@@ -26,7 +26,8 @@
     "format": "tap",
     "origin": "(0,0)",
     "units": "mm",
-    "tool_change": "manual"
+    "tool_change": "manual",
+    "active_post_processor": "3542acbf_radonix"
   },
   "output": {
     "folder": "C:\\FIROO_CAM\\output",
