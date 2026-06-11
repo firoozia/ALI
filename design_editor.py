@@ -8,7 +8,7 @@ import json
 import math
 import copy
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from PySide6.QtCore  import Qt, Signal, QRectF, QPointF, QTimer
 from PySide6.QtGui   import (
@@ -25,6 +25,18 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QSizePolicy,
     QTabWidget, QTextEdit, QColorDialog
 )
+
+try:
+    from door_design_engine import (
+        OffsetStep, PatternRule, DoorDesign as _DoorDesignEngine, ToolRef,
+        cumulative_totals, generate_pattern_geometry,
+        PATTERN_PARAMS, ALL_PATTERN_TYPES,
+    )
+    _ENGINE_AVAILABLE = True
+except ImportError:
+    _ENGINE_AVAILABLE = False
+    ALL_PATTERN_TYPES = ["stepped_border","cross_grid","diagonal","horizontal","vertical","dots","wave","zigzag"]
+    PATTERN_PARAMS = {}
 
 from config import config
 try:
@@ -108,16 +120,14 @@ class DesignData:
             "enabled": False, "type": "none",
             "spacing_mm": 60.0, "angle_deg": 45.0
         }
-        self.offsets: List[Dict] = [
-            {"name":"offset1","from":"door_edge","top":50.0,"right":50.0,"bottom":50.0,"left":50.0,"link":True},
-            {"name":"offset2","from":"offset1",  "top": 8.0,"right": 8.0,"bottom": 8.0,"left": 8.0,"link":True},
-            {"name":"offset3","from":"offset2",  "top":30.0,"right":30.0,"bottom":30.0,"left":30.0,"link":True},
+        self.offset_steps: List[Dict] = [
+            {"enabled":True,"step_mm":40.0,"tool_id":"T1","operation":"profile_frame","depth_mm":18.0,"note":"Initial frame","link":True,"step_top":40.0,"step_right":40.0,"step_bottom":40.0,"step_left":40.0},
+            {"enabled":True,"step_mm":8.0, "tool_id":"T2","operation":"v_groove",     "depth_mm":3.0, "note":"V groove",   "link":True,"step_top":8.0, "step_right":8.0, "step_bottom":8.0, "step_left":8.0},
+            {"enabled":True,"step_mm":5.0, "tool_id":"T6","operation":"engrave",      "depth_mm":1.5, "note":"Fine line",  "link":True,"step_top":5.0, "step_right":5.0, "step_bottom":5.0, "step_left":5.0},
+            {"enabled":True,"step_mm":12.0,"tool_id":"T1","operation":"ball_groove",  "depth_mm":3.0, "note":"Soft groove","link":True,"step_top":12.0,"step_right":12.0,"step_bottom":12.0,"step_left":12.0},
         ]
-        self.operations: List[Dict] = [
-            {"enabled":True,"type":"profile", "offset":"door_edge","inner":"",       "tool":"T1","depth":19.0,"pattern":""},
-            {"enabled":True,"type":"groove",  "offset":"offset1",  "inner":"",       "tool":"T1","depth": 2.0,"pattern":""},
-            {"enabled":True,"type":"groove",  "offset":"offset2",  "inner":"",       "tool":"T1","depth": 2.0,"pattern":""},
-            {"enabled":True,"type":"pocket",  "offset":"offset2",  "inner":"offset3","tool":"T2","depth": 1.5,"pattern":""},
+        self.patterns: List[Dict] = [
+            {"enabled":True,"name":"OuterBorder","pattern_type":"stepped_border","outer_idx":0,"inner_idx":1,"tool_id":"T1","depth_mm":2.0,"pitch_mm":50.0,"step_width_mm":25.0,"start_lead_mm":37.5,"spacing_mm":30.0,"spacing_y_mm":30.0,"angle_deg":45.0,"amplitude_mm":5.0,"wavelength_mm":40.0,"passes":1,"margin_mm":0.0},
         ]
 
     @staticmethod
@@ -171,8 +181,8 @@ class DesignData:
             "pass_depth_mm": self.pass_depth,
             "layers":        self.layers,
             "pattern":       self.pattern,
-            "offsets":       self.offsets,
-            "operations":    self.operations,
+            "offset_steps":  self.offset_steps,
+            "patterns":      self.patterns,
         }
 
     @classmethod
@@ -192,10 +202,19 @@ class DesignData:
         obj.t1_diameter = float(tools.get("T1",{}).get("diameter", 6))
         obj.t2_diameter = float(tools.get("T2",{}).get("diameter", 16))
         obj.pass_depth  = float(d.get("pass_depth_mm", 2))
-        obj.layers      = d.get("layers", [obj._default_layer(0)])
-        obj.pattern     = d.get("pattern", {"enabled": False})
-        obj.offsets     = d.get("offsets",    [])
-        obj.operations  = d.get("operations", [])
+        obj.layers       = d.get("layers", [obj._default_layer(0)])
+        obj.pattern      = d.get("pattern", {"enabled": False})
+        obj.offset_steps = d.get("offset_steps", [])
+        obj.patterns     = d.get("patterns", [])
+        # backward compat: migrate old named-offsets format
+        if not obj.offset_steps and "offsets" in d:
+            for old in d["offsets"]:
+                step = float(old.get("top", old.get("step_mm", 10)))
+                obj.offset_steps.append({
+                    "enabled":True,"step_mm":step,"tool_id":"T1","operation":"groove",
+                    "depth_mm":2.0,"note":old.get("name",""),"link":True,
+                    "step_top":step,"step_right":step,"step_bottom":step,"step_left":step,
+                })
         return obj
 
     def save(self, path: str) -> bool:
@@ -307,20 +326,20 @@ class DoorPreviewCanvas(QWidget):
         return QRectF(self._sx(x), self._sy(y + h),
                       w * self._zoom, h * self._zoom)
 
-    def _compute_offset_rects(self, design) -> dict:
-        """Returns {name: (x0,y0,x1,y1)} in door mm coords. y=0 at bottom."""
-        rects = {"door_edge": (0.0, 0.0, design.width, design.height)}
-        for off in design.offsets:
-            name = off.get("name","")
-            base_name = off.get("from","door_edge")
-            t = float(off.get("top",    0))
-            r = float(off.get("right",  0))
-            b = float(off.get("bottom", 0))
-            l = float(off.get("left",   0))
-            if base_name in rects:
-                bx0,by0,bx1,by1 = rects[base_name]
-                rects[name] = (bx0+l, by0+b, bx1-r, by1-t)
-        return rects
+    def _compute_cumulative_totals(self, design) -> list:
+        """Returns list of (top,right,bottom,left) cumulative totals per enabled step."""
+        totals = []; tt=tr=tb=tl=0.0
+        for s in design.offset_steps:
+            if not s.get("enabled", True):
+                continue
+            if s.get("link", True):
+                v = float(s.get("step_mm", 0))
+                tt+=v; tr+=v; tb+=v; tl+=v
+            else:
+                tt+=float(s.get("step_top",0)); tr+=float(s.get("step_right",0))
+                tb+=float(s.get("step_bottom",0)); tl+=float(s.get("step_left",0))
+            totals.append((round(tt,3), round(tr,3), round(tb,3), round(tl,3)))
+        return totals
 
     # ── Paint ─────────────────────────────────────────────────
     def paintEvent(self, ev):
@@ -365,25 +384,22 @@ class DoorPreviewCanvas(QWidget):
         p.setPen(QPen(QColor("#6b4c3b"), 2))
         p.drawRect(door_rect)
 
-        # ── Compute offset rects ──────────────────────────────
-        offset_rects = self._compute_offset_rects(d)
-
-        # ── Draw offsets (outermost first) ────────────────────
+        # ── Compute cumulative totals ─────────────────────────
+        totals = self._compute_cumulative_totals(d)
         font_lbl = QFont("Segoe UI"); font_lbl.setPixelSize(10)
         p.setFont(font_lbl)
 
-        for i, off in enumerate(d.offsets):
-            name  = off.get("name","")
-            orect = offset_rects.get(name)
-            if not orect:
-                continue
-            x0,y0,x1,y1 = orect
+        # ── Draw offset rings ─────────────────────────────────
+        en_steps = [s for s in d.offset_steps if s.get("enabled", True)]
+        for i, (s, (t_top, t_right, t_bottom, t_left)) in enumerate(zip(en_steps, totals)):
+            color = QColor(OFFSET_COLORS[i % len(OFFSET_COLORS)])
+            x0 = t_left; y0 = t_bottom
+            x1 = dw - t_right; y1 = dh - t_top
             if x1 <= x0 or y1 <= y0:
                 continue
-            color  = QColor(OFFSET_COLORS[i % len(OFFSET_COLORS)])
-            qrect  = self._srect(x0, y0, x1-x0, y1-y0)
+            qrect = self._srect(x0, y0, x1-x0, y1-y0)
             is_sel = (i == self._selected_layer)
-            fill   = QColor(color); fill.setAlpha(30)
+            fill = QColor(color); fill.setAlpha(25)
             p.fillRect(qrect, QBrush(fill))
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(color, 3 if is_sel else 1.5))
@@ -391,73 +407,47 @@ class DoorPreviewCanvas(QWidget):
             if is_sel:
                 hl = QColor(C_ACCENT); hl.setAlpha(40)
                 p.fillRect(qrect, QBrush(hl))
-            if self._show_labels and qrect.width() > 35:
+            if self._show_labels and qrect.width() > 40:
+                sym = float(s.get("step_mm", 0))
+                lbl = f"Σ{t_top:.0f}  {s.get('operation','')}"
                 p.setPen(QPen(color.lighter(160)))
-                p.setFont(font_lbl)
-                p.drawText(
-                    QPointF(qrect.left()+4, qrect.top()+13),
-                    name)
+                p.drawText(QPointF(qrect.left()+4, qrect.top()+13), lbl)
 
-        # ── Draw operations ───────────────────────────────────
-        for op in d.operations:
-            if not op.get("enabled", True):
-                continue
-            op_type     = op.get("type","")
-            outer_name  = op.get("offset","")
-            inner_name  = op.get("inner","")
-            pattern     = op.get("pattern","")
-            orect       = offset_rects.get(outer_name)
-            if not orect:
-                continue
-            ox0,oy0,ox1,oy1 = orect
-            qr = self._srect(ox0, oy0, ox1-ox0, oy1-oy0)
-
-            if op_type == "middle_pattern" and pattern and pattern != "—":
-                step = max(8, int(16 * self._zoom))
-                p.setPen(QPen(QColor("#2ecc7166"), 1))
-                if pattern in ("cross_grid","horizontal","vertical"):
-                    if pattern != "vertical":
-                        y = int(qr.top()) + step
-                        while y < int(qr.bottom()):
-                            p.drawLine(int(qr.left()+2), y, int(qr.right()-2), y)
-                            y += step
-                    if pattern != "horizontal":
-                        x = int(qr.left()) + step
-                        while x < int(qr.right()):
-                            p.drawLine(x, int(qr.top()+2), x, int(qr.bottom()-2))
-                            x += step
-                elif pattern == "diagonal":
-                    x = int(qr.left())
-                    while x < int(qr.right()) + int(qr.height()):
-                        p.drawLine(x, int(qr.top()), x-int(qr.height()), int(qr.bottom()))
-                        x += step
-                elif pattern == "dots":
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QBrush(QColor("#2ecc7188")))
-                    x = int(qr.left()) + step//2
-                    while x < int(qr.right()):
-                        y = int(qr.top()) + step//2
-                        while y < int(qr.bottom()):
-                            p.drawEllipse(QPointF(x,y), 2.5, 2.5)
-                            y += step
-                        x += step
+        # ── Draw patterns ─────────────────────────────────────
+        if _ENGINE_AVAILABLE:
+            for pat in d.patterns:
+                if not pat.get("enabled", True):
+                    continue
+                try:
+                    from door_design_engine import PatternRule as _PR, generate_pattern_geometry as _GPG
+                    pr = _PR(
+                        enabled=True, name=pat.get("name",""),
+                        pattern_type=pat.get("pattern_type","stepped_border"),
+                        outer_idx=int(pat.get("outer_idx",0)),
+                        inner_idx=int(pat.get("inner_idx",1)),
+                        tool_id=pat.get("tool_id","T1"),
+                        depth_mm=float(pat.get("depth_mm",2)),
+                        pitch_mm=float(pat.get("pitch_mm",50)),
+                        step_width_mm=float(pat.get("step_width_mm",25)),
+                        start_lead_mm=float(pat.get("start_lead_mm",37.5)),
+                        spacing_mm=float(pat.get("spacing_mm",30)),
+                        spacing_y_mm=float(pat.get("spacing_y_mm",30)),
+                        angle_deg=float(pat.get("angle_deg",45)),
+                        amplitude_mm=float(pat.get("amplitude_mm",5)),
+                        wavelength_mm=float(pat.get("wavelength_mm",40)),
+                        passes=int(pat.get("passes",1)),
+                        margin_mm=float(pat.get("margin_mm",0)),
+                    )
+                    paths = _GPG(pr, dw, dh, totals)
                     p.setBrush(Qt.NoBrush)
-
-            elif op_type == "border_pattern" and inner_name:
-                ir = offset_rects.get(inner_name)
-                if ir and pattern in ("dots","—",""):
-                    ix0,iy0,ix1,iy1 = ir
-                    iqr = self._srect(ix0,iy0,ix1-ix0,iy1-iy0)
-                    step = max(8, int(14 * self._zoom))
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QBrush(QColor("#3498db99")))
-                    for xx in range(int(qr.left())+step, int(qr.right()), step):
-                        p.drawEllipse(QPointF(xx,(qr.top()+iqr.top())/2), 3,3)
-                        p.drawEllipse(QPointF(xx,(qr.bottom()+iqr.bottom())/2), 3,3)
-                    for yy in range(int(qr.top())+step, int(qr.bottom()), step):
-                        p.drawEllipse(QPointF((qr.left()+iqr.left())/2,yy), 3,3)
-                        p.drawEllipse(QPointF((qr.right()+iqr.right())/2,yy), 3,3)
-                    p.setBrush(Qt.NoBrush)
+                    p.setPen(QPen(QColor("#ff5722"), 1.2))
+                    for path in paths:
+                        for j in range(len(path)-1):
+                            p.drawLine(
+                                QPointF(self._sx(path[j][0]),   self._sy(path[j][1])),
+                                QPointF(self._sx(path[j+1][0]), self._sy(path[j+1][1])))
+                except Exception:
+                    pass
 
         # ── Door profile border ───────────────────────────────
         p.setBrush(Qt.NoBrush)
@@ -753,10 +743,10 @@ class DesignEditorWidget(QWidget):
                 pass
             return en
 
-        tabs.addTab(self._build_props_tab(),       _tlabel("Design Settings","تنظیمات طرح"))
-        tabs.addTab(self._build_offsets_tab(),     _tlabel("Offsets",        "آفست ها"))
-        tabs.addTab(self._build_operations_tab(),  _tlabel("Operations",     "عملیات"))
-        tabs.addTab(self._build_tools_tab(),       _tlabel("Tools",          "ابزارها"))
+        tabs.addTab(self._build_props_tab(),      _tlabel("Design Settings","تنظیمات طرح"))
+        tabs.addTab(self._build_offsets_tab(),    _tlabel("Offsets",        "آفست ها"))
+        tabs.addTab(self._build_patterns_tab(),   _tlabel("Patterns",       "الگوها"))
+        tabs.addTab(self._build_tools_tab(),      _tlabel("Tools",          "ابزارها"))
 
         try:
             from language_manager import lang as _lm
@@ -1047,29 +1037,19 @@ class DesignEditorWidget(QWidget):
         w.setWidget(inner)
         return w
 
-    # ── Offset names helper ───────────────────────────────────
-    def _offset_names(self, include_door_edge=True) -> List[str]:
-        names = []
-        if include_door_edge:
-            names.append("door_edge")
-        names += [o.get("name","") for o in self._design.offsets]
-        return names
-
     # ══════════════════════════════════════════════════════════
-    # OFFSETS TAB
+    # OFFSETS TAB  (F015 cumulative model)
     # ══════════════════════════════════════════════════════════
     def _build_offsets_tab(self) -> QWidget:
-        w   = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(6,6,6,6)
-        lay.setSpacing(4)
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(6,6,6,6); lay.setSpacing(4)
 
         # Toolbar
         tb = QHBoxLayout(); tb.setSpacing(4)
-        self._btn_add_off = QPushButton("＋ Add Offset")
+        self._btn_add_off = QPushButton("＋ Add")
         self._btn_del_off = QPushButton("✕ Delete")
-        self._btn_add_off.setFixedHeight(28)
-        self._btn_del_off.setFixedHeight(28)
+        for btn in (self._btn_add_off, self._btn_del_off):
+            btn.setFixedHeight(28)
         self._btn_add_off.setStyleSheet(
             f"background:{C_ACCENT.name()};border:1px solid {C_ACCENT.name()};"
             f"border-radius:3px;color:white;font-weight:600;padding:0 8px;")
@@ -1078,319 +1058,468 @@ class DesignEditorWidget(QWidget):
             f"border-radius:3px;color:white;padding:0 8px;")
         self._btn_add_off.clicked.connect(self._add_offset)
         self._btn_del_off.clicked.connect(self._del_offset)
-        tb.addWidget(self._btn_add_off)
-        tb.addWidget(self._btn_del_off)
-        tb.addStretch()
+        tb.addWidget(self._btn_add_off); tb.addWidget(self._btn_del_off); tb.addStretch()
         lay.addLayout(tb)
 
-        # Table  (cols: Name | From | Top | Right | Bottom | Left | Link | ●)
-        self._off_table = QTableWidget(0, 8)
-        self._off_table.setHorizontalHeaderLabels(
-            ["Offset","From","Top","Right","Bottom","Left","🔗",""])
+        # Table: ✓ | Step mm | Σ Total | Operation | Tool | Depth | Note | 🔗 | ●
+        COLS = ["✓", "Step mm", "Σ Total", "Operation", "Tool", "Depth", "Note", "🔗", ""]
+        self._off_table = QTableWidget(0, len(COLS))
+        self._off_table.setHorizontalHeaderLabels(COLS)
         self._off_table.verticalHeader().hide()
         self._off_table.setAlternatingRowColors(True)
         self._off_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._off_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self._off_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        for c in range(2, 6):
-            self._off_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
-        self._off_table.setColumnWidth(6, 30)
-        self._off_table.setColumnWidth(7, 24)
+        hh = self._off_table.horizontalHeader()
+        hh.setSectionResizeMode(3, QHeaderView.Stretch)
+        hh.setSectionResizeMode(6, QHeaderView.Stretch)
+        for c in (0,1,2,4,5,7,8):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self._off_table.setFixedHeight(220)
         self._off_table.setStyleSheet(self._table_style())
         self._off_table.itemChanged.connect(self._on_offset_table_changed)
-        lay.addWidget(self._off_table, 1)
+        self._off_table.currentRowChanged.connect(self._on_offset_row_selected)
+        lay.addWidget(self._off_table)
+
+        # Detail panel: shows T/R/B/L spinboxes when link=False
+        self._off_detail = QFrame()
+        self._off_detail.setStyleSheet(
+            f"QFrame{{background:{C_PANEL.name()};border:1px solid {C_BORDER.name()};"
+            f"border-radius:4px;}}")
+        self._off_detail.setFixedHeight(80)
+        dl = QHBoxLayout(self._off_detail)
+        dl.setContentsMargins(10,6,10,6); dl.setSpacing(16)
+        self._off_detail_label = QLabel("Select a row")
+        self._off_detail_label.setStyleSheet(
+            f"color:{C_DIM.name()};font-size:11px;border:none;")
+        dl.addWidget(self._off_detail_label)
+        self._off_side_widgets: Dict = {}
+        lay.addWidget(self._off_detail)
+
+        lay.addStretch()
         return w
 
     def _refresh_offsets_table(self):
         self._off_table.blockSignals(True)
         self._off_table.setRowCount(0)
-        names_so_far = ["door_edge"]
-        for i, off in enumerate(self._design.offsets):
+        tt = tr = tb = tl = 0.0
+        for i, s in enumerate(self._design.offset_steps):
             r = self._off_table.rowCount()
             self._off_table.insertRow(r)
             color = OFFSET_COLORS[i % len(OFFSET_COLORS)]
+            enabled = s.get("enabled", True)
 
-            # Name
-            name_item = QTableWidgetItem(off.get("name",""))
-            name_item.setForeground(QColor(color))
-            self._off_table.setItem(r, 0, name_item)
+            if enabled:
+                if s.get("link", True):
+                    v = float(s.get("step_mm", 0))
+                    tt+=v; tr+=v; tb+=v; tl+=v
+                else:
+                    tt+=float(s.get("step_top",0)); tr+=float(s.get("step_right",0))
+                    tb+=float(s.get("step_bottom",0)); tl+=float(s.get("step_left",0))
 
-            # From — use a combo
-            from_cmb = QComboBox()
-            for n in names_so_far:
-                from_cmb.addItem(n)
-            cur_from = off.get("from","door_edge")
-            idx = from_cmb.findText(cur_from)
-            if idx >= 0: from_cmb.setCurrentIndex(idx)
-            from_cmb.currentIndexChanged.connect(
-                lambda _, row=r: self._on_offset_from_changed(row))
-            self._off_table.setCellWidget(r, 1, from_cmb)
+            # col 0: enabled checkbox
+            en_item = QTableWidgetItem()
+            en_item.setCheckState(Qt.Checked if enabled else Qt.Unchecked)
+            en_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            self._off_table.setItem(r, 0, en_item)
 
-            # top/right/bottom/left
-            for ci, key in enumerate(["top","right","bottom","left"], start=2):
-                val = off.get(key, 0.0)
-                item = QTableWidgetItem(f"{val:.1f}")
-                item.setTextAlignment(Qt.AlignCenter)
-                self._off_table.setItem(r, ci, item)
+            # col 1: step_mm
+            step_item = QTableWidgetItem(f"{float(s.get('step_mm',0)):.1f}")
+            step_item.setTextAlignment(Qt.AlignCenter)
+            self._off_table.setItem(r, 1, step_item)
 
-            # Link checkbox (col 6)
+            # col 2: Σ total (read-only)
+            if enabled:
+                tot_txt = f"Σ{tt:.0f}" if s.get("link",True) else f"T{tt:.0f}/R{tr:.0f}"
+            else:
+                tot_txt = "—"
+            tot_item = QTableWidgetItem(tot_txt)
+            tot_item.setFlags(Qt.ItemIsEnabled)
+            tot_item.setForeground(QColor("#858585"))
+            tot_item.setTextAlignment(Qt.AlignCenter)
+            self._off_table.setItem(r, 2, tot_item)
+
+            # col 3: operation
+            self._off_table.setItem(r, 3, QTableWidgetItem(s.get("operation","")))
+
+            # col 4: tool combo
+            tool_cmb = QComboBox()
+            for tk in self._design.tools.keys():
+                tool_cmb.addItem(tk)
+            tidx = tool_cmb.findText(s.get("tool_id","T1"))
+            if tidx >= 0: tool_cmb.setCurrentIndex(tidx)
+            tool_cmb.currentIndexChanged.connect(lambda _, row=r: self._on_offset_tool_changed(row))
+            self._off_table.setCellWidget(r, 4, tool_cmb)
+
+            # col 5: depth
+            dep_item = QTableWidgetItem(f"{float(s.get('depth_mm',2)):.1f}")
+            dep_item.setTextAlignment(Qt.AlignCenter)
+            self._off_table.setItem(r, 5, dep_item)
+
+            # col 6: note
+            self._off_table.setItem(r, 6, QTableWidgetItem(s.get("note","")))
+
+            # col 7: link checkbox
             link_chk = QCheckBox()
-            link_chk.setChecked(bool(off.get("link", True)))
-            link_chk.setToolTip("Link all sides — editing one value fills all four")
-            link_chk.setStyleSheet("QCheckBox { margin-left:6px; }")
-            link_chk.stateChanged.connect(
-                lambda state, row=r: self._on_offset_link_changed(row, state))
+            link_chk.setChecked(bool(s.get("link", True)))
+            link_chk.setToolTip("Linked: one step for all 4 sides")
+            link_chk.stateChanged.connect(lambda state, row=r: self._on_offset_link_changed(row, state))
             lw = QWidget(); ll = QHBoxLayout(lw)
-            ll.setContentsMargins(0,0,0,0); ll.setAlignment(Qt.AlignCenter)
-            ll.addWidget(link_chk)
-            self._off_table.setCellWidget(r, 6, lw)
+            ll.setContentsMargins(0,0,0,0); ll.setAlignment(Qt.AlignCenter); ll.addWidget(link_chk)
+            self._off_table.setCellWidget(r, 7, lw)
 
-            # Color dot (col 7)
-            dot = QLabel()
-            dot.setFixedSize(14, 14)
-            dot.setStyleSheet(f"background:{color};border-radius:7px;")
-            cell_w = QWidget(); cl = QHBoxLayout(cell_w)
-            cl.setContentsMargins(5,0,0,0); cl.addWidget(dot)
-            self._off_table.setCellWidget(r, 7, cell_w)
-
-            names_so_far.append(off.get("name",""))
+            # col 8: color dot
+            dot = QLabel(); dot.setFixedSize(12,12)
+            dot.setStyleSheet(f"background:{color};border-radius:6px;border:none;")
+            cw = QWidget(); cl = QHBoxLayout(cw); cl.setContentsMargins(4,0,0,0); cl.addWidget(dot)
+            self._off_table.setCellWidget(r, 8, cw)
 
         self._off_table.blockSignals(False)
 
     def _on_offset_table_changed(self, item):
-        r   = item.row()
-        col = item.column()
-        if r >= len(self._design.offsets):
-            return
-        off = self._design.offsets[r]
+        r = item.row(); col = item.column()
+        if r >= len(self._design.offset_steps): return
+        s = self._design.offset_steps[r]
         if col == 0:
-            off["name"] = item.text().strip()
-            self._refresh_operations_table()
-        elif col in (2, 3, 4, 5):
-            key = ["top","right","bottom","left"][col-2]
+            s["enabled"] = (item.checkState() == Qt.Checked)
+        elif col == 1:
             try:
-                val = float(item.text())
-                off[key] = val
-                if off.get("link", True):
-                    self._off_table.blockSignals(True)
-                    for ci, k in enumerate(["top","right","bottom","left"], start=2):
-                        if ci != col:
-                            off[k] = val
-                            sync = QTableWidgetItem(f"{val:.1f}")
-                            sync.setTextAlignment(Qt.AlignCenter)
-                            self._off_table.setItem(r, ci, sync)
-                    self._off_table.blockSignals(False)
-            except ValueError:
-                pass
-        self._mark_modified()
-        self._canvas.update()
+                v = float(item.text()); s["step_mm"] = v
+                if s.get("link", True):
+                    s["step_top"] = s["step_right"] = s["step_bottom"] = s["step_left"] = v
+            except ValueError: pass
+        elif col == 3:
+            s["operation"] = item.text().strip()
+        elif col == 5:
+            try: s["depth_mm"] = float(item.text())
+            except ValueError: pass
+        elif col == 6:
+            s["note"] = item.text()
+        self._refresh_offsets_totals_column()
+        self._mark_modified(); self._canvas.update()
+
+    def _refresh_offsets_totals_column(self):
+        """Recalculate and refresh only the Σ Total column."""
+        self._off_table.blockSignals(True)
+        tt = tr = tb = tl = 0.0
+        for r, s in enumerate(self._design.offset_steps):
+            if not s.get("enabled", True):
+                it = self._off_table.item(r, 2)
+                if it: it.setText("—")
+                continue
+            if s.get("link", True):
+                v = float(s.get("step_mm", 0))
+                tt+=v; tr+=v; tb+=v; tl+=v
+            else:
+                tt+=float(s.get("step_top",0)); tr+=float(s.get("step_right",0))
+                tb+=float(s.get("step_bottom",0)); tl+=float(s.get("step_left",0))
+            it = self._off_table.item(r, 2)
+            if it:
+                it.setText(f"Σ{tt:.0f}" if s.get("link",True) else f"T{tt:.0f}/R{tr:.0f}/B{tb:.0f}/L{tl:.0f}")
+        self._off_table.blockSignals(False)
+
+    def _on_offset_tool_changed(self, row):
+        if row >= len(self._design.offset_steps): return
+        cmb = self._off_table.cellWidget(row, 4)
+        if cmb: self._design.offset_steps[row]["tool_id"] = cmb.currentText()
+        self._mark_modified(); self._canvas.update()
 
     def _on_offset_link_changed(self, row, state):
-        if row >= len(self._design.offsets):
-            return
-        self._design.offsets[row]["link"] = (state == Qt.Checked.value or state == 2)
-        self._mark_modified()
+        if row >= len(self._design.offset_steps): return
+        linked = (state == Qt.Checked.value or state == 2)
+        self._design.offset_steps[row]["link"] = linked
+        self._on_offset_row_selected(row)
+        self._mark_modified(); self._canvas.update()
 
-    def _on_offset_from_changed(self, row):
-        if row >= len(self._design.offsets):
+    def _on_offset_row_selected(self, row):
+        # clear old widgets
+        for w in self._off_side_widgets.values():
+            w.setParent(None)
+        self._off_side_widgets.clear()
+        dl = self._off_detail.layout()
+        # remove all items except the first label
+        while dl.count() > 1:
+            item = dl.takeAt(1)
+            if item.widget(): item.widget().deleteLater()
+
+        if row < 0 or row >= len(self._design.offset_steps):
+            self._off_detail_label.setText("Select a row to edit")
             return
-        cmb = self._off_table.cellWidget(row, 1)
-        if cmb:
-            self._design.offsets[row]["from"] = cmb.currentText()
-            self._mark_modified()
-            self._canvas.update()
+
+        s = self._design.offset_steps[row]
+        if s.get("link", True):
+            self._off_detail_label.setText("Linked — all four sides use the same Step value")
+        else:
+            self._off_detail_label.setText("Independent sides:")
+            for key, label in [("step_top","Top"),("step_right","Right"),("step_bottom","Bottom"),("step_left","Left")]:
+                grp = QWidget(); gl = QVBoxLayout(grp); gl.setContentsMargins(0,0,0,0); gl.setSpacing(2)
+                lbl = QLabel(label); lbl.setStyleSheet(f"color:{C_DIM.name()};font-size:10px;border:none;")
+                sp = QDoubleSpinBox(); sp.setRange(0,9999); sp.setDecimals(1); sp.setSuffix(" mm")
+                sp.setValue(float(s.get(key, s.get("step_mm",0))))
+                sp.setFixedWidth(80); sp.setFixedHeight(26)
+                sp.valueChanged.connect(lambda v, k=key, rr=row: self._on_offset_side_changed(rr, k, v))
+                gl.addWidget(lbl); gl.addWidget(sp)
+                dl.addWidget(grp)
+                self._off_side_widgets[key] = grp
+
+    def _on_offset_side_changed(self, row, key, value):
+        if row >= len(self._design.offset_steps): return
+        self._design.offset_steps[row][key] = value
+        s = self._design.offset_steps[row]
+        s["step_mm"] = (s.get("step_top",0)+s.get("step_right",0)+s.get("step_bottom",0)+s.get("step_left",0))/4
+        self._refresh_offsets_totals_column()
+        it = self._off_table.item(row, 1)
+        if it:
+            self._off_table.blockSignals(True)
+            it.setText(f"{s['step_mm']:.1f}")
+            self._off_table.blockSignals(False)
+        self._mark_modified(); self._canvas.update()
 
     def _add_offset(self):
-        i    = len(self._design.offsets)
-        name = f"offset{i+1}"
-        prev = self._design.offsets[-1]["name"] if self._design.offsets else "door_edge"
-        self._design.offsets.append({
-            "name": name, "from": prev,
-            "top":10.0,"right":10.0,"bottom":10.0,"left":10.0,"link":True})
+        self._design.offset_steps.append({
+            "enabled":True,"step_mm":10.0,"tool_id":"T1","operation":"groove",
+            "depth_mm":2.0,"note":"","link":True,
+            "step_top":10.0,"step_right":10.0,"step_bottom":10.0,"step_left":10.0,
+        })
         self._refresh_offsets_table()
-        self._refresh_operations_table()
-        self._mark_modified()
-        self._canvas.update()
+        self._mark_modified(); self._canvas.update()
 
     def _del_offset(self):
         rows = {i.row() for i in self._off_table.selectedItems()}
-        if not rows:
-            return
+        if not rows: return
         for r in sorted(rows, reverse=True):
-            if r < len(self._design.offsets):
-                self._design.offsets.pop(r)
+            if r < len(self._design.offset_steps):
+                self._design.offset_steps.pop(r)
         self._refresh_offsets_table()
-        self._refresh_operations_table()
-        self._mark_modified()
-        self._canvas.update()
+        self._mark_modified(); self._canvas.update()
 
     # ══════════════════════════════════════════════════════════
-    # OPERATIONS TAB
+    # PATTERNS TAB
     # ══════════════════════════════════════════════════════════
-    def _build_operations_tab(self) -> QWidget:
-        w   = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(6,6,6,6)
-        lay.setSpacing(4)
+    def _build_patterns_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w); lay.setContentsMargins(6,6,6,6); lay.setSpacing(4)
 
+        # Toolbar
         tb = QHBoxLayout(); tb.setSpacing(4)
-        self._btn_add_op = QPushButton("＋ Add Operation")
-        self._btn_del_op = QPushButton("✕ Delete")
-        self._btn_add_op.setFixedHeight(28)
-        self._btn_del_op.setFixedHeight(28)
-        self._btn_add_op.setStyleSheet(
-            f"background:{C_ACCENT.name()};border:1px solid {C_ACCENT.name()};"
-            f"border-radius:3px;color:white;font-weight:600;padding:0 8px;")
-        self._btn_del_op.setStyleSheet(
-            f"background:#5a1f1f;border:1px solid #b94a48;"
-            f"border-radius:3px;color:white;padding:0 8px;")
-        self._btn_add_op.clicked.connect(self._add_operation)
-        self._btn_del_op.clicked.connect(self._del_operation)
-        tb.addWidget(self._btn_add_op)
-        tb.addWidget(self._btn_del_op)
-        tb.addStretch()
+        self._btn_add_pat = QPushButton("＋ Add Pattern")
+        self._btn_dup_pat = QPushButton("⧉ Duplicate")
+        self._btn_del_pat = QPushButton("✕ Delete")
+        for btn in (self._btn_add_pat, self._btn_dup_pat, self._btn_del_pat):
+            btn.setFixedHeight(28)
+        self._btn_add_pat.setStyleSheet(f"background:{C_ACCENT.name()};border:1px solid {C_ACCENT.name()};border-radius:3px;color:white;font-weight:600;padding:0 8px;")
+        self._btn_dup_pat.setStyleSheet(f"background:#2a3a2a;border:1px solid #4a8a4a;border-radius:3px;color:white;padding:0 8px;")
+        self._btn_del_pat.setStyleSheet(f"background:#5a1f1f;border:1px solid #b94a48;border-radius:3px;color:white;padding:0 8px;")
+        self._btn_add_pat.clicked.connect(self._add_pattern)
+        self._btn_dup_pat.clicked.connect(self._dup_pattern)
+        self._btn_del_pat.clicked.connect(self._del_pattern)
+        tb.addWidget(self._btn_add_pat); tb.addWidget(self._btn_dup_pat)
+        tb.addWidget(self._btn_del_pat); tb.addStretch()
         lay.addLayout(tb)
 
-        self._ops_table = QTableWidget(0, 7)
-        self._ops_table.setHorizontalHeaderLabels(
-            ["✓","Type","Outer/Offset","Inner","Tool","Depth","Pattern"])
-        self._ops_table.verticalHeader().hide()
-        self._ops_table.setAlternatingRowColors(True)
-        self._ops_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        hdr = self._ops_table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        self._ops_table.setStyleSheet(self._table_style())
-        lay.addWidget(self._ops_table, 1)
+        # Pattern list table
+        PAT_COLS = ["✓","Name","Type","Outer (idx)","Inner (idx)","Tool","Depth",""]
+        self._pat_table = QTableWidget(0, len(PAT_COLS))
+        self._pat_table.setHorizontalHeaderLabels(PAT_COLS)
+        self._pat_table.verticalHeader().hide()
+        self._pat_table.setAlternatingRowColors(True)
+        self._pat_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        ph = self._pat_table.horizontalHeader()
+        ph.setSectionResizeMode(1, QHeaderView.Stretch)
+        for c in (0,2,3,4,5,6,7): ph.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        self._pat_table.setFixedHeight(180)
+        self._pat_table.setStyleSheet(self._table_style())
+        self._pat_table.itemChanged.connect(self._on_pat_table_changed)
+        self._pat_table.currentRowChanged.connect(self._on_pat_row_selected)
+        lay.addWidget(self._pat_table)
+
+        # Parameter panel (changes per pattern type)
+        param_frame = QFrame()
+        param_frame.setStyleSheet(f"QFrame{{background:{C_PANEL.name()};border:1px solid {C_BORDER.name()};border-radius:4px;}}")
+        self._pat_param_layout = QHBoxLayout(param_frame)
+        self._pat_param_layout.setContentsMargins(10,8,10,8)
+        self._pat_param_layout.setSpacing(14)
+        self._pat_param_widgets: Dict[str, QDoubleSpinBox] = {}
+        self._pat_param_label = QLabel("Select a pattern row to edit parameters")
+        self._pat_param_label.setStyleSheet(f"color:{C_DIM.name()};font-size:11px;border:none;")
+        self._pat_param_layout.addWidget(self._pat_param_label)
+        lay.addWidget(param_frame, 1)
+
         return w
 
-    def _refresh_operations_table(self):
-        self._ops_table.setRowCount(0)
-        offset_names = self._offset_names(include_door_edge=True)
-        tool_names   = [f"T{i}" for i in range(1,13)]
+    def _refresh_patterns_table(self):
+        self._pat_table.blockSignals(True)
+        self._pat_table.setRowCount(0)
+        n_steps = len([s for s in self._design.offset_steps if s.get("enabled",True)])
+        for i, pat in enumerate(self._design.patterns):
+            r = self._pat_table.rowCount()
+            self._pat_table.insertRow(r)
 
-        for op in self._design.operations:
-            r = self._ops_table.rowCount()
-            self._ops_table.insertRow(r)
+            # col 0: enabled
+            en = QTableWidgetItem()
+            en.setCheckState(Qt.Checked if pat.get("enabled",True) else Qt.Unchecked)
+            en.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            self._pat_table.setItem(r, 0, en)
 
-            # ✓ enabled
-            chk = QTableWidgetItem()
-            chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            chk.setCheckState(Qt.Checked if op.get("enabled",True) else Qt.Unchecked)
-            chk.setTextAlignment(Qt.AlignCenter)
-            self._ops_table.setItem(r, 0, chk)
+            # col 1: name
+            self._pat_table.setItem(r, 1, QTableWidgetItem(pat.get("name","")))
 
-            # Type combo
+            # col 2: type combo
             type_cmb = QComboBox()
-            for t in OP_TYPES: type_cmb.addItem(t)
-            idx = type_cmb.findText(op.get("type","groove"))
-            if idx>=0: type_cmb.setCurrentIndex(idx)
-            type_cmb.currentIndexChanged.connect(
-                lambda _, row=r: self._on_op_changed(row))
-            self._ops_table.setCellWidget(r, 1, type_cmb)
+            for pt in ALL_PATTERN_TYPES:
+                type_cmb.addItem(pt)
+            idx = type_cmb.findText(pat.get("pattern_type","stepped_border"))
+            if idx >= 0: type_cmb.setCurrentIndex(idx)
+            type_cmb.currentIndexChanged.connect(lambda _, row=r: self._on_pat_type_changed(row))
+            self._pat_table.setCellWidget(r, 2, type_cmb)
 
-            # Outer offset combo
-            out_cmb = QComboBox()
-            for n in offset_names: out_cmb.addItem(n)
-            idx = out_cmb.findText(op.get("offset","door_edge"))
-            if idx>=0: out_cmb.setCurrentIndex(idx)
-            out_cmb.currentIndexChanged.connect(
-                lambda _, row=r: self._on_op_changed(row))
-            self._ops_table.setCellWidget(r, 2, out_cmb)
+            # col 3: outer index
+            o_sp = QSpinBox(); o_sp.setRange(0, max(0, n_steps-1))
+            o_sp.setValue(min(pat.get("outer_idx",0), max(0, n_steps-1)))
+            o_sp.valueChanged.connect(lambda v, row=r: self._on_pat_idx_changed(row, "outer_idx", v))
+            self._pat_table.setCellWidget(r, 3, o_sp)
 
-            # Inner offset combo
-            in_cmb = QComboBox()
-            in_cmb.addItem("—")
-            for n in offset_names[1:]: in_cmb.addItem(n)  # skip door_edge
-            cur_inner = op.get("inner","")
-            idx = in_cmb.findText(cur_inner) if cur_inner else 0
-            if idx>=0: in_cmb.setCurrentIndex(idx)
-            in_cmb.currentIndexChanged.connect(
-                lambda _, row=r: self._on_op_changed(row))
-            self._ops_table.setCellWidget(r, 3, in_cmb)
+            # col 4: inner index
+            i_sp = QSpinBox(); i_sp.setRange(0, max(0, n_steps-1))
+            i_sp.setValue(min(pat.get("inner_idx",1), max(0, n_steps-1)))
+            i_sp.valueChanged.connect(lambda v, row=r: self._on_pat_idx_changed(row, "inner_idx", v))
+            self._pat_table.setCellWidget(r, 4, i_sp)
 
-            # Tool combo
+            # col 5: tool combo
             tool_cmb = QComboBox()
-            for t in tool_names: tool_cmb.addItem(t)
-            idx = tool_cmb.findText(op.get("tool","T1"))
-            if idx>=0: tool_cmb.setCurrentIndex(idx)
-            tool_cmb.currentIndexChanged.connect(
-                lambda _, row=r: self._on_op_changed(row))
-            self._ops_table.setCellWidget(r, 4, tool_cmb)
+            for tk in self._design.tools.keys():
+                tool_cmb.addItem(tk)
+            tidx = tool_cmb.findText(pat.get("tool_id","T1"))
+            if tidx >= 0: tool_cmb.setCurrentIndex(tidx)
+            tool_cmb.currentIndexChanged.connect(lambda _, row=r: self._on_pat_tool_changed(row))
+            self._pat_table.setCellWidget(r, 5, tool_cmb)
 
-            # Depth spin
-            dep_spin = QDoubleSpinBox()
-            dep_spin.setRange(0,50); dep_spin.setDecimals(1)
-            dep_spin.setSuffix(" mm"); dep_spin.setFixedWidth(70)
-            dep_spin.setValue(float(op.get("depth",2.0)))
-            dep_spin.valueChanged.connect(
-                lambda _, row=r: self._on_op_changed(row))
-            self._ops_table.setCellWidget(r, 5, dep_spin)
+            # col 6: depth
+            dep = QTableWidgetItem(f"{float(pat.get('depth_mm',2)):.1f}")
+            dep.setTextAlignment(Qt.AlignCenter)
+            self._pat_table.setItem(r, 6, dep)
 
-            # Pattern combo
-            pat_cmb = QComboBox()
-            for pt in OP_PATTERNS: pat_cmb.addItem(pt)
-            cur_pat = op.get("pattern","") or "—"
-            idx = pat_cmb.findText(cur_pat)
-            if idx>=0: pat_cmb.setCurrentIndex(idx)
-            pat_cmb.currentIndexChanged.connect(
-                lambda _, row=r: self._on_op_changed(row))
-            self._ops_table.setCellWidget(r, 6, pat_cmb)
+            # col 7: color dot (orange for patterns)
+            dot = QLabel(); dot.setFixedSize(10,10)
+            dot.setStyleSheet("background:#ff5722;border-radius:5px;border:none;")
+            cw = QWidget(); cl = QHBoxLayout(cw); cl.setContentsMargins(4,0,0,0); cl.addWidget(dot)
+            self._pat_table.setCellWidget(r, 7, cw)
 
-            self._ops_table.setRowHeight(r, 26)
+        self._pat_table.blockSignals(False)
 
-    def _on_op_changed(self, row):
-        if row >= len(self._design.operations):
+    def _on_pat_table_changed(self, item):
+        r = item.row(); col = item.column()
+        if r >= len(self._design.patterns): return
+        pat = self._design.patterns[r]
+        if col == 0:
+            pat["enabled"] = (item.checkState() == Qt.Checked)
+        elif col == 1:
+            pat["name"] = item.text().strip()
+        elif col == 6:
+            try: pat["depth_mm"] = float(item.text())
+            except ValueError: pass
+        self._mark_modified(); self._canvas.update()
+
+    def _on_pat_type_changed(self, row):
+        if row >= len(self._design.patterns): return
+        cmb = self._pat_table.cellWidget(row, 2)
+        if cmb:
+            self._design.patterns[row]["pattern_type"] = cmb.currentText()
+            self._on_pat_row_selected(row)
+        self._mark_modified(); self._canvas.update()
+
+    def _on_pat_idx_changed(self, row, key, value):
+        if row >= len(self._design.patterns): return
+        self._design.patterns[row][key] = value
+        self._mark_modified(); self._canvas.update()
+
+    def _on_pat_tool_changed(self, row):
+        if row >= len(self._design.patterns): return
+        cmb = self._pat_table.cellWidget(row, 5)
+        if cmb: self._design.patterns[row]["tool_id"] = cmb.currentText()
+        self._mark_modified(); self._canvas.update()
+
+    def _on_pat_row_selected(self, row):
+        """Rebuild parameter panel for the selected pattern row."""
+        self._pat_param_widgets.clear()
+        while self._pat_param_layout.count():
+            item = self._pat_param_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+
+        if row < 0 or row >= len(self._design.patterns):
+            lbl = QLabel("Select a pattern row to edit parameters")
+            lbl.setStyleSheet(f"color:{C_DIM.name()};font-size:11px;border:none;")
+            self._pat_param_layout.addWidget(lbl)
             return
-        op = self._design.operations[row]
 
-        chk = self._ops_table.item(row, 0)
-        if chk: op["enabled"] = chk.checkState() == Qt.Checked
+        pat = self._design.patterns[row]
+        ptype = pat.get("pattern_type","stepped_border")
+        params = PATTERN_PARAMS.get(ptype, [])
 
-        def cmb_text(col):
-            w = self._ops_table.cellWidget(row, col)
-            return w.currentText() if w else ""
-
-        def spin_val(col):
-            w = self._ops_table.cellWidget(row, col)
-            return w.value() if w else 0.0
-
-        op["type"]    = cmb_text(1)
-        op["offset"]  = cmb_text(2)
-        inner         = cmb_text(3)
-        op["inner"]   = "" if inner == "—" else inner
-        op["tool"]    = cmb_text(4)
-        op["depth"]   = spin_val(5)
-        pat           = cmb_text(6)
-        op["pattern"] = "" if pat == "—" else pat
-
-        self._mark_modified()
-        self._canvas.update()
-
-    def _add_operation(self):
-        offset_names = self._offset_names()
-        default_off  = offset_names[1] if len(offset_names)>1 else "door_edge"
-        self._design.operations.append({
-            "enabled":True,"type":"groove","offset":default_off,
-            "inner":"","tool":"T1","depth":2.0,"pattern":""})
-        self._refresh_operations_table()
-        self._mark_modified()
-
-    def _del_operation(self):
-        rows = {i.row() for i in self._ops_table.selectedItems()}
-        if not rows:
+        if not params:
+            lbl = QLabel(f"No editable parameters for '{ptype}'")
+            lbl.setStyleSheet(f"color:{C_DIM.name()};font-size:11px;border:none;")
+            self._pat_param_layout.addWidget(lbl)
             return
+
+        for (key, label, unit, lo, hi, default) in params:
+            grp = QWidget(); gl = QVBoxLayout(grp); gl.setContentsMargins(0,0,0,0); gl.setSpacing(2)
+            lbl_w = QLabel(label); lbl_w.setStyleSheet(f"color:{C_DIM.name()};font-size:10px;border:none;")
+
+            if key == "passes":
+                sp = QSpinBox(); sp.setRange(int(lo), int(hi))
+                sp.setValue(int(pat.get(key, int(default))))
+                sp.setFixedWidth(70); sp.setFixedHeight(26)
+                sp.valueChanged.connect(lambda v, k=key, rr=row: self._on_pat_param_changed(rr, k, v))
+            else:
+                sp = QDoubleSpinBox(); sp.setRange(float(lo), float(hi)); sp.setDecimals(1)
+                sp.setValue(float(pat.get(key, float(default))))
+                if unit: sp.setSuffix(f" {unit}")
+                sp.setFixedWidth(90); sp.setFixedHeight(26)
+                sp.valueChanged.connect(lambda v, k=key, rr=row: self._on_pat_param_changed(rr, k, v))
+
+            gl.addWidget(lbl_w); gl.addWidget(sp)
+            self._pat_param_layout.addWidget(grp)
+            self._pat_param_widgets[key] = sp
+
+        self._pat_param_layout.addStretch()
+
+    def _on_pat_param_changed(self, row, key, value):
+        if row >= len(self._design.patterns): return
+        self._design.patterns[row][key] = value
+        self._mark_modified(); self._canvas.update()
+
+    def _add_pattern(self):
+        n = len(self._design.patterns)
+        n_steps = max(1, len([s for s in self._design.offset_steps if s.get("enabled",True)]))
+        self._design.patterns.append({
+            "enabled":True, "name":f"Pattern{n+1}", "pattern_type":"stepped_border",
+            "outer_idx":0, "inner_idx":min(1, n_steps-1),
+            "tool_id":"T1", "depth_mm":2.0,
+            "pitch_mm":50.0, "step_width_mm":25.0, "start_lead_mm":37.5,
+            "spacing_mm":30.0, "spacing_y_mm":30.0, "angle_deg":45.0,
+            "amplitude_mm":5.0, "wavelength_mm":40.0, "passes":1, "margin_mm":0.0,
+        })
+        self._refresh_patterns_table()
+        self._mark_modified(); self._canvas.update()
+
+    def _dup_pattern(self):
+        rows = {i.row() for i in self._pat_table.selectedItems()}
+        if not rows: return
+        for r in sorted(rows):
+            if r < len(self._design.patterns):
+                dup = copy.deepcopy(self._design.patterns[r])
+                dup["name"] += "_copy"
+                self._design.patterns.insert(r+1, dup)
+        self._refresh_patterns_table()
+        self._mark_modified(); self._canvas.update()
+
+    def _del_pattern(self):
+        rows = {i.row() for i in self._pat_table.selectedItems()}
+        if not rows: return
         for r in sorted(rows, reverse=True):
-            if r < len(self._design.operations):
-                self._design.operations.pop(r)
-        self._refresh_operations_table()
-        self._mark_modified()
-        self._canvas.update()
+            if r < len(self._design.patterns):
+                self._design.patterns.pop(r)
+        self._refresh_patterns_table()
+        self._mark_modified(); self._canvas.update()
 
     # ══════════════════════════════════════════════════════════
     # REFRESH
@@ -1398,7 +1527,7 @@ class DesignEditorWidget(QWidget):
     def _refresh_all(self):
         self._refresh_props_panel()
         self._refresh_offsets_table()
-        self._refresh_operations_table()
+        self._refresh_patterns_table()
         self._populate_tools_table()
         self._canvas.set_design(self._design)
         self._lbl_size.setText(
@@ -1823,9 +1952,9 @@ class DesignEditorWidget(QWidget):
         if not hasattr(self, "_tabs"):
             return
         tab_labels = {
-            "en": ["Design Settings","Offsets","Operations","Tools"],
-            "fa": ["تنظیمات طرح","آفست ها","عملیات","ابزارها"],
-            "ar": ["إعدادات التصميم","الإزاحات","العمليات","الأدوات"],
+            "en": ["Design Settings","Offsets","Patterns","Tools"],
+            "fa": ["تنظیمات طرح","آفست ها","الگوها","ابزارها"],
+            "ar": ["إعدادات التصميم","الإزاحات","الأنماط","الأدوات"],
         }
         labels = tab_labels.get(code, tab_labels["en"])
         for i, lbl in enumerate(labels):
