@@ -1076,7 +1076,8 @@ class DesignEditorWidget(QWidget):
         self._off_table.setFixedHeight(220)
         self._off_table.setStyleSheet(self._table_style())
         self._off_table.itemChanged.connect(self._on_offset_table_changed)
-        self._off_table.currentRowChanged.connect(self._on_offset_row_selected)
+        self._off_table.itemSelectionChanged.connect(
+            lambda: self._on_offset_row_selected(self._off_table.currentRow()))
         lay.addWidget(self._off_table)
 
         # Detail panel: shows T/R/B/L spinboxes when link=False
@@ -1328,7 +1329,8 @@ class DesignEditorWidget(QWidget):
         self._pat_table.setFixedHeight(180)
         self._pat_table.setStyleSheet(self._table_style())
         self._pat_table.itemChanged.connect(self._on_pat_table_changed)
-        self._pat_table.currentRowChanged.connect(self._on_pat_row_selected)
+        self._pat_table.itemSelectionChanged.connect(
+            lambda: self._on_pat_row_selected(self._pat_table.currentRow()))
         lay.addWidget(self._pat_table)
 
         # Parameter panel (changes per pattern type)
