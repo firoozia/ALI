@@ -11,7 +11,7 @@ Changes from v1:
   • Spacing group layout matches Solid Edge EXACTLY
 """
 from __future__ import annotations
-import math, time
+import math, time, copy
 from typing import List, Optional
 
 from PySide6.QtCore  import Qt, QThread, Signal, QRectF, QTimer, QSize
@@ -34,12 +34,9 @@ from config import config
 # ── Palette ──────────────────────────────────────────────────
 C_BG         = QColor("#1e1e1e")
 C_PANEL      = QColor("#252526")
-C_CANVAS_BG  = QColor("#16161a")   # deep matte for canvas grid
-C_INPUT_BG   = QColor("#141414")   # ultra-dark for data cells
 C_BORDER     = QColor("#3e3e42")
-C_ACCENT     = QColor("#00A3FF")   # engineering blue
-C_ACCENT2    = QColor("#0088dd")
-C_ORANGE     = QColor("#FF6B00")   # G-Code / toolpath orange
+C_ACCENT     = QColor("#0078d4")
+C_ACCENT2    = QColor("#106ebe")
 C_TEXT       = QColor("#cccccc")
 C_DIM        = QColor("#858585")
 C_GOOD       = QColor("#4ec9b0")
@@ -89,6 +86,12 @@ class NestingWorker(QThread):
             engine.margin_right  = self._opts.get("margin_right",  self._opts["sheet_margin"])
             engine.margin_bottom = self._opts.get("margin_bottom", self._opts["sheet_margin"])
             engine.auto_rotate   = self._opts["rotation"] > 0
+            # Optional engine hints; safe if the engine ignores them.
+            try:
+                engine.direction_deg = self._opts.get("direction_deg", 270)
+                engine.strategy = self._opts.get("strategy", "best_efficiency")
+            except Exception:
+                pass
 
             sds = []
             for sd in self._sheet_defs:
@@ -151,7 +154,7 @@ class SheetCanvas(QWidget):
         p = QPainter(self)
         try:
             p.setRenderHint(QPainter.Antialiasing)
-            p.fillRect(self.rect(), C_CANVAS_BG)
+            p.fillRect(self.rect(), C_BG)
             if not self._sheet:
                 p.setPen(QPen(C_DIM))
                 p.drawText(self.rect(), Qt.AlignCenter, "No data")
@@ -248,6 +251,28 @@ class SheetCanvas(QWidget):
             pass  # Never crash the UI
 
 
+
+class HWheelScrollArea(QScrollArea):
+    """Scroll the Current Layout thumbnails left/right with mouse wheel.
+
+    Solid-style behavior: normal mouse wheel moves through nests horizontally
+    when a horizontal scrollbar is available. Ctrl+wheel is left for future zoom.
+    """
+    def wheelEvent(self, ev):
+        hbar = self.horizontalScrollBar()
+        vbar = self.verticalScrollBar()
+        delta = ev.angleDelta().y() or ev.angleDelta().x()
+        if hbar and hbar.maximum() > hbar.minimum() and delta:
+            hbar.setValue(hbar.value() - delta)
+            ev.accept()
+            return
+        if vbar and delta:
+            vbar.setValue(vbar.value() - delta)
+            ev.accept()
+            return
+        super().wheelEvent(ev)
+
+
 # ═══════════════════════════════════════════════════════════════
 # Util Chart
 # ═══════════════════════════════════════════════════════════════
@@ -256,8 +281,8 @@ class UtilChart(QWidget):
         super().__init__(parent)
         self._data: List[float] = []
         self._selected = -1
-        self.setMinimumHeight(90)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.setFixedWidth(110)
+        self.setMinimumHeight(120)
 
     def set_data(self, utils: List[float], selected=0):
         self._data     = utils
@@ -390,6 +415,8 @@ class NestingTab(QWidget):
         self._running           = False
         self._elapsed           = 0
         self._run_start         = 0.0
+        self._nest_direction_deg = 270
+        self._nest_strategy      = "best_efficiency"
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -406,27 +433,34 @@ class NestingTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Slim top bar — timer + rotation + settings only
+        # Compact top bar (Start/Stop + key settings only, no ribbon)
         root.addWidget(self._build_compact_bar())
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"background:{C_BORDER.name()};"); sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background:{C_BORDER.name()};")
+        sep.setFixedHeight(1)
         root.addWidget(sep)
 
-        # Three-panel body: Left (340) | Center (stretch) | Right (290)
+        # Main body: splitter (sheets panel | center | right panel)
         body = QSplitter(Qt.Horizontal)
         body.setHandleWidth(1)
 
-        left   = self._build_left_panel()
+        # Left: sheets panel
+        sheets_panel = self._build_sheets_panel()
+        body.addWidget(sheets_panel)
+
+        # Center: layout preview (main area — now large)
         center = self._build_center()
-        right  = self._build_right_panel()
-        body.addWidget(left)
         body.addWidget(center)
+
+        # Right: Results (top) + Nest Details (bottom)
+        right = self._build_right_panel()
         body.addWidget(right)
+
         body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 1)
         body.setStretchFactor(2, 0)
-        body.setSizes([340, 900, 290])
+        body.setSizes([220, 900, 300])
 
         root.addWidget(body, 1)
 
@@ -440,94 +474,189 @@ class NestingTab(QWidget):
 
     # ── RIBBON ────────────────────────────────────────────────
     def _build_compact_bar(self) -> QFrame:
-        """Top bar: elapsed timer + rotation + settings only."""
+        """Compact single-row bar replaces 90px ribbon. Saves vertical space."""
         bar = QFrame()
-        bar.setFixedHeight(38)
+        bar.setFixedHeight(40)
         bar.setStyleSheet(
             f"background:{C_PANEL.name()};"
             f"border-bottom:1px solid {C_BORDER.name()};")
         bl = QHBoxLayout(bar)
-        bl.setContentsMargins(12, 4, 12, 4)
-        bl.setSpacing(10)
+        bl.setContentsMargins(8, 4, 8, 4)
+        bl.setSpacing(8)
 
-        # App label
-        brand = QLabel("FIROO CAM  —  Nesting")
-        brand.setStyleSheet(
-            f"color:{C_ACCENT.name()}; font-size:12px; font-weight:700;")
-        bl.addWidget(brand)
-
-        bl.addWidget(self._vsep())
+        # Start / Stop
+        self._btn_start = QPushButton("▶  Start")
+        self._btn_stop  = QPushButton("■  Stop")
+        self._btn_start.setFixedSize(90, 28)
+        self._btn_stop.setFixedSize(80, 28)
+        self._btn_stop.setEnabled(False)
+        self._btn_start.setObjectName("btn_start")
+        self._btn_stop.setObjectName("btn_stop")
+        bl.addWidget(self._btn_start)
+        bl.addWidget(self._btn_stop)
 
         # Elapsed timer
         self._lbl_elapsed = QLabel("00:00:00")
         self._lbl_elapsed.setStyleSheet(
-            f"color:{C_DIM.name()}; font-size:11px; min-width:58px;")
+            f"color:{C_DIM.name()}; font-size:11px; min-width:60px;")
         bl.addWidget(self._lbl_elapsed)
         self._lbl_duration = QLabel("00h:10m")
         self._lbl_duration.setStyleSheet(
-            f"color:{C_GOOD.name()}; font-size:11px; font-weight:700;")
+            f"color:{C_GOOD.name()}; font-size:11px; font-weight:600;")
         bl.addWidget(self._lbl_duration)
 
         bl.addWidget(self._vsep())
 
         # Rotation
-        rot_lbl = QLabel("Rotation:")
-        rot_lbl.setStyleSheet(f"color:{C_DIM.name()}; font-size:11px;")
-        bl.addWidget(rot_lbl)
+        bl.addWidget(QLabel("Rot:"))
         self._cmb_rotation = QComboBox()
-        for v in ["None", "90°", "180°", "Any"]: self._cmb_rotation.addItem(v)
+        for v in ["None","90","180","Any"]: self._cmb_rotation.addItem(v)
         self._cmb_rotation.setCurrentIndex(1)
-        self._cmb_rotation.setFixedWidth(68)
+        self._cmb_rotation.setFixedWidth(60)
         bl.addWidget(self._cmb_rotation)
+
+        bl.addWidget(self._vsep())
+
+        # Part Spacing
+        bl.addWidget(QLabel("Gap:"))
+        self._spin_part_spacing = QDoubleSpinBox()
+        self._spin_part_spacing.setRange(0,100); self._spin_part_spacing.setDecimals(1)
+        self._spin_part_spacing.setFixedWidth(60); self._spin_part_spacing.setValue(5.0)
+        self._spin_part_spacing.setSuffix(" mm")
+        bl.addWidget(self._spin_part_spacing)
+
+        bl.addWidget(self._vsep())
+
+        # Margins — compact: single Uniform value
+        self._chk_uniform = QCheckBox("Uniform")
+        self._chk_uniform.setChecked(True)
+        self._chk_uniform.setStyleSheet(f"color:{C_TEXT.name()}; font-size:11px;")
+        self._chk_uniform.toggled.connect(self._on_uniform_toggled)
+        bl.addWidget(self._chk_uniform)
+
+        bl.addWidget(QLabel("Margin:"))
+        self._spin_top = QDoubleSpinBox()
+        self._spin_top.setRange(0,200); self._spin_top.setDecimals(1)
+        self._spin_top.setFixedWidth(60); self._spin_top.setValue(5.0)
+        self._spin_top.setSuffix(" mm")
+        self._spin_top.valueChanged.connect(self._on_top_changed)
+        bl.addWidget(self._spin_top)
+
+        # Hidden spinboxes — parented to bar so Qt keeps C++ objects alive
+        self._spin_left   = QDoubleSpinBox(bar); self._spin_left.setValue(5.0);   self._spin_left.hide()
+        self._spin_right  = QDoubleSpinBox(bar); self._spin_right.setValue(5.0);  self._spin_right.hide()
+        self._spin_bottom = QDoubleSpinBox(bar); self._spin_bottom.setValue(5.0); self._spin_bottom.hide()
+        self._spin_tilt   = QDoubleSpinBox(bar); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
+        self._chk_mirror  = QCheckBox(bar);      self._chk_mirror.hide()
+        self._spin_speed  = QSpinBox(bar);       self._spin_speed.hide()
+        self._chk_fixed   = QCheckBox(bar);      self._chk_fixed.hide()
+        self._btn_dir     = QPushButton("→", bar); self._btn_dir.hide()
+        self._rb_best     = QRadioButton("Best Efficiency", bar); self._rb_best.setChecked(True); self._rb_best.hide()
+        self._rb_bal      = QRadioButton("Balanced Repeats", bar); self._rb_bal.hide()
+        self._rb_prefer   = QRadioButton("Prefer Repeats", bar);  self._rb_prefer.hide()
+        from PySide6.QtWidgets import QButtonGroup
+        self._bg_repeats  = QButtonGroup(self)
+        for i, rb in enumerate([self._rb_best, self._rb_bal, self._rb_prefer]):
+            self._bg_repeats.addButton(rb, i)
+        self._btn_costing = QPushButton("Cost", bar); self._btn_costing.hide()
 
         bl.addStretch()
 
-        # Settings button
-        self._btn_nest_settings = QPushButton("⚙  Settings")
-        self._btn_nest_settings.setFixedHeight(26)
+        # Settings button (opens settings dialog)
+        self._btn_nest_settings = QPushButton("⚙ Settings")
+        self._btn_nest_settings.setFixedSize(90, 28)
+        self._btn_nest_settings.setStyleSheet(
+            f"background:{C_PANEL.name()}; border:1px solid {C_BORDER.name()};"
+            f"border-radius:3px; color:{C_TEXT.name()}; font-size:11px;")
         self._btn_nest_settings.clicked.connect(self._show_nest_settings)
         bl.addWidget(self._btn_nest_settings)
+
+        # Connect
+        self._btn_start.clicked.connect(self.run_nesting)
+        self._btn_stop.clicked.connect(self.stop_nesting)
 
         return bar
 
     def _show_nest_settings(self):
-        """Show a popup dialog with all nesting settings."""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox
-        dlg = QDialog(self); dlg.setWindowTitle("Nesting Settings")
-        dlg.setFixedSize(360, 360)
+        """Show a popup dialog with all nesting settings.
+
+        IMPORTANT: never put the main toolbar widgets directly inside this dialog.
+        Qt deletes dialog children after close, which previously caused:
+        "Internal C++ object (QDoubleSpinBox) already deleted".
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Nesting Settings")
+        dlg.setFixedSize(420, 420)
         dlg.setStyleSheet(f"background:#1e1e1e; color:#cccccc; font-size:12px;")
-        lay = QVBoxLayout(dlg); form = QFormLayout(); form.setSpacing(8)
+        lay = QVBoxLayout(dlg)
+        form = QFormLayout()
+        form.setSpacing(8)
 
-        # Always create LOCAL copies — never add the real panel widgets to the
-        # dialog layout (Qt would re-parent and then destroy them on dialog close)
-        s_top   = QDoubleSpinBox(); s_top.setRange(0,200); s_top.setDecimals(1); s_top.setValue(self._spin_top.value()); s_top.setSuffix(" mm")
-        s_left  = QDoubleSpinBox(); s_left.setRange(0,200); s_left.setDecimals(1); s_left.setValue(self._spin_left.value()); s_left.setSuffix(" mm")
-        s_right = QDoubleSpinBox(); s_right.setRange(0,200); s_right.setDecimals(1); s_right.setValue(self._spin_right.value()); s_right.setSuffix(" mm")
-        s_bot   = QDoubleSpinBox(); s_bot.setRange(0,200); s_bot.setDecimals(1); s_bot.setValue(self._spin_bottom.value()); s_bot.setSuffix(" mm")
-        s_gap   = QDoubleSpinBox(); s_gap.setRange(0,100); s_gap.setDecimals(1); s_gap.setValue(self._spin_part_spacing.value()); s_gap.setSuffix(" mm")
-        s_rot   = QComboBox()
-        for v in ["None", "90°", "180°", "Any"]: s_rot.addItem(v)
-        s_rot.setCurrentIndex(self._cmb_rotation.currentIndex())
+        # Temporary widgets cloned from current values.
+        s_gap = QDoubleSpinBox(); s_gap.setRange(0, 100); s_gap.setDecimals(1)
+        s_gap.setSuffix(" mm"); s_gap.setValue(self._spin_part_spacing.value())
 
-        form.addRow("Top Margin:",    s_top)
-        form.addRow("Left Margin:",   s_left)
-        form.addRow("Right Margin:",  s_right)
+        s_top = QDoubleSpinBox(); s_top.setRange(0, 200); s_top.setDecimals(1)
+        s_top.setSuffix(" mm"); s_top.setValue(self._spin_top.value())
+        s_left = QDoubleSpinBox(); s_left.setRange(0, 200); s_left.setDecimals(1)
+        s_left.setSuffix(" mm"); s_left.setValue(self._spin_left.value())
+        s_right = QDoubleSpinBox(); s_right.setRange(0, 200); s_right.setDecimals(1)
+        s_right.setSuffix(" mm"); s_right.setValue(self._spin_right.value())
+        s_bot = QDoubleSpinBox(); s_bot.setRange(0, 200); s_bot.setDecimals(1)
+        s_bot.setSuffix(" mm"); s_bot.setValue(self._spin_bottom.value())
+
+        s_rotation = QComboBox()
+        for v in ["None", "90", "180", "Any"]:
+            s_rotation.addItem(v)
+        s_rotation.setCurrentIndex(self._cmb_rotation.currentIndex())
+
+        s_direction = QSpinBox(); s_direction.setRange(0, 359); s_direction.setSuffix("°")
+        s_direction.setValue(int(getattr(self, "_nest_direction_deg", 270)))
+
+        # Solid-style repeat strategy.
+        rb_best = QRadioButton("Best Efficiency")
+        rb_bal = QRadioButton("Balanced Repeats")
+        rb_pref = QRadioButton("Prefer Repeats")
+        strategy = getattr(self, "_nest_strategy", "best_efficiency")
+        rb_best.setChecked(strategy == "best_efficiency")
+        rb_bal.setChecked(strategy == "balanced_repeats")
+        rb_pref.setChecked(strategy == "prefer_repeats")
+        for rb in (rb_best, rb_bal, rb_pref):
+            rb.setStyleSheet("color:#cccccc;")
+
+        form.addRow("Part Spacing:", s_gap)
+        form.addRow("Top Margin:", s_top)
+        form.addRow("Left Margin:", s_left)
+        form.addRow("Right Margin:", s_right)
         form.addRow("Bottom Margin:", s_bot)
-        form.addRow("Part Spacing:",  s_gap)
-        form.addRow("Rotation:",      s_rot)
+        form.addRow("Rotation:", s_rotation)
+        form.addRow("Nesting Direction:", s_direction)
         lay.addLayout(form)
+
+        grp = QGroupBox("Nesting Repeats")
+        gl = QVBoxLayout(grp)
+        gl.addWidget(rb_best); gl.addWidget(rb_bal); gl.addWidget(rb_pref)
+        lay.addWidget(grp)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
         lay.addWidget(btns)
 
         if dlg.exec() == QDialog.Accepted:
+            self._spin_part_spacing.setValue(s_gap.value())
             self._spin_top.setValue(s_top.value())
             self._spin_left.setValue(s_left.value())
             self._spin_right.setValue(s_right.value())
             self._spin_bottom.setValue(s_bot.value())
-            self._spin_part_spacing.setValue(s_gap.value())
-            self._cmb_rotation.setCurrentIndex(s_rot.currentIndex())
+            self._cmb_rotation.setCurrentIndex(s_rotation.currentIndex())
+            self._nest_direction_deg = int(s_direction.value())
+            if rb_pref.isChecked():
+                self._nest_strategy = "prefer_repeats"
+            elif rb_bal.isChecked():
+                self._nest_strategy = "balanced_repeats"
+            else:
+                self._nest_strategy = "best_efficiency"
+            self._save_settings_to_config()
 
     @staticmethod
     def _vsep() -> QFrame:
@@ -769,266 +898,150 @@ class NestingTab(QWidget):
         d.setStyleSheet(f"background:{C_BORDER.name()}; margin:4px 6px;")
         return d
 
-    # ── LEFT PANEL (340px) — Database & Parameters ────────────
-    def _build_left_panel(self) -> QWidget:
-        """Panel 1: Parts Database & Parameters (340px fixed)."""
-        w = QWidget(); w.setFixedWidth(340)
-        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+    # ── SHEETS PANEL (left) ───────────────────────────────────
+    def _build_sheets_panel(self):
+        w = QWidget(); w.setFixedWidth(220)
+        lay = QVBoxLayout(w); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
 
-        # ── Header ────────────────────────────────────────────
-        hdr = QLabel("  Parts Database & Parameters")
-        hdr.setFixedHeight(28)
-        hdr.setStyleSheet(
-            f"background:{C_PANEL.name()}; color:{C_ACCENT.name()};"
-            f"font-size:11px; font-weight:700;"
-            f"border-bottom:1px solid {C_BORDER.name()};")
+        hdr = QLabel("  Sheets")
+        hdr.setFixedHeight(26)
+        hdr.setStyleSheet(f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
+                          f"font-size:11px; font-weight:600;"
+                          f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(hdr)
 
-        # ── Nesting Tolerances GroupBox ────────────────────────
-        grp_tol = QGroupBox("Nesting Tolerances")
-        tol_form = QFormLayout(grp_tol)
-        tol_form.setSpacing(6)
-        tol_form.setContentsMargins(10, 14, 10, 8)
-        tol_form.setLabelAlignment(Qt.AlignRight)
-
-        self._spin_part_spacing = QDoubleSpinBox()
-        self._spin_part_spacing.setRange(0, 100); self._spin_part_spacing.setDecimals(1)
-        self._spin_part_spacing.setValue(5.0); self._spin_part_spacing.setSuffix(" mm")
-        tol_form.addRow("Part Gap:", self._spin_part_spacing)
-
-        self._chk_uniform = QCheckBox("Uniform Margins")
-        self._chk_uniform.setChecked(True)
-        self._chk_uniform.toggled.connect(self._on_uniform_toggled)
-        tol_form.addRow("", self._chk_uniform)
-
-        self._spin_top = QDoubleSpinBox()
-        self._spin_top.setRange(0, 200); self._spin_top.setDecimals(1)
-        self._spin_top.setValue(5.0); self._spin_top.setSuffix(" mm")
-        self._spin_top.valueChanged.connect(self._on_top_changed)
-        tol_form.addRow("Top:", self._spin_top)
-
-        self._spin_left   = QDoubleSpinBox()
-        self._spin_right  = QDoubleSpinBox()
-        self._spin_bottom = QDoubleSpinBox()
-        for sp in [self._spin_left, self._spin_right, self._spin_bottom]:
-            sp.setRange(0, 200); sp.setDecimals(1)
-            sp.setValue(5.0); sp.setSuffix(" mm"); sp.setEnabled(False)
-        tol_form.addRow("Left:", self._spin_left)
-        tol_form.addRow("Right:", self._spin_right)
-        tol_form.addRow("Bottom:", self._spin_bottom)
-
-        lay.addWidget(grp_tol)
-
-        # ── Raw Materials / Sheets ─────────────────────────────
-        sheet_hdr = QLabel("  Raw Materials / Sheets")
-        sheet_hdr.setFixedHeight(26)
-        sheet_hdr.setStyleSheet(
-            f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:700;"
-            f"border-top:1px solid {C_BORDER.name()};"
-            f"border-bottom:1px solid {C_BORDER.name()};")
-        lay.addWidget(sheet_hdr)
-
-        tb = QHBoxLayout(); tb.setContentsMargins(4, 4, 4, 4); tb.setSpacing(4)
+        tb = QHBoxLayout(); tb.setContentsMargins(4,3,4,3); tb.setSpacing(3)
         self._btn_create_sheet = QPushButton("+ Sheet")
         self._btn_add_remnant  = QPushButton("+ Remnant")
         self._btn_edit_sheet   = QPushButton("✎")
         self._btn_remove_sheet = QPushButton("✕")
         for b in [self._btn_create_sheet, self._btn_add_remnant]:
-            b.setFixedHeight(24); b.setStyleSheet(self._small_btn_style())
+            b.setFixedHeight(22); b.setStyleSheet(self._small_btn_style())
             tb.addWidget(b)
         for b in [self._btn_edit_sheet, self._btn_remove_sheet]:
-            b.setFixedSize(26, 24); b.setStyleSheet(self._small_btn_style())
+            b.setFixedSize(24,22); b.setStyleSheet(self._small_btn_style())
             tb.addWidget(b)
         tb.addStretch()
         lay.addLayout(tb)
 
         self._sheet_table = QTableWidget(0, 5)
         self._sheet_table.setHorizontalHeaderLabels(
-            ["Name", "X Dim", "Y Dim", "Qty", "Priority"])
+            ["Name","X Dim","Y Dim","Qty","Priority"])
         self._sheet_table.verticalHeader().hide()
         self._sheet_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._sheet_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         hdr2 = self._sheet_table.horizontalHeader()
         hdr2.setSectionResizeMode(0, QHeaderView.Stretch)
-        for i in range(1, 5): hdr2.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        for i in range(1,5): hdr2.setSectionResizeMode(i, QHeaderView.ResizeToContents)
         lay.addWidget(self._sheet_table, 1)
 
-        # Connect sheet buttons
         self._btn_create_sheet.clicked.connect(self._add_sheet)
         self._btn_add_remnant.clicked.connect(self._add_remnant)
         self._btn_edit_sheet.clicked.connect(self._edit_sheet)
         self._btn_remove_sheet.clicked.connect(self._del_sheet)
 
-        # Legacy hidden widgets — parented to w so Qt keeps C++ objects alive
-        self._spin_tilt   = QDoubleSpinBox(w); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
-        self._chk_mirror  = QCheckBox(w);      self._chk_mirror.hide()
-        self._spin_speed  = QSpinBox(w);       self._spin_speed.hide()
-        self._chk_fixed   = QCheckBox(w);      self._chk_fixed.hide()
-        self._btn_dir     = QPushButton("→", w); self._btn_dir.hide()
-        self._rb_best     = QRadioButton("Best Efficiency", w); self._rb_best.setChecked(True); self._rb_best.hide()
-        self._rb_bal      = QRadioButton("Balanced Repeats", w); self._rb_bal.hide()
-        self._rb_prefer   = QRadioButton("Prefer Repeats", w);  self._rb_prefer.hide()
-        self._bg_repeats  = QButtonGroup(self)
-        for i, rb in enumerate([self._rb_best, self._rb_bal, self._rb_prefer]):
-            self._bg_repeats.addButton(rb, i)
-        self._btn_costing = QPushButton("Cost", w); self._btn_costing.hide()
-
         self._refresh_sheet_table()
         return w
 
-    # ── CENTER PANEL — CAD/CAM Canvas (maximum space) ─────────
-    def _build_center(self) -> QWidget:
-        """Panel 2: Main canvas area — stretches to fill all available space."""
+    # ── CENTER PANEL ──────────────────────────────────────────
+    def _build_center(self):
+        """Center panel: Current Layout fills entire area (max space)."""
         w   = QWidget()
-        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+        lay = QVBoxLayout(w); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
 
-        # Header
+        # Current Layout header
         layout_hdr = QLabel("  Current Layout")
-        layout_hdr.setFixedHeight(28)
+        layout_hdr.setFixedHeight(26)
         layout_hdr.setStyleSheet(
             f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:700;"
+            f"font-size:11px; font-weight:600; "
             f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(layout_hdr)
 
-        # Deep matte canvas with thumbnails
-        scroll = QScrollArea()
+        # Sheet thumbnails scroll area — now fills full height
+        scroll = HWheelScrollArea()
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(f"background:{C_CANVAS_BG.name()}; border:none;")
+        scroll.setStyleSheet(f"background:{C_BG.name()}; border:none;")
 
         self._thumbs_container = QWidget()
-        self._thumbs_container.setStyleSheet(f"background:{C_CANVAS_BG.name()};")
-        self._thumbs_layout = QHBoxLayout(self._thumbs_container)
-        self._thumbs_layout.setContentsMargins(16, 16, 16, 16)
-        self._thumbs_layout.setSpacing(20)
+        self._thumbs_layout    = QHBoxLayout(self._thumbs_container)
+        self._thumbs_layout.setContentsMargins(12,12,12,12)
+        self._thumbs_layout.setSpacing(16)
         self._thumbs_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         scroll.setWidget(self._thumbs_container)
         lay.addWidget(scroll, 1)
 
-        # Minimal optimization checkboxes at bottom
-        chk_row = QHBoxLayout(); chk_row.setContentsMargins(10, 4, 10, 4); chk_row.setSpacing(20)
+        # Checkboxes row at bottom
+        chk_row = QHBoxLayout(); chk_row.setContentsMargins(8,3,8,3); chk_row.setSpacing(16)
         self._chk_auto_select  = QCheckBox("Auto-Select Best Result")
         self._chk_unique_nests = QCheckBox("Show Unique Nests Only")
         self._chk_auto_select.setChecked(True)
         self._chk_unique_nests.setChecked(True)
         for c in [self._chk_auto_select, self._chk_unique_nests]:
+            c.setStyleSheet(f"color:{C_TEXT.name()}; font-size:11px;")
             chk_row.addWidget(c)
         chk_row.addStretch()
         lay.addLayout(chk_row)
 
-        # Slim progress bar
+        # Progress bar
         self._progress = QProgressBar()
-        self._progress.setFixedHeight(4)
-        self._progress.setRange(0, 100)
+        self._progress.setFixedHeight(3)
+        self._progress.setRange(0,100)
         self._progress.setTextVisible(False)
         self._progress.hide()
         self._progress.setStyleSheet(
-            f"QProgressBar{{background:{C_INPUT_BG.name()};border:none;}}"
+            f"QProgressBar{{background:{C_PANEL.name()};border:none;}}"
             f"QProgressBar::chunk{{background:{C_ACCENT.name()};}}")
         lay.addWidget(self._progress)
 
         return w
 
-    # ── RIGHT PANEL (290px) — CAM Process & Toolpaths ─────────
-    def _build_right_panel(self) -> QWidget:
-        """Panel 3: CAM process, mill bits, action buttons, results (290px fixed)."""
-        w = QWidget(); w.setFixedWidth(290)
-        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+    # ── RIGHT PANEL ───────────────────────────────────────────
+    def _build_right_panel(self):
+        """Right panel: Results table (top) + Nest Details (bottom)."""
+        w   = QWidget(); w.setMinimumWidth(280); w.setMaximumWidth(400)
+        lay = QVBoxLayout(w); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
 
-        # ── Header ────────────────────────────────────────────
-        hdr = QLabel("  CAM Process & Toolpaths")
-        hdr.setFixedHeight(28)
-        hdr.setStyleSheet(
-            f"background:{C_PANEL.name()}; color:{C_ORANGE.name()};"
-            f"font-size:11px; font-weight:700;"
-            f"border-bottom:1px solid {C_BORDER.name()};")
-        lay.addWidget(hdr)
+        spl = QSplitter(Qt.Vertical)
+        spl.setHandleWidth(3)
 
-        # ── Mill Bits GroupBox ────────────────────────────────
-        grp_bits = QGroupBox("Mill Bits")
-        bits_form = QFormLayout(grp_bits)
-        bits_form.setSpacing(6)
-        bits_form.setContentsMargins(10, 14, 10, 8)
-        bits_form.setLabelAlignment(Qt.AlignRight)
+        # ── TOP: Results table ─────────────────────────────────
+        results_w = QWidget()
+        rl = QVBoxLayout(results_w); rl.setContentsMargins(0,0,0,0); rl.setSpacing(0)
 
-        self._cmb_vbit = QComboBox()
-        self._cmb_vbit.addItems(["V-Bit 90°", "V-Bit 60°", "V-Bit 45°", "V-Bit 30°"])
-        bits_form.addRow("V-Bit:", self._cmb_vbit)
-
-        self._cmb_endmill = QComboBox()
-        self._cmb_endmill.addItems([
-            "End Mill 6mm", "End Mill 8mm", "End Mill 10mm", "End Mill 12mm"])
-        bits_form.addRow("End Mill:", self._cmb_endmill)
-
-        lay.addWidget(grp_bits)
-
-        # ── Action Buttons ────────────────────────────────────
-        btn_w = QWidget()
-        btn_lay = QVBoxLayout(btn_w)
-        btn_lay.setContentsMargins(8, 6, 8, 6); btn_lay.setSpacing(5)
-
-        run_row = QHBoxLayout(); run_row.setSpacing(5)
-        self._btn_start = QPushButton("▶  Run Nesting")
-        self._btn_stop  = QPushButton("■  Stop")
-        self._btn_start.setFixedHeight(36)
-        self._btn_stop.setFixedHeight(36)
-        self._btn_stop.setEnabled(False)
-        self._btn_start.setObjectName("btn_start")
-        self._btn_stop.setObjectName("btn_stop")
-        run_row.addWidget(self._btn_start, 2)
-        run_row.addWidget(self._btn_stop, 1)
-        btn_lay.addLayout(run_row)
-
-        self._btn_gcode = QPushButton("⚡   Generate G-Code")
-        self._btn_gcode.setFixedHeight(42)
-        self._btn_gcode.setObjectName("btn_gcode")
-        btn_lay.addWidget(self._btn_gcode)
-
-        lay.addWidget(btn_w)
-
-        # Connect
-        self._btn_start.clicked.connect(self.run_nesting)
-        self._btn_stop.clicked.connect(self.stop_nesting)
-
-        # ── Engine Results + Nest Details (split) ─────────────
-        spl = QSplitter(Qt.Vertical); spl.setHandleWidth(2)
-
-        # Results table
-        res_w = QWidget()
-        rl = QVBoxLayout(res_w); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(0)
-        res_hdr = QLabel("  Engine Iterations")
-        res_hdr.setFixedHeight(24)
+        res_hdr = QLabel("  Results")
+        res_hdr.setFixedHeight(26)
         res_hdr.setStyleSheet(
             f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:700;"
+            f"font-size:11px; font-weight:600;"
             f"border-bottom:1px solid {C_BORDER.name()};")
         rl.addWidget(res_hdr)
 
         self._results_table = QTableWidget(0, 8)
         self._results_table.setHorizontalHeaderLabels(
-            ["Rank", "Length", "Util %", "Nested", "Extra", "Sheets", "Nests", "Time"])
+            ["Rank","Length","Util (%)","Parts Nested","Extras","Sheets","Nests","Time"])
         self._results_table.verticalHeader().hide()
         self._results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._results_table.setAlternatingRowColors(True)
         self._results_table.itemSelectionChanged.connect(self._on_result_select)
-        hdr_t = self._results_table.horizontalHeader()
-        for i in range(8): hdr_t.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-        hdr_t.setSectionResizeMode(3, QHeaderView.Stretch)
+        hdr = self._results_table.horizontalHeader()
+        for i in range(8): hdr.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
         rl.addWidget(self._results_table, 1)
-        spl.addWidget(res_w)
+        spl.addWidget(results_w)
 
-        # Nest Details tree + utilization chart
-        det_w = QWidget()
-        dl = QVBoxLayout(det_w); dl.setContentsMargins(0, 0, 0, 0); dl.setSpacing(0)
+        # ── BOTTOM: Nest Details ───────────────────────────────
+        details_w = QWidget()
+        dl = QVBoxLayout(details_w); dl.setContentsMargins(0,0,0,0); dl.setSpacing(0)
+
         det_hdr = QLabel("  Nest Details")
-        det_hdr.setFixedHeight(24)
+        det_hdr.setFixedHeight(26)
         det_hdr.setStyleSheet(
             f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:700;"
+            f"font-size:11px; font-weight:600;"
             f"border-top:1px solid {C_BORDER.name()};"
             f"border-bottom:1px solid {C_BORDER.name()};")
         dl.addWidget(det_hdr)
@@ -1036,7 +1049,7 @@ class NestingTab(QWidget):
         self._nest_tree = QTreeWidget()
         self._nest_tree.setHeaderHidden(True)
         self._nest_tree.setStyleSheet(
-            f"QTreeWidget{{background:{C_INPUT_BG.name()};border:none;"
+            f"QTreeWidget{{background:{C_BG.name()}; border:none;"
             f"color:{C_TEXT.name()};}}"
             f"QTreeWidget::item:selected{{background:{C_SEL_ROW.name()};}}")
         self._nest_tree.itemClicked.connect(self._on_tree_click)
@@ -1044,9 +1057,9 @@ class NestingTab(QWidget):
 
         self._util_chart = UtilChart()
         dl.addWidget(self._util_chart)
-        spl.addWidget(det_w)
+        spl.addWidget(details_w)
 
-        spl.setSizes([200, 220])
+        spl.setSizes([220, 280])
         lay.addWidget(spl, 1)
         return w
 
@@ -1087,6 +1100,53 @@ class NestingTab(QWidget):
             pass
 
     # ══════════════════════════════════════════════════════════
+    def _part_identity_token(self, part, index: int) -> str:
+        """Identity token used to keep same-size/different-design parts independent."""
+        dc = str(getattr(part, "design_code", "cd0") or "cd0").strip()
+        pc = str(getattr(part, "part_code", "Part") or "Part").strip()
+        w = round(float(getattr(part, "width", 0) or 0), 3)
+        h = round(float(getattr(part, "height", 0) or 0), 3)
+        return f"{pc}|{dc}|{w}x{h}|{index}"
+
+    def _prepare_parts_for_nesting(self, parts: list) -> list:
+        """Prepare independent nesting instances and apply Solid-style strategy.
+
+        Rule: same width/height is NOT enough to merge parts. design_code is part
+        of production identity, so 800x500/cd1 and 800x500/cd7 remain separate.
+        """
+        prepared = []
+        for idx, part in enumerate(parts, start=1):
+            try:
+                p = copy.copy(part)
+            except Exception:
+                p = part
+            dc = str(getattr(p, "design_code", "cd0") or "cd0").strip()
+            pc = str(getattr(p, "part_code", "Part") or "Part").strip()
+            token = self._part_identity_token(p, idx)
+            # Preserve a stable independent ID for preview/export/design overlay.
+            try:
+                p.production_key = token
+                p.part_id = token
+                if dc and dc not in ("cd0", "0") and f"__{dc}__" not in pc:
+                    p.part_code = f"{pc}__{dc}__{idx:03d}"
+            except Exception:
+                pass
+            prepared.append(p)
+
+        strategy = getattr(self, "_nest_strategy", "best_efficiency")
+        def area(p):
+            return float(getattr(p, "width", 0) or 0) * float(getattr(p, "height", 0) or 0)
+        def dcode(p):
+            return str(getattr(p, "design_code", "cd0") or "cd0").lower()
+
+        if strategy == "prefer_repeats":
+            prepared.sort(key=lambda p: (dcode(p), -area(p), getattr(p, "part_code", "")))
+        elif strategy == "balanced_repeats":
+            prepared.sort(key=lambda p: (dcode(p), -max(float(getattr(p, "width", 0) or 0), float(getattr(p, "height", 0) or 0)), -area(p)))
+        else:  # best efficiency
+            prepared.sort(key=lambda p: (-area(p), dcode(p), getattr(p, "part_code", "")))
+        return prepared
+
     def run_nesting(self):
         if not self._parts:
             self._status_bar.setText("  No parts loaded. Import a CSV order first.")
@@ -1094,6 +1154,8 @@ class NestingTab(QWidget):
 
         # Save current UI values to config for persistence
         self._save_settings_to_config()
+
+        prepared_parts = self._prepare_parts_for_nesting(self._parts)
 
         opts = {
             "part_spacing":   self._spin_part_spacing.value(),
@@ -1108,6 +1170,8 @@ class NestingTab(QWidget):
             "generations":    30,
             "population":     20,
             "duration":       600.0,
+            "direction_deg":  int(getattr(self, "_nest_direction_deg", 270)),
+            "strategy":       getattr(self, "_nest_strategy", "best_efficiency"),
         }
 
         self._btn_start.setEnabled(False)
@@ -1118,7 +1182,7 @@ class NestingTab(QWidget):
         self._timer.start(1000)
         self._run_start = time.time()
 
-        self._worker = NestingWorker(self._parts, self._sheet_defs, opts)
+        self._worker = NestingWorker(prepared_parts, self._sheet_defs, opts)
         self._worker.sig_progress.connect(self._on_progress)
         self._worker.sig_finished.connect(self._on_finished)
         self._worker.sig_error.connect(self._on_error)
@@ -1199,6 +1263,35 @@ class NestingTab(QWidget):
     # ══════════════════════════════════════════════════════════
     # RESULTS TABLE
     # ══════════════════════════════════════════════════════════
+    @staticmethod
+    def _sheet_design_signature(sheet):
+        """Signature that includes placed part identity, not only sheet util.
+
+        This prevents same-size sheets with different door codes from being
+        collapsed into one unique nest and causing design overwrite.
+        """
+        parts_sig = []
+        for p in getattr(sheet, "parts", []) or []:
+            parts_sig.append((
+                round(float(getattr(p, "x", 0) or 0), 2),
+                round(float(getattr(p, "y", 0) or 0), 2),
+                round(float(p.actual_width()), 2) if hasattr(p, "actual_width") else round(float(getattr(p, "width", 0) or 0), 2),
+                round(float(p.actual_height()), 2) if hasattr(p, "actual_height") else round(float(getattr(p, "height", 0) or 0), 2),
+                bool(getattr(p, "rotated", False)),
+                str(getattr(p, "design_code", "cd0") or "cd0"),
+                str(getattr(p, "production_key", getattr(p, "part_id", getattr(p, "part_code", ""))) or ""),
+            ))
+        return (
+            round(float(getattr(sheet, "width", 0) or 0), 2),
+            round(float(getattr(sheet, "height", 0) or 0), 2),
+            round(float(sheet.utilization()), 3) if hasattr(sheet, "utilization") else 0,
+            tuple(parts_sig),
+        )
+
+    @classmethod
+    def _result_design_signature(cls, result):
+        return tuple(cls._sheet_design_signature(s) for s in getattr(result, "sheets", []) or [])
+
     def _refresh_results_table(self):
         t = self._results_table
         t.setRowCount(0)
@@ -1208,7 +1301,7 @@ class NestingTab(QWidget):
         if self._chk_unique_nests.isChecked():
             seen = set(); unique = []
             for r in results:
-                key = (r.sheet_count, round(r.utilization, 2))
+                key = self._result_design_signature(r)
                 if key not in seen:
                     seen.add(key); unique.append(r)
             results = unique
@@ -1259,7 +1352,7 @@ class NestingTab(QWidget):
         for i, sheet in enumerate(self._sheets):
             util = sheet.utilization()
             nest_len = max((p.x + p.actual_width() for p in sheet.parts), default=0)
-            sig = (sheet.width, sheet.height, round(util, 2))
+            sig = self._sheet_design_signature(sheet)
             if sig not in seen_sig:
                 seen_sig[sig] = len(groups)
                 groups.append({
@@ -1316,7 +1409,7 @@ class NestingTab(QWidget):
         groups_ordered = []
         for sheet in self._sheets:
             util = sheet.utilization()
-            sig = (sheet.width, sheet.height, round(util, 2))
+            sig = self._sheet_design_signature(sheet)
             if sig not in seen_sig:
                 seen_sig[sig] = len(groups_ordered)
                 groups_ordered.append({"sheet": sheet, "count": 1})
@@ -1378,7 +1471,7 @@ class NestingTab(QWidget):
         if self._chk_unique_nests.isChecked():
             seen = set(); unique = []
             for r in results:
-                key = (r.sheet_count, round(r.utilization,2))
+                key = self._result_design_signature(r)
                 if key not in seen: seen.add(key); unique.append(r)
             results = unique
         if row < len(results):
@@ -1445,191 +1538,83 @@ class NestingTab(QWidget):
     # ══════════════════════════════════════════════════════════
     def _apply_style(self):
         self.setStyleSheet(f"""
-        * {{
-            font-family: "Segoe UI", "Vazirmatn", sans-serif;
-            font-size: 12px;
-        }}
-        QWidget {{
-            background: {C_BG.name()};
-            color: {C_TEXT.name()};
-        }}
+        * {{ font-family: "Segoe UI", Tahoma, sans-serif; font-size: 12px; }}
+        QWidget {{ background: {C_BG.name()}; color: {C_TEXT.name()}; }}
 
-        /* ── GroupBox ─────────────────────────────────────── */
-        QGroupBox {{
-            border: 1px solid {C_BORDER.name()};
-            border-radius: 4px;
-            margin-top: 10px;
-            padding-top: 6px;
-            color: {C_DIM.name()};
-            font-size: 11px;
-            font-weight: 700;
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 0 5px;
-            color: {C_DIM.name()};
-        }}
-
-        /* ── Action Buttons ───────────────────────────────── */
         QPushButton#btn_start {{
-            background: #1a5c2a;
-            border: 1px solid #27ae60;
-            border-radius: 4px;
-            color: white;
-            font-weight: 700;
-            font-size: 12px;
+            background: #1a5c2a; border: 1px solid #27ae60;
+            border-radius: 3px; color: white; font-weight: 600;
         }}
         QPushButton#btn_start:hover {{ background: #27ae60; }}
         QPushButton#btn_start:disabled {{
-            background: #242424; color: {C_DIM.name()}; border-color: #2e2e2e;
+            background: #2a2a2a; color: {C_DIM.name()}; border-color:#333;
         }}
         QPushButton#btn_stop {{
-            background: #4a1a1a;
-            border: 1px solid #8b2020;
-            border-radius: 4px;
-            color: white;
-            font-weight: 700;
+            background: #5c1a1a; border: 1px solid #c0392b;
+            border-radius: 3px; color: white; font-weight: 600;
         }}
         QPushButton#btn_stop:hover {{ background: #c0392b; }}
         QPushButton#btn_stop:disabled {{
-            background: #242424; color: {C_DIM.name()}; border-color: #2e2e2e;
+            background: #2a2a2a; color: {C_DIM.name()}; border-color:#333;
         }}
-        QPushButton#btn_gcode {{
-            background: #5a2400;
-            border: 1px solid {C_ORANGE.name()};
-            border-radius: 4px;
-            color: white;
-            font-weight: 700;
-            font-size: 13px;
-        }}
-        QPushButton#btn_gcode:hover {{ background: {C_ORANGE.name()}; }}
-
-        /* ── Default Buttons ──────────────────────────────── */
         QPushButton {{
-            background: {C_PANEL.name()};
-            border: 1px solid {C_BORDER.name()};
-            border-radius: 4px;
-            padding: 3px 8px;
-            color: {C_TEXT.name()};
+            background: {C_PANEL.name()}; border: 1px solid {C_BORDER.name()};
+            border-radius: 3px; padding: 3px 8px; color: {C_TEXT.name()};
         }}
-        QPushButton:hover {{
-            background: #3e3e42;
-            border-color: {C_ACCENT.name()};
-        }}
+        QPushButton:hover {{ background: #3e3e42; border-color: {C_ACCENT.name()}; }}
 
-        /* ── Tables ───────────────────────────────────────── */
         QTableWidget {{
-            background: {C_INPUT_BG.name()};
-            gridline-color: {C_BORDER.name()};
-            border: none;
-            selection-background-color: {C_SEL_ROW.name()};
-            alternate-background-color: #1a1a1a;
+            background: #1a1a1a; gridline-color: {C_BORDER.name()};
+            border: none; selection-background-color: {C_SEL_ROW.name()};
+            alternate-background-color: #202020;
         }}
-        QTableWidget::item {{
-            padding: 2px 6px;
-            min-height: 26px;
-        }}
+        QTableWidget::item {{ padding: 2px 6px; }}
         QHeaderView::section {{
-            background: {C_PANEL.name()};
-            border: none;
+            background: {C_PANEL.name()}; border: none;
             border-right: 1px solid {C_BORDER.name()};
             border-bottom: 1px solid {C_BORDER.name()};
-            padding: 3px 6px;
-            font-weight: 700;
-            font-size: 11px;
-            color: {C_DIM.name()};
+            padding: 3px 6px; font-weight: 600;
+            color: {C_DIM.name()}; font-size: 11px;
         }}
-
-        /* ── Inputs ───────────────────────────────────────── */
-        QDoubleSpinBox, QSpinBox, QLineEdit {{
-            background: {C_INPUT_BG.name()};
-            border: 1px solid {C_BORDER.name()};
-            border-radius: 4px;
-            padding: 3px 6px;
-            color: {C_TEXT.name()};
-        }}
-        QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {{
-            border-color: {C_ACCENT.name()};
-        }}
-        QComboBox {{
-            background: {C_INPUT_BG.name()};
-            border: 1px solid {C_BORDER.name()};
-            border-radius: 4px;
-            padding: 3px 6px;
-            color: {C_TEXT.name()};
-        }}
-        QComboBox:focus {{ border-color: {C_ACCENT.name()}; }}
-        QComboBox::drop-down {{ border: none; width: 18px; }}
-        QComboBox QAbstractItemView {{
-            background: {C_PANEL.name()};
-            border: 1px solid {C_BORDER.name()};
-            selection-background-color: {C_SEL_ROW.name()};
-        }}
-
-        /* ── Checkboxes ───────────────────────────────────── */
-        QCheckBox {{ color: {C_TEXT.name()}; spacing: 5px; }}
-        QCheckBox::indicator {{
-            width: 13px; height: 13px;
-            border: 1px solid {C_BORDER.name()};
-            border-radius: 2px;
-            background: {C_INPUT_BG.name()};
-        }}
-        QCheckBox::indicator:checked {{
-            background: {C_ACCENT.name()};
-            border-color: {C_ACCENT.name()};
-        }}
-        QRadioButton {{ color: {C_TEXT.name()}; font-size: 11px; }}
-
-        /* ── Tree ─────────────────────────────────────────── */
-        QTreeWidget {{
-            background: {C_INPUT_BG.name()};
-            border: none;
-            color: {C_TEXT.name()};
-        }}
-        QTreeWidget::item:selected {{ background: {C_SEL_ROW.name()}; }}
-
-        /* ── Misc ─────────────────────────────────────────── */
-        QLabel {{ background: transparent; color: {C_TEXT.name()}; }}
         QScrollArea {{ border: none; }}
-        QSplitter::handle {{ background: {C_BORDER.name()}; }}
-
-        /* ── Ultra-flat Scrollbars ────────────────────────── */
-        QScrollBar:vertical {{
-            background: {C_INPUT_BG.name()};
-            width: 10px;
-            margin: 0px;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {C_BORDER.name()};
-            min-height: 20px;
-            border-radius: 5px;
-        }}
-        QScrollBar::handle:vertical:hover {{ background: #858585; }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-            height: 0px;
-        }}
         QScrollBar:horizontal {{
-            background: {C_INPUT_BG.name()};
-            height: 10px;
-            margin: 0px;
+            background: {C_PANEL.name()}; height: 8px; border: none;
         }}
         QScrollBar::handle:horizontal {{
-            background: {C_BORDER.name()};
-            min-width: 20px;
-            border-radius: 5px;
+            background: {C_BORDER.name()}; border-radius: 4px; min-width: 20px;
         }}
-        QScrollBar::handle:horizontal:hover {{ background: #858585; }}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-            width: 0px;
+        QScrollBar:vertical {{
+            background: {C_PANEL.name()}; width: 8px; border: none;
         }}
+        QScrollBar::handle:vertical {{
+            background: {C_BORDER.name()}; border-radius: 4px; min-height: 20px;
+        }}
+        QCheckBox {{ color: {C_TEXT.name()}; }}
+        QCheckBox::indicator {{
+            width: 13px; height: 13px;
+            border: 1px solid {C_BORDER.name()}; border-radius: 2px;
+            background: #1a1a1a;
+        }}
+        QCheckBox::indicator:checked {{
+            background: {C_ACCENT.name()}; border-color: {C_ACCENT.name()};
+        }}
+        QRadioButton {{ color: {C_TEXT.name()}; font-size: 11px; }}
+        QDoubleSpinBox, QSpinBox, QComboBox {{
+            background: #1a1a1a; border: 1px solid {C_BORDER.name()};
+            border-radius: 3px; padding: 2px 4px; color: {C_TEXT.name()};
+        }}
+        QDoubleSpinBox:focus, QSpinBox:focus {{
+            border-color: {C_ACCENT.name()};
+        }}
+        QLabel {{ background: transparent; color: {C_TEXT.name()}; }}
+        QSplitter::handle {{ background: {C_BORDER.name()}; }}
         """)
 
     @staticmethod
     def _small_btn_style() -> str:
         return (f"background:{C_PANEL.name()}; border:1px solid {C_BORDER.name()};"
-                f"border-radius:4px; color:{C_TEXT.name()}; font-size:11px;"
-                f"padding:2px 6px;")
+                f"border-radius:2px; color:{C_TEXT.name()}; font-size:11px;"
+                f"padding:1px 4px;")
 
 
 # ═══════════════════════════════════════════════════════════════
