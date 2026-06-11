@@ -253,23 +253,32 @@ class SheetCanvas(QWidget):
 
 
 class HWheelScrollArea(QScrollArea):
-    """Scroll the Current Layout thumbnails left/right with mouse wheel.
+    """Canvas scroll area for Current Layout thumbnails.
 
-    Solid-style behavior: normal mouse wheel moves through nests horizontally
-    when a horizontal scrollbar is available. Ctrl+wheel is left for future zoom.
+    Mouse wheel        → Zoom in / out (resize all thumbnails)
+    Ctrl + mouse wheel → Horizontal pan (scroll left/right)
     """
+    zoom_changed = Signal(float)   # emits zoom factor (e.g. 1.1 or 0.9)
+
     def wheelEvent(self, ev):
-        hbar = self.horizontalScrollBar()
-        vbar = self.verticalScrollBar()
         delta = ev.angleDelta().y() or ev.angleDelta().x()
-        if hbar and hbar.maximum() > hbar.minimum() and delta:
-            hbar.setValue(hbar.value() - delta)
+        if not delta:
+            super().wheelEvent(ev); return
+
+        if ev.modifiers() & Qt.ControlModifier:
+            # Ctrl+wheel → horizontal pan
+            hbar = self.horizontalScrollBar()
+            if hbar and hbar.maximum() > hbar.minimum():
+                hbar.setValue(hbar.value() - delta)
+                ev.accept()
+                return
+        else:
+            # Plain wheel → zoom in / out
+            factor = 1.12 if delta > 0 else (1 / 1.12)
+            self.zoom_changed.emit(factor)
             ev.accept()
             return
-        if vbar and delta:
-            vbar.setValue(vbar.value() - delta)
-            ev.accept()
-            return
+
         super().wheelEvent(ev)
 
 
@@ -417,6 +426,7 @@ class NestingTab(QWidget):
         self._run_start         = 0.0
         self._nest_direction_deg = 270
         self._nest_strategy      = "best_efficiency"
+        self._thumb_zoom         = 1.0   # canvas zoom factor
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -958,12 +968,13 @@ class NestingTab(QWidget):
             f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(layout_hdr)
 
-        # Sheet thumbnails scroll area — now fills full height
+        # Sheet thumbnails scroll area — zoom with wheel, pan with Ctrl+wheel
         scroll = HWheelScrollArea()
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"background:{C_BG.name()}; border:none;")
+        scroll.zoom_changed.connect(self._on_canvas_zoom)
 
         self._thumbs_container = QWidget()
         self._thumbs_layout    = QHBoxLayout(self._thumbs_container)
@@ -1391,12 +1402,38 @@ class NestingTab(QWidget):
             self._show_thumb_at(idx)
 
     # ══════════════════════════════════════════════════════════
-    # THUMBNAILS  — with x5/x10/x1 labels
+    # THUMBNAILS  — with x5/x10/x1 labels + zoom support
     # ══════════════════════════════════════════════════════════
+    _THUMB_BASE_W = 220
+    _THUMB_BASE_H = 160
+    _THUMB_MIN    = 0.25
+    _THUMB_MAX    = 4.0
+
     def _clear_thumbs(self):
         while self._thumbs_layout.count():
             item = self._thumbs_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
+
+    def _thumb_size(self):
+        """Current canvas size based on zoom factor."""
+        z = max(self._THUMB_MIN, min(self._THUMB_MAX, self._thumb_zoom))
+        return int(self._THUMB_BASE_W * z), int(self._THUMB_BASE_H * z)
+
+    def _on_canvas_zoom(self, factor: float):
+        """Resize all visible sheet thumbnails smoothly."""
+        self._thumb_zoom = max(
+            self._THUMB_MIN,
+            min(self._THUMB_MAX, self._thumb_zoom * factor))
+        w, h = self._thumb_size()
+        for i in range(self._thumbs_layout.count()):
+            item = self._thumbs_layout.itemAt(i)
+            if not item or not item.widget(): continue
+            col_w = item.widget()
+            if not col_w.layout(): continue
+            for j in range(col_w.layout().count()):
+                wi = col_w.layout().itemAt(j)
+                if wi and isinstance(wi.widget(), SheetCanvas):
+                    wi.widget().setFixedSize(w, h)
 
     def _refresh_thumbs(self):
         self._clear_thumbs()
@@ -1408,7 +1445,6 @@ class NestingTab(QWidget):
         seen_sig = {}
         groups_ordered = []
         for sheet in self._sheets:
-            util = sheet.utilization()
             sig = self._sheet_design_signature(sheet)
             if sig not in seen_sig:
                 seen_sig[sig] = len(groups_ordered)
@@ -1416,22 +1452,23 @@ class NestingTab(QWidget):
             else:
                 groups_ordered[seen_sig[sig]]["count"] += 1
 
+        w, h = self._thumb_size()
         for i, grp in enumerate(groups_ordered):
             sheet = grp["sheet"]
             count = grp["count"]
 
             col_w = QWidget()
             col_l = QVBoxLayout(col_w)
-            col_l.setContentsMargins(0,0,0,0); col_l.setSpacing(3)
+            col_l.setContentsMargins(0, 0, 0, 0); col_l.setSpacing(3)
 
             canvas = SheetCanvas()
-            canvas.setFixedSize(220, 160)
+            canvas.setFixedSize(w, h)
             canvas.set_sheet(sheet, labels=True)
             canvas.set_selected(i == 0)
             canvas.mousePressEvent = lambda ev, idx=i: self._on_thumb_click(idx)
             col_l.addWidget(canvas)
 
-            # x5 / x10 / x1 label — BIG like Solid Edge
+            # x5 / x10 / x1 label
             lbl = QLabel(f"x{count}")
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet(
