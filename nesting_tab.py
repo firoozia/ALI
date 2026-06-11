@@ -1196,8 +1196,7 @@ class NestingTab(QWidget):
         for i, sheet in enumerate(self._sheets):
             util = sheet.utilization()
             nest_len = max((p.x + p.actual_width() for p in sheet.parts), default=0)
-            dc = getattr(sheet, "design_code", "")
-            sig = (sheet.width, sheet.height, round(util, 2), dc)
+            sig = (sheet.width, sheet.height, round(util, 2))
             if sig not in seen_sig:
                 seen_sig[sig] = len(groups)
                 groups.append({
@@ -1206,7 +1205,6 @@ class NestingTab(QWidget):
                     "nest_len": nest_len,
                     "width": sheet.width,
                     "height": sheet.height,
-                    "design_code": dc,
                 })
             else:
                 groups[seen_sig[sig]]["sheets"].append(sheet)
@@ -1215,10 +1213,9 @@ class NestingTab(QWidget):
             count    = len(grp["sheets"])
             util     = grp["util"]
             nest_len = grp["nest_len"]
-            dc_tag   = f"  [{grp['design_code']}]" if grp["design_code"] else ""
             lbl = (f"Nest {idx+1} (x{count}): "
                    f"'{grp['width']:.0f}x{grp['height']:.0f}'"
-                   f" ({util:.2f}%, {nest_len:.0f}mm){dc_tag}")
+                   f" ({util:.2f}%, {nest_len:.0f}mm)")
             item = QTreeWidgetItem([lbl])
             item.setData(0, Qt.UserRole, idx)
             item.setForeground(0, QColor(C_GOOD if util >= 90 else C_WARN))
@@ -1256,18 +1253,16 @@ class NestingTab(QWidget):
         groups_ordered = []
         for sheet in self._sheets:
             util = sheet.utilization()
-            dc = getattr(sheet, "design_code", "")
-            sig = (sheet.width, sheet.height, round(util, 2), dc)
+            sig = (sheet.width, sheet.height, round(util, 2))
             if sig not in seen_sig:
                 seen_sig[sig] = len(groups_ordered)
-                groups_ordered.append({"sheet": sheet, "count": 1, "design_code": dc})
+                groups_ordered.append({"sheet": sheet, "count": 1})
             else:
                 groups_ordered[seen_sig[sig]]["count"] += 1
 
         for i, grp in enumerate(groups_ordered):
             sheet = grp["sheet"]
             count = grp["count"]
-            dc    = grp["design_code"]
 
             col_w = QWidget()
             col_l = QVBoxLayout(col_w)
@@ -1280,12 +1275,11 @@ class NestingTab(QWidget):
             canvas.mousePressEvent = lambda ev, idx=i: self._on_thumb_click(idx)
             col_l.addWidget(canvas)
 
-            # x5 / x10 / x1 label + design code
-            count_lbl = f"x{count}" + (f"  {dc}" if dc else "")
-            lbl = QLabel(count_lbl)
+            # x5 / x10 / x1 label — BIG like Solid Edge
+            lbl = QLabel(f"x{count}")
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet(
-                f"color:{C_TEXT.name()}; font-size:14px; font-weight:600;")
+                f"color:{C_TEXT.name()}; font-size:16px; font-weight:600;")
             col_l.addWidget(lbl)
 
             self._thumbs_layout.addWidget(col_w)
