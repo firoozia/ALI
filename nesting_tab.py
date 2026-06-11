@@ -34,9 +34,12 @@ from config import config
 # ── Palette ──────────────────────────────────────────────────
 C_BG         = QColor("#1e1e1e")
 C_PANEL      = QColor("#252526")
+C_CANVAS_BG  = QColor("#16161a")   # deep matte for canvas grid
+C_INPUT_BG   = QColor("#141414")   # ultra-dark for data cells
 C_BORDER     = QColor("#3e3e42")
-C_ACCENT     = QColor("#0078d4")
-C_ACCENT2    = QColor("#106ebe")
+C_ACCENT     = QColor("#00A3FF")   # engineering blue
+C_ACCENT2    = QColor("#0088dd")
+C_ORANGE     = QColor("#FF6B00")   # G-Code / toolpath orange
 C_TEXT       = QColor("#cccccc")
 C_DIM        = QColor("#858585")
 C_GOOD       = QColor("#4ec9b0")
@@ -148,7 +151,7 @@ class SheetCanvas(QWidget):
         p = QPainter(self)
         try:
             p.setRenderHint(QPainter.Antialiasing)
-            p.fillRect(self.rect(), C_BG)
+            p.fillRect(self.rect(), C_CANVAS_BG)
             if not self._sheet:
                 p.setPen(QPen(C_DIM))
                 p.drawText(self.rect(), Qt.AlignCenter, "No data")
@@ -253,8 +256,8 @@ class UtilChart(QWidget):
         super().__init__(parent)
         self._data: List[float] = []
         self._selected = -1
-        self.setFixedWidth(110)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(90)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
     def set_data(self, utils: List[float], selected=0):
         self._data     = utils
@@ -403,34 +406,27 @@ class NestingTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Compact top bar (Start/Stop + key settings only, no ribbon)
+        # Slim top bar — timer + rotation + settings only
         root.addWidget(self._build_compact_bar())
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"background:{C_BORDER.name()};")
-        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background:{C_BORDER.name()};"); sep.setFixedHeight(1)
         root.addWidget(sep)
 
-        # Main body: splitter (sheets panel | center | right panel)
+        # Three-panel body: Left (340) | Center (stretch) | Right (290)
         body = QSplitter(Qt.Horizontal)
         body.setHandleWidth(1)
 
-        # Left: sheets panel
-        sheets_panel = self._build_sheets_panel()
-        body.addWidget(sheets_panel)
-
-        # Center: layout preview (main area — now large)
+        left   = self._build_left_panel()
         center = self._build_center()
+        right  = self._build_right_panel()
+        body.addWidget(left)
         body.addWidget(center)
-
-        # Right: Results (top) + Nest Details (bottom)
-        right = self._build_right_panel()
         body.addWidget(right)
-
         body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 1)
         body.setStretchFactor(2, 0)
-        body.setSizes([220, 900, 300])
+        body.setSizes([340, 900, 290])
 
         root.addWidget(body, 1)
 
@@ -444,106 +440,53 @@ class NestingTab(QWidget):
 
     # ── RIBBON ────────────────────────────────────────────────
     def _build_compact_bar(self) -> QFrame:
-        """Compact single-row bar replaces 90px ribbon. Saves vertical space."""
+        """Top bar: elapsed timer + rotation + settings only."""
         bar = QFrame()
-        bar.setFixedHeight(40)
+        bar.setFixedHeight(38)
         bar.setStyleSheet(
             f"background:{C_PANEL.name()};"
             f"border-bottom:1px solid {C_BORDER.name()};")
         bl = QHBoxLayout(bar)
-        bl.setContentsMargins(8, 4, 8, 4)
-        bl.setSpacing(8)
+        bl.setContentsMargins(12, 4, 12, 4)
+        bl.setSpacing(10)
 
-        # Start / Stop
-        self._btn_start = QPushButton("▶  Start")
-        self._btn_stop  = QPushButton("■  Stop")
-        self._btn_start.setFixedSize(90, 28)
-        self._btn_stop.setFixedSize(80, 28)
-        self._btn_stop.setEnabled(False)
-        self._btn_start.setObjectName("btn_start")
-        self._btn_stop.setObjectName("btn_stop")
-        bl.addWidget(self._btn_start)
-        bl.addWidget(self._btn_stop)
+        # App label
+        brand = QLabel("FIROO CAM  —  Nesting")
+        brand.setStyleSheet(
+            f"color:{C_ACCENT.name()}; font-size:12px; font-weight:700;")
+        bl.addWidget(brand)
+
+        bl.addWidget(self._vsep())
 
         # Elapsed timer
         self._lbl_elapsed = QLabel("00:00:00")
         self._lbl_elapsed.setStyleSheet(
-            f"color:{C_DIM.name()}; font-size:11px; min-width:60px;")
+            f"color:{C_DIM.name()}; font-size:11px; min-width:58px;")
         bl.addWidget(self._lbl_elapsed)
         self._lbl_duration = QLabel("00h:10m")
         self._lbl_duration.setStyleSheet(
-            f"color:{C_GOOD.name()}; font-size:11px; font-weight:600;")
+            f"color:{C_GOOD.name()}; font-size:11px; font-weight:700;")
         bl.addWidget(self._lbl_duration)
 
         bl.addWidget(self._vsep())
 
         # Rotation
-        bl.addWidget(QLabel("Rot:"))
+        rot_lbl = QLabel("Rotation:")
+        rot_lbl.setStyleSheet(f"color:{C_DIM.name()}; font-size:11px;")
+        bl.addWidget(rot_lbl)
         self._cmb_rotation = QComboBox()
-        for v in ["None","90","180","Any"]: self._cmb_rotation.addItem(v)
+        for v in ["None", "90°", "180°", "Any"]: self._cmb_rotation.addItem(v)
         self._cmb_rotation.setCurrentIndex(1)
-        self._cmb_rotation.setFixedWidth(60)
+        self._cmb_rotation.setFixedWidth(68)
         bl.addWidget(self._cmb_rotation)
-
-        bl.addWidget(self._vsep())
-
-        # Part Spacing
-        bl.addWidget(QLabel("Gap:"))
-        self._spin_part_spacing = QDoubleSpinBox()
-        self._spin_part_spacing.setRange(0,100); self._spin_part_spacing.setDecimals(1)
-        self._spin_part_spacing.setFixedWidth(60); self._spin_part_spacing.setValue(5.0)
-        self._spin_part_spacing.setSuffix(" mm")
-        bl.addWidget(self._spin_part_spacing)
-
-        bl.addWidget(self._vsep())
-
-        # Margins — compact: single Uniform value
-        self._chk_uniform = QCheckBox("Uniform")
-        self._chk_uniform.setChecked(True)
-        self._chk_uniform.setStyleSheet(f"color:{C_TEXT.name()}; font-size:11px;")
-        self._chk_uniform.toggled.connect(self._on_uniform_toggled)
-        bl.addWidget(self._chk_uniform)
-
-        bl.addWidget(QLabel("Margin:"))
-        self._spin_top = QDoubleSpinBox()
-        self._spin_top.setRange(0,200); self._spin_top.setDecimals(1)
-        self._spin_top.setFixedWidth(60); self._spin_top.setValue(5.0)
-        self._spin_top.setSuffix(" mm")
-        self._spin_top.valueChanged.connect(self._on_top_changed)
-        bl.addWidget(self._spin_top)
-
-        # Hidden spinboxes (still needed for 4-side logic)
-        self._spin_left   = QDoubleSpinBox(); self._spin_left.setValue(5.0);   self._spin_left.hide()
-        self._spin_right  = QDoubleSpinBox(); self._spin_right.setValue(5.0);  self._spin_right.hide()
-        self._spin_bottom = QDoubleSpinBox(); self._spin_bottom.setValue(5.0); self._spin_bottom.hide()
-        self._spin_tilt   = QDoubleSpinBox(); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
-        self._chk_mirror  = QCheckBox();      self._chk_mirror.hide()
-        self._spin_speed  = QSpinBox();       self._spin_speed.hide()
-        self._chk_fixed   = QCheckBox();      self._chk_fixed.hide()
-        self._btn_dir     = QPushButton("→"); self._btn_dir.hide()
-        self._rb_best     = QRadioButton("Best Efficiency"); self._rb_best.setChecked(True); self._rb_best.hide()
-        self._rb_bal      = QRadioButton("Balanced Repeats"); self._rb_bal.hide()
-        self._rb_prefer   = QRadioButton("Prefer Repeats");  self._rb_prefer.hide()
-        from PySide6.QtWidgets import QButtonGroup
-        self._bg_repeats  = QButtonGroup(self)
-        for i, rb in enumerate([self._rb_best, self._rb_bal, self._rb_prefer]):
-            self._bg_repeats.addButton(rb, i)
-        self._btn_costing = QPushButton("Cost"); self._btn_costing.hide()
 
         bl.addStretch()
 
-        # Settings button (opens settings dialog)
-        self._btn_nest_settings = QPushButton("⚙ Settings")
-        self._btn_nest_settings.setFixedSize(90, 28)
-        self._btn_nest_settings.setStyleSheet(
-            f"background:{C_PANEL.name()}; border:1px solid {C_BORDER.name()};"
-            f"border-radius:3px; color:{C_TEXT.name()}; font-size:11px;")
+        # Settings button
+        self._btn_nest_settings = QPushButton("⚙  Settings")
+        self._btn_nest_settings.setFixedHeight(26)
         self._btn_nest_settings.clicked.connect(self._show_nest_settings)
         bl.addWidget(self._btn_nest_settings)
-
-        # Connect
-        self._btn_start.clicked.connect(self.run_nesting)
-        self._btn_stop.clicked.connect(self.stop_nesting)
 
         return bar
 
@@ -822,150 +765,266 @@ class NestingTab(QWidget):
         d.setStyleSheet(f"background:{C_BORDER.name()}; margin:4px 6px;")
         return d
 
-    # ── SHEETS PANEL (left) ───────────────────────────────────
-    def _build_sheets_panel(self):
-        w = QWidget(); w.setFixedWidth(220)
-        lay = QVBoxLayout(w); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
+    # ── LEFT PANEL (340px) — Database & Parameters ────────────
+    def _build_left_panel(self) -> QWidget:
+        """Panel 1: Parts Database & Parameters (340px fixed)."""
+        w = QWidget(); w.setFixedWidth(340)
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
 
-        hdr = QLabel("  Sheets")
-        hdr.setFixedHeight(26)
-        hdr.setStyleSheet(f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-                          f"font-size:11px; font-weight:600;"
-                          f"border-bottom:1px solid {C_BORDER.name()};")
+        # ── Header ────────────────────────────────────────────
+        hdr = QLabel("  Parts Database & Parameters")
+        hdr.setFixedHeight(28)
+        hdr.setStyleSheet(
+            f"background:{C_PANEL.name()}; color:{C_ACCENT.name()};"
+            f"font-size:11px; font-weight:700;"
+            f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(hdr)
 
-        tb = QHBoxLayout(); tb.setContentsMargins(4,3,4,3); tb.setSpacing(3)
+        # ── Nesting Tolerances GroupBox ────────────────────────
+        grp_tol = QGroupBox("Nesting Tolerances")
+        tol_form = QFormLayout(grp_tol)
+        tol_form.setSpacing(6)
+        tol_form.setContentsMargins(10, 14, 10, 8)
+        tol_form.setLabelAlignment(Qt.AlignRight)
+
+        self._spin_part_spacing = QDoubleSpinBox()
+        self._spin_part_spacing.setRange(0, 100); self._spin_part_spacing.setDecimals(1)
+        self._spin_part_spacing.setValue(5.0); self._spin_part_spacing.setSuffix(" mm")
+        tol_form.addRow("Part Gap:", self._spin_part_spacing)
+
+        self._chk_uniform = QCheckBox("Uniform Margins")
+        self._chk_uniform.setChecked(True)
+        self._chk_uniform.toggled.connect(self._on_uniform_toggled)
+        tol_form.addRow("", self._chk_uniform)
+
+        self._spin_top = QDoubleSpinBox()
+        self._spin_top.setRange(0, 200); self._spin_top.setDecimals(1)
+        self._spin_top.setValue(5.0); self._spin_top.setSuffix(" mm")
+        self._spin_top.valueChanged.connect(self._on_top_changed)
+        tol_form.addRow("Top:", self._spin_top)
+
+        self._spin_left   = QDoubleSpinBox()
+        self._spin_right  = QDoubleSpinBox()
+        self._spin_bottom = QDoubleSpinBox()
+        for sp in [self._spin_left, self._spin_right, self._spin_bottom]:
+            sp.setRange(0, 200); sp.setDecimals(1)
+            sp.setValue(5.0); sp.setSuffix(" mm"); sp.setEnabled(False)
+        tol_form.addRow("Left:", self._spin_left)
+        tol_form.addRow("Right:", self._spin_right)
+        tol_form.addRow("Bottom:", self._spin_bottom)
+
+        lay.addWidget(grp_tol)
+
+        # ── Raw Materials / Sheets ─────────────────────────────
+        sheet_hdr = QLabel("  Raw Materials / Sheets")
+        sheet_hdr.setFixedHeight(26)
+        sheet_hdr.setStyleSheet(
+            f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
+            f"font-size:11px; font-weight:700;"
+            f"border-top:1px solid {C_BORDER.name()};"
+            f"border-bottom:1px solid {C_BORDER.name()};")
+        lay.addWidget(sheet_hdr)
+
+        tb = QHBoxLayout(); tb.setContentsMargins(4, 4, 4, 4); tb.setSpacing(4)
         self._btn_create_sheet = QPushButton("+ Sheet")
         self._btn_add_remnant  = QPushButton("+ Remnant")
         self._btn_edit_sheet   = QPushButton("✎")
         self._btn_remove_sheet = QPushButton("✕")
         for b in [self._btn_create_sheet, self._btn_add_remnant]:
-            b.setFixedHeight(22); b.setStyleSheet(self._small_btn_style())
+            b.setFixedHeight(24); b.setStyleSheet(self._small_btn_style())
             tb.addWidget(b)
         for b in [self._btn_edit_sheet, self._btn_remove_sheet]:
-            b.setFixedSize(24,22); b.setStyleSheet(self._small_btn_style())
+            b.setFixedSize(26, 24); b.setStyleSheet(self._small_btn_style())
             tb.addWidget(b)
         tb.addStretch()
         lay.addLayout(tb)
 
         self._sheet_table = QTableWidget(0, 5)
         self._sheet_table.setHorizontalHeaderLabels(
-            ["Name","X Dim","Y Dim","Qty","Priority"])
+            ["Name", "X Dim", "Y Dim", "Qty", "Priority"])
         self._sheet_table.verticalHeader().hide()
         self._sheet_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._sheet_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         hdr2 = self._sheet_table.horizontalHeader()
         hdr2.setSectionResizeMode(0, QHeaderView.Stretch)
-        for i in range(1,5): hdr2.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        for i in range(1, 5): hdr2.setSectionResizeMode(i, QHeaderView.ResizeToContents)
         lay.addWidget(self._sheet_table, 1)
 
+        # Connect sheet buttons
         self._btn_create_sheet.clicked.connect(self._add_sheet)
         self._btn_add_remnant.clicked.connect(self._add_remnant)
         self._btn_edit_sheet.clicked.connect(self._edit_sheet)
         self._btn_remove_sheet.clicked.connect(self._del_sheet)
 
+        # Legacy hidden widgets (kept for API compatibility)
+        self._spin_tilt   = QDoubleSpinBox(); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
+        self._chk_mirror  = QCheckBox();      self._chk_mirror.hide()
+        self._spin_speed  = QSpinBox();       self._spin_speed.hide()
+        self._chk_fixed   = QCheckBox();      self._chk_fixed.hide()
+        self._btn_dir     = QPushButton("→"); self._btn_dir.hide()
+        self._rb_best     = QRadioButton("Best Efficiency"); self._rb_best.setChecked(True); self._rb_best.hide()
+        self._rb_bal      = QRadioButton("Balanced Repeats"); self._rb_bal.hide()
+        self._rb_prefer   = QRadioButton("Prefer Repeats");  self._rb_prefer.hide()
+        self._bg_repeats  = QButtonGroup(self)
+        for i, rb in enumerate([self._rb_best, self._rb_bal, self._rb_prefer]):
+            self._bg_repeats.addButton(rb, i)
+        self._btn_costing = QPushButton("Cost"); self._btn_costing.hide()
+
         self._refresh_sheet_table()
         return w
 
-    # ── CENTER PANEL ──────────────────────────────────────────
-    def _build_center(self):
-        """Center panel: Current Layout fills entire area (max space)."""
+    # ── CENTER PANEL — CAD/CAM Canvas (maximum space) ─────────
+    def _build_center(self) -> QWidget:
+        """Panel 2: Main canvas area — stretches to fill all available space."""
         w   = QWidget()
-        lay = QVBoxLayout(w); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
 
-        # Current Layout header
+        # Header
         layout_hdr = QLabel("  Current Layout")
-        layout_hdr.setFixedHeight(26)
+        layout_hdr.setFixedHeight(28)
         layout_hdr.setStyleSheet(
             f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:600; "
+            f"font-size:11px; font-weight:700;"
             f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(layout_hdr)
 
-        # Sheet thumbnails scroll area — now fills full height
+        # Deep matte canvas with thumbnails
         scroll = QScrollArea()
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(f"background:{C_BG.name()}; border:none;")
+        scroll.setStyleSheet(f"background:{C_CANVAS_BG.name()}; border:none;")
 
         self._thumbs_container = QWidget()
-        self._thumbs_layout    = QHBoxLayout(self._thumbs_container)
-        self._thumbs_layout.setContentsMargins(12,12,12,12)
-        self._thumbs_layout.setSpacing(16)
+        self._thumbs_container.setStyleSheet(f"background:{C_CANVAS_BG.name()};")
+        self._thumbs_layout = QHBoxLayout(self._thumbs_container)
+        self._thumbs_layout.setContentsMargins(16, 16, 16, 16)
+        self._thumbs_layout.setSpacing(20)
         self._thumbs_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         scroll.setWidget(self._thumbs_container)
         lay.addWidget(scroll, 1)
 
-        # Checkboxes row at bottom
-        chk_row = QHBoxLayout(); chk_row.setContentsMargins(8,3,8,3); chk_row.setSpacing(16)
+        # Minimal optimization checkboxes at bottom
+        chk_row = QHBoxLayout(); chk_row.setContentsMargins(10, 4, 10, 4); chk_row.setSpacing(20)
         self._chk_auto_select  = QCheckBox("Auto-Select Best Result")
         self._chk_unique_nests = QCheckBox("Show Unique Nests Only")
         self._chk_auto_select.setChecked(True)
         self._chk_unique_nests.setChecked(True)
         for c in [self._chk_auto_select, self._chk_unique_nests]:
-            c.setStyleSheet(f"color:{C_TEXT.name()}; font-size:11px;")
             chk_row.addWidget(c)
         chk_row.addStretch()
         lay.addLayout(chk_row)
 
-        # Progress bar
+        # Slim progress bar
         self._progress = QProgressBar()
-        self._progress.setFixedHeight(3)
-        self._progress.setRange(0,100)
+        self._progress.setFixedHeight(4)
+        self._progress.setRange(0, 100)
         self._progress.setTextVisible(False)
         self._progress.hide()
         self._progress.setStyleSheet(
-            f"QProgressBar{{background:{C_PANEL.name()};border:none;}}"
+            f"QProgressBar{{background:{C_INPUT_BG.name()};border:none;}}"
             f"QProgressBar::chunk{{background:{C_ACCENT.name()};}}")
         lay.addWidget(self._progress)
 
         return w
 
-    # ── RIGHT PANEL ───────────────────────────────────────────
-    def _build_right_panel(self):
-        """Right panel: Results table (top) + Nest Details (bottom)."""
-        w   = QWidget(); w.setMinimumWidth(280); w.setMaximumWidth(400)
-        lay = QVBoxLayout(w); lay.setContentsMargins(0,0,0,0); lay.setSpacing(0)
+    # ── RIGHT PANEL (290px) — CAM Process & Toolpaths ─────────
+    def _build_right_panel(self) -> QWidget:
+        """Panel 3: CAM process, mill bits, action buttons, results (290px fixed)."""
+        w = QWidget(); w.setFixedWidth(290)
+        lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
 
-        spl = QSplitter(Qt.Vertical)
-        spl.setHandleWidth(3)
+        # ── Header ────────────────────────────────────────────
+        hdr = QLabel("  CAM Process & Toolpaths")
+        hdr.setFixedHeight(28)
+        hdr.setStyleSheet(
+            f"background:{C_PANEL.name()}; color:{C_ORANGE.name()};"
+            f"font-size:11px; font-weight:700;"
+            f"border-bottom:1px solid {C_BORDER.name()};")
+        lay.addWidget(hdr)
 
-        # ── TOP: Results table ─────────────────────────────────
-        results_w = QWidget()
-        rl = QVBoxLayout(results_w); rl.setContentsMargins(0,0,0,0); rl.setSpacing(0)
+        # ── Mill Bits GroupBox ────────────────────────────────
+        grp_bits = QGroupBox("Mill Bits")
+        bits_form = QFormLayout(grp_bits)
+        bits_form.setSpacing(6)
+        bits_form.setContentsMargins(10, 14, 10, 8)
+        bits_form.setLabelAlignment(Qt.AlignRight)
 
-        res_hdr = QLabel("  Results")
-        res_hdr.setFixedHeight(26)
+        self._cmb_vbit = QComboBox()
+        self._cmb_vbit.addItems(["V-Bit 90°", "V-Bit 60°", "V-Bit 45°", "V-Bit 30°"])
+        bits_form.addRow("V-Bit:", self._cmb_vbit)
+
+        self._cmb_endmill = QComboBox()
+        self._cmb_endmill.addItems([
+            "End Mill 6mm", "End Mill 8mm", "End Mill 10mm", "End Mill 12mm"])
+        bits_form.addRow("End Mill:", self._cmb_endmill)
+
+        lay.addWidget(grp_bits)
+
+        # ── Action Buttons ────────────────────────────────────
+        btn_w = QWidget()
+        btn_lay = QVBoxLayout(btn_w)
+        btn_lay.setContentsMargins(8, 6, 8, 6); btn_lay.setSpacing(5)
+
+        run_row = QHBoxLayout(); run_row.setSpacing(5)
+        self._btn_start = QPushButton("▶  Run Nesting")
+        self._btn_stop  = QPushButton("■  Stop")
+        self._btn_start.setFixedHeight(36)
+        self._btn_stop.setFixedHeight(36)
+        self._btn_stop.setEnabled(False)
+        self._btn_start.setObjectName("btn_start")
+        self._btn_stop.setObjectName("btn_stop")
+        run_row.addWidget(self._btn_start, 2)
+        run_row.addWidget(self._btn_stop, 1)
+        btn_lay.addLayout(run_row)
+
+        self._btn_gcode = QPushButton("⚡   Generate G-Code")
+        self._btn_gcode.setFixedHeight(42)
+        self._btn_gcode.setObjectName("btn_gcode")
+        btn_lay.addWidget(self._btn_gcode)
+
+        lay.addWidget(btn_w)
+
+        # Connect
+        self._btn_start.clicked.connect(self.run_nesting)
+        self._btn_stop.clicked.connect(self.stop_nesting)
+
+        # ── Engine Results + Nest Details (split) ─────────────
+        spl = QSplitter(Qt.Vertical); spl.setHandleWidth(2)
+
+        # Results table
+        res_w = QWidget()
+        rl = QVBoxLayout(res_w); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(0)
+        res_hdr = QLabel("  Engine Iterations")
+        res_hdr.setFixedHeight(24)
         res_hdr.setStyleSheet(
             f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:600;"
+            f"font-size:11px; font-weight:700;"
             f"border-bottom:1px solid {C_BORDER.name()};")
         rl.addWidget(res_hdr)
 
         self._results_table = QTableWidget(0, 8)
         self._results_table.setHorizontalHeaderLabels(
-            ["Rank","Length","Util (%)","Parts Nested","Extras","Sheets","Nests","Time"])
+            ["Rank", "Length", "Util %", "Nested", "Extra", "Sheets", "Nests", "Time"])
         self._results_table.verticalHeader().hide()
         self._results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._results_table.setAlternatingRowColors(True)
         self._results_table.itemSelectionChanged.connect(self._on_result_select)
-        hdr = self._results_table.horizontalHeader()
-        for i in range(8): hdr.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.Stretch)
+        hdr_t = self._results_table.horizontalHeader()
+        for i in range(8): hdr_t.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        hdr_t.setSectionResizeMode(3, QHeaderView.Stretch)
         rl.addWidget(self._results_table, 1)
-        spl.addWidget(results_w)
+        spl.addWidget(res_w)
 
-        # ── BOTTOM: Nest Details ───────────────────────────────
-        details_w = QWidget()
-        dl = QVBoxLayout(details_w); dl.setContentsMargins(0,0,0,0); dl.setSpacing(0)
-
+        # Nest Details tree + utilization chart
+        det_w = QWidget()
+        dl = QVBoxLayout(det_w); dl.setContentsMargins(0, 0, 0, 0); dl.setSpacing(0)
         det_hdr = QLabel("  Nest Details")
-        det_hdr.setFixedHeight(26)
+        det_hdr.setFixedHeight(24)
         det_hdr.setStyleSheet(
             f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:600;"
+            f"font-size:11px; font-weight:700;"
             f"border-top:1px solid {C_BORDER.name()};"
             f"border-bottom:1px solid {C_BORDER.name()};")
         dl.addWidget(det_hdr)
@@ -973,7 +1032,7 @@ class NestingTab(QWidget):
         self._nest_tree = QTreeWidget()
         self._nest_tree.setHeaderHidden(True)
         self._nest_tree.setStyleSheet(
-            f"QTreeWidget{{background:{C_BG.name()}; border:none;"
+            f"QTreeWidget{{background:{C_INPUT_BG.name()};border:none;"
             f"color:{C_TEXT.name()};}}"
             f"QTreeWidget::item:selected{{background:{C_SEL_ROW.name()};}}")
         self._nest_tree.itemClicked.connect(self._on_tree_click)
@@ -981,9 +1040,9 @@ class NestingTab(QWidget):
 
         self._util_chart = UtilChart()
         dl.addWidget(self._util_chart)
-        spl.addWidget(details_w)
+        spl.addWidget(det_w)
 
-        spl.setSizes([220, 280])
+        spl.setSizes([200, 220])
         lay.addWidget(spl, 1)
         return w
 
@@ -1382,83 +1441,191 @@ class NestingTab(QWidget):
     # ══════════════════════════════════════════════════════════
     def _apply_style(self):
         self.setStyleSheet(f"""
-        * {{ font-family: "Segoe UI", Tahoma, sans-serif; font-size: 12px; }}
-        QWidget {{ background: {C_BG.name()}; color: {C_TEXT.name()}; }}
+        * {{
+            font-family: "Segoe UI", "Vazirmatn", sans-serif;
+            font-size: 12px;
+        }}
+        QWidget {{
+            background: {C_BG.name()};
+            color: {C_TEXT.name()};
+        }}
 
+        /* ── GroupBox ─────────────────────────────────────── */
+        QGroupBox {{
+            border: 1px solid {C_BORDER.name()};
+            border-radius: 4px;
+            margin-top: 10px;
+            padding-top: 6px;
+            color: {C_DIM.name()};
+            font-size: 11px;
+            font-weight: 700;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 0 5px;
+            color: {C_DIM.name()};
+        }}
+
+        /* ── Action Buttons ───────────────────────────────── */
         QPushButton#btn_start {{
-            background: #1a5c2a; border: 1px solid #27ae60;
-            border-radius: 3px; color: white; font-weight: 600;
+            background: #1a5c2a;
+            border: 1px solid #27ae60;
+            border-radius: 4px;
+            color: white;
+            font-weight: 700;
+            font-size: 12px;
         }}
         QPushButton#btn_start:hover {{ background: #27ae60; }}
         QPushButton#btn_start:disabled {{
-            background: #2a2a2a; color: {C_DIM.name()}; border-color:#333;
+            background: #242424; color: {C_DIM.name()}; border-color: #2e2e2e;
         }}
         QPushButton#btn_stop {{
-            background: #5c1a1a; border: 1px solid #c0392b;
-            border-radius: 3px; color: white; font-weight: 600;
+            background: #4a1a1a;
+            border: 1px solid #8b2020;
+            border-radius: 4px;
+            color: white;
+            font-weight: 700;
         }}
         QPushButton#btn_stop:hover {{ background: #c0392b; }}
         QPushButton#btn_stop:disabled {{
-            background: #2a2a2a; color: {C_DIM.name()}; border-color:#333;
+            background: #242424; color: {C_DIM.name()}; border-color: #2e2e2e;
         }}
-        QPushButton {{
-            background: {C_PANEL.name()}; border: 1px solid {C_BORDER.name()};
-            border-radius: 3px; padding: 3px 8px; color: {C_TEXT.name()};
+        QPushButton#btn_gcode {{
+            background: #5a2400;
+            border: 1px solid {C_ORANGE.name()};
+            border-radius: 4px;
+            color: white;
+            font-weight: 700;
+            font-size: 13px;
         }}
-        QPushButton:hover {{ background: #3e3e42; border-color: {C_ACCENT.name()}; }}
+        QPushButton#btn_gcode:hover {{ background: {C_ORANGE.name()}; }}
 
-        QTableWidget {{
-            background: #1a1a1a; gridline-color: {C_BORDER.name()};
-            border: none; selection-background-color: {C_SEL_ROW.name()};
-            alternate-background-color: #202020;
+        /* ── Default Buttons ──────────────────────────────── */
+        QPushButton {{
+            background: {C_PANEL.name()};
+            border: 1px solid {C_BORDER.name()};
+            border-radius: 4px;
+            padding: 3px 8px;
+            color: {C_TEXT.name()};
         }}
-        QTableWidget::item {{ padding: 2px 6px; }}
-        QHeaderView::section {{
-            background: {C_PANEL.name()}; border: none;
-            border-right: 1px solid {C_BORDER.name()};
-            border-bottom: 1px solid {C_BORDER.name()};
-            padding: 3px 6px; font-weight: 600;
-            color: {C_DIM.name()}; font-size: 11px;
-        }}
-        QScrollArea {{ border: none; }}
-        QScrollBar:horizontal {{
-            background: {C_PANEL.name()}; height: 8px; border: none;
-        }}
-        QScrollBar::handle:horizontal {{
-            background: {C_BORDER.name()}; border-radius: 4px; min-width: 20px;
-        }}
-        QScrollBar:vertical {{
-            background: {C_PANEL.name()}; width: 8px; border: none;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {C_BORDER.name()}; border-radius: 4px; min-height: 20px;
-        }}
-        QCheckBox {{ color: {C_TEXT.name()}; }}
-        QCheckBox::indicator {{
-            width: 13px; height: 13px;
-            border: 1px solid {C_BORDER.name()}; border-radius: 2px;
-            background: #1a1a1a;
-        }}
-        QCheckBox::indicator:checked {{
-            background: {C_ACCENT.name()}; border-color: {C_ACCENT.name()};
-        }}
-        QRadioButton {{ color: {C_TEXT.name()}; font-size: 11px; }}
-        QDoubleSpinBox, QSpinBox, QComboBox {{
-            background: #1a1a1a; border: 1px solid {C_BORDER.name()};
-            border-radius: 3px; padding: 2px 4px; color: {C_TEXT.name()};
-        }}
-        QDoubleSpinBox:focus, QSpinBox:focus {{
+        QPushButton:hover {{
+            background: #3e3e42;
             border-color: {C_ACCENT.name()};
         }}
+
+        /* ── Tables ───────────────────────────────────────── */
+        QTableWidget {{
+            background: {C_INPUT_BG.name()};
+            gridline-color: {C_BORDER.name()};
+            border: none;
+            selection-background-color: {C_SEL_ROW.name()};
+            alternate-background-color: #1a1a1a;
+        }}
+        QTableWidget::item {{
+            padding: 2px 6px;
+            min-height: 26px;
+        }}
+        QHeaderView::section {{
+            background: {C_PANEL.name()};
+            border: none;
+            border-right: 1px solid {C_BORDER.name()};
+            border-bottom: 1px solid {C_BORDER.name()};
+            padding: 3px 6px;
+            font-weight: 700;
+            font-size: 11px;
+            color: {C_DIM.name()};
+        }}
+
+        /* ── Inputs ───────────────────────────────────────── */
+        QDoubleSpinBox, QSpinBox, QLineEdit {{
+            background: {C_INPUT_BG.name()};
+            border: 1px solid {C_BORDER.name()};
+            border-radius: 4px;
+            padding: 3px 6px;
+            color: {C_TEXT.name()};
+        }}
+        QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {{
+            border-color: {C_ACCENT.name()};
+        }}
+        QComboBox {{
+            background: {C_INPUT_BG.name()};
+            border: 1px solid {C_BORDER.name()};
+            border-radius: 4px;
+            padding: 3px 6px;
+            color: {C_TEXT.name()};
+        }}
+        QComboBox:focus {{ border-color: {C_ACCENT.name()}; }}
+        QComboBox::drop-down {{ border: none; width: 18px; }}
+        QComboBox QAbstractItemView {{
+            background: {C_PANEL.name()};
+            border: 1px solid {C_BORDER.name()};
+            selection-background-color: {C_SEL_ROW.name()};
+        }}
+
+        /* ── Checkboxes ───────────────────────────────────── */
+        QCheckBox {{ color: {C_TEXT.name()}; spacing: 5px; }}
+        QCheckBox::indicator {{
+            width: 13px; height: 13px;
+            border: 1px solid {C_BORDER.name()};
+            border-radius: 2px;
+            background: {C_INPUT_BG.name()};
+        }}
+        QCheckBox::indicator:checked {{
+            background: {C_ACCENT.name()};
+            border-color: {C_ACCENT.name()};
+        }}
+        QRadioButton {{ color: {C_TEXT.name()}; font-size: 11px; }}
+
+        /* ── Tree ─────────────────────────────────────────── */
+        QTreeWidget {{
+            background: {C_INPUT_BG.name()};
+            border: none;
+            color: {C_TEXT.name()};
+        }}
+        QTreeWidget::item:selected {{ background: {C_SEL_ROW.name()}; }}
+
+        /* ── Misc ─────────────────────────────────────────── */
         QLabel {{ background: transparent; color: {C_TEXT.name()}; }}
+        QScrollArea {{ border: none; }}
         QSplitter::handle {{ background: {C_BORDER.name()}; }}
+
+        /* ── Ultra-flat Scrollbars ────────────────────────── */
+        QScrollBar:vertical {{
+            background: {C_INPUT_BG.name()};
+            width: 10px;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {C_BORDER.name()};
+            min-height: 20px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:vertical:hover {{ background: #858585; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QScrollBar:horizontal {{
+            background: {C_INPUT_BG.name()};
+            height: 10px;
+            margin: 0px;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: {C_BORDER.name()};
+            min-width: 20px;
+            border-radius: 5px;
+        }}
+        QScrollBar::handle:horizontal:hover {{ background: #858585; }}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+            width: 0px;
+        }}
         """)
 
     @staticmethod
     def _small_btn_style() -> str:
         return (f"background:{C_PANEL.name()}; border:1px solid {C_BORDER.name()};"
-                f"border-radius:2px; color:{C_TEXT.name()}; font-size:11px;"
-                f"padding:1px 4px;")
+                f"border-radius:4px; color:{C_TEXT.name()}; font-size:11px;"
+                f"padding:2px 6px;")
 
 
 # ═══════════════════════════════════════════════════════════════
