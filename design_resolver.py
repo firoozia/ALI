@@ -57,12 +57,11 @@ class DesignResolver:
             if p.suffix.lower() not in (self._FDR_EXT, self._JSON_EXT):
                 continue
             stem = p.stem.lower()
-            # Skip index/metadata files
+            # Skip internal/metadata files
             if stem.startswith("_") or stem in ("index", "readme"):
                 continue
-            # Only index files that look like designs: cd1, cd12, or pure numbers
-            if stem.startswith("cd") or stem.isdigit():
-                self._cache[stem] = p
+            # Index ALL design files (cd*, Hood*, Vitrine*, Column*, etc.)
+            self._cache[stem] = p
         print(f"[DesignResolver] Indexed {len(self._cache)} designs in {self._dir}")
 
     def _normalize(self, code: str) -> str:
