@@ -138,6 +138,14 @@ class PostProcessorManager:
         self._cats:    List[dict]          = []
         self._active_id: str               = "syntec_arc_mm"
         self.load()
+        # Restore last-used post processor from config
+        try:
+            from config import config as _cfg
+            saved_id = _cfg.get("gcode", "active_post_processor")
+            if saved_id:
+                self._active_id = saved_id
+        except Exception:
+            pass
 
     # ── Load ──────────────────────────────────────────────────
     def load(self):
@@ -203,6 +211,11 @@ class PostProcessorManager:
         pp = self.get(pp_id)
         if pp:
             self._active_id = pp_id
+            try:
+                from config import config as _cfg
+                _cfg.set(pp_id, "gcode", "active_post_processor")
+            except Exception:
+                pass
             return True
         return False
 
