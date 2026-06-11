@@ -763,7 +763,7 @@ class DesignEditorWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(8)
 
-        title = QLabel("Tool Setup / ابزارها")
+        title = QLabel("Tool Setup")
         title.setStyleSheet(
             f"color:{C_TEXT.name()};font-size:13px;font-weight:700;")
         root.addWidget(title)
@@ -833,7 +833,7 @@ class DesignEditorWidget(QWidget):
         lay.setContentsMargins(8, 5, 8, 5)
         lay.setSpacing(4)
         for i in range(1, 13):
-            b = QPushButton(f"چک ابزار {i}")
+            b = QPushButton(f"Tool {i}")
             b.setFixedHeight(30)
             b.setMinimumWidth(70)
             b.setEnabled(i <= 4)
@@ -843,7 +843,7 @@ class DesignEditorWidget(QWidget):
                 f"color:{C_TEXT.name() if i <= 4 else C_DIM.name()};font-size:11px;")
             lay.addWidget(b)
         lay.addStretch()
-        actions = [("چک تعویض ابزار", False), ("ایجاد وکتور", False), ("آپدیت طرح", True)]
+        actions = [("Change Tool", False), ("Create Contour", False), ("Update Design", True)]
         for text, primary in actions:
             b = QPushButton(text)
             b.setFixedHeight(32)
@@ -852,7 +852,7 @@ class DesignEditorWidget(QWidget):
                 f"background:{'#d56b57' if primary else C_PANEL.name()};"
                 f"border:1px solid {'#e07a66' if primary else C_BORDER.name()};"
                 f"border-radius:3px;color:white;font-weight:600;padding:0 10px;")
-            if text == "آپدیت طرح":
+            if text == "Update Design":
                 b.clicked.connect(self._update_design_from_panels)
             lay.addWidget(b)
         return w
@@ -863,7 +863,7 @@ class DesignEditorWidget(QWidget):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(8)
-        title = QLabel("طرح های وسط / Middle Patterns")
+        title = QLabel("Middle Patterns")
         title.setStyleSheet(f"color:{C_TEXT.name()};font-weight:700;")
         lay.addWidget(title)
         table = QTableWidget(6, 8)
@@ -886,7 +886,7 @@ class DesignEditorWidget(QWidget):
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.setStyleSheet(self._table_style())
         lay.addWidget(table, 1)
-        hint = QLabel("تغییرات این قسمت بعداً به تولید وکتور و G-code متصل می‌شود.")
+        hint = QLabel("Changes here will later connect to vector and G-code generation.")
         hint.setStyleSheet(f"color:{C_DIM.name()};font-size:11px;")
         lay.addWidget(hint)
         return w
@@ -897,7 +897,7 @@ class DesignEditorWidget(QWidget):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(8)
-        title = QLabel("طرح های دور / Border Patterns")
+        title = QLabel("Border Patterns")
         title.setStyleSheet(f"color:{C_TEXT.name()};font-weight:700;")
         lay.addWidget(title)
         table = QTableWidget(6, 7)
@@ -926,7 +926,7 @@ class DesignEditorWidget(QWidget):
         self._on_props_changed()
         self._on_pattern_changed()
         self._refresh_all()
-        self._status("Design updated / طرح آپدیت شد")
+        self._status("Design updated")
 
     @staticmethod
     def _table_style() -> str:
