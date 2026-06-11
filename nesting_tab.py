@@ -494,25 +494,27 @@ class NestingTab(QWidget):
         """Show a popup dialog with all nesting settings."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox
         dlg = QDialog(self); dlg.setWindowTitle("Nesting Settings")
-        dlg.setFixedSize(360, 340)
+        dlg.setFixedSize(360, 360)
         dlg.setStyleSheet(f"background:#1e1e1e; color:#cccccc; font-size:12px;")
         lay = QVBoxLayout(dlg); form = QFormLayout(); form.setSpacing(8)
 
-        from PySide6.QtWidgets import QDoubleSpinBox as DSB, QSpinBox as SB
-        from PySide6.QtWidgets import QCheckBox as CHK
-
-        # Margins per side
-        s_top = QDoubleSpinBox(); s_top.setRange(0,200); s_top.setValue(self._spin_top.value()); s_top.setSuffix(" mm")
-        s_left = QDoubleSpinBox(); s_left.setRange(0,200); s_left.setValue(self._spin_left.value()); s_left.setSuffix(" mm")
-        s_right = QDoubleSpinBox(); s_right.setRange(0,200); s_right.setValue(self._spin_right.value()); s_right.setSuffix(" mm")
-        s_bot = QDoubleSpinBox(); s_bot.setRange(0,200); s_bot.setValue(self._spin_bottom.value()); s_bot.setSuffix(" mm")
+        # Always create LOCAL copies — never add the real panel widgets to the
+        # dialog layout (Qt would re-parent and then destroy them on dialog close)
+        s_top   = QDoubleSpinBox(); s_top.setRange(0,200); s_top.setDecimals(1); s_top.setValue(self._spin_top.value()); s_top.setSuffix(" mm")
+        s_left  = QDoubleSpinBox(); s_left.setRange(0,200); s_left.setDecimals(1); s_left.setValue(self._spin_left.value()); s_left.setSuffix(" mm")
+        s_right = QDoubleSpinBox(); s_right.setRange(0,200); s_right.setDecimals(1); s_right.setValue(self._spin_right.value()); s_right.setSuffix(" mm")
+        s_bot   = QDoubleSpinBox(); s_bot.setRange(0,200); s_bot.setDecimals(1); s_bot.setValue(self._spin_bottom.value()); s_bot.setSuffix(" mm")
+        s_gap   = QDoubleSpinBox(); s_gap.setRange(0,100); s_gap.setDecimals(1); s_gap.setValue(self._spin_part_spacing.value()); s_gap.setSuffix(" mm")
+        s_rot   = QComboBox()
+        for v in ["None", "90°", "180°", "Any"]: s_rot.addItem(v)
+        s_rot.setCurrentIndex(self._cmb_rotation.currentIndex())
 
         form.addRow("Top Margin:",    s_top)
         form.addRow("Left Margin:",   s_left)
         form.addRow("Right Margin:",  s_right)
         form.addRow("Bottom Margin:", s_bot)
-        form.addRow("Part Spacing:",  self._spin_part_spacing)
-        form.addRow("Rotation:",      self._cmb_rotation)
+        form.addRow("Part Spacing:",  s_gap)
+        form.addRow("Rotation:",      s_rot)
         lay.addLayout(form)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -524,6 +526,8 @@ class NestingTab(QWidget):
             self._spin_left.setValue(s_left.value())
             self._spin_right.setValue(s_right.value())
             self._spin_bottom.setValue(s_bot.value())
+            self._spin_part_spacing.setValue(s_gap.value())
+            self._cmb_rotation.setCurrentIndex(s_rot.currentIndex())
 
     @staticmethod
     def _vsep() -> QFrame:
@@ -856,19 +860,19 @@ class NestingTab(QWidget):
         self._btn_edit_sheet.clicked.connect(self._edit_sheet)
         self._btn_remove_sheet.clicked.connect(self._del_sheet)
 
-        # Legacy hidden widgets (kept for API compatibility)
-        self._spin_tilt   = QDoubleSpinBox(); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
-        self._chk_mirror  = QCheckBox();      self._chk_mirror.hide()
-        self._spin_speed  = QSpinBox();       self._spin_speed.hide()
-        self._chk_fixed   = QCheckBox();      self._chk_fixed.hide()
-        self._btn_dir     = QPushButton("→"); self._btn_dir.hide()
-        self._rb_best     = QRadioButton("Best Efficiency"); self._rb_best.setChecked(True); self._rb_best.hide()
-        self._rb_bal      = QRadioButton("Balanced Repeats"); self._rb_bal.hide()
-        self._rb_prefer   = QRadioButton("Prefer Repeats");  self._rb_prefer.hide()
+        # Legacy hidden widgets — parented to w so Qt keeps C++ objects alive
+        self._spin_tilt   = QDoubleSpinBox(w); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
+        self._chk_mirror  = QCheckBox(w);      self._chk_mirror.hide()
+        self._spin_speed  = QSpinBox(w);       self._spin_speed.hide()
+        self._chk_fixed   = QCheckBox(w);      self._chk_fixed.hide()
+        self._btn_dir     = QPushButton("→", w); self._btn_dir.hide()
+        self._rb_best     = QRadioButton("Best Efficiency", w); self._rb_best.setChecked(True); self._rb_best.hide()
+        self._rb_bal      = QRadioButton("Balanced Repeats", w); self._rb_bal.hide()
+        self._rb_prefer   = QRadioButton("Prefer Repeats", w);  self._rb_prefer.hide()
         self._bg_repeats  = QButtonGroup(self)
         for i, rb in enumerate([self._rb_best, self._rb_bal, self._rb_prefer]):
             self._bg_repeats.addButton(rb, i)
-        self._btn_costing = QPushButton("Cost"); self._btn_costing.hide()
+        self._btn_costing = QPushButton("Cost", w); self._btn_costing.hide()
 
         self._refresh_sheet_table()
         return w
