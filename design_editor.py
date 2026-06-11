@@ -701,7 +701,6 @@ class DesignEditorWidget(QWidget):
         self._main_splitter = splitter
 
         root.addWidget(splitter, 1)
-        root.addWidget(self._build_cwood_bottom_bar())
 
         # Status bar
         self._lbl_status = QLabel("  Ready")
@@ -823,39 +822,6 @@ class DesignEditorWidget(QWidget):
         root.addLayout(action_row)
         return w
 
-
-    def _build_cwood_bottom_bar(self) -> QWidget:
-        """Bottom command bar like the original door editor."""
-        w = QFrame()
-        w.setFixedHeight(44)
-        w.setStyleSheet(f"background:{C_PANEL.name()};border-top:1px solid {C_BORDER.name()};")
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(8, 5, 8, 5)
-        lay.setSpacing(4)
-        for i in range(1, 13):
-            b = QPushButton(f"Tool {i}")
-            b.setFixedHeight(30)
-            b.setMinimumWidth(70)
-            b.setEnabled(i <= 4)
-            b.setStyleSheet(
-                f"background:{'#3a3a3a' if i <= 4 else '#242424'};"
-                f"border:1px solid {C_BORDER.name()};border-radius:3px;"
-                f"color:{C_TEXT.name() if i <= 4 else C_DIM.name()};font-size:11px;")
-            lay.addWidget(b)
-        lay.addStretch()
-        actions = [("Change Tool", False), ("Create Contour", False), ("Update Design", True)]
-        for text, primary in actions:
-            b = QPushButton(text)
-            b.setFixedHeight(32)
-            b.setMinimumWidth(115)
-            b.setStyleSheet(
-                f"background:{'#d56b57' if primary else C_PANEL.name()};"
-                f"border:1px solid {'#e07a66' if primary else C_BORDER.name()};"
-                f"border-radius:3px;color:white;font-weight:600;padding:0 10px;")
-            if text == "Update Design":
-                b.clicked.connect(self._update_design_from_panels)
-            lay.addWidget(b)
-        return w
 
     def _build_middle_patterns_tab(self) -> QWidget:
         """Cwood-like middle pattern settings."""
