@@ -130,21 +130,43 @@ class NestingEngine:
 
     def _evaluate(self, parts, algo_cls, gen) -> NestResult:
         result = NestResult(algorithm=algo_cls.__name__, generation=gen)
-        remaining = list(parts)
         sheets_used = []
         sheet_counter = 1
-        limited = [s for s in self.sheet_defs if s.quantity < 999]
+
+        # Group parts by design_code — parts with different designs must
+        # never share a sheet (they have different CNC programs).
+        groups: dict = {}
+        group_order: list = []
+        for p in parts:
+            dc = (getattr(p, "design_code", "") or "").strip().lower()
+            if dc in ("", "cd0", "0"):
+                dc = ""
+            if dc not in groups:
+                groups[dc] = []
+                group_order.append(dc)
+            groups[dc].append(p)
+
+        limited  = [s for s in self.sheet_defs if s.quantity < 999]
         unlimited = [s for s in self.sheet_defs if s.quantity >= 999]
-        for sd in limited:
-            for _ in range(sd.quantity):
-                if not remaining: break
+
+        for dc in group_order:
+            remaining = list(groups[dc])
+            for sd in limited:
+                for _ in range(sd.quantity):
+                    if not remaining: break
+                    sheet, remaining = self._pack_sheet(remaining, sd, sheet_counter, algo_cls)
+                    if sheet.parts:
+                        sheet.design_code = dc
+                        sheets_used.append(sheet); sheet_counter += 1
+            while remaining and unlimited:
+                sd = unlimited[0]
                 sheet, remaining = self._pack_sheet(remaining, sd, sheet_counter, algo_cls)
-                if sheet.parts: sheets_used.append(sheet); sheet_counter += 1
-        while remaining and unlimited:
-            sd = unlimited[0]
-            sheet, remaining = self._pack_sheet(remaining, sd, sheet_counter, algo_cls)
-            if sheet.parts: sheets_used.append(sheet); sheet_counter += 1
-            else: break
+                if sheet.parts:
+                    sheet.design_code = dc
+                    sheets_used.append(sheet); sheet_counter += 1
+                else:
+                    break
+
         result.sheets = sheets_used
         result.sheet_count = len(sheets_used)
         result.total_parts = sum(s.part_count() for s in sheets_used)

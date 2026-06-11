@@ -92,12 +92,13 @@ class Part:
 
 @dataclass
 class Sheet:
-    sheet_id:  int   = 1
-    width:     float = 2800.0
-    height:    float = 1220.0
-    thickness: float = 18.0
-    material:  str   = "MDF"
-    parts:     List[Part] = field(default_factory=list)
+    sheet_id:    int   = 1
+    width:       float = 2800.0
+    height:      float = 1220.0
+    thickness:   float = 18.0
+    material:    str   = "MDF"
+    design_code: str   = ""
+    parts:       List[Part] = field(default_factory=list)
 
     def utilization(self) -> float:
         used  = sum(p.actual_width() * p.actual_height() for p in self.parts)
