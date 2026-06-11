@@ -662,13 +662,19 @@ class ExportWorker(QThread):
                     [(px, py), (px+pw, py), (px+pw, py+ph), (px, py+ph), (px, py)],
                     dxfattribs={"layer": parts_layer, "closed": True})
 
-                if add_labels and part.part_code:
+                if add_labels:
+                    dc = getattr(part, "design_code", "") or ""
+                    label = f"{int(pw)}x{int(ph)}"
+                    if dc and dc not in ("cd0", "0"):
+                        label += f" {dc}"
+                    txt_h  = max(min(min(pw, ph) * 0.012, 5.0), 2.0)
+                    margin = txt_h * 0.8
                     msp.add_text(
-                        part.part_code,
+                        label,
                         dxfattribs={
                             "layer":  parts_layer,
-                            "height": min(min(pw, ph) * 0.04, 20.0),
-                            "insert": (px + pw/2, py + ph/2),
+                            "height": txt_h,
+                            "insert": (px + margin, py + margin),
                         })
 
                 # Design layers from .fdr file
@@ -946,7 +952,6 @@ class ExportTab(QWidget):
                 f"padding:2px 4px; text-align:center;")
             return b
 
-        self._btn_solid_edge      = btn("📐", "Solid Edge",       "Export to Solid Edge format")
         self._btn_dxf_dwg         = btn("📄", "DXF/DWG",          "Export DXF/DWG files", 70)
         self._btn_gcode           = btn("⚙",  "G-code",           "Generate G-code files", 70)
         div1 = self._vdiv()
@@ -957,7 +962,7 @@ class ExportTab(QWidget):
         div2 = self._vdiv()
         lbl2 = self._group_lbl("Reports")
 
-        for w in [self._btn_solid_edge, self._btn_dxf_dwg, self._btn_gcode]:
+        for w in [self._btn_dxf_dwg, self._btn_gcode]:
             tl.addWidget(w)
         tl.addWidget(lbl1); tl.addWidget(div1)
         for w in [self._btn_summary_report, self._btn_detailed_report]:
@@ -971,7 +976,6 @@ class ExportTab(QWidget):
             lambda: self._export_report(detailed=False))
         self._btn_detailed_report.clicked.connect(
             lambda: self._export_report(detailed=True))
-        self._btn_solid_edge.clicked.connect(self._export_solid_edge)
 
         return tb
 
@@ -1122,12 +1126,6 @@ class ExportTab(QWidget):
         self._run_export(
             "report_detailed" if detailed else "report_summary",
             settings)
-
-    def _export_solid_edge(self):
-        QMessageBox.information(
-            self, "Solid Edge Export",
-            "Solid Edge .nfb export will be available in a future version.\n"
-            "Use DXF/DWG export for now.")
 
     def _open_output_folder(self):
         folder = config.output_folder
