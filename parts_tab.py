@@ -616,12 +616,27 @@ class PartsTab(QWidget):
                 dc_col   = 4
                 prev_col = 5
 
-            # Design Code column — editable
-            dc = part.get("design_code","") or ""
-            dc_item = QTableWidgetItem(dc)
-            dc_item.setTextAlignment(Qt.AlignCenter)
-            dc_item.setForeground(QColor("#4ec9b0") if dc and dc not in ("cd0","0","") else QColor("#858585"))
-            t.setItem(row, dc_col, dc_item)
+            # Design Code column — persistent QComboBox dropdown
+            dc = part.get("design_code","") or "cd0"
+            _cmb = QComboBox()
+            _cmb.setEditable(True)
+            for _c in _load_design_codes():
+                _cmb.addItem(_c)
+            _idx = _cmb.findText(dc)
+            if _idx >= 0:
+                _cmb.setCurrentIndex(_idx)
+            else:
+                _cmb.setEditText(dc)
+            _cmb.setStyleSheet(
+                "QComboBox{background:#1a1a1a;color:#4ec9b0;"
+                "border:none;font-size:11px;padding:1px 4px;}"
+                "QComboBox QAbstractItemView{background:#252526;color:#cccccc;"
+                "selection-background-color:#264f78;}"
+            )
+            _row_ref = row
+            _cmb.currentTextChanged.connect(
+                lambda val, r=_row_ref: self._on_dc_changed(r, val))
+            t.setCellWidget(row, dc_col, _cmb)
 
             pix=make_preview_pixmap(raw_w, raw_h, color); prev=QTableWidgetItem()
             prev.setData(Qt.DecorationRole, pix)
@@ -822,26 +837,23 @@ class PartsTab(QWidget):
         if dlg.exec()==QDialog.Accepted:
             self._rows[row].update(dlg.result_data()); self._refresh_table(); self._emit()
 
+    def _on_dc_changed(self, row: int, val: str):
+        """Called when the Design Code combobox value changes."""
+        if row < 0 or row >= len(self._rows):
+            return
+        self._rows[row]["design_code"] = val.strip() or "cd0"
+        self._emit()
+
     # ── Export CSV ────────────────────────────────────────────
     def _on_item_changed(self, item):
-        """Sync Design Code edits in table back to _rows data."""
+        """Sync non-Design-Code edits in table back to _rows data."""
         row = item.row()
         if row < 0 or row >= len(self._rows):
             return
-        # Determine which column is Design Code
         dc_col = 8 if self._detailed_mode else 4
-        if item.column() != dc_col:
+        # Design Code is now a cellWidget (QComboBox), not an item — skip
+        if item.column() == dc_col:
             return
-        new_code = item.text().strip()
-        if not new_code:
-            new_code = "cd0"
-        self._rows[row]["design_code"] = new_code
-        # Update color feedback
-        from PySide6.QtGui import QColor
-        item.setForeground(
-            QColor("#4ec9b0") if new_code not in ("cd0","0","")
-            else QColor("#858585"))
-        self._emit()
 
     def _export_csv(self):
         path,_=QFileDialog.getSaveFileName(self,"Export Part Data CSV",

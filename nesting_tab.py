@@ -1270,7 +1270,7 @@ class NestingTab(QWidget):
 
             canvas = SheetCanvas()
             canvas.setFixedSize(220, 160)
-            canvas.set_sheet(sheet, labels=False)
+            canvas.set_sheet(sheet, labels=True)
             canvas.set_selected(i == 0)
             canvas.mousePressEvent = lambda ev, idx=i: self._on_thumb_click(idx)
             col_l.addWidget(canvas)
