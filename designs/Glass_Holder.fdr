@@ -1,0 +1,65 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "Glass_Holder",
+  "name": "Glass Holder",
+  "name_fa": "جا گیلاسی",
+  "name_ar": "",
+  "category": "others",
+  "source_file": "Glass_Holder.cd",
+  "default_size": {
+    "width": 750.0,
+    "height": 250.0
+  },
+  "tools": {
+    "T1": {
+      "diameter": 2.0,
+      "type": "endmill"
+    },
+    "T2": {
+      "diameter": 6.0,
+      "type": "form_tool"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0,
+      "offset_mm": 0,
+      "pass_count": 1,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "others",
+    "spacing_mm": 25.4,
+    "spacings_all": [
+      25.4,
+      50.8,
+      60,
+      80,
+      101.6,
+      127.0,
+      152.4,
+      254.0,
+      508.0,
+      635.0
+    ]
+  },
+  "offsets": [],
+  "preview": {
+    "shape": "others",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "glass",
+    "holder",
+    "kitchen"
+  ]
+}

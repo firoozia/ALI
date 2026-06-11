@@ -1,0 +1,140 @@
+{
+  "design_code": "cd1",
+  "name": "Classic Frame Door",
+  "name_fa": "در قابدار کلاسیک",
+  "name_ar": "",
+  "category": "designs",
+  "description": "Imported from cd1.cwd",
+  "source_file": "cd1.cwd",
+  "default_size": {
+    "width": 900.0,
+    "height": 500.0
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6.0,
+      "type": "endmill",
+      "description": "Profile & inner cuts"
+    },
+    "T2": {
+      "diameter": 16.0,
+      "type": "form_tool",
+      "description": "Grooves & bevel decoration"
+    }
+  },
+  "offsets": [
+    {
+      "layer_no": 1,
+      "distance_mm": 10.0,
+      "name": "Offset 1",
+      "name_fa": "آفست 1"
+    },
+    {
+      "layer_no": 2,
+      "distance_mm": 17.0,
+      "name": "Offset 2",
+      "name_fa": "آفست 2"
+    },
+    {
+      "layer_no": 3,
+      "distance_mm": 12.5,
+      "name": "Offset 3",
+      "name_fa": "آفست 3"
+    }
+  ],
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile Cut",
+      "name_fa": "برش پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0,
+      "offset_mm": 0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "Layer 1",
+      "name_fa": "لایه 1",
+      "type": "shallow_groove",
+      "tool": "T2",
+      "depth_mm": 1.0,
+      "offset_mm": 10.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "Layer 2",
+      "name_fa": "لایه 2",
+      "type": "shallow_groove",
+      "tool": "T2",
+      "depth_mm": 1.0,
+      "offset_mm": 17.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "Layer 3",
+      "name_fa": "لایه 3",
+      "type": "deep_groove",
+      "tool": "T2",
+      "depth_mm": 7.0,
+      "offset_mm": 12.5,
+      "pass_count": 4,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "name": "Inner Panel Cut",
+      "name_fa": "برش پنل داخلی",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 7.0,
+      "offset_mm": 12.5,
+      "pass_count": 4,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "classic_frame",
+    "spacing_mm": [
+      50.0,
+      50.8,
+      60.0,
+      70.0,
+      76.2,
+      87.0,
+      99.5,
+      101.6,
+      127.0
+    ],
+    "primary_spacing": 50.0
+  },
+  "pass_depth_mm": 2.0,
+  "spacing_mm": [
+    50.0,
+    50.8,
+    60.0,
+    70.0,
+    76.2,
+    87.0,
+    99.5,
+    101.6,
+    127.0
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "classic",
+    "frame",
+    "groove",
+    "traditional"
+  ]
+}

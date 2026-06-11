@@ -1,0 +1,88 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "cd2",
+  "name": "Wide Frame Door",
+  "name_fa": "کابینت2",
+  "name_ar": "",
+  "category": "designs",
+  "source_file": "cd2.cd",
+  "default_size": {
+    "width": 900,
+    "height": 500
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6,
+      "type": "endmill",
+      "use": "profile_inner"
+    },
+    "T2": {
+      "diameter": 16,
+      "type": "form_tool",
+      "use": "groove_bevel"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0.0,
+      "offset_mm": 0.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه 1",
+      "type": "bevel",
+      "tool": "T2",
+      "depth_mm": 5,
+      "offset_mm": 60,
+      "pass_count": 3,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "L2",
+      "name_fa": "لایه 2",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 2,
+      "offset_mm": 60,
+      "pass_count": 1,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "wide_frame",
+    "spacing_mm": 50,
+    "spacings_all": [
+      50,
+      50.8
+    ]
+  },
+  "offsets": [
+    {
+      "layer_no": 1,
+      "distance_mm": 60,
+      "name": "L1",
+      "name_fa": "آفست 1"
+    }
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "wide-frame",
+    "bevel",
+    "modern"
+  ]
+}

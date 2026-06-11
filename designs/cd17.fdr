@@ -1,0 +1,146 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "cd17",
+  "name": "Multi Layer Door",
+  "name_fa": "کابینت17",
+  "name_ar": "",
+  "category": "designs",
+  "source_file": "cd17.cd",
+  "default_size": {
+    "width": 1000,
+    "height": 600
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6,
+      "type": "endmill",
+      "use": "profile_inner"
+    },
+    "T2": {
+      "diameter": 16,
+      "type": "form_tool",
+      "use": "groove_bevel"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0.0,
+      "offset_mm": 0.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه 1",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 2.0,
+      "offset_mm": 30,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "L2",
+      "name_fa": "لایه 2",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 2.0,
+      "offset_mm": 20,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "L3",
+      "name_fa": "لایه 3",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 2.0,
+      "offset_mm": 30,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "name": "L4",
+      "name_fa": "لایه 4",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 2.0,
+      "offset_mm": 20,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 5,
+      "name": "L5",
+      "name_fa": "لایه 5",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 2.0,
+      "offset_mm": 30,
+      "pass_count": 1,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "multi_frame",
+    "spacing_mm": 101.6,
+    "spacings_all": [
+      101.6,
+      152.4,
+      50.8
+    ]
+  },
+  "offsets": [
+    {
+      "layer_no": 1,
+      "distance_mm": 30,
+      "name": "L1",
+      "name_fa": "آفست 1"
+    },
+    {
+      "layer_no": 2,
+      "distance_mm": 20,
+      "name": "L2",
+      "name_fa": "آفست 2"
+    },
+    {
+      "layer_no": 3,
+      "distance_mm": 30,
+      "name": "L3",
+      "name_fa": "آفست 3"
+    },
+    {
+      "layer_no": 4,
+      "distance_mm": 20,
+      "name": "L4",
+      "name_fa": "آفست 4"
+    },
+    {
+      "layer_no": 5,
+      "distance_mm": 30,
+      "name": "L5",
+      "name_fa": "آفست 5"
+    }
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "multi-layer",
+    "complex",
+    "traditional"
+  ]
+}

@@ -1,0 +1,99 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "cd13",
+  "name": "Deep Groove Door",
+  "name_fa": "کابینت13",
+  "name_ar": "",
+  "category": "designs",
+  "source_file": "cd13.cd",
+  "default_size": {
+    "width": 900,
+    "height": 500
+  },
+  "tools": {
+    "T1": {
+      "diameter": 11,
+      "type": "endmill",
+      "use": "profile_inner"
+    },
+    "T2": {
+      "diameter": 25,
+      "type": "form_tool",
+      "use": "groove_bevel"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0.0,
+      "offset_mm": 0.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه 1",
+      "type": "deep_groove",
+      "tool": "T2",
+      "depth_mm": 8,
+      "offset_mm": 22,
+      "pass_count": 4,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "L2",
+      "name_fa": "لایه 2",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 1.5,
+      "offset_mm": 22,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "L3",
+      "name_fa": "لایه 3",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 8,
+      "offset_mm": 22,
+      "pass_count": 4,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "deep_groove",
+    "spacing_mm": 60,
+    "spacings_all": [
+      60,
+      50,
+      80
+    ]
+  },
+  "offsets": [
+    {
+      "layer_no": 2,
+      "distance_mm": 22,
+      "name": "L1",
+      "name_fa": "آفست 1"
+    }
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "frame",
+    "groove"
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "cd14",
+  "name": "Wide Double Frame",
+  "name_fa": "کابینت14",
+  "name_ar": "",
+  "category": "designs",
+  "source_file": "cd14.cd",
+  "default_size": {
+    "width": 900,
+    "height": 500
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6,
+      "type": "endmill",
+      "use": "profile_inner"
+    },
+    "T2": {
+      "diameter": 16,
+      "type": "form_tool",
+      "use": "groove_bevel"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0.0,
+      "offset_mm": 0.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه 1",
+      "type": "deep_groove",
+      "tool": "T2",
+      "depth_mm": 7,
+      "offset_mm": 12.12,
+      "pass_count": 4,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "L2",
+      "name_fa": "لایه 2",
+      "type": "bevel",
+      "tool": "T2",
+      "depth_mm": 7,
+      "offset_mm": 40,
+      "pass_count": 4,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "L3",
+      "name_fa": "لایه 3",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 5,
+      "offset_mm": 40,
+      "pass_count": 3,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "name": "L4",
+      "name_fa": "لایه 4",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 5,
+      "offset_mm": 40,
+      "pass_count": 3,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "double_frame",
+    "spacing_mm": 60,
+    "spacings_all": [
+      60,
+      50,
+      80
+    ]
+  },
+  "offsets": [
+    {
+      "layer_no": 1,
+      "distance_mm": 12.12,
+      "name": "L1",
+      "name_fa": "آفست 1"
+    },
+    {
+      "layer_no": 2,
+      "distance_mm": 40,
+      "name": "L2",
+      "name_fa": "آفست 2"
+    }
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "double-frame",
+    "classic"
+  ]
+}

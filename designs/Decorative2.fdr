@@ -1,0 +1,76 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "Decorative2",
+  "name": "Decorative Panel 2",
+  "name_fa": "دکور2",
+  "name_ar": "",
+  "category": "decorative",
+  "source_file": "Decorative2.cd",
+  "default_size": {
+    "width": 600.0,
+    "height": 600.0
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6.0,
+      "type": "endmill"
+    },
+    "T2": {
+      "diameter": 6.0,
+      "type": "form_tool"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0,
+      "offset_mm": 0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه ۱",
+      "type": "deep_groove",
+      "tool": "T2",
+      "depth_mm": 5.0,
+      "offset_mm": 25.0,
+      "pass_count": 3,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "decorative",
+    "spacing_mm": 25.4,
+    "spacings_all": [
+      25.4,
+      50.8,
+      60,
+      80,
+      101.6,
+      127.0,
+      152.4,
+      254.0,
+      508.0,
+      635.0
+    ]
+  },
+  "offsets": [],
+  "preview": {
+    "shape": "decorative",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "decorative",
+    "panel",
+    "ornamental"
+  ]
+}

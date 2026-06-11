@@ -1,0 +1,88 @@
+{
+  "design_code": "V01",
+  "name": "Vitrine Door",
+  "name_fa": "در ویترین",
+  "name_ar": "باب فيترين",
+  "category": "vitrines",
+  "description": "Glass holder door with inner cutout for glass panel",
+  "default_size": {
+    "width": 600,
+    "height": 800
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6,
+      "type": "endmill",
+      "use": "profile_cut"
+    },
+    "T2": {
+      "diameter": 16,
+      "type": "form_tool",
+      "use": "groove"
+    }
+  },
+  "offsets": [
+    {
+      "layer": 1,
+      "distance_mm": 40.0,
+      "name": "Glass frame",
+      "name_fa": "قاب شیشه"
+    },
+    {
+      "layer": 2,
+      "distance_mm": 44.0,
+      "name": "Glass rabbet",
+      "name_fa": "ربت شیشه"
+    }
+  ],
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth": 0,
+      "enabled": true,
+      "offset_mm": 0,
+      "pass_count": 1
+    },
+    {
+      "id": 1,
+      "name": "Glass frame groove",
+      "name_fa": "شیار قاب شیشه",
+      "type": "groove",
+      "tool": "T2",
+      "depth": 3.0,
+      "enabled": true,
+      "offset_mm": 40.0,
+      "pass_count": 1
+    },
+    {
+      "id": 2,
+      "name": "Glass rabbet",
+      "name_fa": "جای شیشه",
+      "type": "rabbet",
+      "tool": "T1",
+      "depth": 12.0,
+      "enabled": true,
+      "offset_mm": 44.0,
+      "pass_count": 4
+    }
+  ],
+  "pattern": {
+    "type": "glass_frame",
+    "frame_width_mm": 40.0,
+    "rabbet_depth_mm": 12.0,
+    "enabled": true
+  },
+  "preview": {
+    "shape": "vitrine",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "vitrine",
+    "glass",
+    "frame"
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "language": "en",
+  "sheet": {
+    "width": 2800.0,
+    "height": 1220.0,
+    "thickness": 18.0,
+    "material": "MDF"
+  },
+  "nesting": {
+    "edge_margin": 10.0,
+    "part_gap": 8.0,
+    "auto_rotation": true,
+    "respect_grain": false,
+    "edge_margin_left": 10.0,
+    "edge_margin_right": 10.0,
+    "edge_margin_bottom": 10.0
+  },
+  "machine": {
+    "safe_z": 15.0,
+    "home_z": 50.0,
+    "spindle_rpm": 18000,
+    "feed_rate": 3000.0,
+    "plunge_rate": 800.0
+  },
+  "gcode": {
+    "format": "tap",
+    "origin": "(0,0)",
+    "units": "mm",
+    "tool_change": "manual"
+  },
+  "output": {
+    "folder": "C:\\FIROO_CAM\\output",
+    "dxf": true,
+    "gcode": true,
+    "report": true
+  },
+  "camotics_path": "C:/Program Files/CAMotics/CAMotics.exe",
+  "autosave": {
+    "enabled": true,
+    "interval_minutes": 5
+  },
+  "ui": {
+    "theme": "dark",
+    "font_size": "medium",
+    "show_grid": true,
+    "show_labels": true,
+    "show_dimensions": true
+  }
+}

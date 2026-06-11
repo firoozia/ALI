@@ -1,0 +1,92 @@
+{
+  "design_code": "cd2",
+  "name": "Wide Frame Door",
+  "name_fa": "در قابدار پهن",
+  "name_ar": "",
+  "category": "designs",
+  "description": "Imported from cd2.cwd",
+  "source_file": "cd2.cwd",
+  "default_size": {
+    "width": 900.0,
+    "height": 500.0
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6.0,
+      "type": "endmill",
+      "description": "Profile & inner cuts"
+    },
+    "T2": {
+      "diameter": 16.0,
+      "type": "form_tool",
+      "description": "Grooves & bevel decoration"
+    }
+  },
+  "offsets": [
+    {
+      "layer_no": 1,
+      "distance_mm": 60.0,
+      "name": "Offset 1",
+      "name_fa": "آفست 1"
+    }
+  ],
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile Cut",
+      "name_fa": "برش پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0,
+      "offset_mm": 0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "Layer 1",
+      "name_fa": "لایه 1",
+      "type": "bevel",
+      "tool": "T2",
+      "depth_mm": 5.0,
+      "offset_mm": 60.0,
+      "pass_count": 3,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "Inner Panel Cut",
+      "name_fa": "برش پنل داخلی",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 2.0,
+      "offset_mm": 60.0,
+      "pass_count": 1,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "wide_frame",
+    "spacing_mm": [
+      50.0,
+      50.8
+    ],
+    "primary_spacing": 50.0
+  },
+  "pass_depth_mm": 2.0,
+  "spacing_mm": [
+    50.0,
+    50.8
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "wide-frame",
+    "modern",
+    "bevel",
+    "minimal"
+  ]
+}

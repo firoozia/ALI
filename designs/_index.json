@@ -1,0 +1,1062 @@
+{
+  "version": "1.0",
+  "count": 90,
+  "designs": [
+    {
+      "code": "cd0",
+      "name": "Plain Door",
+      "name_fa": "در ساده",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd0.fdr"
+    },
+    {
+      "code": "cd1",
+      "name": "Triple Frame Door",
+      "name_fa": "کابینت1",
+      "category": "designs",
+      "tags": [
+        "triple-frame",
+        "traditional"
+      ],
+      "file": "cd1.fdr"
+    },
+    {
+      "code": "cd2",
+      "name": "Wide Frame Door",
+      "name_fa": "کابینت2",
+      "category": "designs",
+      "tags": [
+        "wide-frame",
+        "bevel",
+        "modern"
+      ],
+      "file": "cd2.fdr"
+    },
+    {
+      "code": "cd3",
+      "name": "Multi Layer Door",
+      "name_fa": "کابینت3",
+      "category": "designs",
+      "tags": [
+        "multi-layer",
+        "complex",
+        "traditional"
+      ],
+      "file": "cd3.fdr"
+    },
+    {
+      "code": "cd4",
+      "name": "Engraved Door",
+      "name_fa": "کابینت4",
+      "category": "designs",
+      "tags": [
+        "engraved",
+        "simple"
+      ],
+      "file": "cd4.fdr"
+    },
+    {
+      "code": "cd5",
+      "name": "Wide Double Frame",
+      "name_fa": "کابینت5",
+      "category": "designs",
+      "tags": [
+        "double-frame",
+        "classic"
+      ],
+      "file": "cd5.fdr"
+    },
+    {
+      "code": "cd6",
+      "name": "Wide Double Frame",
+      "name_fa": "کابینت6",
+      "category": "designs",
+      "tags": [
+        "double-frame",
+        "classic"
+      ],
+      "file": "cd6.fdr"
+    },
+    {
+      "code": "cd7",
+      "name": "Four Layer Door",
+      "name_fa": "کابینت7",
+      "category": "designs",
+      "tags": [
+        "four-layer",
+        "classic"
+      ],
+      "file": "cd7.fdr"
+    },
+    {
+      "code": "cd8",
+      "name": "Double Frame Door",
+      "name_fa": "کابینت8",
+      "category": "designs",
+      "tags": [
+        "double-frame",
+        "classic"
+      ],
+      "file": "cd8.fdr"
+    },
+    {
+      "code": "cd9",
+      "name": "Multi Layer Door",
+      "name_fa": "کابینت9",
+      "category": "designs",
+      "tags": [
+        "multi-layer",
+        "complex",
+        "traditional"
+      ],
+      "file": "cd9.fdr"
+    },
+    {
+      "code": "cd10",
+      "name": "Wide Frame Door",
+      "name_fa": "کابینت10",
+      "category": "designs",
+      "tags": [
+        "wide-frame",
+        "bevel",
+        "modern"
+      ],
+      "file": "cd10.fdr"
+    },
+    {
+      "code": "cd11",
+      "name": "Four Layer Door",
+      "name_fa": "کابینت11",
+      "category": "designs",
+      "tags": [
+        "four-layer",
+        "classic"
+      ],
+      "file": "cd11.fdr"
+    },
+    {
+      "code": "cd12",
+      "name": "Triple Frame Door",
+      "name_fa": "کابینت12",
+      "category": "designs",
+      "tags": [
+        "triple-frame",
+        "traditional"
+      ],
+      "file": "cd12.fdr"
+    },
+    {
+      "code": "cd13",
+      "name": "Deep Groove Door",
+      "name_fa": "کابینت13",
+      "category": "designs",
+      "tags": [
+        "frame",
+        "groove"
+      ],
+      "file": "cd13.fdr"
+    },
+    {
+      "code": "cd14",
+      "name": "Wide Double Frame",
+      "name_fa": "کابینت14",
+      "category": "designs",
+      "tags": [
+        "double-frame",
+        "classic"
+      ],
+      "file": "cd14.fdr"
+    },
+    {
+      "code": "cd15",
+      "name": "Wide Double Frame",
+      "name_fa": "کابینت15",
+      "category": "designs",
+      "tags": [
+        "double-frame",
+        "classic"
+      ],
+      "file": "cd15.fdr"
+    },
+    {
+      "code": "cd16",
+      "name": "Double Frame Door",
+      "name_fa": "کابینت16",
+      "category": "designs",
+      "tags": [
+        "double-frame",
+        "classic"
+      ],
+      "file": "cd16.fdr"
+    },
+    {
+      "code": "cd17",
+      "name": "Multi Layer Door",
+      "name_fa": "کابینت17",
+      "category": "designs",
+      "tags": [
+        "multi-layer",
+        "complex",
+        "traditional"
+      ],
+      "file": "cd17.fdr"
+    },
+    {
+      "code": "cd18",
+      "name": "Plain Door",
+      "name_fa": "کابینت18",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd18.fdr"
+    },
+    {
+      "code": "cd19",
+      "name": "Plain Door",
+      "name_fa": "کابینت19",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd19.fdr"
+    },
+    {
+      "code": "cd20",
+      "name": "Plain Door",
+      "name_fa": "کابینت20",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd20.fdr"
+    },
+    {
+      "code": "cd21",
+      "name": "Plain Door",
+      "name_fa": "کابینت21",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd21.fdr"
+    },
+    {
+      "code": "cd22",
+      "name": "Plain Door",
+      "name_fa": "کابینت22",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd22.fdr"
+    },
+    {
+      "code": "cd23",
+      "name": "Plain Door",
+      "name_fa": "کابینت23",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd23.fdr"
+    },
+    {
+      "code": "cd24",
+      "name": "Plain Door",
+      "name_fa": "کابینت24",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd24.fdr"
+    },
+    {
+      "code": "cd25",
+      "name": "Plain Door",
+      "name_fa": "کابینت25",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd25.fdr"
+    },
+    {
+      "code": "cd26",
+      "name": "Plain Door",
+      "name_fa": "کابینت26",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd26.fdr"
+    },
+    {
+      "code": "cd27",
+      "name": "Plain Door",
+      "name_fa": "کابینت27",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd27.fdr"
+    },
+    {
+      "code": "cd28",
+      "name": "Plain Door",
+      "name_fa": "کابینت28",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd28.fdr"
+    },
+    {
+      "code": "cd29",
+      "name": "Plain Door",
+      "name_fa": "کابینت29",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd29.fdr"
+    },
+    {
+      "code": "cd30",
+      "name": "Plain Door",
+      "name_fa": "کابینت30",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd30.fdr"
+    },
+    {
+      "code": "cd31",
+      "name": "Plain Door",
+      "name_fa": "کابینت31",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd31.fdr"
+    },
+    {
+      "code": "cd32",
+      "name": "Plain Door",
+      "name_fa": "کابینت32",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd32.fdr"
+    },
+    {
+      "code": "cd33",
+      "name": "Plain Door",
+      "name_fa": "کابینت33",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd33.fdr"
+    },
+    {
+      "code": "cd34",
+      "name": "Plain Door",
+      "name_fa": "کابینت34",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd34.fdr"
+    },
+    {
+      "code": "cd35",
+      "name": "Plain Door",
+      "name_fa": "کابینت35",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd35.fdr"
+    },
+    {
+      "code": "cd36",
+      "name": "Plain Door",
+      "name_fa": "کابینت36",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd36.fdr"
+    },
+    {
+      "code": "cd37",
+      "name": "Plain Door",
+      "name_fa": "کابینت37",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd37.fdr"
+    },
+    {
+      "code": "cd38",
+      "name": "Plain Door",
+      "name_fa": "کابینت38",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd38.fdr"
+    },
+    {
+      "code": "cd39",
+      "name": "Plain Door",
+      "name_fa": "کابینت39",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd39.fdr"
+    },
+    {
+      "code": "cd40",
+      "name": "Plain Door",
+      "name_fa": "کابینت40",
+      "category": "designs",
+      "tags": [
+        "plain",
+        "simple"
+      ],
+      "file": "cd40.fdr"
+    },
+    {
+      "code": "Vitrine1",
+      "name": "Wide Glass Vitrine (75×75mm)",
+      "name_fa": "ویترین1",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-75x75",
+        "wide"
+      ],
+      "file": "Vitrine1.fdr"
+    },
+    {
+      "code": "Vitrine2",
+      "name": "Wide Glass Vitrine (75×75mm)",
+      "name_fa": "ویترین2",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-75x75",
+        "wide",
+        "groove"
+      ],
+      "file": "Vitrine2.fdr"
+    },
+    {
+      "code": "Vitrine3",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین3",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine3.fdr"
+    },
+    {
+      "code": "Vitrine4",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین4",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine4.fdr"
+    },
+    {
+      "code": "Vitrine5",
+      "name": "Medium Glass Vitrine (65×65mm)",
+      "name_fa": "ویترین5",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-65x65"
+      ],
+      "file": "Vitrine5.fdr"
+    },
+    {
+      "code": "Vitrine6",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین6",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine6.fdr"
+    },
+    {
+      "code": "Vitrine7",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین7",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine7.fdr"
+    },
+    {
+      "code": "Vitrine8",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین8",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine8.fdr"
+    },
+    {
+      "code": "Vitrine9",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین9",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine9.fdr"
+    },
+    {
+      "code": "Vitrine10",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین10",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine10.fdr"
+    },
+    {
+      "code": "Vitrine11",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین11",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine11.fdr"
+    },
+    {
+      "code": "Vitrine12",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین12",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine12.fdr"
+    },
+    {
+      "code": "Vitrine13",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین13",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine13.fdr"
+    },
+    {
+      "code": "Vitrine14",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین14",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine14.fdr"
+    },
+    {
+      "code": "Vitrine15",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین15",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine15.fdr"
+    },
+    {
+      "code": "Vitrine16",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین16",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine16.fdr"
+    },
+    {
+      "code": "Vitrine17",
+      "name": "Medium Glass Vitrine (65×65mm)",
+      "name_fa": "ویترین17",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-65x65"
+      ],
+      "file": "Vitrine17.fdr"
+    },
+    {
+      "code": "Vitrine18",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین18",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine18.fdr"
+    },
+    {
+      "code": "Vitrine19",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین19",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine19.fdr"
+    },
+    {
+      "code": "Vitrine20",
+      "name": "Medium Glass Vitrine (65×65mm)",
+      "name_fa": "ویترین20",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-65x65"
+      ],
+      "file": "Vitrine20.fdr"
+    },
+    {
+      "code": "Vitrine21",
+      "name": "Medium Glass Vitrine (65×65mm)",
+      "name_fa": "ویترین21",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-65x65"
+      ],
+      "file": "Vitrine21.fdr"
+    },
+    {
+      "code": "Vitrine22",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین22",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine22.fdr"
+    },
+    {
+      "code": "Vitrine23",
+      "name": "Medium Glass Vitrine (65×65mm)",
+      "name_fa": "ویترین23",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-65x65"
+      ],
+      "file": "Vitrine23.fdr"
+    },
+    {
+      "code": "Vitrine24",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین24",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine24.fdr"
+    },
+    {
+      "code": "Vitrine25",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین25",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55",
+        "groove"
+      ],
+      "file": "Vitrine25.fdr"
+    },
+    {
+      "code": "Vitrine26",
+      "name": "Standard Glass Vitrine (55×55mm)",
+      "name_fa": "ویترین26",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-55x55"
+      ],
+      "file": "Vitrine26.fdr"
+    },
+    {
+      "code": "Vitrine27",
+      "name": "Medium Glass Vitrine (65×65mm)",
+      "name_fa": "ویترین27",
+      "category": "vitrines",
+      "tags": [
+        "vitrine",
+        "glass",
+        "glass-65x65"
+      ],
+      "file": "Vitrine27.fdr"
+    },
+    {
+      "code": "Hood1",
+      "name": "Hood 1",
+      "name_fa": "هود1",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood1.fdr"
+    },
+    {
+      "code": "Hood2",
+      "name": "Hood 2",
+      "name_fa": "هود2",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood2.fdr"
+    },
+    {
+      "code": "Hood3",
+      "name": "Hood 3",
+      "name_fa": "هود3",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood3.fdr"
+    },
+    {
+      "code": "Hood4",
+      "name": "Hood 4",
+      "name_fa": "هود4",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood4.fdr"
+    },
+    {
+      "code": "Hood5",
+      "name": "Hood 5",
+      "name_fa": "هود5",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood5.fdr"
+    },
+    {
+      "code": "Hood6",
+      "name": "Hood 6",
+      "name_fa": "هود6",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood6.fdr"
+    },
+    {
+      "code": "Hood7",
+      "name": "Hood 7",
+      "name_fa": "هود7",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood7.fdr"
+    },
+    {
+      "code": "Hood8",
+      "name": "Hood 8",
+      "name_fa": "هود8",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood8.fdr"
+    },
+    {
+      "code": "Hood9",
+      "name": "Hood 9",
+      "name_fa": "هود9",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood9.fdr"
+    },
+    {
+      "code": "Hood10",
+      "name": "Hood 10",
+      "name_fa": "هود10",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood10.fdr"
+    },
+    {
+      "code": "Hood11",
+      "name": "Hood 11",
+      "name_fa": "هود11",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood11.fdr"
+    },
+    {
+      "code": "Hood12",
+      "name": "Hood 12",
+      "name_fa": "هود12",
+      "category": "hoods",
+      "tags": [
+        "hood",
+        "cabinet",
+        "overhead"
+      ],
+      "file": "Hood12.fdr"
+    },
+    {
+      "code": "Column1",
+      "name": "Column 1",
+      "name_fa": "ستون1",
+      "category": "columns",
+      "tags": [
+        "column",
+        "pillar",
+        "decorative"
+      ],
+      "file": "Column1.fdr"
+    },
+    {
+      "code": "Column2",
+      "name": "Column 2",
+      "name_fa": "ستون2",
+      "category": "columns",
+      "tags": [
+        "column",
+        "pillar",
+        "decorative"
+      ],
+      "file": "Column2.fdr"
+    },
+    {
+      "code": "Column3",
+      "name": "Column 3",
+      "name_fa": "ستون3",
+      "category": "columns",
+      "tags": [
+        "column",
+        "pillar",
+        "decorative"
+      ],
+      "file": "Column3.fdr"
+    },
+    {
+      "code": "Column4",
+      "name": "Column 4",
+      "name_fa": "ستون4",
+      "category": "columns",
+      "tags": [
+        "column",
+        "pillar",
+        "decorative"
+      ],
+      "file": "Column4.fdr"
+    },
+    {
+      "code": "Column5",
+      "name": "Column 5",
+      "name_fa": "ستون5",
+      "category": "columns",
+      "tags": [
+        "column",
+        "pillar",
+        "decorative"
+      ],
+      "file": "Column5.fdr"
+    },
+    {
+      "code": "Decorative1",
+      "name": "Decorative Panel 1",
+      "name_fa": "دکور1",
+      "category": "decorative",
+      "tags": [
+        "decorative",
+        "panel",
+        "ornamental"
+      ],
+      "file": "Decorative1.fdr"
+    },
+    {
+      "code": "Decorative2",
+      "name": "Decorative Panel 2",
+      "name_fa": "دکور2",
+      "category": "decorative",
+      "tags": [
+        "decorative",
+        "panel",
+        "ornamental"
+      ],
+      "file": "Decorative2.fdr"
+    },
+    {
+      "code": "Decorative3",
+      "name": "Decorative Panel 3",
+      "name_fa": "دکور3",
+      "category": "decorative",
+      "tags": [
+        "decorative",
+        "panel",
+        "ornamental"
+      ],
+      "file": "Decorative3.fdr"
+    },
+    {
+      "code": "Glass_Holder",
+      "name": "Glass Holder",
+      "name_fa": "جا گیلاسی",
+      "category": "others",
+      "tags": [
+        "glass",
+        "holder",
+        "kitchen"
+      ],
+      "file": "Glass_Holder.fdr"
+    },
+    {
+      "code": "LightFrames",
+      "name": "Light Frame / Crown Molding",
+      "name_fa": "تاج / پاخور / زیرچراغ",
+      "category": "others",
+      "tags": [
+        "light",
+        "frame",
+        "crown",
+        "molding"
+      ],
+      "file": "LightFrames.fdr"
+    }
+  ]
+}

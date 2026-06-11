@@ -1,0 +1,46 @@
+{
+  "design_code": "103",
+  "name": "Flat Panel Door",
+  "name_fa": "در پنل تخت",
+  "name_ar": "باب لوح مسطح",
+  "category": "nesting",
+  "description": "Standard flat panel door for nesting - no grooves",
+  "default_size": {
+    "width": 600,
+    "height": 400
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6,
+      "type": "endmill",
+      "use": "profile_cut"
+    }
+  },
+  "offsets": [],
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth": 0,
+      "enabled": true,
+      "offset_mm": 0,
+      "pass_count": 1
+    }
+  ],
+  "pattern": {
+    "type": "none",
+    "enabled": false
+  },
+  "preview": {
+    "shape": "rectangle",
+    "color": "#A0522D"
+  },
+  "tags": [
+    "nesting",
+    "flat",
+    "standard"
+  ]
+}

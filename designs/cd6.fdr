@@ -1,0 +1,127 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "cd6",
+  "name": "Wide Double Frame",
+  "name_fa": "کابینت6",
+  "name_ar": "",
+  "category": "designs",
+  "source_file": "cd6.cd",
+  "default_size": {
+    "width": 900,
+    "height": 500
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6,
+      "type": "endmill",
+      "use": "profile_inner"
+    },
+    "T2": {
+      "diameter": 16,
+      "type": "form_tool",
+      "use": "groove_bevel"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0.0,
+      "offset_mm": 0.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه 1",
+      "type": "shallow_groove",
+      "tool": "T2",
+      "depth_mm": 1,
+      "offset_mm": 40,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "L2",
+      "name_fa": "لایه 2",
+      "type": "deep_groove",
+      "tool": "T2",
+      "depth_mm": 10,
+      "offset_mm": 32,
+      "pass_count": 5,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "L3",
+      "name_fa": "لایه 3",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 11,
+      "offset_mm": 32,
+      "pass_count": 6,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "name": "L4",
+      "name_fa": "لایه 4",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 1,
+      "offset_mm": 32,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 5,
+      "name": "L5",
+      "name_fa": "لایه 5",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 2,
+      "offset_mm": 32,
+      "pass_count": 1,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "double_frame",
+    "spacing_mm": 50,
+    "spacings_all": [
+      50,
+      152.4,
+      50.8
+    ]
+  },
+  "offsets": [
+    {
+      "layer_no": 2,
+      "distance_mm": 40,
+      "name": "L1",
+      "name_fa": "آفست 1"
+    },
+    {
+      "layer_no": 3,
+      "distance_mm": 32,
+      "name": "L2",
+      "name_fa": "آفست 2"
+    }
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "double-frame",
+    "classic"
+  ]
+}

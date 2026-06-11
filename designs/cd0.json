@@ -1,0 +1,60 @@
+{
+  "design_code": "cd0",
+  "name": "Plain Door",
+  "name_fa": "در ساده",
+  "name_ar": "",
+  "category": "designs",
+  "description": "Imported from cd0.cwd",
+  "source_file": "cd0.cwd",
+  "default_size": {
+    "width": 900.0,
+    "height": 500.0
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6.0,
+      "type": "endmill",
+      "description": "Profile & inner cuts"
+    },
+    "T2": {
+      "diameter": 16.0,
+      "type": "form_tool",
+      "description": "Grooves & bevel decoration"
+    }
+  },
+  "offsets": [],
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile Cut",
+      "name_fa": "برش پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0,
+      "offset_mm": 0,
+      "pass_count": 1,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": false,
+    "type": "none"
+  },
+  "pass_depth_mm": 2.0,
+  "spacing_mm": [
+    50.0,
+    50.8,
+    60.0,
+    80.0
+  ],
+  "preview": {
+    "shape": "rectangle",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "plain",
+    "flat",
+    "simple",
+    "modern"
+  ]
+}

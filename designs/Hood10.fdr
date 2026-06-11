@@ -1,0 +1,64 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "Hood10",
+  "name": "Hood 10",
+  "name_fa": "هود10",
+  "name_ar": "",
+  "category": "hoods",
+  "source_file": "Hood10.cd",
+  "default_size": {
+    "width": 1000.0,
+    "height": 300.0
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6.0,
+      "type": "endmill"
+    },
+    "T2": {
+      "diameter": 6.0,
+      "type": "form_tool"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0,
+      "offset_mm": 0,
+      "pass_count": 1,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "hoods",
+    "spacing_mm": 25.4,
+    "spacings_all": [
+      25.4,
+      50.8,
+      60,
+      80,
+      101.6,
+      127.0,
+      152.4,
+      254.0,
+      645.2
+    ]
+  },
+  "offsets": [],
+  "preview": {
+    "shape": "hoods",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "hood",
+    "cabinet",
+    "overhead"
+  ]
+}

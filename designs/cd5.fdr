@@ -1,0 +1,116 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "cd5",
+  "name": "Wide Double Frame",
+  "name_fa": "کابینت5",
+  "name_ar": "",
+  "category": "designs",
+  "source_file": "cd5.cd",
+  "default_size": {
+    "width": 900,
+    "height": 500
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6,
+      "type": "endmill",
+      "use": "profile_inner"
+    },
+    "T2": {
+      "diameter": 16,
+      "type": "form_tool",
+      "use": "groove_bevel"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0.0,
+      "offset_mm": 0.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه 1",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 2.0,
+      "offset_mm": 60,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "name": "L2",
+      "name_fa": "لایه 2",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 3,
+      "offset_mm": 15,
+      "pass_count": 2,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "L3",
+      "name_fa": "لایه 3",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 3,
+      "offset_mm": 15,
+      "pass_count": 2,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "name": "L4",
+      "name_fa": "لایه 4",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 3,
+      "offset_mm": 15,
+      "pass_count": 2,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "type": "double_frame",
+    "spacing_mm": 50,
+    "spacings_all": [
+      50,
+      50.8,
+      203.2
+    ]
+  },
+  "offsets": [
+    {
+      "layer_no": 1,
+      "distance_mm": 60,
+      "name": "L1",
+      "name_fa": "آفست 1"
+    },
+    {
+      "layer_no": 3,
+      "distance_mm": 15,
+      "name": "L2",
+      "name_fa": "آفست 2"
+    }
+  ],
+  "preview": {
+    "shape": "frame_door",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "double-frame",
+    "classic"
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "firoo_format": "fdr",
+  "format_version": "1.0",
+  "design_code": "Vitrine26",
+  "name": "Standard Glass Vitrine (55×55mm)",
+  "name_fa": "ویترین26",
+  "name_ar": "",
+  "category": "vitrines",
+  "source_file": "Vitrine26.cd",
+  "default_size": {
+    "width": 900.0,
+    "height": 500.0
+  },
+  "glass_opening": {
+    "width": 55.0,
+    "height": 55.0
+  },
+  "tools": {
+    "T1": {
+      "diameter": 6.0,
+      "type": "endmill",
+      "use": "profile_rabbet_inner"
+    },
+    "T2": {
+      "diameter": 6.0,
+      "type": "form_tool",
+      "use": "frame_groove"
+    }
+  },
+  "pass_depth_mm": 2.0,
+  "layers": [
+    {
+      "id": 0,
+      "name": "Profile",
+      "name_fa": "پروفایل",
+      "type": "profile",
+      "tool": "T1",
+      "depth_mm": 0.0,
+      "offset_mm": 0.0,
+      "pass_count": 1,
+      "enabled": true
+    },
+    {
+      "id": 1,
+      "name": "L1",
+      "name_fa": "لایه ۱",
+      "type": "shallow_groove",
+      "tool": "T2",
+      "depth_mm": 2.0,
+      "offset_mm": 211.2,
+      "pass_count": 1,
+      "enabled": false
+    },
+    {
+      "id": 2,
+      "name": "L2",
+      "name_fa": "لایه ۲",
+      "type": "groove",
+      "tool": "T2",
+      "depth_mm": 3.0,
+      "offset_mm": 338.0,
+      "pass_count": 2,
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "name": "L3",
+      "name_fa": "لایه ۳",
+      "type": "rabbet",
+      "tool": "T1",
+      "depth_mm": 5.0,
+      "offset_mm": 422.5,
+      "pass_count": 3,
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "name": "L4",
+      "name_fa": "لایه ۴",
+      "type": "inner_cut",
+      "tool": "T1",
+      "depth_mm": 5.0,
+      "offset_mm": 424.5,
+      "pass_count": 3,
+      "enabled": true
+    }
+  ],
+  "pattern": {
+    "enabled": false,
+    "type": "vitrine",
+    "glass_w": 55.0,
+    "glass_h": 55.0
+  },
+  "offsets": [
+    {
+      "layer_no": 3,
+      "distance_mm": 422.5,
+      "name": "Glass Frame",
+      "name_fa": "قاب شیشه"
+    }
+  ],
+  "preview": {
+    "shape": "vitrine",
+    "color": "#8B4513"
+  },
+  "tags": [
+    "vitrine",
+    "glass",
+    "glass-55x55"
+  ]
+}
