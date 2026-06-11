@@ -667,7 +667,7 @@ class ExportWorker(QThread):
                         part.part_code,
                         dxfattribs={
                             "layer":  parts_layer,
-                            "height": min(pw, ph) * 0.10,
+                            "height": min(min(pw, ph) * 0.04, 20.0),
                             "insert": (px + pw/2, py + ph/2),
                         })
 

@@ -207,7 +207,6 @@ class SheetCanvas(QWidget):
                                    height=part.actual_height())
             if not design:
                 return
-            # Draw each enabled layer as a rectangle inset
             layer_colors = [
                 QColor("#ffffff"),  # L0 profile
                 QColor("#f1c40f"),  # L1
@@ -216,26 +215,31 @@ class SheetCanvas(QWidget):
                 QColor("#3498db"),  # L4
                 QColor("#9b59b6"),  # L5
             ]
+            MIN_PX = 3  # minimum pixel inset so lines are visible in thumbnails
             for layer in design.layers:
                 if not layer.get("enabled", True):
                     continue
                 offset = float(layer.get("offset_mm", 0) or 0)
                 depth  = float(layer.get("depth_mm",  0) or 0)
-                if offset <= 0 or depth <= 0:
+                ltype  = layer.get("type", "groove")
+                # Skip only if zero offset AND zero depth AND not a profile cut
+                if offset <= 0 and depth <= 0 and ltype != "profile":
                     continue
-                lid   = layer.get("id", 0)
-                lc    = layer_colors[lid % len(layer_colors)]
-                # Inset rectangle by offset
-                ox_ = offset * sc; oy_ = offset * sc
+                lid  = layer.get("id", 0)
+                lc   = layer_colors[lid % len(layer_colors)]
+                # Enforce minimum pixel visibility for thumbnail scale
+                ox_ = max(MIN_PX, offset * sc) if offset > 0 else 0
+                oy_ = max(MIN_PX, offset * sc) if offset > 0 else 0
                 lx  = prx + ox_
                 ly  = pry + oy_
-                lw  = prw - 2*ox_
-                lh  = prh - 2*oy_
+                lw  = prw - 2 * ox_
+                lh  = prh - 2 * oy_
                 if lw < 2 or lh < 2:
                     continue
-                lc_pen = QColor(lc); lc_pen.setAlpha(220)
+                lc_pen = QColor(lc)
+                lc_pen.setAlpha(230)
                 p.setBrush(Qt.NoBrush)
-                p.setPen(QPen(lc_pen, max(0.5, depth * sc * 0.3)))
+                p.setPen(QPen(lc_pen, 1.0))
                 p.drawRect(QRectF(lx, ly, lw, lh))
         except Exception:
             pass  # Never crash the UI

@@ -170,17 +170,28 @@ class StandardPartsDialog(QDialog):
             hdr3.setSectionResizeMode(i, QHeaderView.ResizeToContents)
             self._grid.setColumnWidth(i, 100)
         dc_col = 8 if self._detailed_mode else 4
-        self._grid.setColumnWidth(dc_col, 95)
-        self._grid.setItemDelegateForColumn(dc_col, DesignCodeDelegate(self._grid))
+        self._grid.setColumnWidth(dc_col, 110)
         if self._detailed_mode:
             for r in range(20):
-                # Defaults make the detailed grid usable immediately, while still editable.
                 self._grid.setItem(r, 4, QTableWidgetItem("90"))
                 self._grid.setItem(r, 5, QTableWidgetItem("0"))
                 self._grid.setItem(r, 6, QTableWidgetItem(""))
                 self._grid.setItem(r, 7, QTableWidgetItem("Normal"))
+        _codes = _load_design_codes()
         for r in range(20):
-            self._grid.setRowHeight(r, 22)
+            self._grid.setRowHeight(r, 26)
+            cmb = QComboBox()
+            cmb.setEditable(True)
+            for c in _codes:
+                cmb.addItem(c)
+            cmb.setCurrentText("cd0")
+            cmb.setStyleSheet(
+                "QComboBox{background:#1a1a1a;color:#4ec9b0;"
+                "border:1px solid #3e3e42;font-size:11px;}"
+                "QComboBox QAbstractItemView{background:#252526;color:#cccccc;"
+                "selection-background-color:#264f78;}"
+            )
+            self._grid.setCellWidget(r, dc_col, cmb)
         rl.addWidget(self._grid, 1); body.addWidget(right, 1)
         root.addLayout(body, 1)
 
@@ -243,6 +254,11 @@ class StandardPartsDialog(QDialog):
 
             name = self._cell_text(r, 0) or f"{self._shape_type} ({x:.0f}x{y:.0f})"
 
+            dc_col = 8 if self._detailed_mode else 4
+            _dc_widget = self._grid.cellWidget(r, dc_col)
+            _dc_val = (_dc_widget.currentText().strip()
+                       if _dc_widget else self._cell_text(r, dc_col, "cd0")) or "cd0"
+
             if self._detailed_mode:
                 rotation = self._cell_text(r, 4, "90")
                 try:
@@ -252,13 +268,13 @@ class StandardPartsDialog(QDialog):
                 mirror_txt = self._cell_text(r, 6, "").lower()
                 mirror = mirror_txt in ("1", "true", "yes", "y", "✓", "check", "checked")
                 priority = self._cell_text(r, 7, "Normal") or "Normal"
-                design_code = self._cell_text(r, 8, "cd0") or "cd0"
+                design_code = _dc_val
             else:
                 rotation = "90"
                 tilt = 0.0
                 mirror = False
                 priority = "Normal"
-                design_code = self._cell_text(r, 4, "cd0") or "cd0"
+                design_code = _dc_val
 
             self._result_rows.append({
                 "part_code": name,
