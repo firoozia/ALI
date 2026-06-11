@@ -109,9 +109,9 @@ class DesignData:
             "spacing_mm": 60.0, "angle_deg": 45.0
         }
         self.offsets: List[Dict] = [
-            {"name":"offset1","from":"door_edge","top":50.0,"right":50.0,"bottom":50.0,"left":50.0},
-            {"name":"offset2","from":"offset1",  "top": 8.0,"right": 8.0,"bottom": 8.0,"left": 8.0},
-            {"name":"offset3","from":"offset2",  "top":30.0,"right":30.0,"bottom":30.0,"left":30.0},
+            {"name":"offset1","from":"door_edge","top":50.0,"right":50.0,"bottom":50.0,"left":50.0,"link":True},
+            {"name":"offset2","from":"offset1",  "top": 8.0,"right": 8.0,"bottom": 8.0,"left": 8.0,"link":True},
+            {"name":"offset3","from":"offset2",  "top":30.0,"right":30.0,"bottom":30.0,"left":30.0,"link":True},
         ]
         self.operations: List[Dict] = [
             {"enabled":True,"type":"profile", "offset":"door_edge","inner":"",       "tool":"T1","depth":19.0,"pattern":""},
@@ -1083,18 +1083,19 @@ class DesignEditorWidget(QWidget):
         tb.addStretch()
         lay.addLayout(tb)
 
-        # Table
-        self._off_table = QTableWidget(0, 7)
+        # Table  (cols: Name | From | Top | Right | Bottom | Left | Link | ●)
+        self._off_table = QTableWidget(0, 8)
         self._off_table.setHorizontalHeaderLabels(
-            ["Offset","From","Top","Right","Bottom","Left",""])
+            ["Offset","From","Top","Right","Bottom","Left","🔗",""])
         self._off_table.verticalHeader().hide()
         self._off_table.setAlternatingRowColors(True)
         self._off_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._off_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self._off_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        for c in range(2,6):
+        for c in range(2, 6):
             self._off_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeToContents)
-        self._off_table.setColumnWidth(6, 24)
+        self._off_table.setColumnWidth(6, 30)
+        self._off_table.setColumnWidth(7, 24)
         self._off_table.setStyleSheet(self._table_style())
         self._off_table.itemChanged.connect(self._on_offset_table_changed)
         lay.addWidget(self._off_table, 1)
@@ -1132,13 +1133,25 @@ class DesignEditorWidget(QWidget):
                 item.setTextAlignment(Qt.AlignCenter)
                 self._off_table.setItem(r, ci, item)
 
-            # Color dot
+            # Link checkbox (col 6)
+            link_chk = QCheckBox()
+            link_chk.setChecked(bool(off.get("link", True)))
+            link_chk.setToolTip("Link all sides — editing one value fills all four")
+            link_chk.setStyleSheet("QCheckBox { margin-left:6px; }")
+            link_chk.stateChanged.connect(
+                lambda state, row=r: self._on_offset_link_changed(row, state))
+            lw = QWidget(); ll = QHBoxLayout(lw)
+            ll.setContentsMargins(0,0,0,0); ll.setAlignment(Qt.AlignCenter)
+            ll.addWidget(link_chk)
+            self._off_table.setCellWidget(r, 6, lw)
+
+            # Color dot (col 7)
             dot = QLabel()
-            dot.setFixedSize(14,14)
+            dot.setFixedSize(14, 14)
             dot.setStyleSheet(f"background:{color};border-radius:7px;")
             cell_w = QWidget(); cl = QHBoxLayout(cell_w)
             cl.setContentsMargins(5,0,0,0); cl.addWidget(dot)
-            self._off_table.setCellWidget(r, 6, cell_w)
+            self._off_table.setCellWidget(r, 7, cell_w)
 
             names_so_far.append(off.get("name",""))
 
@@ -1153,14 +1166,30 @@ class DesignEditorWidget(QWidget):
         if col == 0:
             off["name"] = item.text().strip()
             self._refresh_operations_table()
-        elif col in (2,3,4,5):
+        elif col in (2, 3, 4, 5):
             key = ["top","right","bottom","left"][col-2]
             try:
-                off[key] = float(item.text())
+                val = float(item.text())
+                off[key] = val
+                if off.get("link", True):
+                    self._off_table.blockSignals(True)
+                    for ci, k in enumerate(["top","right","bottom","left"], start=2):
+                        if ci != col:
+                            off[k] = val
+                            sync = QTableWidgetItem(f"{val:.1f}")
+                            sync.setTextAlignment(Qt.AlignCenter)
+                            self._off_table.setItem(r, ci, sync)
+                    self._off_table.blockSignals(False)
             except ValueError:
                 pass
         self._mark_modified()
         self._canvas.update()
+
+    def _on_offset_link_changed(self, row, state):
+        if row >= len(self._design.offsets):
+            return
+        self._design.offsets[row]["link"] = (state == Qt.Checked.value or state == 2)
+        self._mark_modified()
 
     def _on_offset_from_changed(self, row):
         if row >= len(self._design.offsets):
@@ -1177,7 +1206,7 @@ class DesignEditorWidget(QWidget):
         prev = self._design.offsets[-1]["name"] if self._design.offsets else "door_edge"
         self._design.offsets.append({
             "name": name, "from": prev,
-            "top":10.0,"right":10.0,"bottom":10.0,"left":10.0})
+            "top":10.0,"right":10.0,"bottom":10.0,"left":10.0,"link":True})
         self._refresh_offsets_table()
         self._refresh_operations_table()
         self._mark_modified()
