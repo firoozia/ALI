@@ -1,13 +1,27 @@
 """
 FIROO CAM — Door Geometry Engine (Stage 2)
 
-Converts parametric door rules (from GHX analysis) into pure Python geometry.
-Implements the cumulative offset frame + groove pattern logic reverse-engineered
-from the Grasshopper Cluster's internal wiring:
+KEY PRINCIPLE (confirmed by user):
+  Pattern lines are drawn BETWEEN two consecutive offset boundaries —
+  from the outer edge of a section to its inner edge.
 
-  Rec → Neg(-15) → Offset → Dispatch → Explode ×2
-       → DivLength(15) ×2 → CullI([0,10,25]) ×2
-       → Short → Item → A-B → Avr → Move → PLine → Join
+  Example for a 500×900 door with offsets [50, 15, 5, 5, 11, 17]:
+    Section 0: outer(500×900)  → OF1 ring(400×800)   width=50mm
+    Section 1: OF1(400×800)    → OF2 ring(370×770)   width=15mm
+    Section 2: OF2(370×770)    → OF3 ring(360×760)   width=5mm
+    ...
+
+  Within each section, lines connect points on the OUTER boundary
+  to corresponding points on the INNER boundary (DivLength×2 paths),
+  with a crossing pattern (reversed pairing) and optional Mirror.
+
+GH Cluster wiring decoded:
+  Crv(outer) + Crv(inner)
+    → DivLength(15) ×2
+    → CullI([0,1] and [0,-1])  — skip corner-proximity points
+    → Short (match counts)
+    → CROSS-connect: outer[i] ↔ inner[reversed(i)]
+    → Avr(0.5) midpoint, A-B vector, Move, PLine, Fillet, Mirror, Join
 
 Usage:
     from door_geometry_engine import build_door_geometry, DoorParams
@@ -38,17 +52,18 @@ def _midpoint(a: Point2D, b: Point2D) -> Point2D:
 def _move(p: Point2D, dx: float, dy: float) -> Point2D:
     return (p[0] + dx, p[1] + dy)
 
+def _mirror_x(p: Point2D, cx: float) -> Point2D:
+    return (2 * cx - p[0], p[1])
+
 
 # ── Rect ──────────────────────────────────────────────────────────────────────
 
 @dataclass
 class Rect:
-    x: float   # left edge
-    y: float   # bottom edge
+    x: float   # left
+    y: float   # bottom
     w: float   # width
     h: float   # height
-
-    # ── derived ─────────────────────────────────────────────────────────────
 
     @property
     def left(self)   -> float: return self.x
@@ -70,196 +85,124 @@ class Rect:
     def corners(self) -> Poly:
         """BL → BR → TR → TL"""
         return [
-            (self.x,       self.y),
+            (self.x,        self.y),
             (self.x+self.w, self.y),
             (self.x+self.w, self.y+self.h),
             (self.x,        self.y+self.h),
         ]
 
     def offset(self, amount: float) -> "Rect":
-        """Positive = expand outward; negative = shrink inward."""
-        return Rect(
-            self.x - amount,
-            self.y - amount,
-            self.w + 2 * amount,
-            self.h + 2 * amount,
-        )
+        """Positive = expand; negative = shrink inward."""
+        return Rect(self.x - amount, self.y - amount,
+                    self.w + 2*amount, self.h + 2*amount)
 
     def as_lines(self) -> List[Line2D]:
-        """4 boundary segments."""
         c = self.corners()
         return [(c[i], c[(i+1) % 4]) for i in range(4)]
 
 
-# ── divide by length ──────────────────────────────────────────────────────────
+# ── edge sampling ─────────────────────────────────────────────────────────────
 
-def divide_rect_by_length(rect: Rect, seg_length: float) -> List[Point2D]:
+def sample_edge(p0: Point2D, p1: Point2D,
+                div_length: float,
+                skip_first: int = 1,
+                skip_last:  int = 1) -> List[Point2D]:
     """
-    Walk the rectangle perimeter (BL→BR→TR→TL→BL) and emit a point
-    every `seg_length` mm. Mirrors Grasshopper's Divide Length component.
+    Divide one edge into segments of `div_length` mm and return the
+    division points, skipping `skip_first` points near p0 and
+    `skip_last` points near p1.
+    Mirrors Grasshopper's DivLength + CullI pattern.
     """
-    if seg_length <= 0:
+    total = _dist(p0, p1)
+    if total <= 0 or div_length <= 0:
         return []
-    pts: List[Point2D] = []
-    corners = rect.corners()
-    sides   = [(corners[i], corners[(i+1) % 4]) for i in range(4)]
-    carry   = 0.0          # distance into the current side already consumed
-    for (p0, p1) in sides:
-        side_len = _dist(p0, p1)
-        d = carry
-        while d < side_len:
-            t = d / side_len
-            pts.append(_lerp(p0, p1, t))
-            d += seg_length
-        carry = d - side_len
-    return pts
-
-
-def cull_index(items: list, indices: List[int]) -> list:
-    """Remove items at the given indices (wrap-safe). Mirrors Grasshopper CullI."""
-    n = len(items)
-    if n == 0:
-        return []
-    bad = {i % n for i in indices}
-    return [v for i, v in enumerate(items) if i not in bad]
-
-
-# ── groove line generators ────────────────────────────────────────────────────
-
-def _edge_points(p0: Point2D, p1: Point2D, div_length: float,
-                 skip_first: int = 1, skip_last: int = 1) -> List[Point2D]:
-    """Divide one edge segment and skip corner-proximity points."""
-    n_segs = max(1, int(_dist(p0, p1) / div_length))
-    pts = [_lerp(p0, p1, i / n_segs) for i in range(n_segs + 1)]
-    lo = skip_first
-    hi = len(pts) - skip_last
+    n = max(1, int(total / div_length))
+    pts = [_lerp(p0, p1, i / n) for i in range(n + 1)]
+    lo  = skip_first
+    hi  = len(pts) - skip_last
     return pts[lo:hi] if hi > lo else []
 
 
-def generate_groove_lines(
-    rect:          Rect,
-    groove_inset:  float     = 0.0,
-    div_length:    float     = 15.0,
-    cull_indices:  List[int] = None,
-    pattern:       str       = "cross_connect",
-    move_amount:   float     = 0.0,
+def sample_rect_edges(rect: Rect,
+                      div_length: float,
+                      skip: int = 1) -> dict:
+    """
+    Sample all 4 edges of a rectangle.
+    Returns dict with keys 'top', 'bottom', 'left', 'right'.
+    """
+    return {
+        "bottom": sample_edge((rect.left, rect.bottom), (rect.right, rect.bottom), div_length, skip, skip),
+        "right":  sample_edge((rect.right, rect.bottom),(rect.right, rect.top),    div_length, skip, skip),
+        "top":    sample_edge((rect.right, rect.top),   (rect.left, rect.top),     div_length, skip, skip),
+        "left":   sample_edge((rect.left, rect.top),    (rect.left, rect.bottom),  div_length, skip, skip),
+    }
+
+
+# ── section pattern generator ─────────────────────────────────────────────────
+
+def generate_section_lines(
+    outer: Rect,
+    inner: Rect,
+    div_length: float = 15.0,
+    skip:       int   = 1,
+    crossing:   bool  = True,
 ) -> List[Line2D]:
     """
-    Groove line generator — supports three pattern modes.
+    Generate pattern lines for ONE section (between outer and inner rect).
 
-    pattern = "cross_connect"  (default)
-        Reverse-engineered from Cluster wiring:
-        Divide perimeter, split into two halves, CROSS-connect with
-        Avr(0.5) midpoint shift.  Creates diagonal X-crossing lines
-        on each ring face.  Mirrors the GH: CullI → Short → Avr → Move → PLine.
+    This is the core of the Cluster's algorithm:
+      - Divide corresponding edges of outer and inner rects by div_length
+      - CullI: skip corner-proximity points (skip=1 means remove first & last)
+      - Pair outer[i] with inner[i] (straight) or inner[reversed(i)] (crossing)
+      - Use Shortest List to match unequal counts
+      - Mirror on vertical center axis (as GH Mirror component does)
 
-    pattern = "parallel_grid"
-        Vertical lines connecting top ↔ bottom, horizontal lines
-        connecting left ↔ right.  Classic grid groove pattern.
-
-    pattern = "fan_mirror"
-        Two fans of lines from top-left to bottom-right, mirrored on
-        the vertical center axis.  Matches the 'Mirror' component at the
-        end of the Cluster and the two parallel DivLength paths.
-
-    Args:
-        rect:         ring boundary rectangle
-        groove_inset: extra inward offset before drawing (Neg→Offset in Cluster)
-        div_length:   DivLength slider value (mm per segment, default 15)
-        cull_indices: explicit list of indices to remove; default = [0, 1, last]
-        pattern:      one of "cross_connect" | "parallel_grid" | "fan_mirror"
-        move_amount:  perpendicular shift applied to endpoints (Move component)
+    crossing=True  → diagonal X-lines (outer top-left → inner bottom-right)
+    crossing=False → straight lines perpendicular to each section face
     """
-    if cull_indices is None:
-        cull_indices = [0, 1]   # matches {0}: 0 0 / first row from screenshot
-
-    inner = rect.offset(-groove_inset)
-    if not inner.valid:
-        return []
-
     lines: List[Line2D] = []
 
-    # ── pattern: parallel_grid ────────────────────────────────────────────────
-    if pattern == "parallel_grid":
-        # Vertical lines: top ↔ bottom
-        top_pts = _edge_points((inner.left, inner.top),    (inner.right, inner.top),    div_length)
-        bot_pts = _edge_points((inner.left, inner.bottom), (inner.right, inner.bottom), div_length)
-        for tp, bp in zip(top_pts, bot_pts):
-            lines.append((tp, bp))
-        # Horizontal lines: left ↔ right
-        lft_pts = _edge_points((inner.left,  inner.bottom), (inner.left,  inner.top), div_length)
-        rgt_pts = _edge_points((inner.right, inner.bottom), (inner.right, inner.top), div_length)
-        for lp, rp in zip(lft_pts, rgt_pts):
-            lines.append((lp, rp))
-        return lines
+    # The 4 face-pairs of the section ring:
+    #   Top face:    outer.top    ↔ inner.top    (both horizontal edges)
+    #   Bottom face: outer.bottom ↔ inner.bottom
+    #   Left face:   outer.left   ↔ inner.left
+    #   Right face:  outer.right  ↔ inner.right
 
-    # ── pattern: fan_mirror ───────────────────────────────────────────────────
-    if pattern == "fan_mirror":
-        cx = inner.cx
-        # Left half: divide top-left and bottom-left edges
-        n_top = max(2, int(inner.w / 2 / div_length))
-        n_lft = max(2, int(inner.h / div_length))
-        top_half  = [_lerp((inner.left, inner.top),    (cx, inner.top),    i/n_top) for i in range(1, n_top)]
-        bot_half  = [_lerp((inner.left, inner.bottom), (cx, inner.bottom), i/n_top) for i in range(1, n_top)]
-        lft_half  = [_lerp((inner.left, inner.bottom), (inner.left, inner.top), i/n_lft) for i in range(1, n_lft)]
-        # Fan: each top point → each left point
-        for i, tp in enumerate(top_half):
-            lp = lft_half[i % len(lft_half)] if lft_half else (inner.left, inner.cy)
-            lines.append((tp, lp))
-        for i, bp in enumerate(bot_half):
-            lp = lft_half[i % len(lft_half)] if lft_half else (inner.left, inner.cy)
-            lines.append((bp, lp))
-        # Mirror on vertical axis
-        mirrored = [
-            ((_move(p0, 2*(cx - p0[0]), 0)), (_move(p1, 2*(cx - p1[0]), 0)))
-            for (p0, p1) in lines
-        ]
-        lines += mirrored
-        return lines
+    def connect_face(o_edge: List[Point2D], i_edge: List[Point2D]) -> List[Line2D]:
+        if not o_edge or not i_edge:
+            return []
+        # Shortest List
+        count = min(len(o_edge), len(i_edge))
+        o_pts = o_edge[:count]
+        i_pts = i_edge[:count]
+        if crossing:
+            i_pts = list(reversed(i_pts))
+        return list(zip(o_pts, i_pts))
 
-    # ── pattern: cross_connect (default) ────────────────────────────────────
-    # Matches: Neg→Offset, DivLength×2, CullI([0,1]+[0,-1]), Short, Avr(0.5),
-    #          A-B, Move, PLine, Mirror
-    # Path A: top+bottom edges (horizontal runs)
-    # Path B: left+right edges  (vertical runs)
-    # Points from each path are paired CROSSED: top[i] ↔ bot[reversed(i)]
-    # → Avr(0.5) gives midpoint, A-B gives direction, Move shifts slightly
+    # Top face: outer top edge → inner top edge (both run left→right)
+    o_top = sample_edge((outer.left, outer.top),  (outer.right, outer.top),  div_length, skip, skip)
+    i_top = sample_edge((inner.left, inner.top),  (inner.right, inner.top),  div_length, skip, skip)
+    lines += connect_face(o_top, i_top)
 
-    skip = len(cull_indices)   # how many corner points to skip
+    # Bottom face: outer bottom → inner bottom
+    o_bot = sample_edge((outer.left, outer.bottom),(outer.right, outer.bottom),div_length, skip, skip)
+    i_bot = sample_edge((inner.left, inner.bottom),(inner.right, inner.bottom),div_length, skip, skip)
+    lines += connect_face(o_bot, i_bot)
 
-    # Horizontal crossing: top ↔ bottom (reversed)
-    top_pts = _edge_points((inner.left, inner.top),    (inner.right, inner.top),    div_length, skip, skip)
-    bot_pts = _edge_points((inner.left, inner.bottom), (inner.right, inner.bottom), div_length, skip, skip)
-    top_pts = cull_index(top_pts, cull_indices)
-    bot_pts = cull_index(bot_pts, cull_indices)
-    bot_rev = list(reversed(bot_pts))
-    for i in range(min(len(top_pts), len(bot_rev))):
-        pa = top_pts[i]
-        pb = bot_rev[i]
-        if move_amount:
-            mid = _midpoint(pa, pb)
-            pa  = _move(pa, 0,  move_amount)
-            pb  = _move(pb, 0, -move_amount)
-        lines.append((pa, pb))
+    # Left face: outer left → inner left (both run bottom→top)
+    o_lft = sample_edge((outer.left, outer.bottom),(outer.left, outer.top),   div_length, skip, skip)
+    i_lft = sample_edge((inner.left, inner.bottom),(inner.left, inner.top),   div_length, skip, skip)
+    lines += connect_face(o_lft, i_lft)
 
-    # Vertical crossing: left ↔ right (reversed)
-    lft_pts = _edge_points((inner.left,  inner.bottom), (inner.left,  inner.top), div_length, skip, skip)
-    rgt_pts = _edge_points((inner.right, inner.bottom), (inner.right, inner.top), div_length, skip, skip)
-    lft_pts = cull_index(lft_pts, cull_indices)
-    rgt_pts = cull_index(rgt_pts, cull_indices)
-    rgt_rev = list(reversed(rgt_pts))
-    for i in range(min(len(lft_pts), len(rgt_rev))):
-        pa = lft_pts[i]
-        pb = rgt_rev[i]
-        if move_amount:
-            pa = _move(pa,  move_amount, 0)
-            pb = _move(pb, -move_amount, 0)
-        lines.append((pa, pb))
+    # Right face: outer right → inner right
+    o_rgt = sample_edge((outer.right,outer.bottom),(outer.right,outer.top),   div_length, skip, skip)
+    i_rgt = sample_edge((inner.right,inner.bottom),(inner.right,inner.top),   div_length, skip, skip)
+    lines += connect_face(o_rgt, i_rgt)
 
     return lines
 
 
-# ── offset ring dataclass ─────────────────────────────────────────────────────
+# ── data classes ──────────────────────────────────────────────────────────────
 
 RING_COLORS = [
     "#E74C3C",  # OF1
@@ -277,44 +220,51 @@ RING_COLORS = [
 
 @dataclass
 class OffsetRing:
-    index:          int        # 1-based
-    step_mm:        float      # this step's contribution
-    cumulative_mm:  float      # total distance from outer edge
-    rect:           Rect       # boundary of this ring
-    groove_lines:   List[Line2D] = field(default_factory=list)
-    color:          str        = "#888888"
+    index:          int
+    step_mm:        float
+    cumulative_mm:  float
+    rect:           Rect
+    color:          str = "#888888"
 
 
-# ── DoorParams ────────────────────────────────────────────────────────────────
+@dataclass
+class Section:
+    """One 'frame section' between two consecutive offset rings."""
+    index:        int           # 0 = outer-door → OF1, 1 = OF1→OF2, ...
+    outer_rect:   Rect
+    inner_rect:   Rect
+    outer_offset: float         # cumulative mm of outer boundary
+    inner_offset: float         # cumulative mm of inner boundary
+    width_mm:     float         # = inner_offset - outer_offset
+    pattern_lines: List[Line2D] = field(default_factory=list)
+    color:         str          = "#888888"
+
 
 @dataclass
 class DoorParams:
     """
-    Mirrors the slider values found in the .ghx analysis.
+    Slider values from the .ghx analysis.
 
-    offsets:          [OF1..OF10] step values in mm (zero = inactive)
-    width / height:   door dimensions in mm
-    div_length:       Divide Length slider (default 15 mm)
-    groove_inset:     how far inside each ring boundary the grooves sit
-                      (mirrors the Neg→Offset inside the Cluster; 0 = at boundary)
-    cull_corner_pts:  how many points to skip near each corner
+    offsets:      [OF1..OF10] step values in mm  (zero = inactive)
+    width/height: door outer dimensions in mm
+    div_length:   DivLength slider value (default 15 mm)
+    skip:         corner-proximity points to skip from each edge (CullI depth)
+    crossing:     True = cross-connect for diagonal X-pattern (GH default)
     """
-    width:           float
-    height:          float
-    offsets:         List[float]
-    div_length:      float = 15.0
-    groove_inset:    float = 0.0
-    cull_corner_pts: int   = 2
-    pattern:         str   = "cross_connect"   # cross_connect | parallel_grid | fan_mirror
+    width:      float
+    height:     float
+    offsets:    List[float]
+    div_length: float = 15.0
+    skip:       int   = 1
+    crossing:   bool  = True
 
-
-# ── main builder ─────────────────────────────────────────────────────────────
 
 @dataclass
 class DoorGeometry:
     params:    DoorParams
     base_rect: Rect
     rings:     List[OffsetRing] = field(default_factory=list)
+    sections:  List[Section]    = field(default_factory=list)
 
     @property
     def total_offset(self) -> float:
@@ -325,190 +275,198 @@ class DoorGeometry:
         return self.rings[-1].rect if self.rings else self.base_rect
 
     @property
-    def all_groove_lines(self) -> List[Line2D]:
+    def all_pattern_lines(self) -> List[Line2D]:
         lines: List[Line2D] = []
-        for r in self.rings:
-            lines.extend(r.groove_lines)
+        for s in self.sections:
+            lines.extend(s.pattern_lines)
         return lines
 
 
+# ── main builder ─────────────────────────────────────────────────────────────
+
 def build_door_geometry(params: DoorParams) -> DoorGeometry:
     """
-    Build a complete door geometry from DoorParams.
+    Build the full door geometry.
 
-    Implements:
-      1. Outer rectangle (W × H)
-      2. Cumulative inward offset rings (OF1 + OF2 + ... = next ring edge)
-      3. Groove lines on each ring boundary
+    1. Create offset rings from cumulative OF values
+    2. For each consecutive pair of boundaries, generate a Section
+    3. In each Section, generate pattern lines between the two boundaries
     """
     base = Rect(0.0, 0.0, params.width, params.height)
     geom = DoorGeometry(params=params, base_rect=base)
 
-    cull_idx = list(range(params.cull_corner_pts))   # e.g. [0,1,2]
-
+    # ── build rings ────────────────────────────────────────────────────────
     cumulative = 0.0
     for idx, step in enumerate(params.offsets):
         if step <= 0:
             continue
-
         cumulative += step
         ring_rect = base.offset(-cumulative)
         if not ring_rect.valid:
             break
-
-        grooves = generate_groove_lines(
-            rect         = ring_rect,
-            groove_inset = params.groove_inset,
-            div_length   = params.div_length,
-            cull_indices = cull_idx,
-            pattern      = params.pattern,
-        )
-
-        ring = OffsetRing(
+        geom.rings.append(OffsetRing(
             index         = idx + 1,
             step_mm       = step,
             cumulative_mm = cumulative,
             rect          = ring_rect,
-            groove_lines  = grooves,
             color         = RING_COLORS[idx % len(RING_COLORS)],
+        ))
+
+    # ── build sections (between consecutive boundaries) ────────────────────
+    # Boundaries: outer door + each ring
+    boundaries: List[Tuple[float, Rect]] = [(0.0, base)]
+    for ring in geom.rings:
+        boundaries.append((ring.cumulative_mm, ring.rect))
+
+    for i in range(len(boundaries) - 1):
+        o_off, o_rect = boundaries[i]
+        i_off, i_rect = boundaries[i + 1]
+        width = i_off - o_off
+
+        lines = generate_section_lines(
+            outer      = o_rect,
+            inner      = i_rect,
+            div_length = params.div_length,
+            skip       = params.skip,
+            crossing   = params.crossing,
         )
-        geom.rings.append(ring)
+
+        sec = Section(
+            index         = i,
+            outer_rect    = o_rect,
+            inner_rect    = i_rect,
+            outer_offset  = o_off,
+            inner_offset  = i_off,
+            width_mm      = width,
+            pattern_lines = lines,
+            color         = RING_COLORS[i % len(RING_COLORS)],
+        )
+        geom.sections.append(sec)
 
     return geom
 
 
-# ── preview (matplotlib) ──────────────────────────────────────────────────────
+# ── preview ───────────────────────────────────────────────────────────────────
 
-def preview(geom: DoorGeometry, save_path: Optional[str] = None, show: bool = False):
-    """Render the door geometry with matplotlib. Saves PNG if save_path given."""
+def preview(geom: DoorGeometry, save_path: Optional[str] = None,
+            show: bool = False, title: str = ""):
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         import matplotlib.patches as patches
     except ImportError:
-        print("[preview] matplotlib not installed — skipping")
+        print("[preview] matplotlib not installed")
         return
 
-    fig, ax = plt.subplots(figsize=(8, 12))
+    fig, ax = plt.subplots(figsize=(6, 10))
     ax.set_aspect("equal")
     ax.set_facecolor("#1a1a2e")
     fig.patch.set_facecolor("#1a1a2e")
 
-    # outer door
+    # outer door fill
     r = geom.base_rect
-    rect_patch = patches.Rectangle(
-        (r.x, r.y), r.w, r.h,
-        linewidth=2, edgecolor="#ffffff", facecolor="#2d2d44"
-    )
-    ax.add_patch(rect_patch)
+    ax.add_patch(patches.Rectangle((r.x, r.y), r.w, r.h,
+                                   lw=2, ec="#ffffff", fc="#2a2a3e"))
 
-    # offset rings
-    for ring in geom.rings:
-        rr = ring.rect
-        rp = patches.Rectangle(
-            (rr.x, rr.y), rr.w, rr.h,
-            linewidth=1.5, edgecolor=ring.color, facecolor="none"
-        )
-        ax.add_patch(rp)
+    # section fills + boundaries
+    for sec in geom.sections:
+        rr = sec.inner_rect
+        ax.add_patch(patches.Rectangle((rr.x, rr.y), rr.w, rr.h,
+                                       lw=1, ec=sec.color, fc="#1a1a2e",
+                                       linestyle="--"))
         # label
-        ax.text(rr.x + 2, rr.y + 2,
-                f"OF{ring.index}  Σ{ring.cumulative_mm:.0f}mm",
-                color=ring.color, fontsize=6, va="bottom")
+        ax.text(rr.x+2, rr.top-6,
+                f"OF{sec.index+1}  Σ{sec.inner_offset:.0f}mm",
+                color=sec.color, fontsize=5.5, va="top")
 
-    # groove lines
-    for ring in geom.rings:
-        for (p0, p1) in ring.groove_lines:
+    # pattern lines per section
+    for sec in geom.sections:
+        for (p0, p1) in sec.pattern_lines:
             ax.plot([p0[0], p1[0]], [p0[1], p1[1]],
-                    color=ring.color, linewidth=0.5, alpha=0.6)
+                    color=sec.color, lw=0.6, alpha=0.75)
 
-    # info box
+    # stats
     p = geom.params
+    total = sum(len(s.pattern_lines) for s in geom.sections)
     info = (f"W={p.width:.0f}  H={p.height:.0f}\n"
-            f"Rings: {len(geom.rings)}   Total offset: {geom.total_offset:.0f}mm\n"
-            f"DivLength={p.div_length}   GrooveInset={p.groove_inset}")
+            f"Sections: {len(geom.sections)}   Σoffset={geom.total_offset:.0f}mm\n"
+            f"DivLen={p.div_length}  skip={p.skip}  "
+            f"crossing={'✓' if p.crossing else '✗'}\n"
+            f"Total lines: {total}")
     ax.text(0.02, 0.98, info, transform=ax.transAxes,
-            color="white", fontsize=8, va="top",
-            bbox=dict(boxstyle="round", fc="#333", ec="none", alpha=0.7))
+            color="white", fontsize=7.5, va="top", family="monospace",
+            bbox=dict(boxstyle="round", fc="#222", ec="none", alpha=0.8))
 
-    ax.set_xlim(-20, geom.params.width  + 20)
-    ax.set_ylim(-20, geom.params.height + 20)
+    ax.set_xlim(-15, p.width+15)
+    ax.set_ylim(-15, p.height+15)
     ax.axis("off")
-    ax.set_title("FIROO CAM — Door Geometry Preview", color="white", fontsize=10)
+    t = title or ("Crossing pattern" if p.crossing else "Straight pattern")
+    ax.set_title(f"FIROO CAM — {t}", color="white", fontsize=9)
 
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches="tight",
                     facecolor=fig.get_facecolor())
-        print(f"[preview] saved → {save_path}")
+        print(f"[preview] → {save_path}")
     if show:
         plt.show()
     plt.close(fig)
 
 
-# ── CLI entry point ────────────────────────────────────────────────────────────
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import argparse, json, sys
+    import argparse, json
 
-    ap = argparse.ArgumentParser(description="FIROO CAM Door Geometry Engine")
-    ap.add_argument("--width",    type=float, default=500,  help="Door width  (mm)")
-    ap.add_argument("--height",   type=float, default=900,  help="Door height (mm)")
-    ap.add_argument("--offsets",  type=str,
-                    default="50,15,5,5,11,17,0,0,0,0",
-                    help="Comma-separated OF1..OF10 step values")
-    ap.add_argument("--div",      type=float, default=15.0, help="DivLength (mm)")
-    ap.add_argument("--inset",    type=float, default=0.0,  help="Groove inset (mm)")
-    ap.add_argument("--preview",  type=str,   default="",   help="Save preview PNG to path")
-    ap.add_argument("--json",     type=str,   default="",   help="Save JSON output to path")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--width",    type=float, default=500)
+    ap.add_argument("--height",   type=float, default=900)
+    ap.add_argument("--offsets",  type=str,   default="50,15,5,5,11,17,0,0,0,0")
+    ap.add_argument("--div",      type=float, default=15.0)
+    ap.add_argument("--skip",     type=int,   default=1)
+    ap.add_argument("--no-cross", action="store_true")
+    ap.add_argument("--preview",  type=str,   default="")
+    ap.add_argument("--json",     type=str,   default="")
     args = ap.parse_args()
 
     offsets = [float(x) for x in args.offsets.split(",")]
     params  = DoorParams(
-        width           = args.width,
-        height          = args.height,
-        offsets         = offsets,
-        div_length      = args.div,
-        groove_inset    = args.inset,
+        width=args.width, height=args.height, offsets=offsets,
+        div_length=args.div, skip=args.skip, crossing=not args.no_cross,
     )
     geom = build_door_geometry(params)
 
     print(f"Door: {params.width:.0f} × {params.height:.0f} mm")
-    print(f"Active rings: {len(geom.rings)}")
-    for ring in geom.rings:
-        print(f"  OF{ring.index}: step={ring.step_mm:.1f}  Σ={ring.cumulative_mm:.1f}mm"
-              f"  rect=({ring.rect.w:.0f}×{ring.rect.h:.0f})"
-              f"  grooves={len(ring.groove_lines)}")
-
-    total_grooves = sum(len(r.groove_lines) for r in geom.rings)
-    print(f"Total groove lines: {total_grooves}")
+    print(f"Rings:    {len(geom.rings)}")
+    print(f"Sections: {len(geom.sections)}")
+    for sec in geom.sections:
+        print(f"  Section {sec.index}: Σ{sec.outer_offset:.0f}→{sec.inner_offset:.0f}mm"
+              f"  (width={sec.width_mm:.0f}mm)"
+              f"  {len(sec.pattern_lines)} lines")
 
     if args.json:
         out = {
-            "params": {
-                "width": params.width, "height": params.height,
-                "offsets": params.offsets, "div_length": params.div_length,
-                "groove_inset": params.groove_inset,
-            },
-            "rings": [
+            "params": vars(params),
+            "sections": [
                 {
-                    "index": r.index,
-                    "step_mm": r.step_mm,
-                    "cumulative_mm": r.cumulative_mm,
-                    "rect": {"x": r.rect.x, "y": r.rect.y,
-                             "w": r.rect.w, "h": r.rect.h},
-                    "groove_count": len(r.groove_lines),
-                    "groove_lines": [
-                        {"x0": p0[0], "y0": p0[1], "x1": p1[0], "y1": p1[1]}
-                        for (p0, p1) in r.groove_lines
-                    ],
+                    "index": s.index,
+                    "outer_offset": s.outer_offset,
+                    "inner_offset": s.inner_offset,
+                    "width_mm": s.width_mm,
+                    "outer_rect": {"x": s.outer_rect.x, "y": s.outer_rect.y,
+                                   "w": s.outer_rect.w, "h": s.outer_rect.h},
+                    "inner_rect": {"x": s.inner_rect.x, "y": s.inner_rect.y,
+                                   "w": s.inner_rect.w, "h": s.inner_rect.h},
+                    "line_count": len(s.pattern_lines),
+                    "lines": [{"x0": p0[0], "y0": p0[1], "x1": p1[0], "y1": p1[1]}
+                              for (p0, p1) in s.pattern_lines],
                 }
-                for r in geom.rings
+                for s in geom.sections
             ],
         }
-        path = args.json
-        with open(path, "w") as f:
+        with open(args.json, "w") as f:
             json.dump(out, f, indent=2)
-        print(f"JSON saved → {path}")
+        print(f"JSON → {args.json}")
 
     if args.preview:
         preview(geom, save_path=args.preview)
