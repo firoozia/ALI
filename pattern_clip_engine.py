@@ -399,10 +399,12 @@ class ClipParams:
     door_h:        float
     scale_x:       float = 1.0
     scale_y:       float = 1.0
-    rotation:      float = 0.0          # degrees
+    rotation:      float = 0.0
+    offset_x:      float = 0.0   # user-controlled X shift (mm)
+    offset_y:      float = 0.0   # user-controlled Y shift (mm)
     close_trimmed: bool  = True
     layer_id:      str   = "PATTERN_CLIP"
-    save_with_door: bool = True         # include offset rings in output
+    save_with_door: bool = True
 
 
 class PatternClipper:
@@ -420,12 +422,10 @@ class PatternClipper:
         return cls(entities, params)
 
     def run(self) -> List[Entity]:
-        p   = self.p
-        r   = p.clip_rect
-        dcx = p.door_w / 2
-        dcy = p.door_h / 2
+        p = self.p
+        r = p.clip_rect
 
-        # bbox of pattern (before transform)
+        # pattern bbox — for rotation pivot only, NO auto-centering
         all_pts = [pt for e in self.entities for pt in e.points]
         if not all_pts:
             return []
@@ -434,28 +434,24 @@ class PatternClipper:
         pat_cx = (min(xs) + max(xs)) / 2
         pat_cy = (min(ys) + max(ys)) / 2
 
-        # translate so pattern center → door center
-        tx = dcx - pat_cx * p.scale_x
-        ty = dcy - pat_cy * p.scale_y
+        # user offset: door center + user_offset_x/y
+        tx = p.door_w / 2 + p.offset_x
+        ty = p.door_h / 2 + p.offset_y
 
         result: List[Entity] = []
         for e in self.entities:
-            ent = Entity(
-                [(pt[0]*p.scale_x, pt[1]*p.scale_y) for pt in e.points],
-                e.closed,
-                p.layer_id,
-            )
+            # 1. scale around pattern bbox center
+            pts = [(pat_cx + (pt[0]-pat_cx)*p.scale_x,
+                    pat_cy + (pt[1]-pat_cy)*p.scale_y)
+                   for pt in e.points]
+            # 2. rotate around pattern bbox center
             if p.rotation:
-                ent = Entity(
-                    [_rotate(pt, pat_cx*p.scale_x, pat_cy*p.scale_y, p.rotation)
-                     for pt in ent.points],
-                    ent.closed, ent.layer,
-                )
-            ent = Entity(
-                [(pt[0]+tx, pt[1]+ty) for pt in ent.points],
-                ent.closed, ent.layer,
-            )
-            clipped = ent.clip(r, close_trimmed=p.close_trimmed)
-            result.extend(clipped)
+                pts = [_rotate(pt, pat_cx, pat_cy, p.rotation) for pt in pts]
+            # 3. place pattern-center at door-center + user offset
+            pts = [(pt[0] - pat_cx + tx,
+                    pt[1] - pat_cy + ty)
+                   for pt in pts]
+            ent = Entity(pts, e.closed, p.layer_id)
+            result.extend(ent.clip(r, close_trimmed=p.close_trimmed))
 
         return result
