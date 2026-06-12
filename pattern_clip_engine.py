@@ -191,13 +191,15 @@ class Entity:
             return []
 
         # ── optional: close trimmed closed curves along boundary ─────────────
-        if close_trimmed and self.closed and len(chains) == 1:
-            chain = chains[0]
-            start, end = chain[0], chain[-1]
-            if not _close(start, end):
-                bridge = rect.boundary_path(end, start)
-                chain = chain + bridge[1:]   # bridge already starts at 'end'
-                chains = [chain]
+        if close_trimmed and self.closed:
+            closed_chains = []
+            for chain in chains:
+                start, end = chain[0], chain[-1]
+                if not _close(start, end):
+                    bridge = rect.boundary_path(end, start)
+                    chain = chain + bridge[1:]
+                closed_chains.append(chain)
+            chains = closed_chains
 
         return [Entity(c, False, self.layer) for c in chains]
 
@@ -319,8 +321,11 @@ def parse_dxf(path: str) -> List[Entity]:
                 ys = [float(v) for v in props.get(20, [])]
                 pts = list(zip(xs, ys))
                 if pts:
-                    closed = int(props.get(70, 0)) & 1
-                    entities.append(Entity(pts, bool(closed), layer))
+                    closed = bool(int(props.get(70, 0)) & 1)
+                    # treat as closed if start≈end even when flag is 0
+                    if not closed and len(pts) >= 3:
+                        closed = _close(pts[0], pts[-1], tol=1.0)
+                    entities.append(Entity(pts, closed, layer))
             except (ValueError, TypeError):
                 pass
 
