@@ -208,6 +208,43 @@ class Entity:
 
 _LIST_CODES = {10, 20, 11, 21, 12, 22}   # coordinate codes that repeat in LWPOLYLINE
 
+def _bulge_to_pts(x1: float, y1: float,
+                  x2: float, y2: float,
+                  bulge: float, deg_step: float = 5.0) -> List[Point]:
+    """Convert a LWPOLYLINE arc segment (defined by bulge) to polyline points.
+    Returns points from p1 up to (but not including) p2."""
+    if abs(bulge) < 1e-9:
+        return [(x1, y1)]
+    theta = 4.0 * math.atan(abs(bulge))          # included angle (positive)
+    dx, dy = x2 - x1, y2 - y1
+    d = math.hypot(dx, dy)
+    if d < 1e-10:
+        return [(x1, y1)]
+    r = d / (2.0 * math.sin(theta / 2.0))
+    # midpoint of chord, then perpendicular offset to centre
+    mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    # perpendicular (left-hand side of P1→P2 direction)
+    perp_x, perp_y = -dy / d, dx / d
+    # distance chord-midpoint → centre
+    h = math.sqrt(max(0.0, r * r - (d / 2.0) ** 2))
+    # bulge > 0 → CCW → centre is to the LEFT of P1→P2
+    sign = 1.0 if bulge > 0 else -1.0
+    cx = mx - sign * perp_x * h
+    cy = my - sign * perp_y * h
+    a_start = math.atan2(y1 - cy, x1 - cx)
+    a_end   = math.atan2(y2 - cy, x2 - cx)
+    if bulge > 0:                                 # CCW
+        while a_end < a_start: a_end += 2 * math.pi
+    else:                                         # CW
+        while a_end > a_start: a_end -= 2 * math.pi
+    span = abs(a_end - a_start)
+    n = max(2, int(math.degrees(span) / deg_step))
+    return [
+        (cx + r * math.cos(a_start + (a_end - a_start) * t / n),
+         cy + r * math.sin(a_start + (a_end - a_start) * t / n))
+        for t in range(n)
+    ]
+
 def _iter_entities(text: str):
     """Yield (entity_type, props) for each entity block.
 
@@ -241,7 +278,15 @@ def _iter_entities(text: str):
 
         props: dict = {}
         vertex_stack: list = []
-        is_poly = etype == "POLYLINE"
+        is_poly  = etype == "POLYLINE"
+        is_lwpoly = etype == "LWPOLYLINE"
+        lw_verts: list = []          # [(x, y, bulge), ...] for LWPOLYLINE
+        _lw_cur: list  = [0.0, 0.0, 0.0, False]  # x, y, bulge, has_x
+
+        def _flush_lw():
+            if _lw_cur[3]:
+                lw_verts.append((_lw_cur[0], _lw_cur[1], _lw_cur[2]))
+                _lw_cur[2] = 0.0; _lw_cur[3] = False
 
         while True:
             code, val = _next()
@@ -264,13 +309,26 @@ def _iter_entities(text: str):
                 vertex_stack.append((vx, vy))
                 continue
             if isinstance(code, int):
-                if code in _LIST_CODES:
+                if is_lwpoly:
+                    if code == 10:
+                        _flush_lw()
+                        _lw_cur[0] = float(val); _lw_cur[3] = True
+                    elif code == 20:
+                        _lw_cur[1] = float(val)
+                    elif code == 42:
+                        _lw_cur[2] = float(val)
+                    else:
+                        props[code] = val
+                elif code in _LIST_CODES:
                     props.setdefault(code, []).append(val)
                 else:
                     props[code] = val
 
         if is_poly:
             props["_vertices"] = vertex_stack
+        if is_lwpoly:
+            _flush_lw()
+            props["_lw_verts"] = lw_verts
 
         yield etype, props
 
@@ -317,15 +375,22 @@ def parse_dxf(path: str) -> List[Entity]:
 
         elif etype == "LWPOLYLINE":
             try:
-                xs = [float(v) for v in props.get(10, [])]
-                ys = [float(v) for v in props.get(20, [])]
-                pts = list(zip(xs, ys))
-                if pts:
+                lw_verts = props.get("_lw_verts", [])
+                if lw_verts:
                     closed = bool(int(props.get(70, 0)) & 1)
-                    # treat as closed if start≈end even when flag is 0
-                    if not closed and len(pts) >= 3:
-                        closed = _close(pts[0], pts[-1], tol=1.0)
-                    entities.append(Entity(pts, closed, layer))
+                    # build pts expanding bulge arcs
+                    pts: List[Point] = []
+                    n = len(lw_verts)
+                    for idx, (x1, y1, bulge) in enumerate(lw_verts):
+                        x2, y2, _ = lw_verts[(idx + 1) % n]
+                        pts.extend(_bulge_to_pts(x1, y1, x2, y2, bulge))
+                    if closed:
+                        pts.append(pts[0])  # close back to start
+                    elif _close(lw_verts[0][:2], lw_verts[-1][:2], tol=1.0):
+                        closed = True
+                        pts.append(pts[0])
+                    if len(pts) >= 2:
+                        entities.append(Entity(pts, closed, layer))
             except (ValueError, TypeError):
                 pass
 
