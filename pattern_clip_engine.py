@@ -225,8 +225,11 @@ def _iter_entities(text: str):
         if code != 0:
             continue
         etype = val
-        if etype in ("EOF", "ENDSEC"):
+        if etype == "EOF":
             break
+        if etype in ("ENDSEC", "ENDBLK", "ENDTAB", "SECTION",
+                     "TABLE", "BLOCK", "APPID", "LAYER"):
+            continue
 
         props: dict = {}
         vertex_stack: list = []      # for POLYLINE+VERTEX
@@ -276,6 +279,26 @@ def parse_dxf(path: str) -> List[Entity]:
                 p1 = (float(props[10]), float(props[20]))
                 p2 = (float(props[11]), float(props[21]))
                 entities.append(Entity([p1, p2], False, layer))
+            except (KeyError, ValueError):
+                pass
+
+        elif etype == "ARC":
+            try:
+                cx   = float(props[10])
+                cy   = float(props[20])
+                r    = float(props[40])
+                a0   = float(props[50])   # start angle degrees
+                a1   = float(props[51])   # end angle degrees
+                if a1 <= a0:
+                    a1 += 360.0
+                span = a1 - a0
+                n    = max(4, int(span / 5))   # one point per 5°
+                pts  = [
+                    (cx + r * math.cos(math.radians(a0 + span * t / n)),
+                     cy + r * math.sin(math.radians(a0 + span * t / n)))
+                    for t in range(n + 1)
+                ]
+                entities.append(Entity(pts, False, layer))
             except (KeyError, ValueError):
                 pass
 
