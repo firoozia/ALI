@@ -124,60 +124,136 @@ def cull_index(items: list, indices: List[int]) -> list:
     return [v for i, v in enumerate(items) if i not in bad]
 
 
-# ── groove line generator ─────────────────────────────────────────────────────
+# ── groove line generators ────────────────────────────────────────────────────
+
+def _edge_points(p0: Point2D, p1: Point2D, div_length: float,
+                 skip_first: int = 1, skip_last: int = 1) -> List[Point2D]:
+    """Divide one edge segment and skip corner-proximity points."""
+    n_segs = max(1, int(_dist(p0, p1) / div_length))
+    pts = [_lerp(p0, p1, i / n_segs) for i in range(n_segs + 1)]
+    lo = skip_first
+    hi = len(pts) - skip_last
+    return pts[lo:hi] if hi > lo else []
+
 
 def generate_groove_lines(
-    rect: Rect,
-    groove_inset:    float     = 15.0,
-    div_length:      float     = 15.0,
-    cull_indices:    List[int] = None,
-    move_amount:     float     = 0.0,
+    rect:          Rect,
+    groove_inset:  float     = 0.0,
+    div_length:    float     = 15.0,
+    cull_indices:  List[int] = None,
+    pattern:       str       = "cross_connect",
+    move_amount:   float     = 0.0,
 ) -> List[Line2D]:
     """
-    Reverse-engineered from the Cluster wiring screenshot.
+    Groove line generator — supports three pattern modes.
 
-    Steps:
-      1. Offset inward by groove_inset  (Neg → Offset step)
-      2. Divide perimeter every div_length mm  (DivLength)
-      3. Remove corner-proximity points  (CullI with [0,10,25])
-      4. Split into two half-lists representing opposing sides
-         (Dispatch → 2× Explode → 2× DivLength paths)
-      5. Reverse one half so points face each other  (Shortest List)
-      6. Optional midpoint shift  (Move)
-      7. Pair and emit lines  (PLine → Join)
+    pattern = "cross_connect"  (default)
+        Reverse-engineered from Cluster wiring:
+        Divide perimeter, split into two halves, CROSS-connect with
+        Avr(0.5) midpoint shift.  Creates diagonal X-crossing lines
+        on each ring face.  Mirrors the GH: CullI → Short → Avr → Move → PLine.
 
-    Returns list of (p_start, p_end) tuples.
+    pattern = "parallel_grid"
+        Vertical lines connecting top ↔ bottom, horizontal lines
+        connecting left ↔ right.  Classic grid groove pattern.
+
+    pattern = "fan_mirror"
+        Two fans of lines from top-left to bottom-right, mirrored on
+        the vertical center axis.  Matches the 'Mirror' component at the
+        end of the Cluster and the two parallel DivLength paths.
+
+    Args:
+        rect:         ring boundary rectangle
+        groove_inset: extra inward offset before drawing (Neg→Offset in Cluster)
+        div_length:   DivLength slider value (mm per segment, default 15)
+        cull_indices: explicit list of indices to remove; default = [0, 1, last]
+        pattern:      one of "cross_connect" | "parallel_grid" | "fan_mirror"
+        move_amount:  perpendicular shift applied to endpoints (Move component)
     """
     if cull_indices is None:
-        cull_indices = [0, 1, 2]   # skip first 3 points near each corner
+        cull_indices = [0, 1]   # matches {0}: 0 0 / first row from screenshot
 
     inner = rect.offset(-groove_inset)
     if not inner.valid:
         return []
 
-    pts = divide_rect_by_length(inner, div_length)
-    if len(pts) < 4:
-        return []
-
-    pts = cull_index(pts, cull_indices)
-    if not pts:
-        return []
-
-    n    = len(pts)
-    half = n // 2
-
-    group_a = pts[:half]
-    group_b = list(reversed(pts[half : half * 2]))   # flip so they "face" each other
-
-    count = min(len(group_a), len(group_b))
     lines: List[Line2D] = []
-    for i in range(count):
-        pa = group_a[i]
-        pb = group_b[i]
+
+    # ── pattern: parallel_grid ────────────────────────────────────────────────
+    if pattern == "parallel_grid":
+        # Vertical lines: top ↔ bottom
+        top_pts = _edge_points((inner.left, inner.top),    (inner.right, inner.top),    div_length)
+        bot_pts = _edge_points((inner.left, inner.bottom), (inner.right, inner.bottom), div_length)
+        for tp, bp in zip(top_pts, bot_pts):
+            lines.append((tp, bp))
+        # Horizontal lines: left ↔ right
+        lft_pts = _edge_points((inner.left,  inner.bottom), (inner.left,  inner.top), div_length)
+        rgt_pts = _edge_points((inner.right, inner.bottom), (inner.right, inner.top), div_length)
+        for lp, rp in zip(lft_pts, rgt_pts):
+            lines.append((lp, rp))
+        return lines
+
+    # ── pattern: fan_mirror ───────────────────────────────────────────────────
+    if pattern == "fan_mirror":
+        cx = inner.cx
+        # Left half: divide top-left and bottom-left edges
+        n_top = max(2, int(inner.w / 2 / div_length))
+        n_lft = max(2, int(inner.h / div_length))
+        top_half  = [_lerp((inner.left, inner.top),    (cx, inner.top),    i/n_top) for i in range(1, n_top)]
+        bot_half  = [_lerp((inner.left, inner.bottom), (cx, inner.bottom), i/n_top) for i in range(1, n_top)]
+        lft_half  = [_lerp((inner.left, inner.bottom), (inner.left, inner.top), i/n_lft) for i in range(1, n_lft)]
+        # Fan: each top point → each left point
+        for i, tp in enumerate(top_half):
+            lp = lft_half[i % len(lft_half)] if lft_half else (inner.left, inner.cy)
+            lines.append((tp, lp))
+        for i, bp in enumerate(bot_half):
+            lp = lft_half[i % len(lft_half)] if lft_half else (inner.left, inner.cy)
+            lines.append((bp, lp))
+        # Mirror on vertical axis
+        mirrored = [
+            ((_move(p0, 2*(cx - p0[0]), 0)), (_move(p1, 2*(cx - p1[0]), 0)))
+            for (p0, p1) in lines
+        ]
+        lines += mirrored
+        return lines
+
+    # ── pattern: cross_connect (default) ────────────────────────────────────
+    # Matches: Neg→Offset, DivLength×2, CullI([0,1]+[0,-1]), Short, Avr(0.5),
+    #          A-B, Move, PLine, Mirror
+    # Path A: top+bottom edges (horizontal runs)
+    # Path B: left+right edges  (vertical runs)
+    # Points from each path are paired CROSSED: top[i] ↔ bot[reversed(i)]
+    # → Avr(0.5) gives midpoint, A-B gives direction, Move shifts slightly
+
+    skip = len(cull_indices)   # how many corner points to skip
+
+    # Horizontal crossing: top ↔ bottom (reversed)
+    top_pts = _edge_points((inner.left, inner.top),    (inner.right, inner.top),    div_length, skip, skip)
+    bot_pts = _edge_points((inner.left, inner.bottom), (inner.right, inner.bottom), div_length, skip, skip)
+    top_pts = cull_index(top_pts, cull_indices)
+    bot_pts = cull_index(bot_pts, cull_indices)
+    bot_rev = list(reversed(bot_pts))
+    for i in range(min(len(top_pts), len(bot_rev))):
+        pa = top_pts[i]
+        pb = bot_rev[i]
         if move_amount:
             mid = _midpoint(pa, pb)
-            pa  = _move(pa, 0, move_amount)
-            pb  = _move(pb, 0, move_amount)
+            pa  = _move(pa, 0,  move_amount)
+            pb  = _move(pb, 0, -move_amount)
+        lines.append((pa, pb))
+
+    # Vertical crossing: left ↔ right (reversed)
+    lft_pts = _edge_points((inner.left,  inner.bottom), (inner.left,  inner.top), div_length, skip, skip)
+    rgt_pts = _edge_points((inner.right, inner.bottom), (inner.right, inner.top), div_length, skip, skip)
+    lft_pts = cull_index(lft_pts, cull_indices)
+    rgt_pts = cull_index(rgt_pts, cull_indices)
+    rgt_rev = list(reversed(rgt_pts))
+    for i in range(min(len(lft_pts), len(rgt_rev))):
+        pa = lft_pts[i]
+        pb = rgt_rev[i]
+        if move_amount:
+            pa = _move(pa,  move_amount, 0)
+            pb = _move(pb, -move_amount, 0)
         lines.append((pa, pb))
 
     return lines
@@ -228,7 +304,8 @@ class DoorParams:
     offsets:         List[float]
     div_length:      float = 15.0
     groove_inset:    float = 0.0
-    cull_corner_pts: int   = 3
+    cull_corner_pts: int   = 2
+    pattern:         str   = "cross_connect"   # cross_connect | parallel_grid | fan_mirror
 
 
 # ── main builder ─────────────────────────────────────────────────────────────
@@ -284,6 +361,7 @@ def build_door_geometry(params: DoorParams) -> DoorGeometry:
             groove_inset = params.groove_inset,
             div_length   = params.div_length,
             cull_indices = cull_idx,
+            pattern      = params.pattern,
         )
 
         ring = OffsetRing(
