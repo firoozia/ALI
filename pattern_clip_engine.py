@@ -204,8 +204,14 @@ class Entity:
 
 # ──────────────────────────────────────────── DXF parser ──────────────────────
 
+_LIST_CODES = {10, 20, 11, 21, 12, 22}   # coordinate codes that repeat in LWPOLYLINE
+
 def _iter_entities(text: str):
-    """Yield (entity_type, {code: last_value}) for each entity block."""
+    """Yield (entity_type, props) for each entity block.
+
+    For codes in _LIST_CODES, props[code] is a list (supports repeated coords
+    in LWPOLYLINE).  All other codes store the last value as a plain string.
+    """
     lines = text.splitlines()
     i = 0
     def _next():
@@ -232,16 +238,13 @@ def _iter_entities(text: str):
             continue
 
         props: dict = {}
-        vertex_stack: list = []      # for POLYLINE+VERTEX
+        vertex_stack: list = []
         is_poly = etype == "POLYLINE"
 
         while True:
             code, val = _next()
             if code is None or (code == 0 and val not in ("VERTEX", "SEQEND")):
-                # peek back — rewind by putting back
-                # We can't rewind easily, so just break and rely on outer loop
                 if code == 0:
-                    # re-process this entity header next iteration
                     i -= 2
                 break
             if code == 0 and val == "SEQEND":
@@ -259,7 +262,10 @@ def _iter_entities(text: str):
                 vertex_stack.append((vx, vy))
                 continue
             if isinstance(code, int):
-                props[code] = val
+                if code in _LIST_CODES:
+                    props.setdefault(code, []).append(val)
+                else:
+                    props[code] = val
 
         if is_poly:
             props["_vertices"] = vertex_stack
@@ -276,16 +282,21 @@ def parse_dxf(path: str) -> List[Entity]:
 
         if etype == "LINE":
             try:
-                p1 = (float(props[10]), float(props[20]))
-                p2 = (float(props[11]), float(props[21]))
+                x10 = props[10]; y20 = props[20]
+                x11 = props[11]; y21 = props[21]
+                p1 = (float(x10[0] if isinstance(x10, list) else x10),
+                      float(y20[0] if isinstance(y20, list) else y20))
+                p2 = (float(x11[0] if isinstance(x11, list) else x11),
+                      float(y21[0] if isinstance(y21, list) else y21))
                 entities.append(Entity([p1, p2], False, layer))
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, IndexError):
                 pass
 
         elif etype == "ARC":
             try:
-                cx   = float(props[10])
-                cy   = float(props[20])
+                x10 = props[10]; y20 = props[20]
+                cx  = float(x10[0] if isinstance(x10, list) else x10)
+                cy  = float(y20[0] if isinstance(y20, list) else y20)
                 r    = float(props[40])
                 a0   = float(props[50])   # start angle degrees
                 a1   = float(props[51])   # end angle degrees
@@ -303,17 +314,15 @@ def parse_dxf(path: str) -> List[Entity]:
                 pass
 
         elif etype == "LWPOLYLINE":
-            # group codes 10/20 repeat for each vertex
-            xs = [float(v) for k, v in sorted(props.items())
-                  if k == 10]
-            ys = [float(v) for k, v in sorted(props.items())
-                  if k == 20]
-            # LWPOLYLINE stores all X then all Y — need positional parse
-            # fallback: use raw text re-parse
-            pts = _parse_lwpoly_pts(text, props)
-            if pts:
-                closed = int(props.get(70, 0)) & 1
-                entities.append(Entity(pts, bool(closed), layer))
+            try:
+                xs = [float(v) for v in props.get(10, [])]
+                ys = [float(v) for v in props.get(20, [])]
+                pts = list(zip(xs, ys))
+                if pts:
+                    closed = int(props.get(70, 0)) & 1
+                    entities.append(Entity(pts, bool(closed), layer))
+            except (ValueError, TypeError):
+                pass
 
         elif etype == "POLYLINE":
             verts = props.get("_vertices", [])
@@ -323,35 +332,6 @@ def parse_dxf(path: str) -> List[Entity]:
 
     return entities
 
-
-def _parse_lwpoly_pts(full_text: str, props: dict) -> List[Point]:
-    """LWPOLYLINE stores repeated 10/20 codes; standard dict loses them.
-    We re-parse from the original text using the entity's position."""
-    xs: List[float] = []
-    ys: List[float] = []
-    lines = full_text.splitlines()
-    in_ent = False
-    i = 0
-    while i < len(lines) - 1:
-        code_s = lines[i].strip()
-        val_s  = lines[i+1].strip()
-        i += 2
-        try:
-            code = int(code_s)
-        except ValueError:
-            continue
-        if code == 0:
-            if val_s == "LWPOLYLINE":
-                in_ent = True
-                xs, ys = [], []
-            elif in_ent:
-                break
-        if in_ent:
-            if code == 10:
-                xs.append(float(val_s))
-            elif code == 20:
-                ys.append(float(val_s))
-    return list(zip(xs, ys))
 
 
 # ──────────────────────────────────────────── DXF writer ──────────────────────
