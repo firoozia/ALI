@@ -1309,19 +1309,17 @@ class AspireToolDatabaseDialog(QDialog):
         try:
             with sqlite3.connect(self.db.path) as con:
                 con.row_factory = sqlite3.Row
-                geom   = con.execute(
+                geom = con.execute(
                     "select * from tool_geometry where id=?",
                     (gid,)).fetchone()
-                tree   = con.execute(
+                tree = con.execute(
                     "select * from tool_tree_entry where tool_geometry_id=? limit 1",
-                    (gid,)).fetchone()
-                entity = con.execute(
-                    "select * from tool_entity where tool_geometry_id=? limit 1",
                     (gid,)).fetchone()
                 if not geom:
                     return
+
+                # Copy geometry row
                 new_geom_id = str(uuid.uuid4())
-                # Copy geometry row exactly
                 gcols = list(geom.keys())
                 gvals = [geom[c] for c in gcols]
                 gvals[gcols.index("id")] = new_geom_id
@@ -1329,33 +1327,38 @@ class AspireToolDatabaseDialog(QDialog):
                     f"insert into tool_geometry({','.join(gcols)})"
                     f" values({','.join(['?']*len(gcols))})",
                     gvals)
-                # Copy cutting data + entity
-                if entity:
+
+                # Copy ALL entities (one per material/machine combination)
+                entities = con.execute(
+                    "select * from tool_entity where tool_geometry_id=?",
+                    (gid,)).fetchall()
+                for ent in entities:
                     cut = con.execute(
                         "select * from tool_cutting_data where id=?",
-                        (entity["tool_cutting_data_id"],)).fetchone()
-                    if cut:
-                        new_cut_id = str(uuid.uuid4())
-                        new_ent_id = str(uuid.uuid4())
-                        ccols = list(cut.keys())
-                        cvals = [cut[c] for c in ccols]
-                        cvals[ccols.index("id")] = new_cut_id
-                        con.execute(
-                            f"insert into tool_cutting_data({','.join(ccols)})"
-                            f" values({','.join(['?']*len(ccols))})",
-                            cvals)
-                        con.execute(
-                            "insert into tool_entity"
-                            "(id,material_id,machine_id,tool_geometry_id,tool_cutting_data_id)"
-                            " values(?,?,?,?,?)",
-                            (new_ent_id, entity["material_id"],
-                             entity["machine_id"], new_geom_id, new_cut_id))
+                        (ent["tool_cutting_data_id"],)).fetchone()
+                    if not cut:
+                        continue
+                    new_cut_id = str(uuid.uuid4())
+                    new_ent_id = str(uuid.uuid4())
+                    ccols = list(cut.keys())
+                    cvals = [cut[c] for c in ccols]
+                    cvals[ccols.index("id")] = new_cut_id
+                    con.execute(
+                        f"insert into tool_cutting_data({','.join(ccols)})"
+                        f" values({','.join(['?']*len(ccols))})",
+                        cvals)
+                    con.execute(
+                        "insert into tool_entity"
+                        "(id,material_id,machine_id,tool_geometry_id,tool_cutting_data_id)"
+                        " values(?,?,?,?,?)",
+                        (new_ent_id, ent["material_id"],
+                         ent["machine_id"], new_geom_id, new_cut_id))
+
                 order = con.execute(
                     "select coalesce(max(sibling_order),0)+1 "
                     "from tool_tree_entry where parent_group_id=?",
                     (group_id,)).fetchone()[0]
-                # Keep exact same name — user edits after
-                orig_name = tree["name"] if tree and tree["name"] else ""
+                orig_name  = tree["name"]  if tree and tree["name"]  else ""
                 orig_notes = tree["notes"] if tree and tree["notes"] else ""
                 con.execute(
                     "insert into tool_tree_entry"
