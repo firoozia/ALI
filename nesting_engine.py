@@ -140,14 +140,16 @@ class NestingEngine:
                        progress_interval: float = 1.0,
                        cpu_yield: float = 0.006,
                        deep_search: bool = False) -> List[Sheet]:
-        """Industrial time-based optimizer.
+        """Multi-walker SA optimizer — 3 independent chains, shared global best.
 
-        Runs until:
-        - stop_event is set by UI Stop button, or
-        - time_limit seconds is reached.
+        Walker 0 (Cold  T=0.25): exploitation near global best
+        Walker 1 (Mid   T=1.0 ): balanced exploration / exploitation
+        Walker 2 (Hot   T=3.0 ): aggressive exploration, escapes local optima
 
-        on_progress callback signature:
-            on_progress(gen, util, sheet_count, elapsed, no_improve)
+        Each walker advances one step per loop iteration.
+        ILS double-bridge fires per walker when locally stuck.
+        Cold walker resyncs from global best each cycle.
+        Global best is shared; any walker can update it.
         """
         if not parts:
             self.all_results = []
@@ -157,151 +159,155 @@ class NestingEngine:
         self.all_results = []
         self.best_result = None
         self._start_time = time.time()
-        no_improve = 0
-        gen = 0
-        last_progress_emit = 0.0
+        gen            = 0
+        no_improve     = 0
+        last_progress  = 0.0
+        last_best_e    = float("inf")
 
-        # CPU-safe default:
-        # Python/rectpack is not the same as Solid Edge's compiled engine.
-        # Keep the UI responsive by limiting population, variants, and yielding the GIL.
-        population = max(6, min(10 if not deep_search else 16, int(population or 8)))
-        variants = self._pack_variants(deep_search=deep_search)
+        population = max(6, min(12 if deep_search else 10, int(population or 8)))
+        variants   = self._pack_variants(deep_search=deep_search)
 
-        # Warm start: several deterministic and randomized starts.
+        # ── Warm start ───────────────────────────────────────────
         pop = self._create_population(parts, population)
-        best_order = None
+        best_order  = None
         best_energy = float("inf")
         best_result = None
 
         for order in pop:
-            if self._should_stop(stop_event, time_limit):
-                break
-            energy, result = self._eval_full(order, gen, variants)
-            self._add_result(result)
-            if energy < best_energy:
-                best_energy = energy
-                best_order = list(order)
-                best_result = result
-                self.best_result = result
+            if self._should_stop(stop_event, time_limit): break
+            e, r = self._eval_full(order, gen, variants)
+            self._add_result(r)
+            if e < best_energy:
+                best_energy, best_order, best_result = e, list(order), r
+                self.best_result = r
 
-        # Critical for real-time preview: publish warm-start best immediately.
         if self.best_result and on_progress:
             now = time.time()
             on_progress(0, self.best_result.utilization,
-                        self.best_result.sheet_count,
-                        now - self._start_time, 0)
-            last_progress_emit = now
+                        self.best_result.sheet_count, now - self._start_time, 0)
+            last_progress = now
+            last_best_e   = best_energy
 
         if best_order is None:
             self._finalise_results()
             return self.best_result.sheets if self.best_result else []
 
-        current_order = list(best_order)
-        current_energy = best_energy
+        # ── Multi-walker setup ────────────────────────────────────
+        #
+        # T_init values spread the search landscape:
+        #   cold  → fine-grained hill-climb around current best
+        #   mid   → balanced; the SA "anchor"
+        #   hot   → accepts bad moves readily → escapes local optima
+        #
+        W_T_INIT     = [0.25, 1.0, 3.0]
+        STEPS_CYCLE  = 18    # SA steps per walker before per-cycle actions
+        ILS_THRESH   = 5     # ILS after this many per-walker no-improve cycles
+        ACCEPT_WIN   = 28    # adaptive-T window length
+        TARGET_LO    = 0.08  # acceptance rate lower bound
+        TARGET_HI    = 0.32  # acceptance rate upper bound
 
-        # SA constants
-        T_INIT       = 1.0
-        T_MIN        = 0.003
-        CYCLE_STEPS  = 55        # deeper local search per cycle vs. 35
-        PERTURB_AT   = 6         # ILS perturbation after this many stuck cycles
-        ACCEPT_WIN   = 40        # window for adaptive temperature
-        TARGET_LOW   = 0.10      # acceptance rate too cold → warm up
-        TARGET_HIGH  = 0.30      # acceptance rate too hot → cool down
+        walkers = []
+        for wi in range(3):
+            src = pop[min(wi, len(pop) - 1)]
+            walkers.append({
+                "order":    list(best_order) if wi == 0 else list(src),
+                "energy":   best_energy,
+                "T":        W_T_INIT[wi],
+                "T_init":   W_T_INIT[wi],
+                "acc_win":  [],
+                "steps":    0,
+                "no_imp":   0,
+            })
 
-        T             = T_INIT
-        step_in_cycle = 0
-        accept_window: list = []
-
+        # ── Main loop ─────────────────────────────────────────────
         while not self._should_stop(stop_event, time_limit):
-            neighbor = self._make_neighbor(current_order)
 
-            # Fast exploration: one random MaxRects/sort variant.
-            n_energy, n_result = self._eval_fast(neighbor, gen, variants)
-            self._add_result(n_result)
+            # ─ Advance every walker one SA step ──────────────────
+            for w in walkers:
+                if self._should_stop(stop_event, time_limit):
+                    break
 
-            delta    = n_energy - current_energy
-            accepted = delta < 0 or random.random() < math.exp(-delta / max(T, 1e-9))
+                neighbor         = self._make_neighbor(w["order"])
+                n_energy, n_res  = self._eval_fast(neighbor, gen, variants)
+                self._add_result(n_res)
 
-            # Adaptive temperature: track recent acceptance rate.
-            accept_window.append(1 if accepted else 0)
-            if len(accept_window) > ACCEPT_WIN:
-                accept_window.pop(0)
-                rate = sum(accept_window) / ACCEPT_WIN
-                if rate > TARGET_HIGH:
-                    T = max(T_MIN, T * 0.91)   # too easy — cool faster
-                elif rate < TARGET_LOW:
-                    T = min(T_INIT, T * 1.13)  # too hard — warm up
+                delta    = n_energy - w["energy"]
+                accepted = (delta < 0 or
+                            random.random() < math.exp(-delta / max(w["T"], 1e-9)))
 
-            if accepted:
-                current_order  = neighbor
-                current_energy = n_energy
+                # Adaptive temperature per walker
+                w["acc_win"].append(1 if accepted else 0)
+                if len(w["acc_win"]) > ACCEPT_WIN:
+                    w["acc_win"].pop(0)
+                    rate = sum(w["acc_win"]) / ACCEPT_WIN
+                    if rate > TARGET_HI:
+                        w["T"] = max(0.001, w["T"] * 0.90)
+                    elif rate < TARGET_LO:
+                        w["T"] = min(w["T_init"] * 2.5, w["T"] * 1.12)
 
-                # If fast estimate is promising, verify with full strategy set.
-                if n_energy < best_energy:
-                    full_energy, full_result = self._eval_full(neighbor, gen, variants)
-                    self._add_result(full_result)
-                    if full_energy < best_energy:
-                        best_energy      = full_energy
-                        best_order       = list(neighbor)
-                        best_result      = full_result
-                        self.best_result = full_result
-                        no_improve       = 0
+                if accepted:
+                    w["order"]  = neighbor
+                    w["energy"] = n_energy
 
-            step_in_cycle += 1
+                    # Promising? Verify with full variant set → update global best.
+                    if n_energy < best_energy:
+                        fe, fr = self._eval_full(neighbor, gen, variants)
+                        self._add_result(fr)
+                        if fe < best_energy:
+                            best_energy      = fe
+                            best_order       = list(neighbor)
+                            best_result      = fr
+                            self.best_result = fr
+                            w["no_imp"]      = 0
 
-            # Very important for PySide UI responsiveness:
-            # rectpack is Python-level work and can otherwise monopolize the GIL.
+                w["steps"] += 1
+
+                # ─ Per-walker cycle actions ───────────────────────
+                if w["steps"] >= STEPS_CYCLE:
+                    w["steps"]  = 0
+                    w["no_imp"] += 1
+
+                    if w["no_imp"] >= ILS_THRESH:
+                        # ILS: double-bridge perturbation, always accepted
+                        w["no_imp"] = 0
+                        perturbed   = self._perturb(best_order)
+                        pe, pr      = self._eval_full(perturbed, gen, variants)
+                        self._add_result(pr)
+                        if pe < best_energy:
+                            best_energy, best_order = pe, list(perturbed)
+                            best_result             = pr
+                            self.best_result        = pr
+                        w["order"]   = perturbed
+                        w["energy"]  = pe
+                        w["acc_win"].clear()
+                        w["T"]       = w["T_init"]  # reheat after perturbation
+
+                    elif w is walkers[0]:
+                        # Cold walker: always rebase on global best each cycle
+                        w["order"]  = list(best_order)
+                        w["energy"] = best_energy
+
+            # ─ GIL yield so PySide6 event loop stays alive ───────
             if cpu_yield and cpu_yield > 0:
                 time.sleep(float(cpu_yield))
 
-            if step_in_cycle >= CYCLE_STEPS:
-                step_in_cycle = 0
-                gen += 1
-
-                # Periodic full evaluation of the global best order.
-                full_energy, full_result = self._eval_full(best_order, gen, variants)
-                self._add_result(full_result)
-                if full_energy < best_energy:
-                    best_energy      = full_energy
-                    best_result      = full_result
-                    self.best_result = full_result
-                    no_improve       = 0
-                else:
-                    no_improve += 1
-
-                # ILS: double-bridge perturbation when stuck for PERTURB_AT cycles.
-                if no_improve >= PERTURB_AT:
-                    perturbed = self._perturb(best_order)
-                    p_energy, p_result = self._eval_full(perturbed, gen, variants)
-                    self._add_result(p_result)
-                    if p_energy < best_energy:
-                        best_energy      = p_energy
-                        best_order       = list(perturbed)
-                        best_result      = p_result
-                        self.best_result = p_result
-                        no_improve       = 0
-                    # Accept the perturbed state anyway to escape — ILS key property.
-                    current_order  = perturbed
-                    current_energy = p_energy
-                    accept_window.clear()
-                else:
-                    # Normal reheat from best known solution.
-                    current_order  = list(best_order)
-                    current_energy = best_energy
-
-                T = T_INIT
-
-            # Throttle UI/live preview updates to about once per second.
+            # ─ Progress emit (time-throttled) ────────────────────
             now = time.time()
-            if self.best_result and on_progress and (now - last_progress_emit >= float(progress_interval)):
-                last_progress_emit = now
+            if (self.best_result and on_progress and
+                    now - last_progress >= float(progress_interval)):
+                gen += 1
+                if best_energy >= last_best_e:
+                    no_improve += 1
+                else:
+                    no_improve  = 0
+                    last_best_e = best_energy
+                last_progress = now
                 on_progress(gen, self.best_result.utilization,
                             self.best_result.sheet_count,
                             now - self._start_time, no_improve)
 
         self._finalise_results()
 
-        # Final progress call so UI gets the last best before finishing.
         if self.best_result and on_progress:
             on_progress(gen, self.best_result.utilization,
                         self.best_result.sheet_count,
