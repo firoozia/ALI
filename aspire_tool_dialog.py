@@ -103,24 +103,15 @@ QFrame[frameShape="4"] {{ background: {C_BORDER}; max-height: 1px; border: none;
 # ── No-scroll spinboxes (prevent accidental value changes while scrolling form) ─
 class NoScrollDoubleSpinBox(QDoubleSpinBox):
     def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+        event.ignore()
 
 class NoScrollSpinBox(QSpinBox):
     def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+        event.ignore()
 
 class NoScrollComboBox(QComboBox):
     def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+        event.ignore()
 
 
 TOOL_TYPE_INT: Dict[int, str] = {
