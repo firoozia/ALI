@@ -137,9 +137,10 @@ class NestingEngine:
             e, r = self._sa_eval_full(order)
             self.all_results.append(r)
             if e < best_energy:
-                best_energy = e
-                best_order  = list(order)
-                best_result = r
+                best_energy      = e
+                best_order       = list(order)
+                best_result      = r
+                self.best_result = r  # expose to worker immediately
 
         if best_order is None:
             return []
@@ -202,8 +203,9 @@ class NestingEngine:
                 no_improve += 1
 
                 # Reheat: restart current state from global best
-                current_order  = list(best_order)
-                current_energy = best_energy
+                current_order    = list(best_order)
+                current_energy   = best_energy
+                self.best_result = best_result  # always fresh for worker to read
                 T = self.SA_T_INIT
 
                 if on_progress and best_result:
