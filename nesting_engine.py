@@ -56,6 +56,7 @@ class NestingEngine:
         self.margin_right  = config.edge_margin
         self.margin_bottom = config.edge_margin
         self.auto_rotate   = config.get("nesting","auto_rotation")
+        self.direction     = "bottom_left"
         self.sheet_defs: List[SheetDef] = []
         self.all_results: List[NestResult] = []
         self.best_result: Optional[NestResult] = None
@@ -139,11 +140,15 @@ class NestingEngine:
             for _ in range(sd.quantity):
                 if not remaining: break
                 sheet, remaining = self._pack_sheet(remaining, sd, sheet_counter, algo_cls)
-                if sheet.parts: sheets_used.append(sheet); sheet_counter += 1
+                if sheet.parts:
+                    self._apply_direction_transform(sheet, sd)
+                    sheets_used.append(sheet); sheet_counter += 1
         while remaining and unlimited:
             sd = unlimited[0]
             sheet, remaining = self._pack_sheet(remaining, sd, sheet_counter, algo_cls)
-            if sheet.parts: sheets_used.append(sheet); sheet_counter += 1
+            if sheet.parts:
+                self._apply_direction_transform(sheet, sd)
+                sheets_used.append(sheet); sheet_counter += 1
             else: break
         result.sheets = sheets_used
         result.sheet_count = len(sheets_used)
@@ -186,6 +191,22 @@ class NestingEngine:
             placed.add(rid)
         remaining = [p for i,p in enumerate(parts) if i not in placed]
         return sheet, remaining
+
+    def _apply_direction_transform(self, sheet: "Sheet", sheet_def: SheetDef):
+        """Mirror packed coordinates so the start corner matches the chosen direction."""
+        if self.direction == "bottom_left":
+            return
+        W, H = sheet_def.width, sheet_def.height
+        for part in sheet.parts:
+            pw = part.actual_width()
+            ph = part.actual_height()
+            if self.direction == "bottom_right":
+                part.x = W - part.x - pw
+            elif self.direction == "top_left":
+                part.y = H - part.y - ph
+            elif self.direction == "top_right":
+                part.x = W - part.x - pw
+                part.y = H - part.y - ph
 
     def validate(self, sheets: List[Sheet]) -> List[str]:
         ml = getattr(self, "margin_left",   self.margin)

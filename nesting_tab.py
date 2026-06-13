@@ -101,7 +101,7 @@ class NestingWorker(QThread):
             engine.auto_rotate   = self._opts["rotation"] > 0
             # Optional engine hints; safe if the engine ignores them.
             try:
-                engine.direction_deg = self._opts.get("direction_deg", 270)
+                engine.direction = self._opts.get("direction", "bottom_left")
                 engine.strategy = self._opts.get("strategy", "best_efficiency")
             except Exception:
                 pass
@@ -428,7 +428,7 @@ class NestingTab(QWidget):
         self._running           = False
         self._elapsed           = 0
         self._run_start         = 0.0
-        self._nest_direction_deg = 270
+        self._nest_direction     = "bottom_left"
         self._nest_strategy      = "best_efficiency"
 
         self._timer = QTimer(self)
@@ -623,8 +623,11 @@ class NestingTab(QWidget):
             s_rotation.addItem(v)
         s_rotation.setCurrentIndex(self._cmb_rotation.currentIndex())
 
-        s_direction = QSpinBox(); s_direction.setRange(0, 359); s_direction.setSuffix("°")
-        s_direction.setValue(int(getattr(self, "_nest_direction_deg", 270)))
+        s_direction = QComboBox()
+        for lbl in ["Bottom-Left", "Bottom-Right", "Top-Left", "Top-Right"]:
+            s_direction.addItem(lbl)
+        dir_idx = {"bottom_left": 0, "bottom_right": 1, "top_left": 2, "top_right": 3}
+        s_direction.setCurrentIndex(dir_idx.get(getattr(self, "_nest_direction", "bottom_left"), 0))
 
         # Solid-style repeat strategy.
         rb_best = QRadioButton("Best Efficiency")
@@ -662,7 +665,9 @@ class NestingTab(QWidget):
             self._spin_right.setValue(s_right.value())
             self._spin_bottom.setValue(s_bot.value())
             self._cmb_rotation.setCurrentIndex(s_rotation.currentIndex())
-            self._nest_direction_deg = int(s_direction.value())
+            idx_to_dir = ["bottom_left", "bottom_right", "top_left", "top_right"]
+            new_dir = idx_to_dir[s_direction.currentIndex()]
+            self._on_dir_select(new_dir)
             if rb_pref.isChecked():
                 self._nest_strategy = "prefer_repeats"
             elif rb_bal.isChecked():
@@ -814,22 +819,23 @@ class NestingTab(QWidget):
 
         # ── Group: Nesting Direction ───────────────────────────
         g_dir = self._ribbon_group("Nesting Direction")
-        gd_lay = QVBoxLayout(g_dir._inner)
-        gd_lay.setAlignment(Qt.AlignCenter)
+        gd_lay = QGridLayout(g_dir._inner)
+        gd_lay.setSpacing(3); gd_lay.setContentsMargins(6, 4, 6, 4)
 
-        # Speed input (number field above arrow, like Solid Edge)
-        self._spin_speed = NoScrollSpinBox()
-        self._spin_speed.setRange(0, 9999); self._spin_speed.setValue(0)
-        self._spin_speed.setFixedWidth(50)
-        gd_lay.addWidget(self._spin_speed, 0, Qt.AlignCenter)
-
-        self._btn_dir = QPushButton("→")
-        self._btn_dir.setFixedSize(40, 40)
-        self._btn_dir.setStyleSheet(
-            f"background:{C_PANEL.name()}; border:1px solid {C_BORDER.name()};"
-            f"border-radius:4px; color:{C_TEXT.name()}; font-size:18px;")
-        self._btn_dir.clicked.connect(self._toggle_direction)
-        gd_lay.addWidget(self._btn_dir)
+        self._dir_btns = {}
+        _DIR_DEFS = [
+            ("top_left",     "┌", 0, 0),
+            ("top_right",    "┐", 0, 1),
+            ("bottom_left",  "└", 1, 0),
+            ("bottom_right", "┘", 1, 1),
+        ]
+        for key, sym, row, col in _DIR_DEFS:
+            btn = QPushButton(sym)
+            btn.setFixedSize(32, 26)
+            btn.clicked.connect(lambda _checked, k=key: self._on_dir_select(k))
+            self._dir_btns[key] = btn
+            gd_lay.addWidget(btn, row, col)
+        self._on_dir_select("bottom_left")
         rl.addWidget(g_dir)
         rl.addWidget(self._vdiv())
 
@@ -1181,7 +1187,7 @@ class NestingTab(QWidget):
             "generations":    30,
             "population":     20,
             "duration":       600.0,
-            "direction_deg":  int(getattr(self, "_nest_direction_deg", 270)),
+            "direction":      getattr(self, "_nest_direction", "bottom_left"),
             "strategy":       getattr(self, "_nest_strategy", "best_efficiency"),
         }
 
@@ -1537,9 +1543,16 @@ class NestingTab(QWidget):
         self._sheet_defs.pop(row)
         self._refresh_sheet_table()
 
-    def _toggle_direction(self):
-        cur = self._btn_dir.text()
-        self._btn_dir.setText("↓" if cur == "→" else "→")
+    def _on_dir_select(self, direction: str):
+        self._nest_direction = direction
+        active = (
+            f"background:{C_ACCENT.name()}; border:1px solid {C_ACCENT.name()};"
+            f"border-radius:4px; color:{C_BG.name()}; font-size:15px; font-weight:bold;")
+        normal = (
+            f"background:{C_PANEL2.name()}; border:1px solid {C_BORDER.name()};"
+            f"border-radius:4px; color:{C_TEXT.name()}; font-size:15px;")
+        for key, btn in self._dir_btns.items():
+            btn.setStyleSheet(active if key == direction else normal)
 
     def get_current_sheets(self):
         return self._sheets
