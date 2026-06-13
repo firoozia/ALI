@@ -61,7 +61,7 @@ class ToolpathsTab(QWidget):
         self._sheets: list = []
         self._configs: dict = {}          # design_code → ToolpathConfig
         self._pp_id: str = "gcode_mm"
-        self._output_folder: Path = Path(config.get("output_folder", str(Path.home())))
+        self._output_folder: Path = Path(config.output_folder or str(Path.home()))
 
         self._build()
         self.apply_style()
