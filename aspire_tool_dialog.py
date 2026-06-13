@@ -1305,6 +1305,7 @@ class AspireToolDatabaseDialog(QDialog):
             QMessageBox.warning(self, "Copy", "Select a tool to copy.")
             return
         group_id = self._selected_group_id()
+        new_entry_id = str(uuid.uuid4())
         try:
             with sqlite3.connect(self.db.path) as con:
                 con.row_factory = sqlite3.Row
@@ -1319,8 +1320,8 @@ class AspireToolDatabaseDialog(QDialog):
                     (gid,)).fetchone()
                 if not geom:
                     return
-                new_geom_id  = str(uuid.uuid4())
-                new_entry_id = str(uuid.uuid4())
+                new_geom_id = str(uuid.uuid4())
+                # Copy geometry row exactly
                 gcols = list(geom.keys())
                 gvals = [geom[c] for c in gcols]
                 gvals[gcols.index("id")] = new_geom_id
@@ -1328,6 +1329,7 @@ class AspireToolDatabaseDialog(QDialog):
                     f"insert into tool_geometry({','.join(gcols)})"
                     f" values({','.join(['?']*len(gcols))})",
                     gvals)
+                # Copy cutting data + entity
                 if entity:
                     cut = con.execute(
                         "select * from tool_cutting_data where id=?",
@@ -1352,18 +1354,40 @@ class AspireToolDatabaseDialog(QDialog):
                     "select coalesce(max(sibling_order),0)+1 "
                     "from tool_tree_entry where parent_group_id=?",
                     (group_id,)).fetchone()[0]
-                orig_name = tree["name"] if tree else "Tool"
+                # Keep exact same name — user edits after
+                orig_name = tree["name"] if tree and tree["name"] else ""
+                orig_notes = tree["notes"] if tree and tree["notes"] else ""
                 con.execute(
                     "insert into tool_tree_entry"
                     "(id,parent_group_id,sibling_order,tool_geometry_id,name,notes,expanded)"
                     " values(?,?,?,?,?,?,?)",
                     (new_entry_id, group_id, order,
-                     new_geom_id, f"{orig_name} (Copy)",
-                     tree["notes"] if tree else "", 0))
+                     new_geom_id, orig_name, orig_notes, 0))
                 con.commit()
             self._build_tree()
+            # Select and load the newly copied tool
+            self._select_entry(new_entry_id)
         except Exception as e:
             QMessageBox.warning(self, "Copy", str(e))
+
+    def _select_entry(self, entry_id: str):
+        """Find tree item by entry_id and select it, then load into form."""
+        def _find(parent_item, n=None):
+            count = self.tree.topLevelItemCount() if parent_item is None else parent_item.childCount()
+            for i in range(count):
+                item = (self.tree.topLevelItem(i) if parent_item is None
+                        else parent_item.child(i))
+                if item.data(0, Qt.UserRole + 1) == entry_id:
+                    return item
+                found = _find(item)
+                if found:
+                    return found
+            return None
+
+        item = _find(None)
+        if item:
+            self.tree.setCurrentItem(item)
+            self.tree.scrollToItem(item)
 
     def _remove_selected(self):
         item = self.tree.currentItem()
