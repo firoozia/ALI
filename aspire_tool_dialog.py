@@ -723,8 +723,9 @@ class AspireToolDatabaseDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        from PySide6.QtCore import Qt as _Qt
+        scroll.setHorizontalScrollBarPolicy(_Qt.ScrollBarAlwaysOff)
         form_container = QWidget()
-        form_container.setMaximumWidth(580)
         self._vlay = QVBoxLayout(form_container)
         self._vlay.setContentsMargins(0, 0, 4, 0)
         self._vlay.setSpacing(2)
@@ -797,21 +798,20 @@ class AspireToolDatabaseDialog(QDialog):
             c = QWidget()
             lay = QHBoxLayout(c)
             lay.setContentsMargins(0, 1, 0, 1)
-            lay.setSpacing(6)
+            lay.setSpacing(0)
             lbl = QLabel(label)
-            lbl.setFixedWidth(160)
+            lbl.setFixedWidth(150)
+            lbl.setContentsMargins(0, 0, 6, 0)
             if bold_label:
                 lbl.setStyleSheet("font-weight:700;")
             lay.addWidget(lbl)
-            # widget fills remaining space; suffix pinned right
             lay.addWidget(widget, 1)
-            if suffix:
-                suf = QLabel(suffix)
-                suf.setFixedWidth(56)
-                suf.setStyleSheet(f"color:{C_DIM};")
-                lay.addWidget(suf)
-            else:
-                lay.addSpacing(58)   # keep row width consistent when no suffix
+            # always reserve same suffix area for right-edge alignment
+            suf = QLabel(suffix)
+            suf.setFixedWidth(52)
+            suf.setContentsMargins(6, 0, 0, 0)
+            suf.setStyleSheet(f"color:{C_DIM};")
+            lay.addWidget(suf)
             self._vlay.addWidget(c)
             self._rows[key] = c
             return c
