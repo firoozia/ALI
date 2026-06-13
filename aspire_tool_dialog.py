@@ -1300,11 +1300,74 @@ class AspireToolDatabaseDialog(QDialog):
             QMessageBox.warning(self, "Add Tool", str(e))
 
     def _copy_tool(self):
+        """Copy selected tool with ALL geometry + cutting parameters.
+
+        Important behavior:
+        - Duplicate the complete tool_geometry row.
+        - Duplicate every tool_entity + tool_cutting_data row for all material/machine variants.
+        - Also force the current Material/Machine variant to match the values currently shown
+          in the editor form. This prevents the copied tool from opening with zero parameters
+          when the DB has an empty/default variant for the selected material/machine.
+        - Do NOT require the user to Apply changes to the source tool before copying.
+        """
         gid = self._selected_geom_id()
         if not gid:
             QMessageBox.warning(self, "Copy", "Select a tool to copy.")
             return
         group_id = self._selected_group_id()
+        if not group_id:
+            QMessageBox.warning(self, "Copy", "Select a tool inside a group.")
+            return
+
+        # Snapshot of the currently visible source tool parameters.
+        # This is the user's real expectation: Copy should copy what is on screen.
+        try:
+            src_name = self.txt_name.text().strip() or (self.selected_tool.name if self.selected_tool else "Copied Tool")
+            src_notes = self.txt_notes.toPlainText() if hasattr(self, "txt_notes") else ""
+            src_type = self.cmb_type.currentText() if hasattr(self, "cmb_type") else (self.selected_tool.tool_type if self.selected_tool else "End Mill")
+            src_type_code = TOOL_TYPE_INT_REV.get(src_type, 1)
+            src_diameter = self.sp_diameter.value()
+            if src_type == "Engraving":
+                src_angle = self.sp_side_angle.value() * 2.0
+            else:
+                src_angle = self.sp_angle.value()
+            src_flat = self.sp_flat.value()
+            src_flutes = self.sp_flutes.value()
+            src_pass_depth = self.sp_pass_depth.value()
+            src_stepover = self.sw_stepover.value_mm()
+            src_clear_stepover = self.sw_clear.value_mm()
+            src_rpm = self.sp_rpm.value()
+            src_feed = self.sp_feed.value()
+            src_plunge = self.sp_plunge.value()
+            src_rate_units = self.cmb_feed_units.currentIndex()
+            src_tool_number = self.sp_tool_num.value()
+            src_material_name = self.cmb_material.currentText() or "MDF"
+            src_machine_name = self.cmb_machine.currentText() or "Desktop"
+        except Exception:
+            # Fallback to database values if UI widgets are unavailable.
+            t = self.selected_tool
+            if not t:
+                QMessageBox.warning(self, "Copy", "Cannot read selected tool data.")
+                return
+            src_name = t.name
+            src_notes = t.notes
+            src_type = t.tool_type
+            src_type_code = TOOL_TYPE_INT_REV.get(src_type, 1)
+            src_diameter = t.diameter
+            src_angle = t.included_angle
+            src_flat = t.flat_diameter
+            src_flutes = t.flutes
+            src_pass_depth = t.pass_depth
+            src_stepover = t.stepover
+            src_clear_stepover = t.clear_stepover
+            src_rpm = t.spindle_rpm
+            src_feed = t.feed_rate
+            src_plunge = t.plunge_rate
+            src_rate_units = t.rate_units
+            src_tool_number = t.tool_number
+            src_material_name = t.material or "MDF"
+            src_machine_name = t.machine or "Desktop"
+
         new_entry_id = str(uuid.uuid4())
         try:
             with sqlite3.connect(self.db.path) as con:
@@ -1318,28 +1381,57 @@ class AspireToolDatabaseDialog(QDialog):
                 if not geom:
                     return
 
-                # Copy geometry row
+                # Resolve current material/machine IDs.
+                mat_row = con.execute(
+                    "select id from material where name=?",
+                    (src_material_name,)).fetchone()
+                mach_row = con.execute(
+                    "select id from machine where name=?",
+                    (src_machine_name,)).fetchone()
+                current_mat_id = mat_row["id"] if mat_row else None
+                current_mach_id = mach_row["id"] if mach_row else None
+
+                # ── Copy full geometry row and override the editable fields from UI snapshot.
                 new_geom_id = str(uuid.uuid4())
                 gcols = list(geom.keys())
                 gvals = [geom[c] for c in gcols]
                 gvals[gcols.index("id")] = new_geom_id
+
+                def _set_geom(col, val):
+                    if col in gcols:
+                        gvals[gcols.index(col)] = val
+
+                _set_geom("notes", src_notes)
+                _set_geom("tool_type", src_type_code)
+                _set_geom("diameter", src_diameter)
+                _set_geom("included_angle", src_angle)
+                _set_geom("flat_diameter", src_flat)
+                _set_geom("num_flutes", src_flutes)
+
                 con.execute(
                     f"insert into tool_geometry({','.join(gcols)})"
                     f" values({','.join(['?']*len(gcols))})",
                     gvals)
 
-                # Copy ALL entities (one per material/machine combination)
+                # ── Copy ALL source material/machine cutting variants.
                 entities = con.execute(
                     "select * from tool_entity where tool_geometry_id=?",
                     (gid,)).fetchall()
+
+                matched_current_cut_id = None
+                copied_any_entity = False
+
                 for ent in entities:
                     cut = con.execute(
                         "select * from tool_cutting_data where id=?",
                         (ent["tool_cutting_data_id"],)).fetchone()
                     if not cut:
                         continue
+
                     new_cut_id = str(uuid.uuid4())
                     new_ent_id = str(uuid.uuid4())
+
+                    # Copy all cutting-data columns exactly.
                     ccols = list(cut.keys())
                     cvals = [cut[c] for c in ccols]
                     cvals[ccols.index("id")] = new_cut_id
@@ -1347,28 +1439,86 @@ class AspireToolDatabaseDialog(QDialog):
                         f"insert into tool_cutting_data({','.join(ccols)})"
                         f" values({','.join(['?']*len(ccols))})",
                         cvals)
+
                     con.execute(
                         "insert into tool_entity"
                         "(id,material_id,machine_id,tool_geometry_id,tool_cutting_data_id)"
                         " values(?,?,?,?,?)",
-                        (new_ent_id, ent["material_id"],
-                         ent["machine_id"], new_geom_id, new_cut_id))
+                        (new_ent_id, ent["material_id"], ent["machine_id"],
+                         new_geom_id, new_cut_id))
+                    copied_any_entity = True
 
+                    if ent["material_id"] == current_mat_id and ent["machine_id"] == current_mach_id:
+                        matched_current_cut_id = new_cut_id
+
+                # If the source had no cutting rows, create one for the current material/machine.
+                if not copied_any_entity:
+                    matched_current_cut_id = str(uuid.uuid4())
+                    new_ent_id = str(uuid.uuid4())
+                    con.execute(
+                        "insert into tool_cutting_data"
+                        "(id,rate_units,feed_rate,plunge_rate,spindle_speed,"
+                        " spindle_dir,stepdown,stepover,clear_stepover,"
+                        " length_units,tool_number)"
+                        " values(?,?,?,?,?,?,?,?,?,?,?)",
+                        (matched_current_cut_id, src_rate_units, src_feed, src_plunge,
+                         src_rpm, 0, src_pass_depth, src_stepover, src_clear_stepover,
+                         0, src_tool_number))
+                    con.execute(
+                        "insert into tool_entity"
+                        "(id,material_id,machine_id,tool_geometry_id,tool_cutting_data_id)"
+                        " values(?,?,?,?,?)",
+                        (new_ent_id, current_mat_id, current_mach_id,
+                         new_geom_id, matched_current_cut_id))
+
+                # Guarantee the selected/current material+machine row has the exact visible parameters.
+                if matched_current_cut_id:
+                    con.execute(
+                        "update tool_cutting_data set "
+                        "rate_units=?, feed_rate=?, plunge_rate=?, spindle_speed=?, "
+                        "stepdown=?, stepover=?, clear_stepover=?, tool_number=? "
+                        "where id=?",
+                        (src_rate_units, src_feed, src_plunge, src_rpm,
+                         src_pass_depth, src_stepover, src_clear_stepover,
+                         src_tool_number, matched_current_cut_id))
+                elif current_mat_id or current_mach_id:
+                    # No matching current material/machine variant existed in source.
+                    # Add one so the copied tool opens with the same visible values immediately.
+                    new_cut_id = str(uuid.uuid4())
+                    new_ent_id = str(uuid.uuid4())
+                    con.execute(
+                        "insert into tool_cutting_data"
+                        "(id,rate_units,feed_rate,plunge_rate,spindle_speed,"
+                        " spindle_dir,stepdown,stepover,clear_stepover,"
+                        " length_units,tool_number)"
+                        " values(?,?,?,?,?,?,?,?,?,?,?)",
+                        (new_cut_id, src_rate_units, src_feed, src_plunge,
+                         src_rpm, 0, src_pass_depth, src_stepover, src_clear_stepover,
+                         0, src_tool_number))
+                    con.execute(
+                        "insert into tool_entity"
+                        "(id,material_id,machine_id,tool_geometry_id,tool_cutting_data_id)"
+                        " values(?,?,?,?,?)",
+                        (new_ent_id, current_mat_id, current_mach_id,
+                         new_geom_id, new_cut_id))
+
+                # ── Add tree entry under the same group.
                 order = con.execute(
                     "select coalesce(max(sibling_order),0)+1 "
                     "from tool_tree_entry where parent_group_id=?",
                     (group_id,)).fetchone()[0]
-                orig_name  = tree["name"]  if tree and tree["name"]  else ""
-                orig_notes = tree["notes"] if tree and tree["notes"] else ""
+
+                base_name = src_name or (tree["name"] if tree and tree["name"] else "Copied Tool")
+                copy_name = base_name if base_name.lower().endswith("copy") else f"{base_name} Copy"
                 con.execute(
                     "insert into tool_tree_entry"
                     "(id,parent_group_id,sibling_order,tool_geometry_id,name,notes,expanded)"
                     " values(?,?,?,?,?,?,?)",
                     (new_entry_id, group_id, order,
-                     new_geom_id, orig_name, orig_notes, 0))
+                     new_geom_id, copy_name, src_notes, 0))
                 con.commit()
+
             self._build_tree()
-            # Select and load the newly copied tool
             self._select_entry(new_entry_id)
         except Exception as e:
             QMessageBox.warning(self, "Copy", str(e))
