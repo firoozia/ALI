@@ -2,7 +2,7 @@
 FIROO CAM - Tool Library Manager
 Full CRUD tool library with:
   • JSON persistence
-  • Vectric .vtdb import (text format)
+  • Vectric .vtdb import — SQLite3 (Aspire v11+) + legacy XML format
   • Group management
   • PySide6 UI widget
   • Integration with gcode_generator
@@ -345,12 +345,30 @@ class ToolLibraryManager:
             errors.append(f"File error: {e}")
         return count, errors
 
+    # ── Format detection ──────────────────────────────────────
+
+    @staticmethod
+    def _is_sqlite(path: str) -> bool:
+        """True if the file starts with the SQLite3 magic header."""
+        try:
+            with open(path, "rb") as f:
+                return f.read(16) == b"SQLite format 3\x00"
+        except Exception:
+            return False
+
+    # ── Vectric import (auto-detect SQLite vs XML) ─────────────
+
     def import_vectric_vtdb(self, path: str) -> tuple:
         """
-        Import from Vectric .vtdb (text/XML format).
-        The .vtdb.vectric file that ships with Aspire/VCarve is XML.
+        Import from Vectric .vtdb.
+        Auto-detects format:
+          • SQLite3  — Aspire/VCarve v11+ (tools.vtdb)
+          • XML/text — older Aspire exports  (.vtdb.vectric)
         Returns (imported_count, errors).
         """
+        if self._is_sqlite(path):
+            return self.import_vectric_sqlite(path)
+
         errors = []
         count  = 0
         try:
@@ -376,6 +394,157 @@ class ToolLibraryManager:
 
         except Exception as e:
             errors.append(f"File error: {e}")
+        return count, errors
+
+    def import_vectric_sqlite(self, path: str) -> tuple:
+        """
+        Import tools from a Vectric SQLite .vtdb database (Aspire/VCarve v11+).
+
+        Database layout:
+          tool_tree_entry  — tree hierarchy (groups + tool nodes)
+          tool_geometry    — physical tool shape (diameter, angle, flutes …)
+          tool_entity      — links geometry + material + machine → cutting_data
+          tool_cutting_data — speeds/feeds per material
+
+        One FIROO Tool is created per (geometry + material) combination so the
+        user keeps all the material-specific speed profiles.
+        """
+        import sqlite3
+
+        # Vectric integer tool_type → FIROO string type
+        _VECTRIC_TYPE = {
+            0: "endmill",   # End Mill (flat)
+            1: "ballnose",  # Ball Nose
+            3: "vbit",      # V-Bit / standard
+            4: "vbit",      # Engraving V-bit
+            6: "drill",     # Drill
+            8: "form",      # Form Tool
+            9: "endmill",   # Specialist / other
+        }
+        _TYPE_LABEL = {
+            "endmill": "End Mill", "ballnose": "Ball Nose",
+            "vbit": "V-Bit", "drill": "Drill", "form": "Form Tool",
+        }
+
+        errors = []
+        count  = 0
+
+        try:
+            con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            cur = con.cursor()
+
+            # Build group-path lookup: entry_id → "Parent / Child" label
+            cur.execute(
+                "SELECT id, parent_group_id, name "
+                "FROM tool_tree_entry WHERE tool_geometry_id IS NULL"
+            )
+            _groups = {r["id"]: dict(r) for r in cur.fetchall()}
+
+            def _group_path(gid: str) -> str:
+                parts, visited = [], set()
+                while gid and gid not in visited:
+                    visited.add(gid)
+                    g = _groups.get(gid)
+                    if not g:
+                        break
+                    if g.get("name"):
+                        parts.insert(0, g["name"])
+                    gid = g.get("parent_group_id")
+                return " / ".join(parts) if parts else "Imported"
+
+            # Main query — one row per (geometry + material)
+            cur.execute("""
+                SELECT
+                    tt.parent_group_id,
+                    tg.id          AS geom_id,
+                    tg.tool_type,
+                    tg.diameter,
+                    tg.included_angle,
+                    tg.num_flutes,
+                    tg.flute_length,
+                    tg.neck_length,
+                    m.name         AS material,
+                    tc.feed_rate,
+                    tc.plunge_rate,
+                    tc.spindle_speed,
+                    tc.stepdown,
+                    tc.stepover,
+                    tc.tool_number,
+                    tc.rate_units
+                FROM tool_tree_entry tt
+                JOIN tool_geometry    tg ON tt.tool_geometry_id  = tg.id
+                JOIN tool_entity      te ON tg.id                = te.tool_geometry_id
+                JOIN tool_cutting_data tc ON te.tool_cutting_data_id = tc.id
+                LEFT JOIN material     m  ON te.material_id      = m.id
+                WHERE tc.feed_rate IS NOT NULL AND tc.feed_rate > 0
+                ORDER BY tg.tool_type, tg.diameter, m.name
+            """)
+
+            seen: set = set()
+            for row in cur.fetchall():
+                try:
+                    key = (row["geom_id"], row["material"] or "")
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    firoo_type = _VECTRIC_TYPE.get(row["tool_type"] or 0, "endmill")
+                    diameter   = float(row["diameter"]   or 6.0)
+                    angle      = float(row["included_angle"] or 0.0)
+                    flutes     = int(row["num_flutes"]   or 2)
+                    flute_len  = float(row["flute_length"] or 35.0)
+                    feed       = float(row["feed_rate"]  or 3000.0)
+                    plunge     = float(row["plunge_rate"] or 800.0)
+                    rpm        = int(row["spindle_speed"] or 18000)
+                    pass_d     = float(row["stepdown"]   or 6.0)
+                    stepover   = float(row["stepover"]   or 0.4)
+                    mat        = row["material"] or "Default"
+
+                    # Stepover stored as fraction (0–1) in Vectric → convert to %
+                    if 0 < stepover <= 1.0:
+                        stepover_pct = stepover * 100.0
+                    else:
+                        stepover_pct = stepover
+
+                    type_label = _TYPE_LABEL.get(firoo_type, "Tool")
+                    if firoo_type == "vbit" and angle:
+                        name = f"{type_label} {int(angle)}° Ø{diameter:.1f}mm [{mat}]"
+                    else:
+                        name = f"{type_label} Ø{diameter:.1f}mm [{mat}]"
+
+                    grp_path = _group_path(row["parent_group_id"])
+                    notes = f"Vectric | {grp_path} | {mat}"
+
+                    self.add(Tool(
+                        name           = name,
+                        tool_type      = firoo_type,
+                        group          = self._type_to_group(firoo_type),
+                        material       = "Carbide",
+                        diameter       = diameter,
+                        angle          = angle,
+                        flutes         = flutes,
+                        cutting_length = flute_len,
+                        shank_diameter = diameter,
+                        spindle_rpm    = rpm,
+                        feed_rate      = feed,
+                        plunge_rate    = plunge,
+                        pass_depth     = pass_d,
+                        stepover       = stepover_pct,
+                        safe_z         = 15.0,
+                        notes          = notes,
+                        enabled        = True,
+                    ))
+                    count += 1
+
+                except Exception as e:
+                    errors.append(f"Row error: {e}")
+
+            con.close()
+
+        except Exception as e:
+            errors.append(f"SQLite error: {e}")
+
         return count, errors
 
     def _parse_vectric_xml_tool(self, el) -> Optional[Tool]:
