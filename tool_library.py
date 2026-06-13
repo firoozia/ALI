@@ -411,15 +411,18 @@ class ToolLibraryManager:
         """
         import sqlite3
 
-        # Vectric integer tool_type → FIROO string type
+        # Vectric integer tool_type → FIROO string type (confirmed from DB)
         _VECTRIC_TYPE = {
-            0: "endmill",   # End Mill (flat)
-            1: "ballnose",  # Ball Nose
-            3: "vbit",      # V-Bit / standard
-            4: "vbit",      # Engraving V-bit
+            0: "ballnose",  # Ball Nose
+            1: "endmill",   # End Mill (flat)
+            2: "endmill",   # Radiused End Mill
+            3: "vbit",      # V-Bit
+            4: "vbit",      # Engraving
+            5: "ballnose",  # Tapered Ball Nose
             6: "drill",     # Drill
             8: "form",      # Form Tool
             9: "endmill",   # Specialist / other
+            12: "laser",    # Laser
         }
         _TYPE_LABEL = {
             "endmill": "End Mill", "ballnose": "Ball Nose",
@@ -501,11 +504,8 @@ class ToolLibraryManager:
                     stepover   = float(row["stepover"]   or 0.4)
                     mat        = row["material"] or "Default"
 
-                    # Stepover stored as fraction (0–1) in Vectric → convert to %
-                    if 0 < stepover <= 1.0:
-                        stepover_pct = stepover * 100.0
-                    else:
-                        stepover_pct = stepover
+                    # Stepover stored as mm absolute in Vectric → convert to %
+                    stepover_pct = (stepover / diameter * 100.0) if diameter > 0 else 0.0
 
                     type_label = _TYPE_LABEL.get(firoo_type, "Tool")
                     if firoo_type == "vbit" and angle:
