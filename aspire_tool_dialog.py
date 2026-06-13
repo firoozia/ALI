@@ -431,7 +431,7 @@ class StepoverWidget(QWidget):
 
         self.sp_mm = NoScrollDoubleSpinBox()
         self.sp_mm.setRange(0, 9999)
-        self.sp_mm.setDecimals(4)
+        self.sp_mm.setDecimals(2)
         self.sp_mm.setSuffix(" mm")
         self.sp_mm.setFixedWidth(100)
 
@@ -829,17 +829,17 @@ class AspireToolDatabaseDialog(QDialog):
         self.cmb_units.addItem("mm"); self.cmb_units.addItem("inches")
         row("units", "Units", self.cmb_units)
 
-        self.sp_diameter = self._dspin(0, 500, dec=3)
+        self.sp_diameter = self._dspin(0, 500, dec=2)
         self.sp_diameter.valueChanged.connect(self._on_diameter_changed)
         row("diameter", "Diameter (D)", self.sp_diameter, "mm")
 
-        self.sp_angle = self._dspin(0, 360, dec=2)
+        self.sp_angle = self._dspin(0, 360, dec=1)
         row("angle", "Included Angle (A)", self.sp_angle, "degrees")
 
-        self.sp_side_angle = self._dspin(0, 180, dec=2)
+        self.sp_side_angle = self._dspin(0, 180, dec=1)
         row("side_angle", "Side Angle", self.sp_side_angle, "degrees")
 
-        self.sp_flat = self._dspin(0, 500, dec=3)
+        self.sp_flat = self._dspin(0, 500, dec=2)
         self.sp_flat.valueChanged.connect(self._on_flat_changed)
         row("flat", "Flat Diameter (F)", self.sp_flat, "mm")
 
@@ -851,7 +851,7 @@ class AspireToolDatabaseDialog(QDialog):
         # ── Cutting Parameters ─────────────────────────────────────────────────
         section("Cutting Parameters")
 
-        self.sp_pass_depth = self._dspin(0, 500, dec=3)
+        self.sp_pass_depth = self._dspin(0, 500, dec=2)
         row("pass_depth", "Pass Depth", self.sp_pass_depth, "mm")
 
         self.sw_stepover = StepoverWidget()
@@ -873,7 +873,7 @@ class AspireToolDatabaseDialog(QDialog):
         feed_lay = QHBoxLayout(feed_w)
         feed_lay.setContentsMargins(0, 0, 0, 0)
         feed_lay.setSpacing(4)
-        self.sp_feed = self._dspin(0, 999999, dec=3)
+        self.sp_feed = self._dspin(0, 999999, dec=0)
         self.sp_feed.valueChanged.connect(self._update_chip_load)
         self.cmb_feed_units = NoScrollComboBox()
         self.cmb_feed_units.setFixedWidth(90)
@@ -888,7 +888,7 @@ class AspireToolDatabaseDialog(QDialog):
         plunge_lay = QHBoxLayout(plunge_w)
         plunge_lay.setContentsMargins(0, 0, 0, 0)
         plunge_lay.setSpacing(4)
-        self.sp_plunge = self._dspin(0, 999999, dec=3)
+        self.sp_plunge = self._dspin(0, 999999, dec=0)
         self.cmb_plunge_units = NoScrollComboBox()
         self.cmb_plunge_units.setFixedWidth(90)
         for u in RATE_UNITS.values():
@@ -897,7 +897,7 @@ class AspireToolDatabaseDialog(QDialog):
         plunge_lay.addWidget(self.cmb_plunge_units)
         row("plunge", "Plunge Rate", plunge_w)
 
-        self.sp_chip = self._dspin(0, 9999, dec=6)
+        self.sp_chip = self._dspin(0, 9999, dec=4)
         self.sp_chip.setReadOnly(True)
         self.sp_chip.setButtonSymbols(QDoubleSpinBox.NoButtons)
         row("chip", "Chip Load", self.sp_chip, "mm")
