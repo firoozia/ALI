@@ -2,7 +2,7 @@
 FIROO CAM - Nesting Engine v2
 Genetic Algorithm + MaxRects
 """
-import time, random
+import time, random, math
 from typing import List, Tuple, Optional
 from dataclasses import dataclass, field
 from copy import deepcopy
