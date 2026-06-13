@@ -253,32 +253,23 @@ class SheetCanvas(QWidget):
 
 
 class HWheelScrollArea(QScrollArea):
-    """Canvas scroll area for Current Layout thumbnails.
+    """Scroll the Current Layout thumbnails left/right with mouse wheel.
 
-    Mouse wheel        → Zoom in / out (resize all thumbnails)
-    Ctrl + mouse wheel → Horizontal pan (scroll left/right)
+    Solid-style behavior: normal mouse wheel moves through nests horizontally
+    when a horizontal scrollbar is available. Ctrl+wheel is left for future zoom.
     """
-    zoom_changed = Signal(float)   # emits zoom factor (e.g. 1.1 or 0.9)
-
     def wheelEvent(self, ev):
+        hbar = self.horizontalScrollBar()
+        vbar = self.verticalScrollBar()
         delta = ev.angleDelta().y() or ev.angleDelta().x()
-        if not delta:
-            super().wheelEvent(ev); return
-
-        if ev.modifiers() & Qt.ControlModifier:
-            # Ctrl+wheel → horizontal pan
-            hbar = self.horizontalScrollBar()
-            if hbar and hbar.maximum() > hbar.minimum():
-                hbar.setValue(hbar.value() - delta)
-                ev.accept()
-                return
-        else:
-            # Plain wheel → zoom in / out
-            factor = 1.12 if delta > 0 else (1 / 1.12)
-            self.zoom_changed.emit(factor)
+        if hbar and hbar.maximum() > hbar.minimum() and delta:
+            hbar.setValue(hbar.value() - delta)
             ev.accept()
             return
-
+        if vbar and delta:
+            vbar.setValue(vbar.value() - delta)
+            ev.accept()
+            return
         super().wheelEvent(ev)
 
 
@@ -426,7 +417,6 @@ class NestingTab(QWidget):
         self._run_start         = 0.0
         self._nest_direction_deg = 270
         self._nest_strategy      = "best_efficiency"
-        self._thumb_zoom         = 1.0   # canvas zoom factor
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -552,23 +542,23 @@ class NestingTab(QWidget):
         self._spin_top.valueChanged.connect(self._on_top_changed)
         bl.addWidget(self._spin_top)
 
-        # Hidden spinboxes — parented to bar so Qt keeps C++ objects alive
-        self._spin_left   = QDoubleSpinBox(bar); self._spin_left.setValue(5.0);   self._spin_left.hide()
-        self._spin_right  = QDoubleSpinBox(bar); self._spin_right.setValue(5.0);  self._spin_right.hide()
-        self._spin_bottom = QDoubleSpinBox(bar); self._spin_bottom.setValue(5.0); self._spin_bottom.hide()
-        self._spin_tilt   = QDoubleSpinBox(bar); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
-        self._chk_mirror  = QCheckBox(bar);      self._chk_mirror.hide()
-        self._spin_speed  = QSpinBox(bar);       self._spin_speed.hide()
-        self._chk_fixed   = QCheckBox(bar);      self._chk_fixed.hide()
-        self._btn_dir     = QPushButton("→", bar); self._btn_dir.hide()
-        self._rb_best     = QRadioButton("Best Efficiency", bar); self._rb_best.setChecked(True); self._rb_best.hide()
-        self._rb_bal      = QRadioButton("Balanced Repeats", bar); self._rb_bal.hide()
-        self._rb_prefer   = QRadioButton("Prefer Repeats", bar);  self._rb_prefer.hide()
+        # Hidden spinboxes (still needed for 4-side logic)
+        self._spin_left   = QDoubleSpinBox(); self._spin_left.setValue(5.0);   self._spin_left.hide()
+        self._spin_right  = QDoubleSpinBox(); self._spin_right.setValue(5.0);  self._spin_right.hide()
+        self._spin_bottom = QDoubleSpinBox(); self._spin_bottom.setValue(5.0); self._spin_bottom.hide()
+        self._spin_tilt   = QDoubleSpinBox(); self._spin_tilt.setValue(0.0);   self._spin_tilt.hide()
+        self._chk_mirror  = QCheckBox();      self._chk_mirror.hide()
+        self._spin_speed  = QSpinBox();       self._spin_speed.hide()
+        self._chk_fixed   = QCheckBox();      self._chk_fixed.hide()
+        self._btn_dir     = QPushButton("→"); self._btn_dir.hide()
+        self._rb_best     = QRadioButton("Best Efficiency"); self._rb_best.setChecked(True); self._rb_best.hide()
+        self._rb_bal      = QRadioButton("Balanced Repeats"); self._rb_bal.hide()
+        self._rb_prefer   = QRadioButton("Prefer Repeats");  self._rb_prefer.hide()
         from PySide6.QtWidgets import QButtonGroup
         self._bg_repeats  = QButtonGroup(self)
         for i, rb in enumerate([self._rb_best, self._rb_bal, self._rb_prefer]):
             self._bg_repeats.addButton(rb, i)
-        self._btn_costing = QPushButton("Cost", bar); self._btn_costing.hide()
+        self._btn_costing = QPushButton("Cost"); self._btn_costing.hide()
 
         bl.addStretch()
 
@@ -968,13 +958,12 @@ class NestingTab(QWidget):
             f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(layout_hdr)
 
-        # Sheet thumbnails scroll area — zoom with wheel, pan with Ctrl+wheel
+        # Sheet thumbnails scroll area — now fills full height
         scroll = HWheelScrollArea()
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet(f"background:{C_BG.name()}; border:none;")
-        scroll.zoom_changed.connect(self._on_canvas_zoom)
 
         self._thumbs_container = QWidget()
         self._thumbs_layout    = QHBoxLayout(self._thumbs_container)
@@ -1402,38 +1391,12 @@ class NestingTab(QWidget):
             self._show_thumb_at(idx)
 
     # ══════════════════════════════════════════════════════════
-    # THUMBNAILS  — with x5/x10/x1 labels + zoom support
+    # THUMBNAILS  — with x5/x10/x1 labels
     # ══════════════════════════════════════════════════════════
-    _THUMB_BASE_W = 220
-    _THUMB_BASE_H = 160
-    _THUMB_MIN    = 0.25
-    _THUMB_MAX    = 4.0
-
     def _clear_thumbs(self):
         while self._thumbs_layout.count():
             item = self._thumbs_layout.takeAt(0)
             if item.widget(): item.widget().deleteLater()
-
-    def _thumb_size(self):
-        """Current canvas size based on zoom factor."""
-        z = max(self._THUMB_MIN, min(self._THUMB_MAX, self._thumb_zoom))
-        return int(self._THUMB_BASE_W * z), int(self._THUMB_BASE_H * z)
-
-    def _on_canvas_zoom(self, factor: float):
-        """Resize all visible sheet thumbnails smoothly."""
-        self._thumb_zoom = max(
-            self._THUMB_MIN,
-            min(self._THUMB_MAX, self._thumb_zoom * factor))
-        w, h = self._thumb_size()
-        for i in range(self._thumbs_layout.count()):
-            item = self._thumbs_layout.itemAt(i)
-            if not item or not item.widget(): continue
-            col_w = item.widget()
-            if not col_w.layout(): continue
-            for j in range(col_w.layout().count()):
-                wi = col_w.layout().itemAt(j)
-                if wi and isinstance(wi.widget(), SheetCanvas):
-                    wi.widget().setFixedSize(w, h)
 
     def _refresh_thumbs(self):
         self._clear_thumbs()
@@ -1445,6 +1408,7 @@ class NestingTab(QWidget):
         seen_sig = {}
         groups_ordered = []
         for sheet in self._sheets:
+            util = sheet.utilization()
             sig = self._sheet_design_signature(sheet)
             if sig not in seen_sig:
                 seen_sig[sig] = len(groups_ordered)
@@ -1452,23 +1416,22 @@ class NestingTab(QWidget):
             else:
                 groups_ordered[seen_sig[sig]]["count"] += 1
 
-        w, h = self._thumb_size()
         for i, grp in enumerate(groups_ordered):
             sheet = grp["sheet"]
             count = grp["count"]
 
             col_w = QWidget()
             col_l = QVBoxLayout(col_w)
-            col_l.setContentsMargins(0, 0, 0, 0); col_l.setSpacing(3)
+            col_l.setContentsMargins(0,0,0,0); col_l.setSpacing(3)
 
             canvas = SheetCanvas()
-            canvas.setFixedSize(w, h)
+            canvas.setFixedSize(220, 160)
             canvas.set_sheet(sheet, labels=True)
             canvas.set_selected(i == 0)
             canvas.mousePressEvent = lambda ev, idx=i: self._on_thumb_click(idx)
             col_l.addWidget(canvas)
 
-            # x5 / x10 / x1 label
+            # x5 / x10 / x1 label — BIG like Solid Edge
             lbl = QLabel(f"x{count}")
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet(

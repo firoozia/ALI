@@ -63,75 +63,16 @@ def make_preview_pixmap(w: float, h: float, color: str,
     return pix
 
 
-import re as _re
-
-def _natural_key(s: str):
-    return [int(t) if t.isdigit() else t.lower()
-            for t in _re.split(r'(\d+)', s)]
-
-# Category definitions: (display label, stem-match function)
-_DESIGN_CATEGORIES = [
-    ("Cabinet Doors",  lambda s: s.startswith("cd")),
-    ("Vitrines",       lambda s: s.startswith("vitrine")),
-    ("Hoods",          lambda s: s.startswith("hood")),
-    ("Columns",        lambda s: s.startswith("column")),
-    ("Decorative",     lambda s: s.startswith("decorative")),
-    ("Others",         lambda s: True),   # catch-all
-]
-
 def _load_design_codes() -> list:
-    """Return all available design codes from the designs folder."""
+    """Return sorted list of available design codes from the designs folder."""
     try:
         from design_resolver import get_resolver
-        return sorted(get_resolver().all_codes(), key=_natural_key)
+        codes = get_resolver().all_codes()
+        result = [c for c in codes if c != "cd0"]
+        result.sort()
+        return ["cd0"] + result
     except Exception:
         return ["cd0"]
-
-def _build_design_combobox(parent=None, current: str = "cd0") -> "QComboBox":
-    """
-    Build a QComboBox with all designs grouped by category.
-    Category headers are shown as disabled separator rows.
-    """
-    from PySide6.QtGui import QStandardItemModel, QStandardItem
-
-    cmb = QComboBox(parent)
-    cmb.setEditable(True)
-    model = QStandardItemModel(cmb)
-
-    all_codes = _load_design_codes()
-    assigned: set = set()
-
-    for cat_label, matcher in _DESIGN_CATEGORIES:
-        cat_codes = sorted(
-            [c for c in all_codes if c not in assigned and matcher(c)],
-            key=_natural_key)
-        if not cat_codes:
-            continue
-        # Separator header row
-        hdr = QStandardItem(f"── {cat_label} ──")
-        hdr.setEnabled(False)
-        hdr.setSelectable(False)
-        hdr.setForeground(QColor(C_DIM))
-        hdr.setData("__sep__", Qt.UserRole)
-        model.appendRow(hdr)
-        for code in cat_codes:
-            item = QStandardItem(code)
-            model.appendRow(item)
-            assigned.add(code)
-
-    cmb.setModel(model)
-    cmb.setStyleSheet(
-        "QComboBox{background:#1a1a1a;color:#4ec9b0;"
-        "border:1px solid #3e3e42;font-size:11px;padding:1px 4px;}"
-        "QComboBox QAbstractItemView{background:#252526;color:#cccccc;"
-        "selection-background-color:#264f78;}"
-    )
-    idx = cmb.findText(current)
-    if idx >= 0:
-        cmb.setCurrentIndex(idx)
-    else:
-        cmb.setEditText(current)
-    return cmb
 
 
 class DesignCodeDelegate(QStyledItemDelegate):
@@ -236,10 +177,21 @@ class StandardPartsDialog(QDialog):
                 self._grid.setItem(r, 5, QTableWidgetItem("0"))
                 self._grid.setItem(r, 6, QTableWidgetItem(""))
                 self._grid.setItem(r, 7, QTableWidgetItem("Normal"))
+        _codes = _load_design_codes()
         for r in range(20):
             self._grid.setRowHeight(r, 26)
-            self._grid.setCellWidget(r, dc_col,
-                                     _build_design_combobox(self._grid, "cd0"))
+            cmb = QComboBox()
+            cmb.setEditable(True)
+            for c in _codes:
+                cmb.addItem(c)
+            cmb.setCurrentText("cd0")
+            cmb.setStyleSheet(
+                "QComboBox{background:#1a1a1a;color:#4ec9b0;"
+                "border:1px solid #3e3e42;font-size:11px;}"
+                "QComboBox QAbstractItemView{background:#252526;color:#cccccc;"
+                "selection-background-color:#264f78;}"
+            )
+            self._grid.setCellWidget(r, dc_col, cmb)
         rl.addWidget(self._grid, 1); body.addWidget(right, 1)
         root.addLayout(body, 1)
 
@@ -376,8 +328,17 @@ class PartEditDialog(QDialog):
         self._name     = QLineEdit(self._d.get("part_code",""))
         self._dimx     = QDoubleSpinBox(); self._dimy = QDoubleSpinBox()
         self._qty      = QSpinBox();       self._thick = QDoubleSpinBox()
-        self._design   = _build_design_combobox(
-            self, self._d.get("design_code", "cd0") or "cd0")
+        self._design   = QComboBox()
+        self._design.setEditable(True)
+        _codes = _load_design_codes()
+        for c in _codes:
+            self._design.addItem(c)
+        _cur = self._d.get("design_code", "cd0") or "cd0"
+        _idx = self._design.findText(_cur)
+        if _idx >= 0:
+            self._design.setCurrentIndex(_idx)
+        else:
+            self._design.setEditText(_cur)
         self._material = QLineEdit(self._d.get("material","MDF"))
         self._customer = QLineEdit(self._d.get("customer",""))
         self._label    = QLineEdit(self._d.get("label",""))
@@ -655,11 +616,26 @@ class PartsTab(QWidget):
                 dc_col   = 4
                 prev_col = 5
 
-            # Design Code column — persistent grouped QComboBox
-            dc = part.get("design_code", "") or "cd0"
-            _cmb = _build_design_combobox(None, dc)
+            # Design Code column — persistent QComboBox dropdown
+            dc = part.get("design_code","") or "cd0"
+            _cmb = QComboBox()
+            _cmb.setEditable(True)
+            for _c in _load_design_codes():
+                _cmb.addItem(_c)
+            _idx = _cmb.findText(dc)
+            if _idx >= 0:
+                _cmb.setCurrentIndex(_idx)
+            else:
+                _cmb.setEditText(dc)
+            _cmb.setStyleSheet(
+                "QComboBox{background:#1a1a1a;color:#4ec9b0;"
+                "border:none;font-size:11px;padding:1px 4px;}"
+                "QComboBox QAbstractItemView{background:#252526;color:#cccccc;"
+                "selection-background-color:#264f78;}"
+            )
+            _row_ref = row
             _cmb.currentTextChanged.connect(
-                lambda val, r=row: self._on_dc_changed(r, val))
+                lambda val, r=_row_ref: self._on_dc_changed(r, val))
             t.setCellWidget(row, dc_col, _cmb)
 
             pix=make_preview_pixmap(raw_w, raw_h, color); prev=QTableWidgetItem()
@@ -870,13 +846,45 @@ class PartsTab(QWidget):
 
     # ── Export CSV ────────────────────────────────────────────
     def _on_item_changed(self, item):
-        """Sync non-Design-Code edits in table back to _rows data."""
+        """Sync editable grid values back to _rows data.
+
+        Quantity is editable directly in both Standard and Detailed grids.
+        Design Code is handled by its QComboBox cell widget, so it is skipped here.
+        """
+        if item is None:
+            return
         row = item.row()
         if row < 0 or row >= len(self._rows):
             return
+
         dc_col = 8 if self._detailed_mode else 4
-        # Design Code is now a cellWidget (QComboBox), not an item — skip
-        if item.column() == dc_col:
+        col = item.column()
+
+        # Design Code is a QComboBox cellWidget, not a normal table item.
+        if col == dc_col:
+            return
+
+        # Quantity column is always column 3 in both modes.
+        if col == 3:
+            old_qty = int(self._rows[row].get("qty", 1) or 1)
+            text = (item.text() or "").strip()
+            try:
+                # Accept values like "2" or "2.0", then normalize to int.
+                new_qty = int(float(text))
+            except Exception:
+                new_qty = old_qty if old_qty >= 1 else 1
+            new_qty = max(1, new_qty)
+
+            self._rows[row]["qty"] = new_qty
+
+            # Normalize displayed value without recursively triggering extra updates.
+            if item.text() != str(new_qty):
+                self._table.blockSignals(True)
+                item.setText(str(new_qty))
+                self._table.blockSignals(False)
+
+            self._update_bottom_bar()
+            self._emit()
             return
 
     def _export_csv(self):
