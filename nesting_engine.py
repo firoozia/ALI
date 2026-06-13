@@ -187,10 +187,11 @@ class NestingEngine:
                     full_e, full_r = self._sa_eval_full(neighbor)
                     self.all_results.append(full_r)
                     if full_e < best_energy:
-                        best_energy = full_e
-                        best_order  = list(neighbor)
-                        best_result = full_r
-                        no_improve  = 0
+                        best_energy      = full_e
+                        best_order       = list(neighbor)
+                        best_result      = full_r
+                        self.best_result = full_r  # live read by worker callback
+                        no_improve       = 0
 
             T = max(self.SA_T_MIN, T * self.SA_COOLING)
             step_in_cycle += 1
@@ -239,12 +240,13 @@ class NestingEngine:
     def _create_population(self, parts, size):
         pop = []
         base = list(parts)
-        pop.append(sorted(base, key=lambda p: p.width*p.height, reverse=True))
-        pop.append(sorted(base, key=lambda p: max(p.width,p.height), reverse=True))
-        pop.append(sorted(base, key=lambda p: min(p.width,p.height), reverse=True))
-        for _ in range(size - len(pop)):
+        pop.append(list(base))                                                     # strategy-sorted order (from caller)
+        pop.append(sorted(base, key=lambda p: p.width * p.height, reverse=True))  # area DESC
+        pop.append(sorted(base, key=lambda p: max(p.width, p.height), reverse=True))
+        pop.append(sorted(base, key=lambda p: min(p.width, p.height), reverse=True))
+        while len(pop) < size:
             s = list(base); random.shuffle(s); pop.append(s)
-        return pop
+        return pop[:size]
 
     def _mutate(self, top, count, parts):
         mutated = []

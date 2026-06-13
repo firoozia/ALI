@@ -76,6 +76,7 @@ class NoScrollComboBox(QComboBox):
 class NestingWorker(QThread):
     # gen, util%, elapsed_sec, no_improve_count
     sig_progress = Signal(int, float, float, int)
+    sig_sheets   = Signal(list)   # current best sheets for live canvas update
     sig_finished = Signal(list, list)
     sig_error    = Signal(str)
     sig_status   = Signal(str)
@@ -115,6 +116,9 @@ class NestingWorker(QThread):
 
             def on_progress(gen, util, sheet_count, elapsed, no_improve):
                 self.sig_progress.emit(gen, util, elapsed, no_improve)
+                # Emit current best sheets for live canvas preview
+                if engine.best_result and engine.best_result.sheets:
+                    self.sig_sheets.emit(list(engine.best_result.sheets))
                 conv = "  [Converged — still searching]" if no_improve > 12 else ""
                 self.sig_status.emit(
                     f"Gen {gen}  |  Best {util:.1f}%  |  {sheet_count} sheets{conv}")
@@ -1304,6 +1308,7 @@ class NestingTab(QWidget):
 
         self._worker = NestingWorker(prepared_parts, self._sheet_defs, opts)
         self._worker.sig_progress.connect(self._on_progress)
+        self._worker.sig_sheets.connect(self._on_live_sheets)
         self._worker.sig_finished.connect(self._on_finished)
         self._worker.sig_error.connect(self._on_error)
         self._worker.sig_status.connect(lambda s: self._status_bar.setText(f"  {s}"))
@@ -1344,6 +1349,11 @@ class NestingTab(QWidget):
         self._live_graph.add_point(elapsed, util)
         if no_improve > 12:
             self._live_graph.mark_converged(elapsed)
+
+    # ── Live canvas update during nesting ─────────────────────
+    def _on_live_sheets(self, sheets: list):
+        self._sheets = sheets
+        self._refresh_thumbs()
 
     # ── Finished ──────────────────────────────────────────────
     def _on_finished(self, sheets, all_results):
