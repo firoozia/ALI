@@ -691,6 +691,7 @@ class AspireToolDatabaseDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         form_container = QWidget()
+        form_container.setMaximumWidth(640)
         self._vlay = QVBoxLayout(form_container)
         self._vlay.setContentsMargins(0, 0, 4, 0)
         self._vlay.setSpacing(2)
@@ -769,11 +770,15 @@ class AspireToolDatabaseDialog(QDialog):
             if bold_label:
                 lbl.setStyleSheet("font-weight:700;")
             lay.addWidget(lbl)
+            # widget fills remaining space; suffix pinned right
             lay.addWidget(widget, 1)
             if suffix:
                 suf = QLabel(suffix)
+                suf.setFixedWidth(56)
                 suf.setStyleSheet(f"color:{C_DIM};")
                 lay.addWidget(suf)
+            else:
+                lay.addSpacing(58)   # keep row width consistent when no suffix
             self._vlay.addWidget(c)
             self._rows[key] = c
             return c
@@ -896,6 +901,7 @@ class AspireToolDatabaseDialog(QDialog):
         s = QDoubleSpinBox()
         s.setRange(lo, hi)
         s.setDecimals(dec)
+        s.setFixedHeight(26)
         return s
 
     # ── Data load ──────────────────────────────────────────────────────────────
