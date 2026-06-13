@@ -73,13 +73,13 @@ QDoubleSpinBox[readOnly=true], QSpinBox[readOnly=true] {{
 }}
 QDoubleSpinBox::up-button, QSpinBox::up-button {{
     subcontrol-origin: border; subcontrol-position: top right;
-    width: 18px; border-left: 1px solid {C_BORDER};
+    width: 16px; border-left: 1px solid {C_BORDER};
     border-bottom: 1px solid {C_BORDER};
     background: {C_PANEL2}; border-top-right-radius: 3px;
 }}
 QDoubleSpinBox::down-button, QSpinBox::down-button {{
     subcontrol-origin: border; subcontrol-position: bottom right;
-    width: 18px; border-left: 1px solid {C_BORDER};
+    width: 16px; border-left: 1px solid {C_BORDER};
     background: {C_PANEL2}; border-bottom-right-radius: 3px;
 }}
 QDoubleSpinBox::up-button:hover, QSpinBox::up-button:hover,
@@ -89,26 +89,6 @@ QDoubleSpinBox::down-button:hover, QSpinBox::down-button:hover {{
 QDoubleSpinBox::up-button:pressed, QSpinBox::up-button:pressed,
 QDoubleSpinBox::down-button:pressed, QSpinBox::down-button:pressed {{
     background: #388bfd;
-}}
-QDoubleSpinBox::up-arrow, QSpinBox::up-arrow {{
-    image: none; width: 0; height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-bottom: 5px solid {C_TEXT};
-}}
-QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {{
-    image: none; width: 0; height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid {C_TEXT};
-}}
-QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off,
-QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off {{
-    border-bottom-color: {C_DIM};
-}}
-QDoubleSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off,
-QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off {{
-    border-top-color: {C_DIM};
 }}
 QPushButton {{
     background: {C_PANEL2}; color: {C_TEXT}; border: 1px solid {C_BORDER};
