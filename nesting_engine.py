@@ -199,13 +199,18 @@ class NestingEngine:
         current_order = list(best_order)
         current_energy = best_energy
 
-        # SA / local search constants tuned for interactive nesting.
-        T_INIT = 1.0
-        T_MIN = 0.004
-        COOLING = 0.972
-        CYCLE_STEPS = 35
-        T = T_INIT
+        # SA constants
+        T_INIT       = 1.0
+        T_MIN        = 0.003
+        CYCLE_STEPS  = 55        # deeper local search per cycle vs. 35
+        PERTURB_AT   = 6         # ILS perturbation after this many stuck cycles
+        ACCEPT_WIN   = 40        # window for adaptive temperature
+        TARGET_LOW   = 0.10      # acceptance rate too cold → warm up
+        TARGET_HIGH  = 0.30      # acceptance rate too hot → cool down
+
+        T             = T_INIT
         step_in_cycle = 0
+        accept_window: list = []
 
         while not self._should_stop(stop_event, time_limit):
             neighbor = self._make_neighbor(current_order)
@@ -214,9 +219,21 @@ class NestingEngine:
             n_energy, n_result = self._eval_fast(neighbor, gen, variants)
             self._add_result(n_result)
 
-            delta = n_energy - current_energy
-            if delta < 0 or random.random() < math.exp(-delta / max(T, 1e-9)):
-                current_order = neighbor
+            delta    = n_energy - current_energy
+            accepted = delta < 0 or random.random() < math.exp(-delta / max(T, 1e-9))
+
+            # Adaptive temperature: track recent acceptance rate.
+            accept_window.append(1 if accepted else 0)
+            if len(accept_window) > ACCEPT_WIN:
+                accept_window.pop(0)
+                rate = sum(accept_window) / ACCEPT_WIN
+                if rate > TARGET_HIGH:
+                    T = max(T_MIN, T * 0.91)   # too easy — cool faster
+                elif rate < TARGET_LOW:
+                    T = min(T_INIT, T * 1.13)  # too hard — warm up
+
+            if accepted:
+                current_order  = neighbor
                 current_energy = n_energy
 
                 # If fast estimate is promising, verify with full strategy set.
@@ -224,13 +241,12 @@ class NestingEngine:
                     full_energy, full_result = self._eval_full(neighbor, gen, variants)
                     self._add_result(full_result)
                     if full_energy < best_energy:
-                        best_energy = full_energy
-                        best_order = list(neighbor)
-                        best_result = full_result
+                        best_energy      = full_energy
+                        best_order       = list(neighbor)
+                        best_result      = full_result
                         self.best_result = full_result
-                        no_improve = 0
+                        no_improve       = 0
 
-            T = max(T_MIN, T * COOLING)
             step_in_cycle += 1
 
             # Very important for PySide UI responsiveness:
@@ -246,16 +262,33 @@ class NestingEngine:
                 full_energy, full_result = self._eval_full(best_order, gen, variants)
                 self._add_result(full_result)
                 if full_energy < best_energy:
-                    best_energy = full_energy
-                    best_result = full_result
+                    best_energy      = full_energy
+                    best_result      = full_result
                     self.best_result = full_result
-                    no_improve = 0
+                    no_improve       = 0
                 else:
                     no_improve += 1
 
-                # Reheat and restart from the best known solution.
-                current_order = list(best_order)
-                current_energy = best_energy
+                # ILS: double-bridge perturbation when stuck for PERTURB_AT cycles.
+                if no_improve >= PERTURB_AT:
+                    perturbed = self._perturb(best_order)
+                    p_energy, p_result = self._eval_full(perturbed, gen, variants)
+                    self._add_result(p_result)
+                    if p_energy < best_energy:
+                        best_energy      = p_energy
+                        best_order       = list(perturbed)
+                        best_result      = p_result
+                        self.best_result = p_result
+                        no_improve       = 0
+                    # Accept the perturbed state anyway to escape — ILS key property.
+                    current_order  = perturbed
+                    current_energy = p_energy
+                    accept_window.clear()
+                else:
+                    # Normal reheat from best known solution.
+                    current_order  = list(best_order)
+                    current_energy = best_energy
+
                 T = T_INIT
 
             # Throttle UI/live preview updates to about once per second.
@@ -344,29 +377,68 @@ class NestingEngine:
         s = list(order)
         move = random.random()
 
-        if move < 0.38:
+        if move < 0.28:
+            # Swap two random positions
             i, j = random.sample(range(n), 2)
             s[i], s[j] = s[j], s[i]
-        elif move < 0.62:
+        elif move < 0.46:
+            # 2-opt: reverse a random segment
             i, j = sorted(random.sample(range(n), 2))
             if j > i:
-                s[i:j+1] = s[i:j+1][::-1]
-        elif move < 0.82:
+                s[i:j + 1] = s[i:j + 1][::-1]
+        elif move < 0.61:
+            # Or-opt1: relocate one element
             i = random.randrange(n)
             elem = s.pop(i)
             j = random.randrange(len(s) + 1)
             s.insert(j, elem)
+        elif move < 0.75 and n >= 4:
+            # Or-opt2: relocate two consecutive elements
+            i = random.randrange(n - 1)
+            pair = [s[i], s[i + 1]]
+            del s[i:i + 2]
+            j = random.randrange(len(s) + 1)
+            s = s[:j] + pair + s[j:]
+        elif move < 0.87 and n >= 5:
+            # Or-opt3: relocate three consecutive elements
+            i = random.randrange(n - 2)
+            triple = s[i:i + 3]
+            del s[i:i + 3]
+            j = random.randrange(len(s) + 1)
+            s = s[:j] + triple + s[j:]
         else:
-            # Move a small same-design block together; useful for repeat strategies.
+            # Block move: group same-design parts together (helps repeat strategies)
             d = self._sort_key_design(random.choice(s))
-            idxs = [i for i, p in enumerate(s) if self._sort_key_design(p) == d]
+            idxs = [k for k, p in enumerate(s) if self._sort_key_design(p) == d]
             if len(idxs) > 1:
-                block = [s[i] for i in idxs]
-                rest = [p for i, p in enumerate(s) if i not in idxs]
+                block = [s[k] for k in idxs]
+                rest  = [p for k, p in enumerate(s) if k not in set(idxs)]
                 j = random.randrange(len(rest) + 1)
                 s = rest[:j] + block + rest[j:]
 
         return s
+
+    def _perturb(self, order) -> list:
+        """Double-bridge perturbation for ILS escaping from local optima.
+
+        Cuts the sequence into 4 segments [A|B|C|D] and reconnects as
+        [A|C|B|D] — a non-reversible move that a swap or 2-opt cannot undo.
+        Falls back to segment shuffle for very small instances.
+        """
+        n = len(order)
+        s = list(order)
+        if n < 8:
+            # Small instance: shuffle a random half
+            mid = n // 2
+            i = random.randrange(max(1, n - mid))
+            chunk = s[i:i + mid]
+            random.shuffle(chunk)
+            s[i:i + mid] = chunk
+            return s
+        # Double-bridge
+        cuts = sorted(random.sample(range(1, n), 3))
+        a, b, c = cuts
+        return s[:a] + s[b:c] + s[a:b] + s[c:]
 
     def _pack_variants(self, deep_search: bool = False):
         """Generate packing variants.
