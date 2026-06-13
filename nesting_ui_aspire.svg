@@ -1,0 +1,503 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <defs>
+    <style>
+      text { font-family: "Segoe UI", Vazirmatn, sans-serif; }
+      .title-bar   { font-size:13px; fill:#c9d1d9; }
+      .tab-text    { font-size:12px; }
+      .ribbon-lbl  { font-size:10px; font-weight:700; fill:#e3b341; }
+      .group-inner { font-size:11px; fill:#e6edf3; }
+      .dim         { fill:#8b949e; }
+      .gold        { fill:#e3b341; }
+      .accent      { fill:#58a6ff; }
+      .green       { fill:#3fb950; }
+      .panel-hdr   { font-size:11px; font-weight:700; fill:#e3b341; }
+      .tbl-hdr     { font-size:10px; fill:#8b949e; font-weight:600; }
+      .tbl-cell    { font-size:10px; fill:#e6edf3; }
+      .btn-lbl     { font-size:11px; fill:#e6edf3; }
+      .small-lbl   { font-size:10px; fill:#8b949e; }
+      .tree-item   { font-size:11px; fill:#e6edf3; }
+    </style>
+    <!-- subtle glow for gold headers -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════
+       WINDOW CHROME
+  ════════════════════════════════════════════ -->
+  <!-- Main background -->
+  <rect width="1400" height="900" fill="#0d1117"/>
+
+  <!-- Title bar -->
+  <rect x="0" y="0" width="1400" height="32" fill="#161b22"/>
+  <rect x="0" y="31" width="1400" height="1" fill="#30363d"/>
+  <!-- App icon placeholder -->
+  <rect x="8" y="8" width="16" height="16" rx="3" fill="#1f6feb"/>
+  <text x="10" y="20" font-size="10" fill="white" font-weight="700">F</text>
+  <text x="30" y="21" class="title-bar">untitled* — FIROO CAM  |  Nesting Tab</text>
+  <!-- Window controls -->
+  <circle cx="1360" cy="16" r="6" fill="#ff5f56"/>
+  <circle cx="1378" cy="16" r="6" fill="#febc2e"/>
+  <circle cx="1396" cy="16" r="6" fill="#28c840"/>
+
+  <!-- ═══════════════════════════════════════════
+       TAB BAR
+  ════════════════════════════════════════════ -->
+  <rect x="0" y="32" width="1400" height="34" fill="#161b22"/>
+  <rect x="0" y="65" width="1400" height="1" fill="#30363d"/>
+
+  <!-- Tabs -->
+  <!-- Parts tab -->
+  <rect x="8" y="37" width="70" height="24" rx="3" fill="#21262d"/>
+  <rect x="8" y="37" width="70" height="24" rx="3" fill="none" stroke="#30363d" stroke-width="1"/>
+  <text x="43" y="54" text-anchor="middle" class="tab-text dim">Parts</text>
+
+  <!-- Sheets tab -->
+  <rect x="84" y="37" width="70" height="24" rx="3" fill="#21262d"/>
+  <rect x="84" y="37" width="70" height="24" rx="3" fill="none" stroke="#30363d" stroke-width="1"/>
+  <text x="119" y="54" text-anchor="middle" class="tab-text dim">Sheets</text>
+
+  <!-- Nesting tab (active) -->
+  <rect x="160" y="36" width="80" height="26" rx="3" fill="#0d1117"/>
+  <rect x="160" y="36" width="80" height="26" rx="3" fill="none" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="200" y="54" text-anchor="middle" class="tab-text" fill="#e3b341" font-weight="700">Nesting</text>
+
+  <!-- Export tab -->
+  <rect x="246" y="37" width="70" height="24" rx="3" fill="#21262d"/>
+  <rect x="246" y="37" width="70" height="24" rx="3" fill="none" stroke="#30363d" stroke-width="1"/>
+  <text x="281" y="54" text-anchor="middle" class="tab-text dim">Export</text>
+
+  <!-- ═══════════════════════════════════════════
+       RIBBON  (66–156px)
+  ════════════════════════════════════════════ -->
+  <rect x="0" y="66" width="1400" height="90" fill="#161b22"/>
+  <rect x="0" y="155" width="1400" height="1" fill="#30363d"/>
+
+  <!-- ── Group: Nesting ──────────────────────── -->
+  <!-- inner frame -->
+  <rect x="8" y="70" width="172" height="64" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <!-- Start button (green) -->
+  <rect x="14" y="76" width="72" height="28" rx="4" fill="#1a5c2a" stroke="#3fb950" stroke-width="1"/>
+  <text x="50" y="95" text-anchor="middle" class="btn-lbl" fill="white" font-weight="600">▶  Start</text>
+  <!-- Stop button -->
+  <rect x="92" y="76" width="72" height="28" rx="4" fill="#5c1a1a" stroke="#c0392b" stroke-width="1"/>
+  <text x="128" y="95" text-anchor="middle" class="btn-lbl" fill="white" font-weight="600">■  Stop</text>
+  <!-- Timer row -->
+  <text x="14" y="122" font-size="11" fill="#e6edf3">☐ Fixed Run</text>
+  <text x="100" y="122" font-size="11" font-weight="700" fill="#e3b341">00h:10m</text>
+  <text x="152" y="122" font-size="11" fill="#8b949e">00:00:00</text>
+  <!-- Group label -->
+  <rect x="8" y="134" width="172" height="1" fill="#30363d"/>
+  <text x="94" y="146" text-anchor="middle" class="ribbon-lbl" filter="url(#glow)">Nesting</text>
+
+  <!-- vertical divider -->
+  <rect x="186" y="72" width="1" height="78" fill="#30363d"/>
+
+  <!-- ── Group: Part Rotation ────────────────── -->
+  <rect x="192" y="70" width="148" height="64" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="198" y="86" class="small-lbl">Rotation</text>
+  <rect x="248" y="74" width="70" height="22" rx="3" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <!-- spinbox arrow buttons -->
+  <rect x="302" y="74" width="16" height="11" rx="0" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <rect x="302" y="85" width="16" height="11" rx="0" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <text x="270" y="90" text-anchor="middle" font-size="11" fill="#e6edf3">90°</text>
+  <text x="308" y="83" text-anchor="middle" font-size="8" fill="#8b949e">▲</text>
+  <text x="308" y="93" text-anchor="middle" font-size="8" fill="#8b949e">▼</text>
+
+  <text x="198" y="106" class="small-lbl">Tilt (+/-)°</text>
+  <rect x="248" y="94" width="70" height="22" rx="3" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <rect x="302" y="94" width="16" height="11" rx="0" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <rect x="302" y="105" width="16" height="11" rx="0" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <text x="270" y="110" text-anchor="middle" font-size="11" fill="#e6edf3">0.000</text>
+  <text x="308" y="103" text-anchor="middle" font-size="8" fill="#8b949e">▲</text>
+  <text x="308" y="113" text-anchor="middle" font-size="8" fill="#8b949e">▼</text>
+
+  <!-- Mirror checkbox -->
+  <rect x="198" y="116" width="12" height="12" rx="2" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <text x="214" y="126" font-size="11" fill="#e6edf3">Mirror Allowed</text>
+  <!-- Group label -->
+  <rect x="192" y="134" width="148" height="1" fill="#30363d"/>
+  <text x="266" y="146" text-anchor="middle" class="ribbon-lbl" filter="url(#glow)">Part Rotation</text>
+
+  <!-- vertical divider -->
+  <rect x="346" y="72" width="1" height="78" fill="#30363d"/>
+
+  <!-- ── Group: Spacing ──────────────────────── -->
+  <rect x="352" y="70" width="190" height="64" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <!-- Part Spacing row -->
+  <text x="358" y="84" class="small-lbl">Part Spacing</text>
+  <rect x="436" y="72" width="80" height="20" rx="3" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <rect x="500" y="72" width="16" height="10" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <rect x="500" y="82" width="16" height="10" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <text x="460" y="87" font-size="11" fill="#e6edf3">6.500</text>
+  <text x="506" y="80" text-anchor="middle" font-size="8" fill="#8b949e">▲</text>
+  <text x="506" y="90" text-anchor="middle" font-size="8" fill="#8b949e">▼</text>
+  <!-- Uniform checkbox -->
+  <rect x="358" y="94" width="12" height="12" rx="2" fill="#58a6ff" stroke="#58a6ff" stroke-width="1"/>
+  <text x="358" y="103" font-size="9" fill="white" font-weight="700">✓</text>
+  <text x="374" y="104" font-size="11" fill="#e6edf3">Uniform</text>
+  <!-- Top row -->
+  <text x="358" y="120" class="small-lbl">Top:</text>
+  <rect x="378" y="108" width="60" height="20" rx="3" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <rect x="432" y="108" width="14" height="10" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <rect x="432" y="118" width="14" height="10" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <text x="398" y="122" font-size="11" fill="#e6edf3">8.000</text>
+  <text x="438" y="116" text-anchor="middle" font-size="8" fill="#8b949e">▲</text>
+  <text x="438" y="126" text-anchor="middle" font-size="8" fill="#8b949e">▼</text>
+  <!-- Left/Right labels below -->
+  <text x="452" y="120" class="small-lbl">Left/Right/Bot: 8.000</text>
+  <!-- Sheet Edge Spacing sub-label -->
+  <text x="358" y="131" font-size="9" fill="#8b949e" font-style="italic">Sheet Edge Spacing</text>
+  <!-- Group label -->
+  <rect x="352" y="134" width="190" height="1" fill="#30363d"/>
+  <text x="447" y="146" text-anchor="middle" class="ribbon-lbl" filter="url(#glow)">Spacing</text>
+
+  <!-- vertical divider -->
+  <rect x="548" y="72" width="1" height="78" fill="#30363d"/>
+
+  <!-- ── Group: Nesting Direction ────────────── -->
+  <rect x="554" y="70" width="110" height="64" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <!-- Speed spinbox -->
+  <rect x="574" y="74" width="50" height="22" rx="3" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <rect x="618" y="74" width="14" height="11" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <rect x="618" y="85" width="14" height="11" fill="#21262d" stroke="#30363d" stroke-width="0.5"/>
+  <text x="593" y="90" text-anchor="middle" font-size="11" fill="#e6edf3">270</text>
+  <text x="624" y="83" text-anchor="middle" font-size="8" fill="#8b949e">▲</text>
+  <text x="624" y="93" text-anchor="middle" font-size="8" fill="#8b949e">▼</text>
+  <!-- Arrow button (circle style) -->
+  <rect x="574" y="100" width="40" height="28" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+  <text x="594" y="119" text-anchor="middle" font-size="18" fill="#e6edf3">→</text>
+  <!-- Group label -->
+  <rect x="554" y="134" width="110" height="1" fill="#30363d"/>
+  <text x="609" y="146" text-anchor="middle" class="ribbon-lbl" filter="url(#glow)">Nesting Direction</text>
+
+  <!-- vertical divider -->
+  <rect x="670" y="72" width="1" height="78" fill="#30363d"/>
+
+  <!-- ── Group: Nest Repeats ─────────────────── -->
+  <rect x="676" y="70" width="170" height="64" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <!-- Radio: Best Efficiency (selected) -->
+  <circle cx="686" cy="83" r="6" fill="#58a6ff" stroke="#58a6ff" stroke-width="1"/>
+  <circle cx="686" cy="83" r="3" fill="#0d1117"/>
+  <text x="696" y="87" font-size="11" fill="#e6edf3">Best Efficiency</text>
+  <!-- Radio: Balanced Repeats -->
+  <circle cx="686" cy="103" r="6" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <text x="696" y="107" font-size="11" fill="#e6edf3">Balanced Repeats</text>
+  <!-- Radio: Prefer Repeats -->
+  <circle cx="686" cy="123" r="6" fill="#111820" stroke="#30363d" stroke-width="1"/>
+  <text x="696" y="127" font-size="11" fill="#e6edf3">Prefer Repeats</text>
+  <!-- Group label -->
+  <rect x="676" y="134" width="170" height="1" fill="#30363d"/>
+  <text x="761" y="146" text-anchor="middle" class="ribbon-lbl" filter="url(#glow)">Nesting Repeats</text>
+
+  <!-- vertical divider -->
+  <rect x="852" y="72" width="1" height="78" fill="#30363d"/>
+
+  <!-- ── Group: Costing ──────────────────────── -->
+  <rect x="858" y="70" width="130" height="64" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <!-- Costing button -->
+  <rect x="868" y="74" width="110" height="56" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+  <!-- Piggy bank icon -->
+  <ellipse cx="916" cy="92" rx="14" ry="11" fill="none" stroke="#e3b341" stroke-width="1.5"/>
+  <circle cx="926" cy="88" r="3" fill="none" stroke="#e3b341" stroke-width="1.5"/>
+  <line x1="910" y1="100" x2="908" y2="107" stroke="#e3b341" stroke-width="1.5"/>
+  <line x1="918" y1="100" x2="917" y2="107" stroke="#e3b341" stroke-width="1.5"/>
+  <line x1="914" y1="83" x2="914" y2="79" stroke="#e3b341" stroke-width="1.5"/>
+  <text x="923" y="114" text-anchor="middle" font-size="10" fill="#e6edf3">Estimate</text>
+  <text x="923" y="124" text-anchor="middle" font-size="10" fill="#e6edf3">Material Cost</text>
+  <!-- Group label -->
+  <rect x="858" y="134" width="130" height="1" fill="#30363d"/>
+  <text x="923" y="146" text-anchor="middle" class="ribbon-lbl" filter="url(#glow)">Costing</text>
+
+  <!-- ═══════════════════════════════════════════
+       BODY  (below ribbon)
+  ════════════════════════════════════════════ -->
+
+  <!-- ── LEFT: Sheets panel (0–220) ────────── -->
+  <rect x="0" y="156" width="220" height="720" fill="#0d1117"/>
+  <!-- header -->
+  <rect x="0" y="156" width="220" height="26" fill="#161b22"/>
+  <text x="8" y="174" class="panel-hdr" filter="url(#glow)">  Sheets</text>
+  <rect x="0" y="181" width="220" height="1" fill="#30363d"/>
+  <!-- toolbar buttons -->
+  <rect x="4" y="184" width="60" height="22" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+  <text x="34" y="199" text-anchor="middle" font-size="11" fill="#e6edf3">+ Sheet</text>
+  <rect x="68" y="184" width="68" height="22" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+  <text x="102" y="199" text-anchor="middle" font-size="11" fill="#e6edf3">+ Remnant</text>
+  <rect x="140" y="184" width="22" height="22" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+  <text x="151" y="199" text-anchor="middle" font-size="11" fill="#e6edf3">✎</text>
+  <rect x="166" y="184" width="22" height="22" rx="4" fill="#21262d" stroke="#30363d" stroke-width="1"/>
+  <text x="177" y="199" text-anchor="middle" font-size="11" fill="#e6edf3">✕</text>
+  <rect x="0" y="208" width="220" height="1" fill="#30363d"/>
+  <!-- Table header -->
+  <rect x="0" y="209" width="220" height="22" fill="#161b22"/>
+  <text x="4" y="224" class="tbl-hdr">Name</text>
+  <text x="86" y="224" class="tbl-hdr">W</text>
+  <text x="112" y="224" class="tbl-hdr">H</text>
+  <text x="145" y="224" class="tbl-hdr">Qty</text>
+  <text x="178" y="224" class="tbl-hdr">Pri</text>
+  <line x1="0" y1="231" x2="220" y2="231" stroke="#30363d" stroke-width="1"/>
+  <!-- Row 1 (highlighted) -->
+  <rect x="0" y="231" width="220" height="22" fill="#163b69"/>
+  <text x="4" y="246" class="tbl-cell">2440×1220</text>
+  <text x="86" y="246" class="tbl-cell">2440</text>
+  <text x="112" y="246" class="tbl-cell">1220</text>
+  <text x="145" y="246" class="tbl-cell">100</text>
+  <text x="178" y="246" class="tbl-cell">Nrm</text>
+  <!-- Row 2 -->
+  <rect x="0" y="253" width="220" height="22" fill="#15191f"/>
+  <text x="4" y="268" class="tbl-cell dim">3660×1830</text>
+  <text x="86" y="268" class="tbl-cell dim">3660</text>
+  <text x="112" y="268" class="tbl-cell dim">1830</text>
+  <text x="145" y="268" class="tbl-cell dim">50</text>
+  <text x="178" y="268" class="tbl-cell dim">Low</text>
+  <!-- Row 3 -->
+  <rect x="0" y="275" width="220" height="22" fill="#111820"/>
+  <text x="4" y="290" class="tbl-cell dim">1220×2440</text>
+  <text x="86" y="290" class="tbl-cell dim">1220</text>
+  <text x="112" y="290" class="tbl-cell dim">2440</text>
+  <text x="145" y="290" class="tbl-cell dim">25</text>
+  <text x="178" y="290" class="tbl-cell dim">Nrm</text>
+  <!-- border -->
+  <rect x="219" y="156" width="1" height="720" fill="#30363d"/>
+
+  <!-- ── CENTER: Current Layout ─────────────── -->
+  <rect x="220" y="156" width="860" height="720" fill="#0d1117"/>
+  <!-- header -->
+  <rect x="220" y="156" width="860" height="26" fill="#161b22"/>
+  <text x="228" y="174" class="panel-hdr" filter="url(#glow)">  Current Layout</text>
+  <rect x="220" y="181" width="860" height="1" fill="#30363d"/>
+
+  <!-- Sheet thumbnails (9 sheets, 3 rows × 3, in scrollable area) -->
+  <!-- Row 1 thumbnails -->
+  <!-- Thumb 1 (selected - blue border) -->
+  <rect x="232" y="192" width="140" height="110" rx="3" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
+  <!-- parts inside thumb 1 -->
+  <rect x="240" y="198" width="55" height="45" rx="1" fill="#c0392b" opacity="0.85"/>
+  <rect x="300" y="198" width="35" height="35" rx="1" fill="#e67e22" opacity="0.85"/>
+  <rect x="240" y="248" width="40" height="30" rx="1" fill="#27ae60" opacity="0.85"/>
+  <rect x="285" y="240" width="50" height="38" rx="1" fill="#2980b9" opacity="0.85"/>
+  <rect x="240" y="198" width="55" height="45" fill="none" stroke="#e74c3c" stroke-width="0.5"/>
+  <text x="302" y="312" text-anchor="middle" font-size="11" fill="#e3b341" font-weight="700">x1</text>
+
+  <!-- Thumb 2 -->
+  <rect x="384" y="192" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="392" y="198" width="60" height="50" rx="1" fill="#c0392b" opacity="0.75"/>
+  <rect x="456" y="198" width="40" height="30" rx="1" fill="#8e44ad" opacity="0.75"/>
+  <rect x="392" y="252" width="50" height="35" rx="1" fill="#16a085" opacity="0.75"/>
+  <rect x="446" y="235" width="45" height="42" rx="1" fill="#d35400" opacity="0.75"/>
+  <text x="454" y="312" text-anchor="middle" font-size="11" fill="#e3b341" font-weight="700">x2</text>
+
+  <!-- Thumb 3 -->
+  <rect x="536" y="192" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="544" y="198" width="70" height="55" rx="1" fill="#2c3e50" opacity="0.75"/>
+  <rect x="618" y="198" width="30" height="25" rx="1" fill="#1abc9c" opacity="0.75"/>
+  <rect x="544" y="257" width="55" height="30" rx="1" fill="#e74c3c" opacity="0.75"/>
+  <rect x="603" y="230" width="45" height="45" rx="1" fill="#3498db" opacity="0.75"/>
+  <text x="606" y="312" text-anchor="middle" font-size="11" fill="#8b949e" font-weight="700">x1</text>
+
+  <!-- Thumb 4 -->
+  <rect x="688" y="192" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="696" y="198" width="50" height="42" rx="1" fill="#e67e22" opacity="0.75"/>
+  <rect x="750" y="198" width="40" height="30" rx="1" fill="#c0392b" opacity="0.75"/>
+  <rect x="696" y="244" width="45" height="35" rx="1" fill="#27ae60" opacity="0.75"/>
+  <rect x="745" y="232" width="42" height="45" rx="1" fill="#8e44ad" opacity="0.75"/>
+  <text x="758" y="312" text-anchor="middle" font-size="11" fill="#e3b341" font-weight="700">x2</text>
+
+  <!-- Row 2 thumbnails -->
+  <!-- Thumb 5 -->
+  <rect x="232" y="336" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="240" y="342" width="65" height="52" rx="1" fill="#16a085" opacity="0.75"/>
+  <rect x="309" y="342" width="30" height="28" rx="1" fill="#d35400" opacity="0.75"/>
+  <rect x="240" y="398" width="50" height="32" rx="1" fill="#2c3e50" opacity="0.75"/>
+  <text x="302" y="456" text-anchor="middle" font-size="11" fill="#8b949e" font-weight="700">x1</text>
+
+  <!-- Thumb 6 -->
+  <rect x="384" y="336" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="392" y="342" width="55" height="46" rx="1" fill="#3498db" opacity="0.75"/>
+  <rect x="451" y="342" width="45" height="32" rx="1" fill="#e74c3c" opacity="0.75"/>
+  <rect x="392" y="392" width="42" height="36" rx="1" fill="#1abc9c" opacity="0.75"/>
+  <text x="454" y="456" text-anchor="middle" font-size="11" fill="#e3b341" font-weight="700">x2</text>
+
+  <!-- Thumb 7 -->
+  <rect x="536" y="336" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="544" y="342" width="72" height="56" rx="1" fill="#8e44ad" opacity="0.75"/>
+  <rect x="620" y="342" width="28" height="24" rx="1" fill="#2980b9" opacity="0.75"/>
+  <rect x="544" y="402" width="58" height="28" rx="1" fill="#c0392b" opacity="0.75"/>
+  <text x="606" y="456" text-anchor="middle" font-size="11" fill="#8b949e" font-weight="700">x1</text>
+
+  <!-- Row 3 thumbnails -->
+  <!-- Thumb 8 -->
+  <rect x="232" y="480" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="240" y="486" width="60" height="48" rx="1" fill="#e67e22" opacity="0.75"/>
+  <rect x="304" y="486" width="32" height="28" rx="1" fill="#27ae60" opacity="0.75"/>
+  <rect x="240" y="538" width="55" height="38" rx="1" fill="#16a085" opacity="0.75"/>
+  <text x="302" y="600" text-anchor="middle" font-size="11" fill="#e3b341" font-weight="700">x2</text>
+
+  <!-- Thumb 9 -->
+  <rect x="384" y="480" width="140" height="110" rx="3" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <rect x="392" y="486" width="50" height="44" rx="1" fill="#2c3e50" opacity="0.75"/>
+  <rect x="446" y="486" width="40" height="34" rx="1" fill="#d35400" opacity="0.75"/>
+  <rect x="392" y="534" width="48" height="32" rx="1" fill="#3498db" opacity="0.75"/>
+  <text x="454" y="600" text-anchor="middle" font-size="11" fill="#8b949e" font-weight="700">x1</text>
+
+  <!-- Checkboxes row -->
+  <rect x="220" y="840" width="860" height="28" fill="#161b22"/>
+  <rect x="220" y="840" width="860" height="1" fill="#30363d"/>
+  <!-- checkbox 1 (checked) -->
+  <rect x="232" y="848" width="13" height="13" rx="2" fill="#58a6ff" stroke="#58a6ff"/>
+  <text x="232" y="859" font-size="9" fill="white" font-weight="700">✓</text>
+  <text x="249" y="859" font-size="11" fill="#e6edf3">Auto-Select Best Result</text>
+  <!-- checkbox 2 (checked) -->
+  <rect x="402" y="848" width="13" height="13" rx="2" fill="#58a6ff" stroke="#58a6ff"/>
+  <text x="402" y="859" font-size="9" fill="white" font-weight="700">✓</text>
+  <text x="419" y="859" font-size="11" fill="#e6edf3">Show Unique Nests Only</text>
+
+  <!-- 6px progress bar (thin Aspire style) -->
+  <rect x="220" y="868" width="860" height="6" fill="#161b22" rx="3"/>
+  <rect x="220" y="868" width="540" height="6" fill="#58a6ff" rx="3"/>
+
+  <!-- thin 6px horizontal scrollbar -->
+  <rect x="220" y="874" width="860" height="6" fill="#161b22" rx="3"/>
+  <rect x="360" y="874" width="200" height="6" fill="#30363d" rx="3"/>
+
+  <!-- border between center and right -->
+  <rect x="1079" y="156" width="1" height="720" fill="#30363d"/>
+
+  <!-- ── RIGHT: Results + Nest Details ─────── -->
+  <rect x="1080" y="156" width="320" height="720" fill="#0d1117"/>
+
+  <!-- Results header (gold) -->
+  <rect x="1080" y="156" width="320" height="26" fill="#161b22"/>
+  <text x="1088" y="174" class="panel-hdr" filter="url(#glow)">  Results</text>
+  <rect x="1080" y="181" width="320" height="1" fill="#30363d"/>
+
+  <!-- Results table header -->
+  <rect x="1080" y="182" width="320" height="20" fill="#161b22"/>
+  <text x="1084" y="196" class="tbl-hdr">Rnk</text>
+  <text x="1110" y="196" class="tbl-hdr">Util%</text>
+  <text x="1155" y="196" class="tbl-hdr">Parts</text>
+  <text x="1202" y="196" class="tbl-hdr">Extr</text>
+  <text x="1240" y="196" class="tbl-hdr">Shts</text>
+  <text x="1278" y="196" class="tbl-hdr">Time</text>
+  <line x1="1080" y1="202" x2="1400" y2="202" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Row 1 (best - highlighted green bg) -->
+  <rect x="1080" y="202" width="320" height="22" fill="#1a3a1a"/>
+  <text x="1088" y="217" class="tbl-cell">★ 1</text>
+  <text x="1115" y="217" class="tbl-cell" fill="#3fb950" font-weight="700">94.2%</text>
+  <text x="1160" y="217" class="tbl-cell">48</text>
+  <text x="1208" y="217" class="tbl-cell">0</text>
+  <text x="1244" y="217" class="tbl-cell">6</text>
+  <text x="1282" y="217" class="tbl-cell">12s</text>
+  <!-- Row 2 -->
+  <rect x="1080" y="224" width="320" height="22" fill="#15191f"/>
+  <text x="1088" y="239" class="tbl-cell dim">2</text>
+  <text x="1115" y="239" class="tbl-cell">91.8%</text>
+  <text x="1160" y="239" class="tbl-cell">47</text>
+  <text x="1208" y="239" class="tbl-cell">1</text>
+  <text x="1244" y="239" class="tbl-cell">7</text>
+  <text x="1282" y="239" class="tbl-cell">8s</text>
+  <!-- Row 3 -->
+  <rect x="1080" y="246" width="320" height="22" fill="#111820"/>
+  <text x="1088" y="261" class="tbl-cell dim">3</text>
+  <text x="1115" y="261" class="tbl-cell">89.3%</text>
+  <text x="1160" y="261" class="tbl-cell">46</text>
+  <text x="1208" y="261" class="tbl-cell">2</text>
+  <text x="1244" y="261" class="tbl-cell">7</text>
+  <text x="1282" y="261" class="tbl-cell">5s</text>
+  <!-- Row 4 -->
+  <rect x="1080" y="268" width="320" height="22" fill="#15191f"/>
+  <text x="1088" y="283" class="tbl-cell dim">4</text>
+  <text x="1115" y="283" class="tbl-cell">87.1%</text>
+  <text x="1160" y="283" class="tbl-cell">45</text>
+  <text x="1208" y="283" class="tbl-cell">3</text>
+  <text x="1244" y="283" class="tbl-cell">8</text>
+  <text x="1282" y="283" class="tbl-cell">3s</text>
+  <!-- Row 5 -->
+  <rect x="1080" y="290" width="320" height="22" fill="#111820"/>
+  <text x="1088" y="305" class="tbl-cell dim">5</text>
+  <text x="1115" y="305" class="tbl-cell">85.0%</text>
+  <text x="1160" y="305" class="tbl-cell">44</text>
+  <text x="1208" y="305" class="tbl-cell">4</text>
+  <text x="1244" y="305" class="tbl-cell">8</text>
+  <text x="1282" y="305" class="tbl-cell">2s</text>
+
+  <!-- vertical 6px scrollbar (thin Aspire style) -->
+  <rect x="1392" y="202" width="6" height="134" fill="#161b22" rx="3"/>
+  <rect x="1392" y="210" width="6" height="40" fill="#30363d" rx="3"/>
+
+  <!-- Nest Details header (gold) -->
+  <rect x="1080" y="336" width="320" height="1" fill="#30363d"/>
+  <rect x="1080" y="337" width="320" height="26" fill="#161b22"/>
+  <text x="1088" y="355" class="panel-hdr" filter="url(#glow)">  Nest Details</text>
+  <rect x="1080" y="362" width="320" height="1" fill="#30363d"/>
+
+  <!-- Nest tree (utilization chart on right side) -->
+  <!-- Tree items -->
+  <rect x="1080" y="363" width="210" height="360" fill="#161b22"/>
+  <!-- Tree item 1 (selected) -->
+  <rect x="1080" y="363" width="210" height="22" fill="#1f6feb"/>
+  <text x="1088" y="379" font-size="11" fill="white">▼ Nest 1 (x1)</text>
+  <!-- child items -->
+  <rect x="1080" y="385" width="210" height="18" fill="#1c2128"/>
+  <text x="1104" y="398" font-size="10" fill="#58a6ff">  2440x1220 — 94.2%</text>
+  <rect x="1080" y="403" width="210" height="18" fill="#161b22"/>
+  <text x="1104" y="416" font-size="10" fill="#8b949e">  Parts: 8 × 48</text>
+
+  <rect x="1080" y="421" width="210" height="22" fill="#161b22"/>
+  <text x="1088" y="437" font-size="11" fill="#e6edf3">▶ Nest 2 (x2)</text>
+  <rect x="1080" y="443" width="210" height="22" fill="#15191f"/>
+  <text x="1088" y="459" font-size="11" fill="#e6edf3">▶ Nest 3 (x1)</text>
+  <rect x="1080" y="465" width="210" height="22" fill="#161b22"/>
+  <text x="1088" y="481" font-size="11" fill="#e6edf3">▶ Nest 4 (x2)</text>
+  <rect x="1080" y="487" width="210" height="22" fill="#15191f"/>
+  <text x="1088" y="503" font-size="11" fill="#e6edf3">▶ Nest 5 (x2)</text>
+  <rect x="1080" y="509" width="210" height="22" fill="#161b22"/>
+  <text x="1088" y="525" font-size="11" fill="#e6edf3">▶ Nest 6 (x1)</text>
+  <rect x="1080" y="531" width="210" height="22" fill="#15191f"/>
+  <text x="1088" y="547" font-size="11" fill="#e6edf3">▶ Nest 7 (x2)</text>
+  <rect x="1080" y="553" width="210" height="22" fill="#161b22"/>
+  <text x="1088" y="569" font-size="11" fill="#e6edf3">▶ Nest 8 (x1)</text>
+  <rect x="1080" y="575" width="210" height="22" fill="#15191f"/>
+  <text x="1088" y="591" font-size="11" fill="#e6edf3">▶ Nest 9 (x1)</text>
+
+  <!-- 6px vertical scrollbar for tree -->
+  <rect x="1286" y="363" width="6" height="220" fill="#161b22" rx="3"/>
+  <rect x="1286" y="380" width="6" height="60" fill="#30363d" rx="3"/>
+
+  <!-- Util Chart panel -->
+  <rect x="1292" y="363" width="108" height="360" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <!-- chart title -->
+  <text x="1346" y="380" text-anchor="middle" font-size="10" fill="#8b949e">Utilization</text>
+  <!-- Y-axis labels -->
+  <text x="1316" y="396" text-anchor="end" font-size="9" fill="#8b949e">94.2%</text>
+  <text x="1316" y="500" text-anchor="end" font-size="9" fill="#8b949e">85.0%</text>
+  <!-- Bars -->
+  <rect x="1320" y="390" width="70" height="14" rx="2" fill="#58a6ff"/>
+  <text x="1394" y="402" font-size="9" fill="#e6edf3">94.2%</text>
+  <rect x="1320" y="408" width="64" height="14" rx="2" fill="#30363d"/>
+  <text x="1388" y="420" font-size="9" fill="#8b949e">91.8%</text>
+  <rect x="1320" y="426" width="58" height="14" rx="2" fill="#30363d"/>
+  <text x="1382" y="438" font-size="9" fill="#8b949e">89.3%</text>
+  <rect x="1320" y="444" width="52" height="14" rx="2" fill="#30363d"/>
+  <text x="1376" y="456" font-size="9" fill="#8b949e">87.1%</text>
+  <rect x="1320" y="462" width="46" height="14" rx="2" fill="#30363d"/>
+  <text x="1370" y="474" font-size="9" fill="#8b949e">85.0%</text>
+
+  <!-- ═══════════════════════════════════════════
+       STATUS BAR
+  ════════════════════════════════════════════ -->
+  <rect x="0" y="876" width="1400" height="24" fill="#161b22"/>
+  <rect x="0" y="876" width="1400" height="1" fill="#30363d"/>
+  <text x="8" y="892" font-family="'Segoe UI','Vazirmatn',sans-serif" font-size="11" fill="#8b949e">  48 parts nested across 6 sheets — best utilization: 94.2%  |  elapsed: 00:00:12</text>
+
+  <!-- ═══════════════════════════════════════════
+       ASPIRE STYLE BADGE (bottom right)
+  ════════════════════════════════════════════ -->
+  <rect x="1260" y="878" width="136" height="18" rx="3" fill="#21262d" stroke="#30363d"/>
+  <text x="1328" y="891" text-anchor="middle" font-size="10" fill="#e3b341" font-weight="700" font-family="'Segoe UI',sans-serif">Aspire Theme ✓</text>
+
+</svg>
