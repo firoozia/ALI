@@ -108,65 +108,133 @@ class NestingEngine:
             return self.best_result.sheets
         return []
 
-    def run_continuous(self, parts: List[Part], stop_event,
-                       on_progress=None) -> List[Part]:
-        """Run nesting generations in a loop until stop_event is set.
+    # ── SA constants ──────────────────────────────────────────
+    SA_T_INIT   = 1.0     # starting temperature
+    SA_T_MIN    = 0.004   # minimum temperature before reheat
+    SA_COOLING  = 0.975   # per-step cooling factor
+    SA_CYCLE    = 120     # SA steps between progress reports / reheats
 
-        on_progress(gen, util%, sheet_count, elapsed_sec, no_improve_count) is
-        called after every generation so the UI can update the live graph.
+    def run_continuous(self, parts: List[Part], stop_event,
+                       on_progress=None) -> List[Sheet]:
+        """Simulated Annealing + MaxRects, runs until stop_event is set.
+
+        Neighbor moves: random swap / 2-opt reverse / reinsertion.
+        Each SA step evaluates one random MaxRects variant (fast).
+        Every SA_CYCLE steps: full 3-variant evaluation, reheat, report.
+        Direction transform is applied inside _evaluate via self.direction.
         """
         if not parts:
             return []
         self.all_results = []
         start = time.time()
-        pop = self._create_population(parts, 15)
-        best_ever = None
-        no_improve = 0
-        gen = 0
+
+        # ── Warm start: pick best ordering from initial population ─
+        pop = self._create_population(parts, 8)
+        best_order, best_energy, best_result = None, float("inf"), None
+        for order in pop:
+            if stop_event.is_set():
+                break
+            e, r = self._sa_eval_full(order)
+            self.all_results.append(r)
+            if e < best_energy:
+                best_energy = e
+                best_order  = list(order)
+                best_result = r
+
+        if best_order is None:
+            return []
+
+        current_order  = list(best_order)
+        current_energy = best_energy
+
+        T              = self.SA_T_INIT
+        step_in_cycle  = 0
+        gen            = 0          # reported cycle count
+        no_improve     = 0          # cycles since global best improved
 
         while not stop_event.is_set():
-            gen_results = []
-            for order in pop:
-                if stop_event.is_set():
-                    break
-                for algo in self.PACK_ALGOS:
-                    if stop_event.is_set():
-                        break
-                    t0 = time.time()
-                    result = self._evaluate(order, algo, gen)
-                    result.time_ms = (time.time() - t0) * 1000
-                    gen_results.append((result, order))
-                    self.all_results.append(result)
+            # ── SA step ───────────────────────────────────────────
+            neighbor = list(current_order)
+            n = len(neighbor)
+            if n >= 2:
+                r = random.random()
+                if r < 0.50:
+                    # Swap two random positions
+                    i, j = random.sample(range(n), 2)
+                    neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
+                elif r < 0.75:
+                    # 2-opt: reverse a random segment
+                    i, j = sorted(random.sample(range(n), 2))
+                    if j > i:
+                        neighbor[i:j + 1] = neighbor[i:j + 1][::-1]
+                else:
+                    # Reinsertion: remove one element, insert elsewhere
+                    i = random.randrange(n)
+                    j = random.randrange(n - 1)
+                    elem = neighbor.pop(i)
+                    neighbor.insert(j, elem)
 
-            if not gen_results:
-                break
+            # Fast single-algo energy estimate during exploration
+            n_energy, n_result = self._sa_eval_fast(neighbor)
+            self.all_results.append(n_result)
 
-            gen_results.sort(key=lambda x: -x[0].score())
-            best_this = gen_results[0][0]
+            delta = n_energy - current_energy
+            if delta < 0 or random.random() < math.exp(-delta / max(T, 1e-10)):
+                current_order  = neighbor
+                current_energy = n_energy
+                # Update global best (verify with full 3-algo eval)
+                if n_energy < best_energy:
+                    full_e, full_r = self._sa_eval_full(neighbor)
+                    self.all_results.append(full_r)
+                    if full_e < best_energy:
+                        best_energy = full_e
+                        best_order  = list(neighbor)
+                        best_result = full_r
+                        no_improve  = 0
 
-            if not best_ever or best_this.score() > best_ever.score():
-                best_ever = best_this
-                no_improve = 0
-            else:
+            T = max(self.SA_T_MIN, T * self.SA_COOLING)
+            step_in_cycle += 1
+
+            if step_in_cycle >= self.SA_CYCLE or stop_event.is_set():
+                step_in_cycle = 0
+                gen += 1
                 no_improve += 1
 
-            top = [x[1] for x in gen_results[:max(2, 15 // 3)]]
-            pop = top + self._mutate(top, 15 - len(top), parts)
+                # Reheat: restart current state from global best
+                current_order  = list(best_order)
+                current_energy = best_energy
+                T = self.SA_T_INIT
 
-            if on_progress and best_ever:
-                on_progress(gen, best_ever.utilization,
-                            best_ever.sheet_count,
-                            time.time() - start, no_improve)
-            gen += 1
+                if on_progress and best_result:
+                    on_progress(gen, best_result.utilization,
+                                best_result.sheet_count,
+                                time.time() - start, no_improve)
 
+        self._finalise_results()
+        return self.best_result.sheets if self.best_result else []
+
+    def _sa_eval_fast(self, order):
+        """Single random-algo evaluation — used during SA exploration."""
+        algo = random.choice(self.PACK_ALGOS)
+        r = self._evaluate(order, algo, 0)
+        return -r.score(), r
+
+    def _sa_eval_full(self, order):
+        """All 3 algos, return best — used at cycle checkpoints."""
+        best = None
+        for algo in self.PACK_ALGOS:
+            r = self._evaluate(order, algo, 0)
+            if best is None or r.score() > best.score():
+                best = r
+        return -best.score(), best
+
+    def _finalise_results(self):
         self.all_results.sort(
             key=lambda r: (-r.total_parts, -r.utilization, r.sheet_count))
         for i, r in enumerate(self.all_results):
             r.rank = i + 1
         if self.all_results:
             self.best_result = self.all_results[0]
-            return self.best_result.sheets
-        return []
 
     def _create_population(self, parts, size):
         pop = []
