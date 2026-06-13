@@ -433,8 +433,8 @@ class NestingTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Compact top bar (Start/Stop + key settings only, no ribbon)
-        root.addWidget(self._build_compact_bar())
+        # Full Solid Edge ribbon toolbar
+        root.addWidget(self._build_ribbon())
 
         sep = QFrame(); sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet(f"background:{C_BORDER.name()};")
@@ -675,7 +675,7 @@ class NestingTab(QWidget):
 
         # ── Group: Nesting ─────────────────────────────────────
         g_nest = self._ribbon_group("Nesting")
-        gn_lay = QHBoxLayout(g_nest)
+        gn_lay = QHBoxLayout(g_nest._inner)
         gn_lay.setSpacing(4)
 
         btn_col = QVBoxLayout(); btn_col.setSpacing(2)
@@ -709,7 +709,7 @@ class NestingTab(QWidget):
 
         # ── Group: Part Rotation ───────────────────────────────
         g_rot = self._ribbon_group("Part Rotation")
-        gr_lay = QFormLayout(g_rot)
+        gr_lay = QFormLayout(g_rot._inner)
         gr_lay.setSpacing(3); gr_lay.setContentsMargins(4,2,4,2)
         gr_lay.setLabelAlignment(Qt.AlignRight)
 
@@ -735,7 +735,7 @@ class NestingTab(QWidget):
         # Layout: checkbox Uniform + spin | Top/Left/Bottom/Right for Sheet Edge Spacing
         # and Part Spacing
         g_spc = self._ribbon_group("Spacing")
-        gs_lay = QVBoxLayout(g_spc)
+        gs_lay = QVBoxLayout(g_spc._inner)
         gs_lay.setSpacing(2); gs_lay.setContentsMargins(4,2,4,2)
 
         # Part Spacing row
@@ -801,7 +801,7 @@ class NestingTab(QWidget):
 
         # ── Group: Nesting Direction ───────────────────────────
         g_dir = self._ribbon_group("Nesting Direction")
-        gd_lay = QVBoxLayout(g_dir)
+        gd_lay = QVBoxLayout(g_dir._inner)
         gd_lay.setAlignment(Qt.AlignCenter)
 
         # Speed input (number field above arrow, like Solid Edge)
@@ -822,7 +822,7 @@ class NestingTab(QWidget):
 
         # ── Group: Nest Repeats ────────────────────────────────
         g_rep = self._ribbon_group("Nesting Repeats")
-        gr2_lay = QVBoxLayout(g_rep)
+        gr2_lay = QVBoxLayout(g_rep._inner)
         gr2_lay.setSpacing(2); gr2_lay.setContentsMargins(4,2,4,2)
         self._bg_repeats = QButtonGroup(self)
         self._rb_best    = QRadioButton("Best Efficiency")
@@ -838,7 +838,7 @@ class NestingTab(QWidget):
 
         # ── Group: Costing ────────────────────────────────────
         g_cost = self._ribbon_group("Costing")
-        gc_lay = QVBoxLayout(g_cost)
+        gc_lay = QVBoxLayout(g_cost._inner)
         gc_lay.setAlignment(Qt.AlignCenter)
         self._btn_costing = QPushButton("💰\nEstimate\nMaterial Cost")
         self._btn_costing.setFixedSize(80, 60)
@@ -889,6 +889,7 @@ class NestingTab(QWidget):
         lbl.setStyleSheet(f"color:{C_DIM.name()}; font-size:10px; "
                           f"border-top:1px solid {C_BORDER.name()}; padding:1px 0;")
         vl.addWidget(lbl)
+        w._inner = inner  # content area for callers
         return w
 
     @staticmethod
