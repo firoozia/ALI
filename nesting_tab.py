@@ -34,13 +34,15 @@ from config import config
 # ── Palette ──────────────────────────────────────────────────
 C_BG         = QColor("#0d1117")
 C_PANEL      = QColor("#161b22")
+C_PANEL2     = QColor("#21262d")
 C_BORDER     = QColor("#30363d")
 C_ACCENT     = QColor("#58a6ff")
 C_ACCENT2    = QColor("#1f6feb")
 C_TEXT       = QColor("#e6edf3")
 C_DIM        = QColor("#8b949e")
-C_GOOD       = QColor("#4ec9b0")
+C_GOOD       = QColor("#3fb950")
 C_WARN       = QColor("#ce9178")
+C_SECTION    = QColor("#e3b341")   # gold — group/section labels (Aspire style)
 C_BEST_ROW   = QColor("#1a3a1a")
 C_SEL_ROW    = QColor("#163b69")
 C_SHEET_BG   = QColor("#161b22")
@@ -55,6 +57,17 @@ PART_COLORS = [
 ]
 
 PRIORITY_LABELS = {1:"Highest", 2:"High", 3:"Normal", 4:"Low", 5:"Lowest"}
+
+
+# ── No-scroll input widgets (prevent accidental changes while scrolling) ──────
+class NoScrollDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event): event.ignore()
+
+class NoScrollSpinBox(QSpinBox):
+    def wheelEvent(self, event): event.ignore()
+
+class NoScrollComboBox(QComboBox):
+    def wheelEvent(self, event): event.ignore()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -468,8 +481,8 @@ class NestingTab(QWidget):
         self._status_bar = QLabel("  Ready")
         self._status_bar.setFixedHeight(22)
         self._status_bar.setStyleSheet(
-            f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; border-top:1px solid {C_BORDER.name()};")
+            f"background:{C_PANEL.name()}; color:{C_DIM.name()}; font-family:'Segoe UI','Vazirmatn',sans-serif;"
+            f"font-size:11px; border-top:1px solid {C_BORDER.name()}; padding:0 6px;")
         root.addWidget(self._status_bar)
 
     # ── RIBBON ────────────────────────────────────────────────
@@ -695,7 +708,7 @@ class NestingTab(QWidget):
         self._chk_fixed.setStyleSheet(f"color:{C_TEXT.name()}; font-size:11px;")
         self._lbl_duration = QLabel("00h:10m")
         self._lbl_duration.setStyleSheet(
-            f"color:{C_GOOD.name()}; font-size:11px; font-weight:600;")
+            f"color:{C_SECTION.name()}; font-size:11px; font-weight:700;")
         self._lbl_elapsed = QLabel("00:00:00")
         self._lbl_elapsed.setStyleSheet(f"color:{C_DIM.name()}; font-size:11px;")
         timer_row.addWidget(self._chk_fixed)
@@ -713,12 +726,12 @@ class NestingTab(QWidget):
         gr_lay.setSpacing(3); gr_lay.setContentsMargins(4,2,4,2)
         gr_lay.setLabelAlignment(Qt.AlignRight)
 
-        self._cmb_rotation = QComboBox()
+        self._cmb_rotation = NoScrollComboBox()
         for v in ["None","90","180","Any"]: self._cmb_rotation.addItem(v)
         self._cmb_rotation.setCurrentIndex(1)
         self._cmb_rotation.setFixedWidth(70)
 
-        self._spin_tilt = QDoubleSpinBox()
+        self._spin_tilt = NoScrollDoubleSpinBox()
         self._spin_tilt.setRange(0,45); self._spin_tilt.setValue(0.0)
         self._spin_tilt.setFixedWidth(70)
 
@@ -741,7 +754,7 @@ class NestingTab(QWidget):
         # Part Spacing row
         part_row = QHBoxLayout(); part_row.setSpacing(4)
         part_row.addWidget(QLabel("Part Spacing:"))
-        self._spin_part_spacing = QDoubleSpinBox()
+        self._spin_part_spacing = NoScrollDoubleSpinBox()
         self._spin_part_spacing.setRange(0,100); self._spin_part_spacing.setDecimals(3)
         self._spin_part_spacing.setFixedWidth(72); self._spin_part_spacing.setValue(5.0)
         part_row.addWidget(self._spin_part_spacing)
@@ -757,7 +770,7 @@ class NestingTab(QWidget):
         # Sheet Edge Spacing — Top row
         top_row = QHBoxLayout(); top_row.setSpacing(3)
         top_row.addWidget(QLabel("Top:"))
-        self._spin_top = QDoubleSpinBox()
+        self._spin_top = NoScrollDoubleSpinBox()
         self._spin_top.setRange(0,200); self._spin_top.setDecimals(3)
         self._spin_top.setFixedWidth(65); self._spin_top.setValue(5.0)
         self._spin_top.valueChanged.connect(self._on_top_changed)
@@ -769,13 +782,13 @@ class NestingTab(QWidget):
         # Left / Right row
         lr_row = QHBoxLayout(); lr_row.setSpacing(3)
         lr_row.addWidget(QLabel("Left:"))
-        self._spin_left = QDoubleSpinBox()
+        self._spin_left = NoScrollDoubleSpinBox()
         self._spin_left.setRange(0,200); self._spin_left.setDecimals(3)
         self._spin_left.setFixedWidth(65); self._spin_left.setValue(5.0)
         lr_row.addWidget(self._spin_left)
         lr_row.addSpacing(4)
         lr_row.addWidget(QLabel("Right:"))
-        self._spin_right = QDoubleSpinBox()
+        self._spin_right = NoScrollDoubleSpinBox()
         self._spin_right.setRange(0,200); self._spin_right.setDecimals(3)
         self._spin_right.setFixedWidth(65); self._spin_right.setValue(5.0)
         lr_row.addWidget(self._spin_right)
@@ -784,7 +797,7 @@ class NestingTab(QWidget):
         # Bottom row
         bot_row = QHBoxLayout(); bot_row.setSpacing(3)
         bot_row.addWidget(QLabel("Bottom:"))
-        self._spin_bottom = QDoubleSpinBox()
+        self._spin_bottom = NoScrollDoubleSpinBox()
         self._spin_bottom.setRange(0,200); self._spin_bottom.setDecimals(3)
         self._spin_bottom.setFixedWidth(65); self._spin_bottom.setValue(5.0)
         bot_row.addWidget(self._spin_bottom)
@@ -805,7 +818,7 @@ class NestingTab(QWidget):
         gd_lay.setAlignment(Qt.AlignCenter)
 
         # Speed input (number field above arrow, like Solid Edge)
-        self._spin_speed = QSpinBox()
+        self._spin_speed = NoScrollSpinBox()
         self._spin_speed.setRange(0, 9999); self._spin_speed.setValue(0)
         self._spin_speed.setFixedWidth(50)
         gd_lay.addWidget(self._spin_speed, 0, Qt.AlignCenter)
@@ -886,8 +899,9 @@ class NestingTab(QWidget):
         vl.addWidget(inner, 1)
         lbl = QLabel(title)
         lbl.setAlignment(Qt.AlignCenter)
-        lbl.setStyleSheet(f"color:{C_DIM.name()}; font-size:10px; "
-                          f"border-top:1px solid {C_BORDER.name()}; padding:1px 0;")
+        lbl.setStyleSheet(
+            f"color:{C_SECTION.name()}; font-size:10px; font-weight:600; "
+            f"border-top:1px solid {C_BORDER.name()}; padding:2px 0;")
         vl.addWidget(lbl)
         w._inner = inner  # content area for callers
         return w
@@ -906,8 +920,8 @@ class NestingTab(QWidget):
 
         hdr = QLabel("  Sheets")
         hdr.setFixedHeight(26)
-        hdr.setStyleSheet(f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-                          f"font-size:11px; font-weight:600;"
+        hdr.setStyleSheet(f"background:{C_PANEL.name()}; color:{C_SECTION.name()};"
+                          f"font-size:11px; font-weight:700;"
                           f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(hdr)
 
@@ -954,8 +968,8 @@ class NestingTab(QWidget):
         layout_hdr = QLabel("  Current Layout")
         layout_hdr.setFixedHeight(26)
         layout_hdr.setStyleSheet(
-            f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:600; "
+            f"background:{C_PANEL.name()}; color:{C_SECTION.name()};"
+            f"font-size:11px; font-weight:700; "
             f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(layout_hdr)
 
@@ -1015,8 +1029,8 @@ class NestingTab(QWidget):
         res_hdr = QLabel("  Results")
         res_hdr.setFixedHeight(26)
         res_hdr.setStyleSheet(
-            f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:600;"
+            f"background:{C_PANEL.name()}; color:{C_SECTION.name()};"
+            f"font-size:11px; font-weight:700;"
             f"border-bottom:1px solid {C_BORDER.name()};")
         rl.addWidget(res_hdr)
 
@@ -1041,18 +1055,14 @@ class NestingTab(QWidget):
         det_hdr = QLabel("  Nest Details")
         det_hdr.setFixedHeight(26)
         det_hdr.setStyleSheet(
-            f"background:{C_PANEL.name()}; color:{C_DIM.name()};"
-            f"font-size:11px; font-weight:600;"
+            f"background:{C_PANEL.name()}; color:{C_SECTION.name()};"
+            f"font-size:11px; font-weight:700;"
             f"border-top:1px solid {C_BORDER.name()};"
             f"border-bottom:1px solid {C_BORDER.name()};")
         dl.addWidget(det_hdr)
 
         self._nest_tree = QTreeWidget()
         self._nest_tree.setHeaderHidden(True)
-        self._nest_tree.setStyleSheet(
-            f"QTreeWidget{{background:{C_BG.name()}; border:none;"
-            f"color:{C_TEXT.name()};}}"
-            f"QTreeWidget::item:selected{{background:{C_SEL_ROW.name()};}}")
         self._nest_tree.itemClicked.connect(self._on_tree_click)
         dl.addWidget(self._nest_tree, 1)
 
@@ -1538,38 +1548,86 @@ class NestingTab(QWidget):
     # STYLE
     # ══════════════════════════════════════════════════════════
     def _apply_style(self):
+        _C_SECTION = C_SECTION.name()   # "#e3b341" gold
+        _C_BLUE    = C_ACCENT2.name()   # "#1f6feb"
         self.setStyleSheet(f"""
-        * {{ font-family: "Segoe UI", Tahoma, sans-serif; font-size: 12px; }}
+        * {{ font-family: "Segoe UI", "Vazirmatn", sans-serif; font-size: 12px; }}
         QWidget {{ background: {C_BG.name()}; color: {C_TEXT.name()}; }}
+        QLabel  {{ color: {C_TEXT.name()}; border: none; background: transparent; }}
 
+        /* ── Inputs ── */
+        QLineEdit, QTextEdit, QDoubleSpinBox, QSpinBox, QComboBox {{
+            background: #111820; color: {C_TEXT.name()};
+            border: 1px solid {C_BORDER.name()};
+            border-radius: 3px; padding: 3px 5px; min-height: 22px;
+        }}
+        QDoubleSpinBox:focus, QSpinBox:focus,
+        QComboBox:focus,      QLineEdit:focus {{
+            border-color: {C_ACCENT.name()};
+        }}
+        QDoubleSpinBox[readOnly=true], QSpinBox[readOnly=true] {{
+            color: {C_DIM.name()}; background: #0d1117;
+        }}
+
+        /* ── SpinBox arrow buttons (Aspire style) ── */
+        QDoubleSpinBox::up-button, QSpinBox::up-button {{
+            subcontrol-origin: border; subcontrol-position: top right;
+            width: 16px; border-left: 1px solid {C_BORDER.name()};
+            border-bottom: 1px solid {C_BORDER.name()};
+            background: {C_PANEL2.name()}; border-top-right-radius: 3px;
+        }}
+        QDoubleSpinBox::down-button, QSpinBox::down-button {{
+            subcontrol-origin: border; subcontrol-position: bottom right;
+            width: 16px; border-left: 1px solid {C_BORDER.name()};
+            background: {C_PANEL2.name()}; border-bottom-right-radius: 3px;
+        }}
+        QDoubleSpinBox::up-button:hover,   QSpinBox::up-button:hover,
+        QDoubleSpinBox::down-button:hover, QSpinBox::down-button:hover {{
+            background: {_C_BLUE};
+        }}
+        QDoubleSpinBox::up-button:pressed,   QSpinBox::up-button:pressed,
+        QDoubleSpinBox::down-button:pressed, QSpinBox::down-button:pressed {{
+            background: #388bfd;
+        }}
+
+        /* ── Buttons ── */
         QPushButton#btn_start {{
-            background: #1a5c2a; border: 1px solid #27ae60;
-            border-radius: 3px; color: white; font-weight: 600;
+            background: #1a5c2a; border: 1px solid #3fb950;
+            border-radius: 4px; color: white; font-weight: 600;
         }}
         QPushButton#btn_start:hover {{ background: #27ae60; }}
         QPushButton#btn_start:disabled {{
-            background: #161b22; color: {C_DIM.name()}; border-color:#333;
+            background: {C_PANEL.name()}; color: {C_DIM.name()}; border-color: #333;
         }}
         QPushButton#btn_stop {{
             background: #5c1a1a; border: 1px solid #c0392b;
-            border-radius: 3px; color: white; font-weight: 600;
+            border-radius: 4px; color: white; font-weight: 600;
         }}
         QPushButton#btn_stop:hover {{ background: #c0392b; }}
         QPushButton#btn_stop:disabled {{
-            background: #161b22; color: {C_DIM.name()}; border-color:#333;
+            background: {C_PANEL.name()}; color: {C_DIM.name()}; border-color: #333;
         }}
         QPushButton {{
-            background: {C_PANEL.name()}; border: 1px solid {C_BORDER.name()};
-            border-radius: 3px; padding: 3px 8px; color: {C_TEXT.name()};
+            background: {C_PANEL2.name()}; color: {C_TEXT.name()};
+            border: 1px solid {C_BORDER.name()};
+            border-radius: 4px; padding: 4px 10px; min-height: 26px;
         }}
-        QPushButton:hover {{ background: #30363d; border-color: {C_ACCENT.name()}; }}
+        QPushButton:hover   {{ border-color: {C_ACCENT.name()}; background: #26313a; }}
+        QPushButton:pressed {{ background: {_C_BLUE}; }}
+        QPushButton[primary=true] {{
+            background: {_C_BLUE}; color: white; border-color: {_C_BLUE};
+        }}
+        QPushButton[primary=true]:hover {{ background: #388bfd; }}
 
+        /* ── Tables ── */
         QTableWidget {{
             background: #111820; gridline-color: {C_BORDER.name()};
-            border: none; selection-background-color: {C_SEL_ROW.name()};
-            alternate-background-color: #202020;
+            border: 1px solid {C_BORDER.name()};
+            selection-background-color: {_C_BLUE};
+            alternate-background-color: #15191f;
         }}
         QTableWidget::item {{ padding: 2px 6px; }}
+        QTableWidget::item:selected {{ background: {C_SEL_ROW.name()}; color: {C_TEXT.name()}; }}
         QHeaderView::section {{
             background: {C_PANEL.name()}; border: none;
             border-right: 1px solid {C_BORDER.name()};
@@ -1577,19 +1635,34 @@ class NestingTab(QWidget):
             padding: 3px 6px; font-weight: 600;
             color: {C_DIM.name()}; font-size: 11px;
         }}
+
+        /* ── Tree ── */
+        QTreeWidget {{
+            background: {C_PANEL.name()}; color: {C_TEXT.name()};
+            border: 1px solid {C_BORDER.name()}; outline: none;
+        }}
+        QTreeWidget::item {{ padding: 3px 4px; }}
+        QTreeWidget::item:selected {{ background: {_C_BLUE}; color: white; border-radius: 2px; }}
+        QTreeWidget::item:hover    {{ background: #1c2128; }}
+
+        /* ── Scrollbars (thin, Aspire style) ── */
         QScrollArea {{ border: none; }}
         QScrollBar:horizontal {{
-            background: {C_PANEL.name()}; height: 8px; border: none;
+            background: {C_PANEL.name()}; height: 6px; border: none; border-radius: 3px;
         }}
         QScrollBar::handle:horizontal {{
-            background: {C_BORDER.name()}; border-radius: 4px; min-width: 20px;
+            background: {C_BORDER.name()}; border-radius: 3px; min-width: 20px;
         }}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
         QScrollBar:vertical {{
-            background: {C_PANEL.name()}; width: 8px; border: none;
+            background: {C_PANEL.name()}; width: 6px; border: none; border-radius: 3px;
         }}
         QScrollBar::handle:vertical {{
-            background: {C_BORDER.name()}; border-radius: 4px; min-height: 20px;
+            background: {C_BORDER.name()}; border-radius: 3px; min-height: 20px;
         }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+
+        /* ── Checkboxes & Radio ── */
         QCheckBox {{ color: {C_TEXT.name()}; }}
         QCheckBox::indicator {{
             width: 13px; height: 13px;
@@ -1600,22 +1673,40 @@ class NestingTab(QWidget):
             background: {C_ACCENT.name()}; border-color: {C_ACCENT.name()};
         }}
         QRadioButton {{ color: {C_TEXT.name()}; font-size: 11px; }}
-        QDoubleSpinBox, QSpinBox, QComboBox {{
-            background: #111820; border: 1px solid {C_BORDER.name()};
-            border-radius: 3px; padding: 2px 4px; color: {C_TEXT.name()};
+        QRadioButton::indicator {{
+            width: 13px; height: 13px; border-radius: 7px;
+            border: 1px solid {C_BORDER.name()}; background: #111820;
         }}
-        QDoubleSpinBox:focus, QSpinBox:focus {{
-            border-color: {C_ACCENT.name()};
+        QRadioButton::indicator:checked {{
+            background: {C_ACCENT.name()}; border-color: {C_ACCENT.name()};
         }}
-        QLabel {{ background: transparent; color: {C_TEXT.name()}; }}
+
+        /* ── GroupBox (for dialogs) ── */
+        QGroupBox {{
+            border: 1px solid {C_BORDER.name()}; border-radius: 4px;
+            margin-top: 16px; padding-top: 6px;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin; subcontrol-position: top left;
+            padding: 0 6px; color: {_C_SECTION}; font-weight: 600;
+        }}
+
+        /* ── Ribbon inner frame ── */
+        QFrame#ribbon_group {{
+            border: 1px solid {C_BORDER.name()}; border-radius: 3px;
+            background: {C_PANEL.name()};
+        }}
+
+        /* ── Misc ── */
+        QFrame[frameShape="4"] {{ background: {C_BORDER.name()}; max-height: 1px; border: none; }}
         QSplitter::handle {{ background: {C_BORDER.name()}; }}
         """)
 
     @staticmethod
     def _small_btn_style() -> str:
-        return (f"background:{C_PANEL.name()}; border:1px solid {C_BORDER.name()};"
-                f"border-radius:2px; color:{C_TEXT.name()}; font-size:11px;"
-                f"padding:1px 4px;")
+        return (f"background:{C_PANEL2.name()}; border:1px solid {C_BORDER.name()};"
+                f"border-radius:4px; color:{C_TEXT.name()}; font-size:11px;"
+                f"padding:2px 6px; min-height:22px;")
 
 
 # ═══════════════════════════════════════════════════════════════
