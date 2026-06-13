@@ -212,67 +212,235 @@ class GCodeGenerator:
 
     def _layer_to_gcode(self, layer_info: dict, part: Part,
                         sw: float, sh: float, tool: Tool) -> List[str]:
-        """
-        Generate G-code for one layer of one part.
-        Layer is defined by offset_mm (rectangle inset from part boundary).
-        """
-        lines = []
+        """Dispatch to the correct generator based on layer type."""
+        if not tool.is_valid() or layer_info.get("depth_mm", 0) <= 0:
+            return []
+        t = layer_info.get("type", "groove").lower()
+        if t == "pocket":
+            return self._pocket_layer(layer_info, part, sw, sh, tool)
+        if t in ("vcarve", "v-carve", "v_carve"):
+            return self._vcarve_layer(layer_info, part, sw, sh, tool)
+        if t in ("engrave", "engraving"):
+            return self._engrave_layer(layer_info, part, sw, sh, tool)
+        if t in ("drill", "drilling"):
+            return self._drill_layer(layer_info, part, sw, sh, tool)
+        if t in ("thread_mill", "thread", "thread_milling"):
+            return self._thread_mill_layer(layer_info, part, sw, sh, tool)
+        # profile / groove / bevel / default
+        return self._contour_layer(layer_info, part, sw, sh, tool)
+
+    def _contour_layer(self, layer_info: dict, part: Part,
+                       sw: float, sh: float, tool: Tool) -> List[str]:
+        """Profile / groove contour — original rectangle cut."""
+        lines      = []
         depth      = layer_info["depth_mm"]
-        offset     = layer_info["offset_mm"]
-        pass_count = layer_info["pass_count"]
+        offset     = layer_info.get("offset_mm", 0)
         layer_name = layer_info["name"]
-        layer_type = layer_info["type"]
+        layer_type = layer_info.get("type", "groove")
 
-        if depth <= 0 or not tool.is_valid():
-            return lines
-
-        # Part actual dimensions (considering rotation)
         pw = part.actual_width()
         ph = part.actual_height()
-
-        # Boundary rectangle (inset by offset)
-        x0 = offset;     y0 = offset
-        x1 = pw - offset; y1 = ph - offset
-
+        x0, y0 = offset, offset
+        x1, y1 = pw - offset, ph - offset
         if x1 <= x0 or y1 <= y0:
-            lines.append(f"; Skipped {layer_name}: offset too large")
-            return lines
+            return [f"; Skipped {layer_name}: offset too large"]
 
-        pass_depth = tool.pass_depth
+        pass_depth = max(tool.pass_depth, 0.1)
         passes     = max(1, math.ceil(depth / pass_depth))
-        feed       = tool.feed_rate
-        plunge     = tool.plunge_rate
+        feed, plunge = tool.feed_rate, tool.plunge_rate
 
-        # Transform helper
         def tx(x, y):
             cx, cy = self._transform(x, y, part.x, part.y, sw, sh)
             return f"X{cx:.3f} Y{cy:.3f}"
 
-        # Layer comment
-        lines.append(f"\n; === {layer_name} (off={offset:.1f}mm dep={depth:.1f}mm) ===")
+        lines.append(f"\n; === {layer_name} ({layer_type}, off={offset:.1f} dep={depth:.1f}mm) ===")
         lines.append(f"G0 Z{self.safe_z:.3f}")
         lines.append(f"G0 {tx(x0, y0)}")
+        for p in range(passes):
+            z = -min(pass_depth * (p + 1), depth)
+            lines.append(f"G1 Z{z:.3f} F{plunge:.0f}")
+            lines.append(f"G1 {tx(x1, y0)} F{feed:.0f}")
+            lines.append(f"G1 {tx(x1, y1)} F{feed:.0f}")
+            lines.append(f"G1 {tx(x0, y1)} F{feed:.0f}")
+            lines.append(f"G1 {tx(x0, y0)} F{feed:.0f}")
+        lines.append(f"G0 Z{self.safe_z:.3f}")
+        return lines
 
-        if layer_type == "profile":
-            # Profile: cut outer boundary
-            for p in range(passes):
-                z = -min(pass_depth * (p + 1), depth)
-                lines.append(f"G1 Z{z:.3f} F{plunge:.0f}")
-                lines.append(f"G1 {tx(x1, y0)} F{feed:.0f}")
-                lines.append(f"G1 {tx(x1, y1)} F{feed:.0f}")
-                lines.append(f"G1 {tx(x0, y1)} F{feed:.0f}")
-                lines.append(f"G1 {tx(x0, y0)} F{feed:.0f}")
-        else:
-            # Groove / bevel / etc: cut inner rectangle
-            for p in range(passes):
-                z = -min(pass_depth * (p + 1), depth)
-                lines.append(f"G1 Z{z:.3f} F{plunge:.0f}")
-                lines.append(f"G1 {tx(x1, y0)} F{feed:.0f}")
-                lines.append(f"G1 {tx(x1, y1)} F{feed:.0f}")
-                lines.append(f"G1 {tx(x0, y1)} F{feed:.0f}")
-                lines.append(f"G1 {tx(x0, y0)} F{feed:.0f}")
+    def _pocket_layer(self, layer_info: dict, part: Part,
+                      sw: float, sh: float, tool: Tool) -> List[str]:
+        """Raster zigzag pocket clearing."""
+        lines    = []
+        depth    = layer_info["depth_mm"]
+        offset   = layer_info.get("offset_mm", 0)
+        stepover = layer_info.get("stepover_pct", 40) / 100.0 * max(tool.diameter, 1)
+        name     = layer_info["name"]
+
+        pw, ph = part.actual_width(), part.actual_height()
+        x0, y0 = offset, offset
+        x1, y1 = pw - offset, ph - offset
+        if x1 <= x0 or y1 <= y0 or stepover <= 0:
+            return [f"; Pocket {name} skipped"]
+
+        pass_depth = max(tool.pass_depth, 0.1)
+        passes = max(1, math.ceil(depth / pass_depth))
+
+        def tx(x, y):
+            cx, cy = self._transform(x, y, part.x, part.y, sw, sh)
+            return f"X{cx:.3f} Y{cy:.3f}"
+
+        lines.append(f"\n; === {name} (Pocket, stepover={stepover:.1f}mm) ===")
+        for p in range(passes):
+            z = -min(pass_depth * (p + 1), depth)
+            lines.append(f"G0 Z{self.safe_z:.3f}")
+            lines.append(f"G0 {tx(x0, y0)}")
+            lines.append(f"G1 Z{z:.3f} F{tool.plunge_rate:.0f}")
+            y, right = y0, True
+            while y <= y1:
+                lines.append(f"G1 {tx(x1 if right else x0, y)} F{tool.feed_rate:.0f}")
+                y += stepover
+                if y <= y1:
+                    lines.append(f"G1 {tx(x1 if right else x0, y)} F{tool.feed_rate:.0f}")
+                right = not right
+        lines.append(f"G0 Z{self.safe_z:.3f}")
+        return lines
+
+    def _vcarve_layer(self, layer_info: dict, part: Part,
+                      sw: float, sh: float, tool: Tool) -> List[str]:
+        """V-carve along boundary perimeter; optional flat-depth pass."""
+        lines  = []
+        depth  = layer_info["depth_mm"]
+        offset = layer_info.get("offset_mm", 0)
+        flat   = layer_info.get("vcarve_flat", 0.0)
+        name   = layer_info["name"]
+
+        pw, ph = part.actual_width(), part.actual_height()
+        x0, y0 = offset, offset
+        x1, y1 = pw - offset, ph - offset
+        if x1 <= x0 or y1 <= y0:
+            return [f"; V-Carve {name} skipped"]
+
+        pass_depth = max(tool.pass_depth, 0.1)
+        passes = max(1, math.ceil(depth / pass_depth))
+
+        def tx(x, y):
+            cx, cy = self._transform(x, y, part.x, part.y, sw, sh)
+            return f"X{cx:.3f} Y{cy:.3f}"
+
+        lines.append(f"\n; === {name} (V-Carve, depth={depth:.1f}mm) ===")
+        for p in range(passes):
+            z = -min(pass_depth * (p + 1), depth)
+            lines += [f"G0 Z{self.safe_z:.3f}", f"G0 {tx(x0,y0)}",
+                      f"G1 Z{z:.3f} F{tool.plunge_rate:.0f}",
+                      f"G1 {tx(x1,y0)} F{tool.feed_rate:.0f}",
+                      f"G1 {tx(x1,y1)} F{tool.feed_rate:.0f}",
+                      f"G1 {tx(x0,y1)} F{tool.feed_rate:.0f}",
+                      f"G1 {tx(x0,y0)} F{tool.feed_rate:.0f}"]
+
+        if flat > 0:
+            fi = offset + 2
+            if pw - 2*fi > 0 and ph - 2*fi > 0:
+                lines.append(f"; --- V-Flat (depth={flat:.1f}mm) ---")
+                lines += [f"G0 Z{self.safe_z:.3f}", f"G0 {tx(fi,fi)}",
+                          f"G1 Z{-flat:.3f} F{tool.plunge_rate:.0f}",
+                          f"G1 {tx(pw-fi,fi)} F{tool.feed_rate:.0f}",
+                          f"G1 {tx(pw-fi,ph-fi)} F{tool.feed_rate:.0f}",
+                          f"G1 {tx(fi,ph-fi)} F{tool.feed_rate:.0f}",
+                          f"G1 {tx(fi,fi)} F{tool.feed_rate:.0f}"]
 
         lines.append(f"G0 Z{self.safe_z:.3f}")
+        return lines
+
+    def _engrave_layer(self, layer_info: dict, part: Part,
+                       sw: float, sh: float, tool: Tool) -> List[str]:
+        """Single-pass scribing at fixed depth along perimeter."""
+        depth  = layer_info.get("engrave_depth", layer_info["depth_mm"])
+        offset = layer_info.get("offset_mm", 0)
+        name   = layer_info["name"]
+
+        pw, ph = part.actual_width(), part.actual_height()
+        x0, y0 = offset, offset
+        x1, y1 = pw - offset, ph - offset
+        if x1 <= x0 or y1 <= y0 or depth <= 0:
+            return [f"; Engrave {name} skipped"]
+
+        def tx(x, y):
+            cx, cy = self._transform(x, y, part.x, part.y, sw, sh)
+            return f"X{cx:.3f} Y{cy:.3f}"
+
+        return [
+            f"\n; === {name} (Engrave, depth={depth:.1f}mm) ===",
+            f"G0 Z{self.safe_z:.3f}", f"G0 {tx(x0,y0)}",
+            f"G1 Z{-depth:.3f} F{tool.plunge_rate:.0f}",
+            f"G1 {tx(x1,y0)} F{tool.feed_rate:.0f}",
+            f"G1 {tx(x1,y1)} F{tool.feed_rate:.0f}",
+            f"G1 {tx(x0,y1)} F{tool.feed_rate:.0f}",
+            f"G1 {tx(x0,y0)} F{tool.feed_rate:.0f}",
+            f"G0 Z{self.safe_z:.3f}",
+        ]
+
+    def _drill_layer(self, layer_info: dict, part: Part,
+                     sw: float, sh: float, tool: Tool) -> List[str]:
+        """Drill cycles (G81/G82/G83) at part center."""
+        depth  = layer_info["depth_mm"]
+        mode   = layer_info.get("drill_mode", "peck")
+        peck   = layer_info.get("peck_depth", 5.0)
+        dwell  = layer_info.get("dwell_ms", 300)
+        name   = layer_info["name"]
+
+        cx = part.actual_width() / 2
+        cy = part.actual_height() / 2
+        gx, gy = self._transform(cx, cy, part.x, part.y, sw, sh)
+        pos = f"X{gx:.3f} Y{gy:.3f}"
+        r   = f"R{self.safe_z:.3f}"
+        f_  = f"F{tool.plunge_rate:.0f}"
+
+        lines = [f"\n; === {name} (Drill, depth={depth:.1f}mm, {mode}) ===",
+                 f"G0 Z{self.safe_z:.3f}", f"G0 {pos}"]
+        if mode == "simple":
+            lines += [f"G81 {pos} Z{-depth:.3f} {r} {f_}", "G80"]
+        elif mode == "dwell":
+            lines += [f"G82 {pos} Z{-depth:.3f} {r} P{dwell} {f_}", "G80"]
+        else:
+            lines += [f"G83 {pos} Z{-depth:.3f} {r} Q{peck:.3f} {f_}", "G80"]
+        lines.append(f"G0 Z{self.safe_z:.3f}")
+        return lines
+
+    def _thread_mill_layer(self, layer_info: dict, part: Part,
+                           sw: float, sh: float, tool: Tool) -> List[str]:
+        """Helical thread milling via full-circle arcs with Z descent per pitch."""
+        pitch      = max(layer_info.get("thread_pitch", 1.25), 0.01)
+        tdia       = layer_info.get("thread_dia", 6.0)
+        tdepth     = layer_info.get("thread_depth", layer_info["depth_mm"])
+        tdir       = layer_info.get("thread_dir", "cw")
+        lead_z     = layer_info.get("lead_in_z", 2.0)
+        name       = layer_info["name"]
+        tool_r     = max(tool.diameter, 0.1) / 2
+        helix_r    = tdia / 2 - tool_r
+
+        if helix_r <= 0:
+            return [f"; Thread {name} skipped: tool too large for M{tdia:.0f}"]
+
+        cx, cy = part.actual_width() / 2, part.actual_height() / 2
+        ox, oy = self._transform(cx, cy, part.x, part.y, sw, sh)
+        ex, ey = ox + helix_r, oy
+        arc    = "G02" if tdir == "cw" else "G03"
+        turns  = math.ceil(tdepth / pitch)
+
+        lines = [
+            f"\n; === {name} (Thread M{tdia:.0f}×{pitch} {tdir.upper()}) ===",
+            f"G0 Z{self.safe_z:.3f}",
+            f"G0 X{ox:.3f} Y{oy:.3f}",
+            f"G0 Z{lead_z:.3f}",
+            f"G1 X{ex:.3f} Y{ey:.3f} F{tool.feed_rate:.0f}",
+            f"G1 Z0.0 F{tool.plunge_rate:.0f}",
+        ]
+        i_val = ox - ex  # = -helix_r
+        for turn in range(turns):
+            z_next = -min(pitch * (turn + 1), tdepth)
+            lines.append(f"{arc} X{ex:.3f} Y{ey:.3f} Z{z_next:.3f}"
+                         f" I{i_val:.3f} J0.000 F{tool.feed_rate:.0f}")
+        lines += [f"G1 X{ox:.3f} Y{oy:.3f} F{tool.feed_rate:.0f}",
+                  f"G0 Z{self.safe_z:.3f}"]
         return lines
 
     def generate_part(self, part: Part, sw: float, sh: float) -> Dict[str, List[str]]:

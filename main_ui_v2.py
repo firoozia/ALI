@@ -22,10 +22,14 @@ from PySide6.QtWidgets import (
 
 from language_manager import lang, init_from_config
 from config import config
-from parts_tab   import PartsTab
-from sheets_tab  import SheetsTab
-from nesting_tab import NestingTab
-from export_tab  import ExportTab
+from parts_tab    import PartsTab
+from sheets_tab   import SheetsTab
+from nesting_tab  import NestingTab
+from export_tab   import ExportTab
+try:
+    from toolpaths_tab import ToolpathsTab
+except Exception:
+    ToolpathsTab = None
 
 C_BG      = "#1e1e1e"
 C_PANEL   = "#252526"
@@ -269,11 +273,18 @@ class MainWindow(QMainWindow):
         # Design tab — try to load, fallback to placeholder
         self._design_tab  = self._build_design_tab()
 
+        # CAM / Toolpaths tab
+        if ToolpathsTab:
+            self._cam_tab = ToolpathsTab()
+        else:
+            self._cam_tab = self._cam_placeholder()
+
         self._tab_widget.addTab(self._parts_tab,   "Parts")
         self._tab_widget.addTab(self._sheets_tab,  "Sheets")
         self._tab_widget.addTab(self._nesting_tab, "Nesting")
         self._tab_widget.addTab(self._export_tab,  "Export")
         self._tab_widget.addTab(self._design_tab,  "Design")
+        self._tab_widget.addTab(self._cam_tab,     "CAM")
 
         self._parts_tab.parts_changed.connect(self._on_parts_changed)
         self._sheets_tab.sheets_changed.connect(self._on_sheets_changed)
@@ -293,6 +304,16 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"[Design] Could not load design library: {e}")
             return self._design_placeholder()
+
+    def _cam_placeholder(self) -> QWidget:
+        w   = QWidget()
+        lay = QVBoxLayout(w); lay.setAlignment(Qt.AlignCenter)
+        lbl = QLabel("⚙  CAM Toolpaths\n\ntoolpaths_tab.py not found.\n"
+                     "Place toolpaths_tab.py in the project folder.")
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet(f"color:{C_DIM}; font-size:13px;")
+        lbl.setWordWrap(True); lay.addWidget(lbl)
+        return w
 
     def _design_placeholder(self) -> QWidget:
         w   = QWidget()
@@ -330,7 +351,10 @@ class MainWindow(QMainWindow):
         self._nesting_tab._refresh_sheet_table(); self._mark_modified()
 
     def _on_layout_applied(self, sheets: list):
-        self._sheets_cache = sheets; self._export_tab.set_sheets(sheets)
+        self._sheets_cache = sheets
+        self._export_tab.set_sheets(sheets)
+        if ToolpathsTab and hasattr(self._cam_tab, "set_sheets"):
+            self._cam_tab.set_sheets(sheets)
         n=len(sheets); parts=sum(s.part_count() for s in sheets)
         util=sum(s.utilization() for s in sheets)/max(n,1)
         self._lbl_sheets.setText(f"Sheets: {n}"); self._lbl_util.setText(f"Util: {util:.1f}%")
@@ -480,6 +504,7 @@ class MainWindow(QMainWindow):
             lang.t("tabs.nesting") or "Nesting",
             lang.t("tabs.export")  or "Export",
             lang.t("tabs.design")  or "Design",
+            "CAM" if code == "en" else ("کم" if code == "fa" else "CAM"),
         ]
         for i, name in enumerate(tab_names):
             if i < self._tab_widget.count():

@@ -6,7 +6,8 @@ Toolbar: Solid Edge | DXF/DWG | G-code | Summary Report | Detailed Report
 DXF Dialog: fully replaced with Solid Edge exact layout (s13 screenshot)
 """
 from __future__ import annotations
-import os
+import os, json
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -1124,10 +1125,56 @@ class ExportTab(QWidget):
             settings)
 
     def _export_solid_edge(self):
+        """Export nesting layout as Solid Edge CNS-compatible JSON package."""
+        if not self._sheets:
+            QMessageBox.warning(self, "No Layout", "Run nesting first."); return
+
+        out_dir = Path(config.output_folder)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        job = {
+            "firoo_cam_version": "1.0.0",
+            "export_type": "solid_edge_cns",
+            "export_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "sheet_count": len(self._sheets),
+            "sheets": []
+        }
+        total_parts = 0
+        for idx, sheet in enumerate(self._sheets, 1):
+            parts_data = []
+            for p in sheet.parts:
+                parts_data.append({
+                    "part_code":   getattr(p, "part_code",   f"P{total_parts+1}"),
+                    "design_code": getattr(p, "design_code", ""),
+                    "x":           round(getattr(p, "x", 0), 3),
+                    "y":           round(getattr(p, "y", 0), 3),
+                    "width":       round(getattr(p, "actual_width",  lambda: p.width)(), 3),
+                    "height":      round(getattr(p, "actual_height", lambda: p.height)(), 3),
+                    "rotated":     bool(getattr(p, "rotated", False)),
+                    "material":    getattr(p, "material", ""),
+                })
+                total_parts += 1
+            job["sheets"].append({
+                "sheet_id":    idx,
+                "width":       sheet.width,
+                "height":      sheet.height,
+                "thickness":   getattr(sheet, "thickness", 18),
+                "material":    getattr(sheet, "material", "MDF"),
+                "utilization": round(sheet.utilization(), 2),
+                "part_count":  sheet.part_count(),
+                "parts":       parts_data,
+            })
+
+        ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out = out_dir / f"NestingJob_{ts}.cns.json"
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(job, f, ensure_ascii=False, indent=2)
+
         QMessageBox.information(
-            self, "Solid Edge Export",
-            "Solid Edge .nfb export will be available in a future version.\n"
-            "Use DXF/DWG export for now.")
+            self, "Solid Edge CNS Export",
+            f"Exported {len(self._sheets)} sheet(s), {total_parts} part(s).\n\n"
+            f"File: {out.name}\nFolder: {out_dir}\n\n"
+            "Format: CNS-compatible JSON (FIROO CAM nesting package).")
 
     def _open_output_folder(self):
         folder = config.output_folder
