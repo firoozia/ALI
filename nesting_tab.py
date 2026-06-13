@@ -32,20 +32,20 @@ from language_manager import lang
 from config import config
 
 # ── Palette ──────────────────────────────────────────────────
-C_BG         = QColor("#1e1e1e")
-C_PANEL      = QColor("#252526")
-C_BORDER     = QColor("#3e3e42")
-C_ACCENT     = QColor("#0078d4")
-C_ACCENT2    = QColor("#106ebe")
-C_TEXT       = QColor("#cccccc")
-C_DIM        = QColor("#858585")
+C_BG         = QColor("#0d1117")
+C_PANEL      = QColor("#161b22")
+C_BORDER     = QColor("#30363d")
+C_ACCENT     = QColor("#58a6ff")
+C_ACCENT2    = QColor("#1f6feb")
+C_TEXT       = QColor("#e6edf3")
+C_DIM        = QColor("#8b949e")
 C_GOOD       = QColor("#4ec9b0")
 C_WARN       = QColor("#ce9178")
 C_BEST_ROW   = QColor("#1a3a1a")
-C_SEL_ROW    = QColor("#264f78")
-C_SHEET_BG   = QColor("#2a2a2a")
-C_SHEET_BDR  = QColor("#555555")
-C_MARGIN_LINE= QColor("#444444")
+C_SEL_ROW    = QColor("#163b69")
+C_SHEET_BG   = QColor("#161b22")
+C_SHEET_BDR  = QColor("#444c56")
+C_MARGIN_LINE= QColor("#2c3239")
 
 PART_COLORS = [
     QColor("#c0392b"), QColor("#e67e22"), QColor("#27ae60"),
@@ -587,7 +587,7 @@ class NestingTab(QWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("Nesting Settings")
         dlg.setFixedSize(420, 420)
-        dlg.setStyleSheet(f"background:#1e1e1e; color:#cccccc; font-size:12px;")
+        dlg.setStyleSheet(f"background:#0d1117; color:#e6edf3; font-size:12px;")
         lay = QVBoxLayout(dlg)
         form = QFormLayout()
         form.setSpacing(8)
@@ -622,7 +622,7 @@ class NestingTab(QWidget):
         rb_bal.setChecked(strategy == "balanced_repeats")
         rb_pref.setChecked(strategy == "prefer_repeats")
         for rb in (rb_best, rb_bal, rb_pref):
-            rb.setStyleSheet("color:#cccccc;")
+            rb.setStyleSheet("color:#e6edf3;")
 
         form.addRow("Part Spacing:", s_gap)
         form.addRow("Top Margin:", s_top)
@@ -661,7 +661,7 @@ class NestingTab(QWidget):
     @staticmethod
     def _vsep() -> QFrame:
         d = QFrame(); d.setFrameShape(QFrame.VLine); d.setFixedWidth(1)
-        d.setStyleSheet(f"color:#3e3e42; margin:4px 0;"); return d
+        d.setStyleSheet(f"color:#30363d; margin:4px 0;"); return d
 
     def _build_ribbon(self) -> QFrame:
         ribbon = QFrame()
@@ -1548,7 +1548,7 @@ class NestingTab(QWidget):
         }}
         QPushButton#btn_start:hover {{ background: #27ae60; }}
         QPushButton#btn_start:disabled {{
-            background: #2a2a2a; color: {C_DIM.name()}; border-color:#333;
+            background: #161b22; color: {C_DIM.name()}; border-color:#333;
         }}
         QPushButton#btn_stop {{
             background: #5c1a1a; border: 1px solid #c0392b;
@@ -1556,16 +1556,16 @@ class NestingTab(QWidget):
         }}
         QPushButton#btn_stop:hover {{ background: #c0392b; }}
         QPushButton#btn_stop:disabled {{
-            background: #2a2a2a; color: {C_DIM.name()}; border-color:#333;
+            background: #161b22; color: {C_DIM.name()}; border-color:#333;
         }}
         QPushButton {{
             background: {C_PANEL.name()}; border: 1px solid {C_BORDER.name()};
             border-radius: 3px; padding: 3px 8px; color: {C_TEXT.name()};
         }}
-        QPushButton:hover {{ background: #3e3e42; border-color: {C_ACCENT.name()}; }}
+        QPushButton:hover {{ background: #30363d; border-color: {C_ACCENT.name()}; }}
 
         QTableWidget {{
-            background: #1a1a1a; gridline-color: {C_BORDER.name()};
+            background: #111820; gridline-color: {C_BORDER.name()};
             border: none; selection-background-color: {C_SEL_ROW.name()};
             alternate-background-color: #202020;
         }}
@@ -1594,14 +1594,14 @@ class NestingTab(QWidget):
         QCheckBox::indicator {{
             width: 13px; height: 13px;
             border: 1px solid {C_BORDER.name()}; border-radius: 2px;
-            background: #1a1a1a;
+            background: #111820;
         }}
         QCheckBox::indicator:checked {{
             background: {C_ACCENT.name()}; border-color: {C_ACCENT.name()};
         }}
         QRadioButton {{ color: {C_TEXT.name()}; font-size: 11px; }}
         QDoubleSpinBox, QSpinBox, QComboBox {{
-            background: #1a1a1a; border: 1px solid {C_BORDER.name()};
+            background: #111820; border: 1px solid {C_BORDER.name()};
             border-radius: 3px; padding: 2px 4px; color: {C_TEXT.name()};
         }}
         QDoubleSpinBox:focus, QSpinBox:focus {{

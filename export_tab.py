@@ -25,12 +25,12 @@ from PySide6.QtWidgets import (
 from language_manager import lang
 from config import config
 
-C_BG     = QColor("#1e1e1e")
-C_PANEL  = QColor("#252526")
-C_BORDER = QColor("#3e3e42")
-C_ACCENT = QColor("#0078d4")
-C_TEXT   = QColor("#cccccc")
-C_DIM    = QColor("#858585")
+C_BG     = QColor("#0d1117")
+C_PANEL  = QColor("#161b22")
+C_BORDER = QColor("#30363d")
+C_ACCENT = QColor("#58a6ff")
+C_TEXT   = QColor("#e6edf3")
+C_DIM    = QColor("#8b949e")
 C_GOOD   = QColor("#4ec9b0")
 
 
@@ -377,7 +377,7 @@ class DXFExportDialog(QDialog):
             subcontrol-origin:margin; left:8px; padding:0 4px;
         }}
         QLineEdit, QComboBox {{
-            background:#1a1a1a; border:1px solid {C_BORDER.name()};
+            background:#111820; border:1px solid {C_BORDER.name()};
             border-radius:3px; padding:3px 6px; color:{C_TEXT.name()};
         }}
         QLineEdit:focus, QComboBox:focus {{
@@ -389,7 +389,7 @@ class DXFExportDialog(QDialog):
         QCheckBox::indicator {{
             width:13px; height:13px;
             border:1px solid {C_BORDER.name()}; border-radius:2px;
-            background:#1a1a1a;
+            background:#111820;
         }}
         QCheckBox::indicator:checked {{
             background:{C_ACCENT.name()}; border-color:{C_ACCENT.name()};
@@ -397,7 +397,7 @@ class DXFExportDialog(QDialog):
         QRadioButton::indicator {{
             width:13px; height:13px;
             border:1px solid {C_BORDER.name()}; border-radius:7px;
-            background:#1a1a1a;
+            background:#111820;
         }}
         QRadioButton::indicator:checked {{
             background:{C_ACCENT.name()}; border-color:{C_ACCENT.name()};
@@ -407,7 +407,7 @@ class DXFExportDialog(QDialog):
             border-radius:3px; padding:3px 10px; color:{C_TEXT.name()};
         }}
         QPushButton:hover {{
-            background:#3e3e42; border-color:{C_ACCENT.name()};
+            background:#30363d; border-color:{C_ACCENT.name()};
         }}
         QScrollBar:vertical {{
             background:{C_PANEL.name()}; width:8px; border:none;
@@ -443,7 +443,7 @@ class GCodeExportDialog(QDialog):
         self._cmb_pp = QComboBox()
         self._pp_ids = []  # parallel list of pp.id values
         self._pp_lbl = QLabel("")
-        self._pp_lbl.setStyleSheet("color:#858585; font-size:11px;")
+        self._pp_lbl.setStyleSheet("color:#8b949e; font-size:11px;")
         self._pp_lbl.setWordWrap(True)
 
         try:
@@ -811,17 +811,17 @@ class ExportWorker(QThread):
 <style>
 body{{font-family:Segoe UI,sans-serif;background:#f5f5f5;
      color:#333;margin:0;padding:20px;}}
-h1{{color:#0078d4;border-bottom:2px solid #0078d4;padding-bottom:8px;}}
+h1{{color:#58a6ff;border-bottom:2px solid #58a6ff;padding-bottom:8px;}}
 h2{{color:#555;font-size:14px;margin-top:20px;}}
 table{{width:100%;border-collapse:collapse;background:#fff;
        box-shadow:0 1px 3px rgba(0,0,0,.1);}}
-th{{background:#0078d4;color:white;padding:8px 12px;
+th{{background:#58a6ff;color:white;padding:8px 12px;
     text-align:left;font-size:12px;}}
 td{{padding:6px 12px;border-bottom:1px solid #eee;font-size:12px;}}
 tr:nth-child(even){{background:#f9f9f9;}}
 .stat{{display:inline-block;background:#fff;border:1px solid #ddd;
        border-radius:4px;padding:12px 20px;margin:6px;text-align:center;}}
-.stat-val{{font-size:22px;font-weight:bold;color:#0078d4;}}
+.stat-val{{font-size:22px;font-weight:bold;color:#58a6ff;}}
 .stat-lbl{{font-size:11px;color:#888;margin-top:4px;}}
 .sheet-box{{background:#fff;border:1px solid #ddd;border-radius:4px;
             padding:12px;margin:10px 0;}}
@@ -1049,7 +1049,7 @@ class ExportTab(QWidget):
         self._log = QTextEdit()
         self._log.setReadOnly(True)
         self._log.setStyleSheet(
-            f"background:#1a1a1a; border:none; color:{C_TEXT.name()};"
+            f"background:#111820; border:none; color:{C_TEXT.name()};"
             f"font-family:Consolas,monospace; font-size:11px;")
         self._log.setPlaceholderText("Export log will appear here...")
         lay.addWidget(self._log, 1)
@@ -1242,7 +1242,7 @@ class ExportTab(QWidget):
             subcontrol-origin:margin; left:6px; padding:0 3px;
         }}
         QComboBox, QLineEdit {{
-            background:#1a1a1a; border:1px solid {C_BORDER.name()};
+            background:#111820; border:1px solid {C_BORDER.name()};
             border-radius:3px; padding:2px 5px; color:{C_TEXT.name()};
         }}
         QComboBox:focus, QLineEdit:focus {{
@@ -1254,7 +1254,7 @@ class ExportTab(QWidget):
             border-radius:3px; padding:3px 8px; color:{C_TEXT.name()};
         }}
         QPushButton:hover {{
-            background:#3e3e42; border-color:{C_ACCENT.name()};
+            background:#30363d; border-color:{C_ACCENT.name()};
         }}
         QScrollBar:vertical {{
             background:{C_PANEL.name()}; width:8px; border:none;

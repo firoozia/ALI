@@ -15,12 +15,12 @@ from PySide6.QtWidgets import (
 # ---------------------------------------------------------------------------
 # Palette
 # ---------------------------------------------------------------------------
-C_BG     = QColor("#1e1e1e")
-C_PANEL  = QColor("#252526")
-C_BORDER = QColor("#3e3e42")
-C_ACCENT = QColor("#0078d4")
-C_TEXT   = QColor("#cccccc")
-C_DIM    = QColor("#858585")
+C_BG     = QColor("#0d1117")
+C_PANEL  = QColor("#161b22")
+C_BORDER = QColor("#30363d")
+C_ACCENT = QColor("#58a6ff")
+C_TEXT   = QColor("#e6edf3")
+C_DIM    = QColor("#8b949e")
 C_GOOD   = QColor("#4ec9b0")
 C_WARN   = QColor("#ce9178")
 
@@ -117,7 +117,7 @@ class ToolpathPreview(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         # Background
-        painter.fillRect(self.rect(), QColor("#1a1a1a"))
+        painter.fillRect(self.rect(), QColor("#111820"))
 
         # Thin border
         border_pen = QPen(C_BORDER, 1)
@@ -187,7 +187,7 @@ class ToolpathPreview(QWidget):
         ]
         poly = QPolygonF(pts)
         p.setPen(QPen(C_DIM, 1, Qt.DashLine))
-        p.setBrush(QBrush(QColor("#2a2a2a")))
+        p.setBrush(QBrush(QColor("#161b22")))
         p.drawPolygon(poly)
         # V-cut line
         p.setPen(QPen(C_ACCENT, 2))
@@ -305,15 +305,15 @@ class ToolpathDialog(QDialog):
             QListWidget{{background:{C_PANEL.name()};border:1px solid {C_BORDER.name()};border-radius:3px;outline:none;}}
             QListWidget::item{{padding:8px 12px;border-radius:3px;}}
             QListWidget::item:selected{{background:{C_ACCENT.name()};color:white;}}
-            QListWidget::item:hover:!selected{{background:#2d2d30;}}
+            QListWidget::item:hover:!selected{{background:#21262d;}}
             QGroupBox{{border:1px solid {C_BORDER.name()};border-radius:4px;margin-top:8px;padding:8px;}}
             QGroupBox::title{{color:{C_DIM.name()};subcontrol-origin:margin;left:8px;padding:0 4px;}}
-            QDoubleSpinBox,QSpinBox,QLineEdit,QComboBox{{background:#1a1a1a;border:1px solid {C_BORDER.name()};border-radius:3px;padding:3px 6px;color:{C_TEXT.name()};min-width:80px;}}
+            QDoubleSpinBox,QSpinBox,QLineEdit,QComboBox{{background:#111820;border:1px solid {C_BORDER.name()};border-radius:3px;padding:3px 6px;color:{C_TEXT.name()};min-width:80px;}}
             QCheckBox{{color:{C_TEXT.name()};spacing:6px;}}
-            QCheckBox::indicator{{width:13px;height:13px;border:1px solid {C_BORDER.name()};background:#1a1a1a;border-radius:2px;}}
+            QCheckBox::indicator{{width:13px;height:13px;border:1px solid {C_BORDER.name()};background:#111820;border-radius:2px;}}
             QCheckBox::indicator:checked{{background:{C_ACCENT.name()};border-color:{C_ACCENT.name()};}}
             QPushButton{{background:{C_PANEL.name()};border:1px solid {C_BORDER.name()};border-radius:3px;padding:4px 16px;color:{C_TEXT.name()};}}
-            QPushButton:hover{{background:#3e3e42;border-color:{C_ACCENT.name()};}}
+            QPushButton:hover{{background:#30363d;border-color:{C_ACCENT.name()};}}
             QLabel{{color:{C_TEXT.name()};background:transparent;}}
         """)
 

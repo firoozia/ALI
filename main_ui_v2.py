@@ -31,12 +31,12 @@ try:
 except Exception:
     ToolpathsTab = None
 
-C_BG      = "#1e1e1e"
-C_PANEL   = "#252526"
-C_BORDER  = "#3e3e42"
-C_ACCENT  = "#0078d4"
-C_TEXT    = "#cccccc"
-C_DIM     = "#858585"
+C_BG      = "#0d1117"
+C_PANEL   = "#161b22"
+C_BORDER  = "#30363d"
+C_ACCENT  = "#58a6ff"
+C_TEXT    = "#e6edf3"
+C_DIM     = "#8b949e"
 C_TITLE   = "#569cd6"
 APP_NAME  = "FIROO CAM"
 VERSION   = "1.0.0"
@@ -142,12 +142,12 @@ class SettingsDialog(QDialog):
         QTabBar::tab{{background:{C_PANEL};border:1px solid {C_BORDER};padding:5px 12px;color:{C_DIM};}}
         QTabBar::tab:selected{{background:{C_BG};color:{C_TEXT};border-bottom:2px solid {C_ACCENT};}}
         QFormLayout QLabel{{color:{C_DIM};}}
-        QDoubleSpinBox,QSpinBox,QLineEdit,QComboBox{{background:#1a1a1a;border:1px solid {C_BORDER};
+        QDoubleSpinBox,QSpinBox,QLineEdit,QComboBox{{background:#111820;border:1px solid {C_BORDER};
             border-radius:3px;padding:3px 6px;color:{C_TEXT};}}
-        QCheckBox::indicator{{width:13px;height:13px;border:1px solid {C_BORDER};background:#1a1a1a;}}
+        QCheckBox::indicator{{width:13px;height:13px;border:1px solid {C_BORDER};background:#111820;}}
         QCheckBox::indicator:checked{{background:{C_ACCENT};border-color:{C_ACCENT};}}
         QPushButton{{background:{C_PANEL};border:1px solid {C_BORDER};border-radius:3px;padding:4px 10px;color:{C_TEXT};}}
-        QPushButton:hover{{background:#3e3e42;border-color:{C_ACCENT};}}
+        QPushButton:hover{{background:#30363d;border-color:{C_ACCENT};}}
         """)
 
 
@@ -170,7 +170,7 @@ class AboutDialog(QDialog):
         self.setStyleSheet(f"""QDialog{{background:{C_BG};color:{C_TEXT};font-family:"Segoe UI",sans-serif;}}
         QLabel{{color:{C_TEXT};background:transparent;}}
         QPushButton{{background:{C_PANEL};border:1px solid {C_BORDER};border-radius:3px;padding:4px 20px;color:{C_TEXT};}}
-        QPushButton:hover{{background:#3e3e42;}}""")
+        QPushButton:hover{{background:#30363d;}}""")
 
 
 class MainWindow(QMainWindow):
@@ -239,8 +239,8 @@ class MainWindow(QMainWindow):
         tb.setIconSize(QSize(20,20)); tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         tb.setFixedHeight(52)
         tb.setStyleSheet(
-            f"QToolBar{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #202124, stop:0.45 #252526, stop:1 #1f2933);border-bottom:1px solid {C_BORDER};padding:5px 8px;spacing:6px;}}"
-            f"QToolButton{{background:#2d2d30;border:1px solid {C_BORDER};color:{C_TEXT};padding:6px 12px;border-radius:6px;font-weight:600;}}"
+            f"QToolBar{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #202124, stop:0.45 #161b22, stop:1 #1f2933);border-bottom:1px solid {C_BORDER};padding:5px 8px;spacing:6px;}}"
+            f"QToolButton{{background:#21262d;border:1px solid {C_BORDER};color:{C_TEXT};padding:6px 12px;border-radius:6px;font-weight:600;}}"
             f"QToolButton:hover{{background:#3a3d41;border-color:{C_ACCENT};color:white;}}"
             f"QToolButton:pressed{{background:{C_ACCENT};}}"
             f"QToolBar::separator{{background:{C_BORDER};width:1px;margin:6px 8px;}}")
@@ -543,7 +543,7 @@ class MainWindow(QMainWindow):
         QMenuBar::item{{padding:6px 13px;background:transparent;border-radius:5px;margin:1px;}}
         QMenuBar::item:selected{{background:#333842;color:white;}}
         QMenuBar::item:pressed{{background:{C_ACCENT};color:white;}}
-        QMenu{{background:#252526;color:{C_TEXT};border:1px solid #4b4b4f;border-radius:6px;font-size:12px;padding:5px;}}
+        QMenu{{background:#161b22;color:{C_TEXT};border:1px solid #4b4b4f;border-radius:6px;font-size:12px;padding:5px;}}
         QMenu::item{{padding:7px 34px 7px 18px;border-radius:4px;}}
         QMenu::item:selected{{background:{C_ACCENT};color:white;}}
         QMenu::separator{{background:{C_BORDER};height:1px;margin:5px 8px;}}
@@ -558,7 +558,7 @@ class MainWindow(QMainWindow):
             border-right:1px solid {C_BORDER};padding:6px 20px;font-size:12px;min-width:80px;}}
         QTabBar::tab:selected{{background:{C_BG};color:{C_TEXT};
             border-bottom:2px solid {C_ACCENT};font-weight:600;}}
-        QTabBar::tab:hover:!selected{{background:#2d2d30;color:{C_TEXT};}}
+        QTabBar::tab:hover:!selected{{background:#21262d;color:{C_TEXT};}}
         """
 
 
@@ -569,7 +569,7 @@ def main():
     pal=QPalette()
     pal.setColor(QPalette.Window,       QColor(C_BG))
     pal.setColor(QPalette.WindowText,   QColor(C_TEXT))
-    pal.setColor(QPalette.Base,         QColor("#1a1a1a"))
+    pal.setColor(QPalette.Base,         QColor("#111820"))
     pal.setColor(QPalette.AlternateBase,QColor("#222222"))
     pal.setColor(QPalette.Text,         QColor(C_TEXT))
     pal.setColor(QPalette.Button,       QColor(C_PANEL))

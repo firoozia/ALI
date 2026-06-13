@@ -24,12 +24,12 @@ except ImportError:
     ToolpathDialog = None
 
 # ── Palette ────────────────────────────────────────────────────
-C_BG     = QColor("#1e1e1e")
-C_PANEL  = QColor("#252526")
-C_BORDER = QColor("#3e3e42")
-C_ACCENT = QColor("#0078d4")
-C_TEXT   = QColor("#cccccc")
-C_DIM    = QColor("#858585")
+C_BG     = QColor("#0d1117")
+C_PANEL  = QColor("#161b22")
+C_BORDER = QColor("#30363d")
+C_ACCENT = QColor("#58a6ff")
+C_TEXT   = QColor("#e6edf3")
+C_DIM    = QColor("#8b949e")
 C_GOOD   = QColor("#4ec9b0")
 C_WARN   = QColor("#ce9178")
 
@@ -445,7 +445,7 @@ class ToolpathsTab(QWidget):
                 color: {C_TEXT.name()};
                 border: 1px solid {C_BORDER.name()};
                 gridline-color: transparent;
-                selection-background-color: #264f78;
+                selection-background-color: #163b69;
                 selection-color: #ffffff;
                 outline: none;
             }}
