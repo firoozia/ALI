@@ -100,6 +100,29 @@ QFrame[frameShape="4"] {{ background: {C_BORDER}; max-height: 1px; border: none;
 """
 
 # ── Tool type mapping (confirmed from SQLite DB) ───────────────────────────────
+# ── No-scroll spinboxes (prevent accidental value changes while scrolling form) ─
+class NoScrollDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+class NoScrollSpinBox(QSpinBox):
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+class NoScrollComboBox(QComboBox):
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 TOOL_TYPE_INT: Dict[int, str] = {
     0:  "Ball Nose",
     1:  "End Mill",
@@ -396,13 +419,13 @@ class StepoverWidget(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
 
-        self.sp_mm = QDoubleSpinBox()
+        self.sp_mm = NoScrollDoubleSpinBox()
         self.sp_mm.setRange(0, 9999)
         self.sp_mm.setDecimals(4)
         self.sp_mm.setSuffix(" mm")
         self.sp_mm.setFixedWidth(100)
 
-        self.sp_pct = QDoubleSpinBox()
+        self.sp_pct = NoScrollDoubleSpinBox()
         self.sp_pct.setRange(0, 9999)
         self.sp_pct.setDecimals(1)
         self.sp_pct.setSuffix(" %")
@@ -691,7 +714,7 @@ class AspireToolDatabaseDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         form_container = QWidget()
-        form_container.setMaximumWidth(640)
+        form_container.setMaximumWidth(580)
         self._vlay = QVBoxLayout(form_container)
         self._vlay.setContentsMargins(0, 0, 4, 0)
         self._vlay.setSpacing(2)
@@ -785,14 +808,14 @@ class AspireToolDatabaseDialog(QDialog):
 
         # ── Tool Type ──────────────────────────────────────────────────────────
         section("Tool Type")
-        self.cmb_type = QComboBox()
+        self.cmb_type = NoScrollComboBox()
         self.cmb_type.addItems(TOOL_TYPE_DISPLAY_ORDER)
         self.cmb_type.currentTextChanged.connect(self._on_type_changed)
         row("tool_type", "Tool Type", self.cmb_type)
 
         # ── Geometry ───────────────────────────────────────────────────────────
         section("Geometry")
-        self.cmb_units = QComboBox()
+        self.cmb_units = NoScrollComboBox()
         self.cmb_units.addItem("mm"); self.cmb_units.addItem("inches")
         row("units", "Units", self.cmb_units)
 
@@ -810,7 +833,7 @@ class AspireToolDatabaseDialog(QDialog):
         self.sp_flat.valueChanged.connect(self._on_flat_changed)
         row("flat", "Flat Diameter (F)", self.sp_flat, "mm")
 
-        self.sp_flutes = QSpinBox()
+        self.sp_flutes = NoScrollSpinBox()
         self.sp_flutes.setRange(0, 20)
         self.sp_flutes.valueChanged.connect(self._update_chip_load)
         row("flutes", "No. Flutes", self.sp_flutes)
@@ -830,7 +853,7 @@ class AspireToolDatabaseDialog(QDialog):
         # ── Feeds and Speeds ───────────────────────────────────────────────────
         section("Feeds and Speeds")
 
-        self.sp_rpm = QSpinBox()
+        self.sp_rpm = NoScrollSpinBox()
         self.sp_rpm.setRange(0, 100000)
         self.sp_rpm.setSingleStep(100)
         self.sp_rpm.valueChanged.connect(self._update_chip_load)
@@ -842,7 +865,7 @@ class AspireToolDatabaseDialog(QDialog):
         feed_lay.setSpacing(4)
         self.sp_feed = self._dspin(0, 999999, dec=3)
         self.sp_feed.valueChanged.connect(self._update_chip_load)
-        self.cmb_feed_units = QComboBox()
+        self.cmb_feed_units = NoScrollComboBox()
         self.cmb_feed_units.setFixedWidth(90)
         for u in RATE_UNITS.values():
             self.cmb_feed_units.addItem(u)
@@ -856,7 +879,7 @@ class AspireToolDatabaseDialog(QDialog):
         plunge_lay.setContentsMargins(0, 0, 0, 0)
         plunge_lay.setSpacing(4)
         self.sp_plunge = self._dspin(0, 999999, dec=3)
-        self.cmb_plunge_units = QComboBox()
+        self.cmb_plunge_units = NoScrollComboBox()
         self.cmb_plunge_units.setFixedWidth(90)
         for u in RATE_UNITS.values():
             self.cmb_plunge_units.addItem(u)
@@ -869,7 +892,7 @@ class AspireToolDatabaseDialog(QDialog):
         self.sp_chip.setButtonSymbols(QDoubleSpinBox.NoButtons)
         row("chip", "Chip Load", self.sp_chip, "mm")
 
-        self.sp_tool_num = QSpinBox()
+        self.sp_tool_num = NoScrollSpinBox()
         self.sp_tool_num.setRange(0, 9999)
         row("tool_number", "Tool Number", self.sp_tool_num)
 
@@ -879,13 +902,13 @@ class AspireToolDatabaseDialog(QDialog):
         copy_lay = QHBoxLayout(copy_w)
         copy_lay.setContentsMargins(0, 0, 0, 0)
         copy_lay.setSpacing(4)
-        self.cmb_copy_tool = QComboBox()
+        self.cmb_copy_tool = NoScrollComboBox()
         self.cmb_copy_tool.addItem("<This Tool>")
-        self.cmb_copy_size = QComboBox()
+        self.cmb_copy_size = NoScrollComboBox()
         for s in ["Small", "Medium", "Large"]:
             self.cmb_copy_size.addItem(s)
         self.cmb_copy_size.setCurrentText("Large")
-        self.cmb_copy_mat = QComboBox()
+        self.cmb_copy_mat = NoScrollComboBox()
         self.btn_copy_settings = QPushButton("Copy")
         self.btn_copy_settings.setFixedWidth(60)
         self.btn_copy_settings.clicked.connect(self._copy_settings)
@@ -897,8 +920,8 @@ class AspireToolDatabaseDialog(QDialog):
         self._vlay.addWidget(copy_w)
 
     @staticmethod
-    def _dspin(lo=0, hi=9999, dec=3) -> QDoubleSpinBox:
-        s = QDoubleSpinBox()
+    def _dspin(lo=0, hi=9999, dec=3) -> NoScrollDoubleSpinBox:
+        s = NoScrollDoubleSpinBox()
         s.setRange(lo, hi)
         s.setDecimals(dec)
         s.setFixedHeight(26)
