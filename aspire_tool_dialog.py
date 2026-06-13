@@ -287,10 +287,14 @@ class AspireToolDatabase:
         with sqlite3.connect(self.path) as con:
             con.row_factory = sqlite3.Row
             return [dict(r) for r in con.execute(
-                "select id,parent_group_id,sibling_order,"
-                "tool_geometry_id,name,notes,expanded "
-                "from tool_tree_entry "
-                "order by parent_group_id is not null, sibling_order, name"
+                "select tt.id, tt.parent_group_id, tt.sibling_order,"
+                " tt.tool_geometry_id,"
+                " coalesce(nullif(tt.name,''), tg.name, '') as name,"
+                " tt.notes, tt.expanded,"
+                " tg.tool_type, tg.diameter, tg.included_angle, tg.flat_diameter"
+                " from tool_tree_entry tt"
+                " left join tool_geometry tg on tt.tool_geometry_id = tg.id"
+                " order by tt.parent_group_id is not null, tt.sibling_order, tt.name"
             )]
 
     def get_tool(self, geometry_id: str,
@@ -919,6 +923,14 @@ class AspireToolDatabaseDialog(QDialog):
                 name     = row.get("name") or ""
                 geom_id  = row.get("tool_geometry_id") or ""
                 entry_id = row.get("id") or ""
+
+                if not name and geom_id:
+                    type_int  = row.get("tool_type") or 1
+                    type_name = TOOL_TYPE_INT.get(type_int, "End Mill")
+                    dia       = float(row.get("diameter")       or 6.0)
+                    angle     = float(row.get("included_angle") or 0.0)
+                    flat      = float(row.get("flat_diameter")  or 0.0)
+                    name = _make_tool_name(type_name, dia, angle, flat)
 
                 item = QTreeWidgetItem([name or "(unnamed)"])
                 item.setData(0, Qt.UserRole,     geom_id)
