@@ -289,7 +289,7 @@ class AspireToolDatabase:
             return [dict(r) for r in con.execute(
                 "select tt.id, tt.parent_group_id, tt.sibling_order,"
                 " tt.tool_geometry_id,"
-                " coalesce(nullif(tt.name,''), tg.name, '') as name,"
+                " coalesce(nullif(tt.name,''), '') as name,"
                 " tt.notes, tt.expanded,"
                 " tg.tool_type, tg.diameter, tg.included_angle, tg.flat_diameter"
                 " from tool_tree_entry tt"
