@@ -11,10 +11,10 @@ Changes from v1:
   • Spacing group layout matches Solid Edge EXACTLY
 """
 from __future__ import annotations
-import math, time, copy
+import math, time, copy, threading
 from typing import List, Optional
 
-from PySide6.QtCore  import Qt, QThread, Signal, QRectF, QTimer, QSize
+from PySide6.QtCore  import Qt, QThread, Signal, QRectF, QPointF, QTimer, QSize
 from PySide6.QtGui   import (QPainter, QColor, QPen, QBrush, QFont,
                               QFontMetrics, QLinearGradient, QPainterPath)
 from PySide6.QtWidgets import (
@@ -74,7 +74,8 @@ class NoScrollComboBox(QComboBox):
 # Worker Thread
 # ═══════════════════════════════════════════════════════════════
 class NestingWorker(QThread):
-    sig_progress = Signal(int, int, float)
+    # gen, util%, elapsed_sec, no_improve_count
+    sig_progress = Signal(int, float, float, int)
     sig_finished = Signal(list, list)
     sig_error    = Signal(str)
     sig_status   = Signal(str)
@@ -84,59 +85,42 @@ class NestingWorker(QThread):
         self._parts      = parts
         self._sheet_defs = sheet_defs
         self._opts       = opts
-        self._stop       = False
+        self._stop_event = threading.Event()
 
-    def stop(self): self._stop = True
+    def stop(self): self._stop_event.set()
 
     def run(self):
         try:
             from nesting_engine import NestingEngine, SheetDef
             engine = NestingEngine()
             engine.gap           = self._opts["part_spacing"]
-            engine.margin        = self._opts["sheet_margin"]  # max margin fallback
+            engine.margin        = self._opts["sheet_margin"]
             engine.margin_top    = self._opts.get("margin_top",    self._opts["sheet_margin"])
             engine.margin_left   = self._opts.get("margin_left",   self._opts["sheet_margin"])
             engine.margin_right  = self._opts.get("margin_right",  self._opts["sheet_margin"])
             engine.margin_bottom = self._opts.get("margin_bottom", self._opts["sheet_margin"])
             engine.auto_rotate   = self._opts["rotation"] > 0
-            # Optional engine hints; safe if the engine ignores them.
-            try:
-                engine.direction = self._opts.get("direction", "bottom_left")
-                engine.strategy = self._opts.get("strategy", "best_efficiency")
-            except Exception:
-                pass
+            engine.direction     = self._opts.get("direction", "bottom_left")
+            engine.strategy      = self._opts.get("strategy", "best_efficiency")
 
             sds = []
             for sd in self._sheet_defs:
                 sds.append(SheetDef(
                     name=sd["name"], width=sd["width"], height=sd["height"],
-                    thickness=sd.get("thickness",18), material=sd.get("material","MDF"),
+                    thickness=sd.get("thickness", 18), material=sd.get("material", "MDF"),
                     quantity=sd["quantity"], priority=sd["priority"],
-                    is_remnant=sd.get("is_remnant",False)
+                    is_remnant=sd.get("is_remnant", False)
                 ))
             engine.set_sheets(sds)
 
-            orig = engine._evaluate
-            gen_seen = [0]; best_u = [0.0]
+            def on_progress(gen, util, sheet_count, elapsed, no_improve):
+                self.sig_progress.emit(gen, util, elapsed, no_improve)
+                conv = "  [Converged — still searching]" if no_improve > 12 else ""
+                self.sig_status.emit(
+                    f"Gen {gen}  |  Best {util:.1f}%  |  {sheet_count} sheets{conv}")
 
-            def patched(parts, algo, gen):
-                if self._stop: return orig([], algo, gen)
-                r = orig(parts, algo, gen)
-                if r.utilization > best_u[0]: best_u[0] = r.utilization
-                if gen != gen_seen[0]:
-                    gen_seen[0] = gen
-                    self.sig_progress.emit(gen, self._opts["generations"], best_u[0])
-                    self.sig_status.emit(
-                        f"Looking for improvements...  Gen {gen}  Best {best_u[0]:.1f}%")
-                return r
-            engine._evaluate = patched
-
-            sheets = engine.run(
-                self._parts,
-                generations=self._opts["generations"],
-                population=self._opts["population"],
-                time_limit=self._opts["duration"],
-            )
+            sheets = engine.run_continuous(
+                self._parts, self._stop_event, on_progress=on_progress)
             self.sig_finished.emit(sheets, engine.all_results)
         except Exception as e:
             import traceback
@@ -336,6 +320,116 @@ class UtilChart(QWidget):
             p.setPen(QPen(C_TEXT))
             p.drawText(QRectF(pad + bw + 2, by, 50, bar_h),
                        Qt.AlignVCenter, f"{u:.1f}%")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Live Line Graph  — utilization % over time during nesting
+# ═══════════════════════════════════════════════════════════════
+class LiveLineGraph(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._points: List[tuple] = []   # (elapsed_sec, util_pct)
+        self._converged_at: Optional[float] = None
+        self.setMinimumHeight(110)
+        self.setMinimumWidth(120)
+
+    def reset(self):
+        self._points = []
+        self._converged_at = None
+        self.update()
+
+    def add_point(self, elapsed: float, util: float):
+        self._points.append((elapsed, util))
+        self.update()
+
+    def mark_converged(self, elapsed: float):
+        if self._converged_at is None:
+            self._converged_at = elapsed
+            self.update()
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), C_BG)
+
+        font9 = QFont("Segoe UI"); font9.setPixelSize(9)
+        p.setFont(font9)
+
+        if len(self._points) < 2:
+            p.setPen(QPen(C_DIM))
+            p.drawText(self.rect(), Qt.AlignCenter, "Waiting for data…")
+            return
+
+        PAD_L, PAD_R, PAD_T, PAD_B = 30, 6, 14, 16
+        W = self.width()  - PAD_L - PAD_R
+        H = self.height() - PAD_T - PAD_B
+
+        xs = [pt[0] for pt in self._points]
+        ys = [pt[1] for pt in self._points]
+        x_max = max(xs[-1], 1.0)
+        y_min = max(0.0,  min(ys) - 3)
+        y_max = min(100.0, max(ys) + 5)
+        y_rng = y_max - y_min if y_max != y_min else 1.0
+
+        def px(x): return PAD_L + x / x_max * W
+        def py(y): return PAD_T + (1.0 - (y - y_min) / y_rng) * H
+
+        # Horizontal grid lines
+        p.setPen(QPen(C_BORDER, 1))
+        for yv in [25, 50, 75, 100]:
+            if y_min < yv < y_max:
+                yp = py(yv)
+                p.drawLine(QPointF(PAD_L, yp), QPointF(PAD_L + W, yp))
+                p.setPen(QPen(C_DIM))
+                p.drawText(QRectF(0, yp - 6, PAD_L - 3, 12), Qt.AlignRight, str(yv))
+                p.setPen(QPen(C_BORDER, 1))
+
+        # Converged vertical marker (gold dashed)
+        if self._converged_at is not None:
+            cx = px(self._converged_at)
+            pen_g = QPen(C_SECTION, 1, Qt.DashLine)
+            p.setPen(pen_g)
+            p.drawLine(QPointF(cx, PAD_T), QPointF(cx, PAD_T + H))
+            p.setPen(QPen(C_SECTION))
+            font8 = QFont("Segoe UI"); font8.setPixelSize(8)
+            p.setFont(font8)
+            p.drawText(QRectF(cx + 2, PAD_T, 40, 10), Qt.AlignLeft, "conv.")
+            p.setFont(font9)
+
+        # Area fill under curve
+        fill_path = QPainterPath()
+        fill_path.moveTo(px(xs[0]), PAD_T + H)
+        for x, y in self._points:
+            fill_path.lineTo(px(x), py(y))
+        fill_path.lineTo(px(xs[-1]), PAD_T + H)
+        fill_path.closeSubpath()
+        fill_col = QColor(C_ACCENT); fill_col.setAlpha(28)
+        p.fillPath(fill_path, QBrush(fill_col))
+
+        # Curve line
+        curve = QPainterPath()
+        curve.moveTo(px(xs[0]), py(ys[0]))
+        for x, y in self._points[1:]:
+            curve.lineTo(px(x), py(y))
+        p.setPen(QPen(C_ACCENT, 1.5))
+        p.drawPath(curve)
+
+        # Current-value dot + label
+        lx, ly = px(xs[-1]), py(ys[-1])
+        p.setBrush(QBrush(C_ACCENT)); p.setPen(Qt.NoPen)
+        p.drawEllipse(QPointF(lx, ly), 3.0, 3.0)
+        font_b = QFont("Segoe UI"); font_b.setPixelSize(9); font_b.setBold(True)
+        p.setFont(font_b)
+        p.setPen(QPen(C_TEXT))
+        p.drawText(QRectF(lx + 5, ly - 8, 50, 14),
+                   Qt.AlignLeft | Qt.AlignVCenter, f"{ys[-1]:.1f}%")
+
+        # X-axis time labels
+        p.setFont(font9); p.setPen(QPen(C_DIM))
+        p.drawText(QRectF(PAD_L, PAD_T + H + 3, 25, 12), Qt.AlignLeft, "0s")
+        end_lbl = f"{int(x_max)}s" if x_max < 60 else f"{int(x_max // 60)}m{int(x_max % 60):02d}s"
+        p.drawText(QRectF(PAD_L + W - 35, PAD_T + H + 3, 40, 12),
+                   Qt.AlignRight, end_lbl)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1074,9 +1168,21 @@ class NestingTab(QWidget):
 
         self._util_chart = UtilChart()
         dl.addWidget(self._util_chart)
+
+        graph_hdr = QLabel("  Live Utilization")
+        graph_hdr.setFixedHeight(22)
+        graph_hdr.setStyleSheet(
+            f"background:{C_PANEL.name()}; color:{C_SECTION.name()};"
+            f"font-size:10px; font-weight:700;"
+            f"border-top:1px solid {C_BORDER.name()};")
+        dl.addWidget(graph_hdr)
+
+        self._live_graph = LiveLineGraph()
+        dl.addWidget(self._live_graph)
+
         spl.addWidget(details_w)
 
-        spl.setSizes([220, 280])
+        spl.setSizes([220, 340])
         lay.addWidget(spl, 1)
         return w
 
@@ -1180,13 +1286,9 @@ class NestingTab(QWidget):
             "margin_left":    self._spin_left.value(),
             "margin_right":   self._spin_right.value(),
             "margin_bottom":  self._spin_bottom.value(),
-            # Keep sheet_margin as max of 4 for engine compatibility
             "sheet_margin":   max(self._spin_top.value(), self._spin_left.value(),
                                   self._spin_right.value(), self._spin_bottom.value()),
             "rotation":       self._cmb_rotation.currentIndex(),
-            "generations":    30,
-            "population":     20,
-            "duration":       600.0,
             "direction":      getattr(self, "_nest_direction", "bottom_left"),
             "strategy":       getattr(self, "_nest_strategy", "best_efficiency"),
         }
@@ -1198,6 +1300,7 @@ class NestingTab(QWidget):
         self._elapsed = 0
         self._timer.start(1000)
         self._run_start = time.time()
+        self._live_graph.reset()
 
         self._worker = NestingWorker(prepared_parts, self._sheet_defs, opts)
         self._worker.sig_progress.connect(self._on_progress)
@@ -1222,6 +1325,7 @@ class NestingTab(QWidget):
         self._results_table.setRowCount(0)
         self._nest_tree.clear()
         self._util_chart.set_data([])
+        self._live_graph.reset()
         self._clear_thumbs()
         self._status_bar.setText("  Ready")
 
@@ -1234,9 +1338,12 @@ class NestingTab(QWidget):
         self._lbl_elapsed.setText(f"{h:02d}:{m:02d}:{s:02d}")
 
     # ── Progress ──────────────────────────────────────────────
-    def _on_progress(self, gen, total, best_util):
-        pct = int(gen / max(1, total) * 100)
-        self._progress.setValue(pct)
+    def _on_progress(self, gen: int, util: float, elapsed: float, no_improve: int):
+        # Progress bar shows utilization % as the quality indicator
+        self._progress.setValue(min(99, int(util)))
+        self._live_graph.add_point(elapsed, util)
+        if no_improve > 12:
+            self._live_graph.mark_converged(elapsed)
 
     # ── Finished ──────────────────────────────────────────────
     def _on_finished(self, sheets, all_results):

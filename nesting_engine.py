@@ -108,6 +108,66 @@ class NestingEngine:
             return self.best_result.sheets
         return []
 
+    def run_continuous(self, parts: List[Part], stop_event,
+                       on_progress=None) -> List[Part]:
+        """Run nesting generations in a loop until stop_event is set.
+
+        on_progress(gen, util%, sheet_count, elapsed_sec, no_improve_count) is
+        called after every generation so the UI can update the live graph.
+        """
+        if not parts:
+            return []
+        self.all_results = []
+        start = time.time()
+        pop = self._create_population(parts, 15)
+        best_ever = None
+        no_improve = 0
+        gen = 0
+
+        while not stop_event.is_set():
+            gen_results = []
+            for order in pop:
+                if stop_event.is_set():
+                    break
+                for algo in self.PACK_ALGOS:
+                    if stop_event.is_set():
+                        break
+                    t0 = time.time()
+                    result = self._evaluate(order, algo, gen)
+                    result.time_ms = (time.time() - t0) * 1000
+                    gen_results.append((result, order))
+                    self.all_results.append(result)
+
+            if not gen_results:
+                break
+
+            gen_results.sort(key=lambda x: -x[0].score())
+            best_this = gen_results[0][0]
+
+            if not best_ever or best_this.score() > best_ever.score():
+                best_ever = best_this
+                no_improve = 0
+            else:
+                no_improve += 1
+
+            top = [x[1] for x in gen_results[:max(2, 15 // 3)]]
+            pop = top + self._mutate(top, 15 - len(top), parts)
+
+            if on_progress and best_ever:
+                on_progress(gen, best_ever.utilization,
+                            best_ever.sheet_count,
+                            time.time() - start, no_improve)
+            gen += 1
+
+        self.all_results.sort(
+            key=lambda r: (-r.total_parts, -r.utilization, r.sheet_count))
+        for i, r in enumerate(self.all_results):
+            r.rank = i + 1
+        if self.all_results:
+            self.best_result = self.all_results[0]
+            return self.best_result.sheets
+        return []
+
     def _create_population(self, parts, size):
         pop = []
         base = list(parts)
