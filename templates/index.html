@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grasshopper Analyzer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container { max-width: 860px; margin: 0 auto; }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #7c3aed, #2563eb);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.4rem;
+    }
+
+    .subtitle { color: #94a3b8; margin-bottom: 2rem; font-size: 0.95rem; }
+
+    .card {
+      background: #1e2330;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.4rem; }
+
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 0.6rem 1rem;
+      color: #e2e8f0;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+      direction: ltr;
+    }
+
+    input[type="text"]:focus, input[type="password"]:focus {
+      border-color: #7c3aed;
+    }
+
+    .drop-zone {
+      border: 2px dashed #2d3748;
+      border-radius: 10px;
+      padding: 3rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 1rem;
+    }
+
+    .drop-zone:hover, .drop-zone.drag-over {
+      border-color: #7c3aed;
+      background: rgba(124, 58, 237, 0.05);
+    }
+
+    .drop-zone .icon { font-size: 2.5rem; margin-bottom: 0.8rem; }
+    .drop-zone p { color: #94a3b8; font-size: 0.9rem; }
+    .drop-zone .file-name { color: #7c3aed; font-weight: 600; margin-top: 0.5rem; }
+
+    input[type="file"] { display: none; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: linear-gradient(135deg, #7c3aed, #2563eb);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 0.75rem 2rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      justify-content: center;
+      margin-top: 1rem;
+      transition: opacity 0.2s;
+    }
+
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .result-card { display: none; }
+
+    .stats {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 0.5rem 1rem;
+      font-size: 0.85rem;
+    }
+
+    .stat span { color: #7c3aed; font-weight: 700; }
+
+    .analysis-output {
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 1.2rem;
+      white-space: pre-wrap;
+      font-size: 0.88rem;
+      line-height: 1.7;
+      direction: ltr;
+      text-align: left;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+
+    .copy-btn {
+      background: #2d3748;
+      color: #e2e8f0;
+      border: none;
+      border-radius: 6px;
+      padding: 0.4rem 1rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-bottom: 0.8rem;
+      transition: background 0.2s;
+    }
+
+    .copy-btn:hover { background: #4a5568; }
+    .copy-btn.copied { background: #065f46; color: #6ee7b7; }
+
+    .error {
+      background: #1a0a0a;
+      border: 1px solid #7f1d1d;
+      border-radius: 8px;
+      padding: 1rem;
+      color: #fca5a5;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    h2 { font-size: 1.2rem; margin-bottom: 1rem; color: #e2e8f0; }
+    .section-title { color: #94a3b8; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Grasshopper Analyzer</h1>
+    <p class="subtitle">فایل Grasshopper خود را آپلود کنید تا ساختار و منطق آن تحلیل شود و پرامپت Cursor تولید گردد</p>
+
+    <div class="card">
+      <div>
+        <label>کلید API آنتروپیک (اختیاری اگر در سرور تنظیم شده)</label>
+        <input type="password" id="apiKey" placeholder="sk-ant-..." />
+      </div>
+
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <div class="icon">🦗</div>
+        <p>فایل <strong>.gh</strong> یا <strong>.ghx</strong> را اینجا رها کنید</p>
+        <p>یا کلیک کنید برای انتخاب فایل</p>
+        <div class="file-name" id="fileName"></div>
+      </div>
+      <input type="file" id="fileInput" accept=".gh,.ghx" />
+
+      <button class="btn" id="analyzeBtn" onclick="analyze()" disabled>
+        <div class="spinner" id="spinner"></div>
+        <span id="btnText">ابتدا یک فایل انتخاب کنید</span>
+      </button>
+    </div>
+
+    <div class="error" id="errorBox"></div>
+
+    <div class="card result-card" id="resultCard">
+      <h2>نتیجه تحلیل</h2>
+      <div class="stats" id="statsBox"></div>
+      <div class="section-title">خروجی تحلیل و پرامپت Cursor</div>
+      <button class="copy-btn" id="copyBtn" onclick="copyResult()">کپی کردن</button>
+      <div class="analysis-output" id="analysisOutput"></div>
+    </div>
+  </div>
+
+  <script>
+    let selectedFile = null;
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const btnText = document.getElementById('btnText');
+    const spinner = document.getElementById('spinner');
+
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f) setFile(f);
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) setFile(fileInput.files[0]);
+    });
+
+    function setFile(f) {
+      if (!f.name.match(/\.(gh|ghx)$/i)) {
+        showError('فقط فایل‌های .gh و .ghx پشتیبانی می‌شوند');
+        return;
+      }
+      selectedFile = f;
+      document.getElementById('fileName').textContent = f.name;
+      analyzeBtn.disabled = false;
+      btnText.textContent = 'تحلیل کن';
+      hideError();
+    }
+
+    async function analyze() {
+      if (!selectedFile) return;
+
+      analyzeBtn.disabled = true;
+      spinner.style.display = 'block';
+      btnText.textContent = 'در حال تحلیل...';
+      hideError();
+      document.getElementById('resultCard').style.display = 'none';
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('api_key', document.getElementById('apiKey').value.trim());
+
+      try {
+        const res = await fetch('/analyze', { method: 'POST', body: formData });
+        const data = await res.json();
+
+        if (!res.ok) {
+          showError(data.detail || 'خطا در تحلیل فایل');
+          return;
+        }
+
+        document.getElementById('statsBox').innerHTML = `
+          <div class="stat">کامپوننت‌ها: <span>${data.component_count}</span></div>
+          <div class="stat">اتصالات: <span>${data.wire_count}</span></div>
+          <div class="stat">فایل: <span>${data.filename}</span></div>
+        `;
+        document.getElementById('analysisOutput').textContent = data.analysis;
+        document.getElementById('resultCard').style.display = 'block';
+        document.getElementById('copyBtn').textContent = 'کپی کردن';
+        document.getElementById('copyBtn').className = 'copy-btn';
+        document.getElementById('resultCard').scrollIntoView({ behavior: 'smooth' });
+      } catch (err) {
+        showError('خطای شبکه: ' + err.message);
+      } finally {
+        analyzeBtn.disabled = false;
+        spinner.style.display = 'none';
+        btnText.textContent = 'تحلیل کن';
+      }
+    }
+
+    function copyResult() {
+      const text = document.getElementById('analysisOutput').textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById('copyBtn');
+        btn.textContent = 'کپی شد!';
+        btn.className = 'copy-btn copied';
+        setTimeout(() => {
+          btn.textContent = 'کپی کردن';
+          btn.className = 'copy-btn';
+        }, 2000);
+      });
+    }
+
+    function showError(msg) {
+      const box = document.getElementById('errorBox');
+      box.textContent = msg;
+      box.style.display = 'block';
+    }
+
+    function hideError() {
+      document.getElementById('errorBox').style.display = 'none';
+    }
+  </script>
+</body>
+</html>
