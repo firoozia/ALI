@@ -1,5 +1,5 @@
 """
-FIROO CAM — Nesting Engine v6.0  Industrial Memetic Algorithm + BFDH Strip Packing
+FIROO CAM — Nesting Engine v7.0  Fixed-Budget Feasibility + LNS Repair
 ═══════════════════════════════════════════════════════════════════════════════════
 
 Root-cause fix vs v5.0
@@ -29,17 +29,26 @@ Why BFDH beats MaxRects for cabinet panels:
   • BFDH* (with rotation) is even better: a 1200×300 part can become 300×1200,
     fitting perfectly in a tall 300-wide strip.
 
-New in v6.0
+New in v7.0
 ───────────
-1. _pack_sheet_bfdh — dedicated BFDH strip packing for one sheet.
-2. _evaluate_bfdh   — full sheet-set evaluation using BFDH.
-3. _eval_full now runs BOTH MaxRects variants AND BFDH, takes best.
-4. _eval_fast has 30% chance to probe BFDH (instead of two MaxRects).
-5. height_group_sort operator in _make_neighbor: sorts a random segment
-   of the ordering by height → creates BFDH-friendly input for MaxRects too.
-6. Initial population: height-sorted order is candidate #1 (not #8).
-7. All v5.0 improvements kept: OX crossover, elite archive, convergence
-   restart, late_reloc, large_forward, Skyline variants, global_util scoring.
+1. Fixed-budget feasibility search (Phase 0): before SA starts, try hundreds
+   of orderings with BFDH + MaxRects packed into exactly target_sheets bins.
+   If any ordering places all parts within the budget → return immediately.
+2. LNS Repair (_lns_repair): when initial fixed-budget pack leaves overflow
+   parts, repeatedly try new orderings that put overflow parts first.
+   Ejection-chain variant: destroy lightest sheet, merge with overflow, repack.
+3. target_sheets attribute (default 0 = auto):
+   Set engine.target_sheets = 9 to activate Phase 0 feasibility search.
+4. Scoring bonus: if all parts placed AND sheet_count ≤ target_sheets,
+   score gets +10 000 000 so SA also converges toward budget solutions.
+5. _pack_bfdh_budget / _pack_maxrects_budget: pack into fixed bin count.
+6. All v6.0 improvements kept: BFDH strip packing, SA + OX crossover,
+   elite archive, convergence restart, Skyline variants.
+
+⚠️  Gap note: Solid Edge 9-sheet result uses gap=6.5 mm (derived from
+   NestLength=1173: 8+66+6.5+543+6.5+543=1173).  At gap=20 mm theoretical
+   density for 9 sheets = 99.77 % (infeasible).  At gap=6.5 mm = 94.93 %
+   (achievable).  Set config.part_gap = 6.5 to match Solid Edge.
 """
 from __future__ import annotations
 
@@ -145,6 +154,7 @@ class NestingEngine:
         self.direction     = "bottom_left"
         self.direction_deg = 270
         self.strategy      = "best_efficiency"
+        self.target_sheets: int = 0  # 0 = auto; >0 = fixed-budget target
         self.sheet_defs: List[SheetDef] = []
         self.all_results: List[NestResult] = []
         self.best_result: Optional[NestResult] = None
@@ -216,6 +226,20 @@ class NestingEngine:
 
         population = max(6, min(12 if deep_search else 10, int(population or 8)))
         variants   = self._pack_variants(deep_search=deep_search)
+
+        # ── Phase 0: Fixed-budget feasibility search ─────────────
+        _target = self.target_sheets
+        if _target > 0:
+            _budget_t = min(float(time_limit or 30.0) * 0.35, 20.0)
+            _budget_result = self._budget_first_search(
+                parts, self._start_time, self._start_time + _budget_t)
+            if _budget_result is not None:
+                self._add_result(_budget_result)
+                self.best_result = _budget_result
+                if on_progress:
+                    on_progress(0, _budget_result.utilization,
+                                _budget_result.sheet_count,
+                                time.time() - self._start_time, 0)
 
         # ── Phase 1: Warm start ──────────────────────────────────
         pop = self._create_population(parts, population)
@@ -490,6 +514,19 @@ class NestingEngine:
         pop.append(sorted(base, key=lambda p: (
             str(getattr(p, "material", "")).lower(), -float(p.height), -float(p.width))))
 
+        # #10: anchor-first column sort (seed for BFDC)
+        # Anchor = col_h > 85% of typical sheet usable height (~2424mm for 2440 sheet).
+        # Within anchors: widest first. Within mediums: widest first.
+        _sh = float(self.sheet_defs[0].height) if self.sheet_defs else 2440.0
+        _uh = _sh - 2 * float(self.margin)
+        _at = _uh * 0.85
+        _g  = self.gap
+        def _col_sort_key(p):
+            cw = min(float(p.width)+_g, float(p.height)+_g)
+            ch = max(float(p.width)+_g, float(p.height)+_g)
+            return (-(1 if ch > _at else 0), -cw, -ch)
+        pop.append(sorted(base, key=_col_sort_key))
+
         if self.strategy == "prefer_repeats":
             pop.append(sorted(base, key=lambda p: (
                 design(p), str(getattr(p, "part_code", "")), -area(p))))
@@ -711,6 +748,10 @@ class NestingEngine:
         def sort_key(item):
             _, p = item
             if self.auto_rotate:
+                # Portrait bins (uh > uw): sort by shorter dim desc to open compact shelves.
+                # Landscape bins: sort by longer dim desc (classic BFDH policy).
+                if uh > uw:
+                    return -min(float(p.height) + self.gap, float(p.width) + self.gap)
                 return -max(float(p.height) + self.gap, float(p.width) + self.gap)
             return -(float(p.height) + self.gap)
 
@@ -741,7 +782,8 @@ class NestingEngine:
                 sh = shelf["h"]
                 rem = shelf["rem"]
                 for (pw, ph, rot) in opts:
-                    if ph <= sh + 1e-9 and pw <= rem + 1e-9:
+                    # Tight-fit: last part in shelf row needs no trailing gap.
+                    if ph <= sh + 1e-9 and pw - self.gap <= rem + 1e-9:
                         waste = rem - pw
                         if waste < best_waste:
                             best_waste     = waste
@@ -755,14 +797,17 @@ class NestingEngine:
                 x_pos = shelf["x_next"]
                 y_pos = shelf["y"]
             else:
-                # Open a new shelf — prefer the orientation that opens the
-                # tallest shelf (more parts can reuse it later).
+                # Open a new shelf — tight-fit: last shelf needs no trailing gap.
                 valid = [(pw, ph, rot) for pw, ph, rot in opts
-                         if total_h + ph <= uh + 1e-9]
+                         if total_h + ph - self.gap <= uh + 1e-9]
                 if not valid:
                     continue
-                # tallest first (BFDH descending-height policy)
-                best_pw, best_ph, best_rot = max(valid, key=lambda x: x[1])
+                # Portrait bins (uh > uw): prefer shorter shelf to stack more rows.
+                # Landscape bins: prefer taller shelf (classic BFDH policy).
+                if uh > uw:
+                    best_pw, best_ph, best_rot = min(valid, key=lambda x: x[1])
+                else:
+                    best_pw, best_ph, best_rot = max(valid, key=lambda x: x[1])
                 x_pos = 0.0
                 y_pos = total_h
                 shelves.append({"y": y_pos, "h": best_ph,
@@ -846,6 +891,659 @@ class NestingEngine:
         result.fitness = self._score_result(result, total_required=len(order))
         return result
 
+    # ──────────────────────────────────────────────────────────
+    # v7.0: Column (vertical strip) packing  — Solid Edge strategy
+    # ──────────────────────────────────────────────────────────
+
+    def _pack_sheet_column(self, parts_enum: List[Tuple], sheet_def: SheetDef,
+                           sheet_id: int):
+        """
+        Best-Fit Decreasing Column (BFDC) — vertical-strip analogue of BFDH.
+
+        Parts are sorted by effective width (shorter dim) descending so the
+        widest part opens the widest column first.  Narrow parts (K=66 mm)
+        open their own narrow columns.  Same-width parts stack vertically
+        within one column — matching Solid Edge's column layout.
+
+        columns: {'x': float, 'w': float, 'y_next': float, 'rem': float}
+          x      = left edge in local coords
+          w      = column width (set when first part is placed; fixed after)
+          y_next = y-position for next part (from bottom)
+          rem    = remaining height in column
+        """
+        ml = getattr(self, 'margin_left',   self.margin)
+        mr = getattr(self, 'margin_right',  self.margin)
+        mt = getattr(self, 'margin_top',    self.margin)
+        mb = getattr(self, 'margin_bottom', self.margin)
+
+        uw = float(sheet_def.width)  - ml - mr
+        uh = float(sheet_def.height) - mt - mb
+
+        sheet = Sheet(sheet_id=sheet_id, width=sheet_def.width,
+                      height=sheet_def.height, thickness=sheet_def.thickness,
+                      material=sheet_def.material)
+        sheet.source_sheet_name = sheet_def.name
+        sheet.is_remnant        = sheet_def.is_remnant
+        sheet.priority          = sheet_def.priority
+
+        if uw <= 0 or uh <= 0:
+            return sheet, [i for i, _ in parts_enum]
+
+        def eff_dims(p):
+            """Return (col_width, col_height, rotated) for column packing."""
+            w0 = float(p.width)  + self.gap
+            h0 = float(p.height) + self.gap
+            if self.auto_rotate and h0 < w0:
+                return h0, w0, True   # rotate: shorter = column width
+            return w0, h0, False
+
+        # Anchor threshold: parts taller than 85 % of usable sheet height.
+        # K=66×2350 (col_h=2356mm) and L=543×2320 (col_h=2326mm) qualify.
+        # Anchors are placed first (widest anchor first) so they claim their
+        # columns before medium parts fill the remaining horizontal space.
+        anchor_thresh = uh * 0.85
+
+        def sort_key(item):
+            _, p = item
+            cw, ch, _ = eff_dims(p)
+            is_anchor = 1 if ch > anchor_thresh else 0
+            if is_anchor:
+                return (-1, -ch, -cw)  # tallest anchor first (K before L)
+            return (0, -cw, -ch)  # non-anchors: widest first
+
+        sorted_parts = sorted(parts_enum, key=sort_key)
+
+        columns: list = []  # list of column dicts
+        total_x = 0.0       # total width used (accumulates column widths)
+        placed   = set()
+
+        for orig_i, p in sorted_parts:
+            cw, ch, rotated = eff_dims(p)
+
+            # Must fit in sheet dimensions
+            if cw > uw + 1e-9 or ch > uh + 1e-9:
+                # Try the other rotation
+                if self.auto_rotate and (ch <= uw + 1e-9) and (cw <= uh + 1e-9):
+                    cw, ch, rotated = ch, cw, not rotated
+                else:
+                    continue
+
+            # Search existing columns: part must fit in width AND height.
+            # Tight-fit: last part in column needs no trailing gap (ch-gap model).
+            best_ci    = -1
+            best_waste = float('inf')
+            for ci, col in enumerate(columns):
+                if cw <= col['w'] + 1e-9 and ch - self.gap <= col['rem'] + 1e-9:
+                    waste = col['rem'] - ch
+                    if waste < best_waste:
+                        best_waste = waste
+                        best_ci    = ci
+
+            if best_ci >= 0:
+                col   = columns[best_ci]
+                x_pos = col['x']
+                y_pos = col['y_next']
+            else:
+                # Open a new column — tight-fit: last column needs no trailing gap.
+                if total_x + cw - self.gap > uw + 1e-9:
+                    # Try the other rotation for the new column
+                    if self.auto_rotate:
+                        cw2, ch2 = ch - 0, cw - 0  # swap (already includes gap)
+                        r2 = not rotated
+                        if (cw2 <= uw - total_x + 1e-9 and ch2 <= uh + 1e-9):
+                            cw, ch, rotated = cw2, ch2, r2
+                        else:
+                            continue
+                    else:
+                        continue
+
+                x_pos = total_x
+                y_pos = 0.0
+                columns.append({'x': x_pos, 'w': cw, 'y_next': 0.0, 'rem': uh})
+                total_x += cw
+                best_ci  = len(columns) - 1
+
+            # Place the part
+            actual_w = cw - self.gap
+            actual_h = ch - self.gap
+            p_copy = deepcopy(p)
+            p_copy.x        = x_pos + ml
+            p_copy.y        = y_pos + mb
+            p_copy.sheet_id = sheet_id
+            p_copy.rotated  = rotated
+            p_copy.status   = "nested"
+            sheet.parts.append(p_copy)
+
+            col = columns[best_ci]
+            col['y_next'] += ch
+            col['rem']    -= ch
+            placed.add(orig_i)
+
+        unplaced = [i for i, _ in parts_enum if i not in placed]
+        return sheet, unplaced
+
+    def _evaluate_column(self, order: list, gen: int) -> 'NestResult':
+        """Full multi-sheet evaluation using column (BFDC) packing."""
+        result = NestResult(algorithm="BFDC/Column",
+                            generation=gen, strategy=self.strategy)
+        t0 = time.time()
+
+        parts_enum    = list(enumerate(order))
+        remaining_idx = list(range(len(order)))
+        sheets_used   = []
+        sheet_counter = 1
+
+        limited   = [s for s in self.sheet_defs if s.quantity < 999]
+        unlimited = [s for s in self.sheet_defs if s.quantity >= 999]
+
+        for sd in limited:
+            for _ in range(int(sd.quantity)):
+                if not remaining_idx:
+                    break
+                cands = [(i, order[i]) for i in remaining_idx]
+                sheet, unplaced = self._pack_sheet_column(cands, sd, sheet_counter)
+                if sheet.parts:
+                    self._apply_direction_transform(sheet, sd)
+                    sheets_used.append(sheet)
+                    sheet_counter += 1
+                remaining_idx = unplaced
+
+        while remaining_idx and unlimited:
+            sd    = unlimited[0]
+            cands = [(i, order[i]) for i in remaining_idx]
+            sheet, unplaced = self._pack_sheet_column(cands, sd, sheet_counter)
+            if sheet.parts:
+                self._apply_direction_transform(sheet, sd)
+                sheets_used.append(sheet)
+                sheet_counter += 1
+                if len(unplaced) == len(remaining_idx):
+                    break
+            else:
+                break
+            remaining_idx = unplaced
+
+        result.sheets      = sheets_used
+        result.sheet_count = len(sheets_used)
+        result.total_parts = sum(s.part_count() for s in sheets_used)
+        result.time_ms     = (time.time() - t0) * 1000.0
+
+        if sheets_used:
+            total_placed = sum(
+                float(p.actual_width()) * float(p.actual_height())
+                for s in sheets_used for p in s.parts
+            )
+            total_sheet = sum(float(s.width) * float(s.height) for s in sheets_used)
+            result.utilization = (total_placed / total_sheet * 100.0
+                                  if total_sheet > 0 else 0.0)
+
+        self._apply_repeat_stats(result)
+        result.fitness = self._score_result(result, total_required=len(order))
+        return result
+
+    def _pack_column_budget(self, parts_list: list, sheet_def: SheetDef,
+                            budget: int) -> Tuple[list, list]:
+        """Column packing into fixed budget. Returns (sheets, overflow)."""
+        remaining_idx = list(range(len(parts_list)))
+        sheets_used: list = []
+        for i in range(budget):
+            if not remaining_idx:
+                break
+            cands = [(idx, parts_list[idx]) for idx in remaining_idx]
+            sheet, unplaced = self._pack_sheet_column(cands, sheet_def, i + 1)
+            if sheet.parts:
+                self._apply_direction_transform(sheet, sheet_def)
+                sheets_used.append(sheet)
+            remaining_idx = unplaced
+        overflow = [parts_list[i] for i in remaining_idx]
+        return sheets_used, overflow
+
+    # ──────────────────────────────────────────────────────────
+    # v7.0: Fixed-budget feasibility search + LNS repair
+    # ──────────────────────────────────────────────────────────
+
+    def _pack_bfdh_budget(self, parts_list: list, sheet_def: SheetDef,
+                          budget: int) -> Tuple[list, list]:
+        """BFDH into exactly `budget` bins. Returns (sheets_used, overflow_parts)."""
+        remaining_idx = list(range(len(parts_list)))
+        sheets_used: list = []
+        for i in range(budget):
+            if not remaining_idx:
+                break
+            cands = [(idx, parts_list[idx]) for idx in remaining_idx]
+            sheet, unplaced_idx = self._pack_sheet_bfdh(cands, sheet_def, i + 1)
+            if sheet.parts:
+                self._apply_direction_transform(sheet, sheet_def)
+                sheets_used.append(sheet)
+            remaining_idx = unplaced_idx
+        overflow = [parts_list[i] for i in remaining_idx]
+        return sheets_used, overflow
+
+    def _pack_maxrects_budget(self, parts_list: list, algo_cls, sort_func,
+                              sheet_def: SheetDef, budget: int) -> Tuple[list, list]:
+        """MaxRects into exactly `budget` bins. Returns (sheets_used, overflow_parts)."""
+        remaining = list(parts_list)
+        sheets_used: list = []
+        for i in range(budget):
+            if not remaining:
+                break
+            sheet, remaining = self._pack_sheet(
+                remaining, sheet_def, i + 1, algo_cls, sort_func)
+            if sheet.parts:
+                self._apply_direction_transform(sheet, sheet_def)
+                sheets_used.append(sheet)
+            else:
+                break
+        return sheets_used, remaining
+
+    def _strip_part(self, p):
+        """Return a copy of part with all placement info cleared."""
+        pc = deepcopy(p)
+        pc.x = 0.0; pc.y = 0.0
+        pc.rotated = False
+        pc.status  = "pending"
+        if hasattr(pc, 'sheet_id'):
+            pc.sheet_id = None
+        return pc
+
+    def _collect_parts_from_sheets(self, sheets: list) -> list:
+        """Extract stripped Part copies from a list of Sheet objects."""
+        return [self._strip_part(p) for s in sheets for p in s.parts]
+
+    def _repack_sheet_all_algos(self, parts_list: list,
+                                sheet_def: SheetDef, sheet_id: int):
+        """Try every packing algorithm on parts_list for one sheet.
+        Returns (sheet, unplaced) with fewest unplaced, or None."""
+        algos = [
+            (MaxRectsBaf,  SORT_NONE),  (MaxRectsBaf,  SORT_AREA),
+            (MaxRectsBssf, SORT_NONE),  (MaxRectsBssf, SORT_AREA),
+            (MaxRectsBlsf, SORT_LSIDE), (MaxRectsBl,   SORT_AREA),
+            (SkylineMwf,   SORT_NONE),
+        ]
+        best_sheet = None
+        best_unplaced: list = list(parts_list)
+        for algo_cls, sfunc in algos:
+            s, unplaced = self._pack_sheet(parts_list, sheet_def, sheet_id,
+                                           algo_cls, sfunc)
+            if len(unplaced) < len(best_unplaced):
+                best_unplaced = unplaced
+                best_sheet    = s
+            if not unplaced:
+                break
+        # Also try BFDH
+        cands = list(enumerate(parts_list))
+        s_bfdh, un_idx = self._pack_sheet_bfdh(cands, sheet_def, sheet_id)
+        unplaced_bfdh = [parts_list[i] for i in un_idx]
+        if len(unplaced_bfdh) < len(best_unplaced):
+            best_unplaced = unplaced_bfdh
+            best_sheet    = s_bfdh
+        if not best_unplaced:
+            return best_sheet, best_unplaced
+
+        # Also try column packing (BFDC)
+        cands2 = list(enumerate(parts_list))
+        s_col, un_idx2 = self._pack_sheet_column(cands2, sheet_def, sheet_id)
+        unplaced_col = [parts_list[i] for i in un_idx2]
+        if len(unplaced_col) < len(best_unplaced):
+            best_unplaced = unplaced_col
+            best_sheet    = s_col
+        return best_sheet, best_unplaced
+
+    def _lns_repair(self, all_parts: list, overflow: list,
+                    sheet_def: SheetDef, budget: int,
+                    t0: float, t_limit: float,
+                    max_iter: int = 600,
+                    initial_sheets: Optional[list] = None) -> Tuple[list, list]:
+        """
+        LNS repair: try to fit all_parts into exactly budget bins.
+
+        Strategies:
+        0. Single-sheet insert on initial_sheets (fast early attempt).
+        1. Ordering variations with overflow-first (BFDH + MaxRects).
+        2. Destroy-repair: eject lightest sheet, repack its parts + overflow.
+        3. Final single-sheet insert on best found solution.
+
+        all_parts      — full original part list (unmodified Part objects)
+        overflow       — parts that didn't fit (subset of all_parts by identity)
+        initial_sheets — optional pre-packed sheet list to start from
+        t_limit        — absolute time.time() deadline (NOT relative to t0)
+        """
+        best_over_count = len(overflow)
+        best_sheets: list = list(initial_sheets) if initial_sheets else []
+        best_over = list(overflow)
+        cur_over  = list(overflow)
+
+        def _timed_out():
+            return time.time() > t_limit
+
+        # ── Helper: single-sheet insert ──────────────────────────────────────
+        def try_single_insert(sheets: list, ov_list: list):
+            """For each overflow part, try to add it to any sheet by repacking."""
+            remaining_ov     = list(ov_list)
+            modified_sheets  = list(sheets)
+            for ov_part in list(remaining_ov):
+                if _timed_out():
+                    break
+                for si, sheet in enumerate(modified_sheets):
+                    existing  = [self._strip_part(p) for p in sheet.parts]
+                    candidate = existing + [self._strip_part(ov_part)]
+                    new_s, leftover = self._repack_sheet_all_algos(
+                        candidate, sheet_def, si + 1)
+                    if not leftover and new_s is not None:
+                        self._apply_direction_transform(new_s, sheet_def)
+                        modified_sheets[si] = new_s
+                        remaining_ov.remove(ov_part)
+                        break
+            return modified_sheets, remaining_ov
+
+        # ── Strategy 0: fast insert on initial solution ──────────────────────
+        if best_sheets and best_over:
+            ins_s, ins_o = try_single_insert(best_sheets, best_over)
+            if not ins_o:
+                return ins_s, []
+            if len(ins_o) < best_over_count:
+                best_over_count = len(ins_o)
+                best_sheets     = ins_s
+                best_over       = ins_o
+                cur_over        = ins_o
+
+        # ── Strategy 1: ordering variations ─────────────────────────────────
+        for it in range(max_iter):
+            if _timed_out():
+                break
+
+            ov_ids   = {id(p) for p in cur_over}
+            ov_idxs  = [i for i, p in enumerate(all_parts) if id(p) in ov_ids]
+            rest_idx = [i for i in range(len(all_parts)) if i not in set(ov_idxs)]
+
+            if it < 5:
+                ov_s = sorted(ov_idxs,
+                              key=lambda i: -float(all_parts[i].width)*float(all_parts[i].height))
+                rs   = sorted(rest_idx,
+                              key=lambda i: -float(all_parts[i].width)*float(all_parts[i].height))
+                order_idx = ov_s + rs
+            elif it < 25:
+                ov_s = list(ov_idxs); random.shuffle(ov_s)
+                rs   = sorted(rest_idx,
+                              key=lambda i: -float(all_parts[i].width)*float(all_parts[i].height))
+                order_idx = ov_s + rs
+            elif it % 6 == 0:
+                order_idx = sorted(range(len(all_parts)),
+                                   key=lambda i: -float(all_parts[i].width)*float(all_parts[i].height))
+            elif it % 6 == 1:
+                order_idx = sorted(range(len(all_parts)),
+                                   key=lambda i: (-max(float(all_parts[i].width),
+                                                        float(all_parts[i].height)),
+                                                   -float(all_parts[i].width)*float(all_parts[i].height)))
+            elif it % 6 == 2:
+                order_idx = sorted(range(len(all_parts)),
+                                   key=lambda i: (-float(all_parts[i].height),
+                                                   -float(all_parts[i].width)))
+            else:
+                order_idx = list(range(len(all_parts))); random.shuffle(order_idx)
+
+            order = [all_parts[i] for i in order_idx]
+
+            # Column packing (BFDC) pass — anchor-first, widest column first
+            col_s, col_o = self._pack_column_budget(order, sheet_def, budget)
+            if not col_o:
+                return col_s, []
+            new_sheets, new_over = col_s, col_o
+
+            # BFDH pass
+            bfdh_s, bfdh_o = self._pack_bfdh_budget(order, sheet_def, budget)
+            if not bfdh_o:
+                return bfdh_s, []
+            if len(bfdh_o) < len(new_over):
+                new_over = bfdh_o; new_sheets = bfdh_s
+
+            # MaxRects passes on same ordering
+            for algo_cls, sfunc in [(MaxRectsBaf, SORT_NONE), (MaxRectsBaf, SORT_AREA),
+                                    (MaxRectsBssf, SORT_NONE), (MaxRectsBssf, SORT_AREA),
+                                    (MaxRectsBlsf, SORT_LSIDE), (MaxRectsBl, SORT_AREA)]:
+                mr_s, mr_o = self._pack_maxrects_budget(
+                    order, algo_cls, sfunc, sheet_def, budget)
+                if not mr_o:
+                    return mr_s, []
+                if len(mr_o) < len(new_over):
+                    new_over = mr_o; new_sheets = mr_s
+
+            if len(new_over) < best_over_count:
+                best_over_count = len(new_over)
+                best_sheets     = new_sheets
+                best_over       = new_over
+                cur_over        = new_over
+
+                # Quick single-insert on newly improved solution
+                ins_s, ins_o = try_single_insert(new_sheets, new_over)
+                if not ins_o:
+                    return ins_s, []
+                if len(ins_o) < best_over_count:
+                    best_over_count = len(ins_o)
+                    best_sheets = ins_s; best_over = ins_o; cur_over = ins_o
+
+        # ── Strategy 2: destroy-repair on lightest sheets ────────────────────
+        if best_sheets and best_over and not _timed_out():
+            util_sorted = sorted(enumerate(best_sheets),
+                                 key=lambda x: x[1].utilization())
+            for sheet_idx, light_sheet in util_sorted[:4]:
+                if _timed_out():
+                    break
+                ejected  = [self._strip_part(p) for p in light_sheet.parts]
+                pool     = ejected + [self._strip_part(p) for p in best_over]
+
+                new_s, leftover = self._repack_sheet_all_algos(
+                    pool, sheet_def, sheet_idx + 1)
+                if not leftover and new_s is not None:
+                    self._apply_direction_transform(new_s, sheet_def)
+                    rebuilt = ([s for i, s in enumerate(best_sheets) if i != sheet_idx]
+                               + [new_s])
+                    return rebuilt, []
+
+        # ── Strategy 3: final insert pass ────────────────────────────────────
+        if best_sheets and best_over:
+            ins_s, ins_o = try_single_insert(best_sheets, best_over)
+            if not ins_o:
+                return ins_s, []
+            if len(ins_o) < best_over_count:
+                best_sheets = ins_s; best_over = ins_o
+
+        return best_sheets, best_over
+
+    def _build_column_group_orders(self, parts: list,
+                                   sheet_def: SheetDef) -> list:
+        """
+        Generate orderings that form near-perfect CEM / BJM column groups.
+
+        CEM (C+E+M): col_w=331.5mm, fill height ≈ 2419mm (5mm waste, tight-fit).
+        BJM (B+J+M): col_w=459.5mm, fill height ≈ 2422mm (2mm waste, tight-fit).
+
+        Returns a list of part orderings (each ordering is a list of Part refs).
+        """
+        gap = self.gap
+        mt  = self.margin_top
+        mb  = self.margin_bottom
+        uh  = float(sheet_def.height) - mt - mb
+        anchor_thresh = uh * 0.85
+
+        def eff_ch(p):
+            w0 = float(p.width) + gap
+            h0 = float(p.height) + gap
+            return max(w0, h0) if (self.auto_rotate and h0 < w0) else h0
+
+        # Anchors: tallest first (K before L in MaxRects ordering)
+        anchors = sorted([p for p in parts if eff_ch(p) > anchor_thresh],
+                         key=lambda p: -eff_ch(p))
+        non_anc = [p for p in parts if eff_ch(p) <= anchor_thresh]
+
+        by_code: dict = {}
+        for p in non_anc:
+            by_code.setdefault(p.part_code[0], []).append(p)
+
+        C_l = list(by_code.get('C', []))
+        E_l = list(by_code.get('E', []))
+        M_l = list(by_code.get('M', []))
+        B_l = list(by_code.get('B', []))
+        J_l = list(by_code.get('J', []))
+
+        max_cem = min(len(C_l), len(E_l), len(M_l))
+        orders: list = []
+
+        for cem_n in range(max_cem, max(0, max_cem - 3), -1):
+            m_left = len(M_l) - cem_n
+            bjm_n  = min(len(B_l), len(J_l), m_left)
+            if bjm_n < 0:
+                continue
+
+            c_use  = C_l[:cem_n];   e_use  = E_l[:cem_n]
+            b_use  = B_l[:bjm_n];   j_use  = J_l[:bjm_n]
+            m_cem  = M_l[:cem_n];   m_bjm  = M_l[cem_n:cem_n + bjm_n]
+
+            used = {id(p) for p in c_use + e_use + b_use + j_use + m_cem + m_bjm}
+            rest = sorted([p for p in non_anc if id(p) not in used],
+                          key=lambda p: -float(p.width) * float(p.height))
+
+            cem_flat = [p for c, e, m in zip(c_use, e_use, m_cem) for p in (c, e, m)]
+            bjm_flat = [p for b, j, m in zip(b_use, j_use, m_bjm) for p in (b, j, m)]
+
+            # anchors → CEM groups → BJM groups → rest (area-descending)
+            orders.append(anchors + cem_flat + bjm_flat + rest)
+            # anchors → BJM groups → CEM groups → rest
+            orders.append(anchors + bjm_flat + cem_flat + rest)
+            # anchors → interleaved CEM/BJM → rest
+            interleaved: list = []
+            for i in range(max(cem_n, bjm_n)):
+                if i < cem_n:
+                    interleaved += [c_use[i], e_use[i], m_cem[i]]
+                if i < bjm_n:
+                    interleaved += [b_use[i], j_use[i], m_bjm[i]]
+            orders.append(anchors + interleaved + rest)
+
+        return orders
+
+    def _budget_first_search(self, parts: list,
+                             t0: float, t_limit: float) -> Optional['NestResult']:
+        """
+        Phase 0: dedicated fixed-budget feasibility search.
+        Tries BFDH + MaxRects + LNS repair targeting self.target_sheets bins.
+        Returns NestResult if all parts fit, else None.
+        """
+        target = self.target_sheets
+        if not target or target <= 0:
+            return None
+
+        sd = next((s for s in self.sheet_defs if s.quantity >= 999), None)
+        if sd is None and self.sheet_defs:
+            sd = self.sheet_defs[0]
+        if sd is None:
+            return None
+
+        pop = self._create_population(parts, 15)
+        # Prepend column-group orderings (CEM/BJM) — tried first, most targeted
+        pop = self._build_column_group_orders(parts, sd) + list(pop)
+
+        mr_variants = [
+            (MaxRectsBaf,  SORT_NONE,  "MaxRectsBaf/Order"),
+            (MaxRectsBaf,  SORT_AREA,  "MaxRectsBaf/Area"),
+            (MaxRectsBssf, SORT_NONE,  "MaxRectsBssf/Order"),
+            (MaxRectsBssf, SORT_AREA,  "MaxRectsBssf/Area"),
+            (MaxRectsBlsf, SORT_LSIDE, "MaxRectsBlsf/LongSide"),
+            (MaxRectsBl,   SORT_AREA,  "MaxRectsBl/Area"),
+            (SkylineMwf,   SORT_NONE,  "SkylineMwf/Order"),
+        ]
+
+        best_over: list = list(parts)
+        best_col_sheets: list = []   # tracks the sheet list for best_over
+
+        for order in pop:
+            if time.time() > t_limit:
+                break
+
+            # Column packing (BFDC) fixed budget — anchor-first strategy
+            col_sheets, col_over = self._pack_column_budget(order, sd, target)
+            if not col_over:
+                return self._make_nest_result(col_sheets, parts,
+                                              f"BFDC-Budget{target}", t0)
+            if len(col_over) < len(best_over):
+                best_over = col_over
+                best_col_sheets = col_sheets   # keep the best BFDC layout
+
+            if time.time() > t_limit:
+                break
+
+            # BFDH fixed budget
+            sheets, overflow = self._pack_bfdh_budget(order, sd, target)
+            if not overflow:
+                return self._make_nest_result(sheets, parts,
+                                              f"BFDH-Budget{target}", t0)
+            if len(overflow) < len(best_over):
+                best_over = overflow
+                best_col_sheets = sheets
+
+            # MaxRects variants fixed budget
+            for algo_cls, sort_func, aname in mr_variants:
+                if time.time() > t_limit:
+                    break
+                mr_sheets, mr_over = self._pack_maxrects_budget(
+                    order, algo_cls, sort_func, sd, target)
+                if not mr_over:
+                    return self._make_nest_result(
+                        mr_sheets, parts, f"{aname}-Budget{target}", t0)
+                if len(mr_over) < len(best_over):
+                    best_over = mr_over
+                    best_col_sheets = mr_sheets
+
+            # LNS repair when close — trigger on best_over (not just BFDH overflow)
+            max_overflow_for_lns = max(8, len(parts) // 8)
+            if len(best_over) <= max_overflow_for_lns:
+                now = time.time()
+                lns_end = min(t_limit, now + min((t_limit - now) * 0.55, 5.0))
+                rep_sheets, rep_over = self._lns_repair(
+                    parts, best_over, sd, target,
+                    t0, lns_end, initial_sheets=best_col_sheets)
+                if not rep_over:
+                    return self._make_nest_result(
+                        rep_sheets, parts, f"LNS-Budget{target}", t0)
+                if len(rep_over) < len(best_over):
+                    best_over = rep_over
+                    best_col_sheets = rep_sheets
+
+        # Final LNS pass — start from best layout found (not from scratch)
+        if best_over and len(best_over) < len(parts):
+            remain = t_limit - time.time()
+            if remain > 1.5:
+                rep_sheets, rep_over = self._lns_repair(
+                    parts, best_over, sd, target,
+                    t0, t_limit, initial_sheets=best_col_sheets)
+                if not rep_over:
+                    return self._make_nest_result(
+                        rep_sheets, parts, f"LNS-Budget{target}-Final", t0)
+
+        return None
+
+    def _make_nest_result(self, sheets: list, all_parts: list,
+                          algo_name: str, t0: float) -> 'NestResult':
+        """Construct a NestResult from a finished list of sheets."""
+        result = NestResult(
+            algorithm=algo_name,
+            generation=0,
+            strategy=self.strategy,
+            sheets=sheets,
+            sheet_count=len(sheets),
+            total_parts=sum(s.part_count() for s in sheets),
+        )
+        if sheets:
+            total_placed = sum(
+                float(p.actual_width()) * float(p.actual_height())
+                for s in sheets for p in s.parts
+            )
+            total_sheet = sum(float(s.width) * float(s.height) for s in sheets)
+            result.utilization = (total_placed / total_sheet * 100.0
+                                  if total_sheet > 0 else 0.0)
+        self._apply_repeat_stats(result)
+        result.fitness = self._score_result(result, total_required=len(all_parts))
+        result.time_ms = (time.time() - t0) * 1000.0
+        return result
+
     # ── Packing variant list (MaxRects / Skyline) ───────────────
 
     def _pack_variants(self, deep_search: bool = False):
@@ -887,7 +1585,11 @@ class NestingEngine:
         BFDH is cheaper than MaxRects for many parts (O(n log n) vs O(n²)) and
         produces strip-packed solutions that MaxRects may miss.
         """
-        if random.random() < 0.30:
+        roll = random.random()
+        if roll < 0.20:
+            r = self._evaluate_column(order, gen)
+            return -r.score(), r
+        if roll < 0.46:
             r = self._evaluate_bfdh(order, gen)
             return -r.score(), r
 
@@ -924,6 +1626,11 @@ class NestingEngine:
             r_hbfdh = self._evaluate_bfdh(h_order, gen)
             if r_hbfdh.score() > best.score():
                 best = r_hbfdh
+
+        # Column packing (BFDC) — sorts internally by effective width
+        r_col = self._evaluate_column(order, gen)
+        if r_col.score() > best.score():
+            best = r_col
 
         return -best.score(), best
 
@@ -1093,6 +1800,11 @@ class NestingEngine:
         score += min_util * 1_500
         score += sum(5_000 for u in per_sheet_utils if u >= 88.0)
         score += remnant_used * 8_000
+
+        # Fixed-budget bonus: reward achieving target sheet count
+        _target = getattr(self, 'target_sheets', 0)
+        if _target > 0 and not_nested == 0 and sheet_count <= _target:
+            score += 10_000_000 + (_target - sheet_count) * 1_000_000
 
         if self.strategy == "balanced_repeats":
             repeat_gain  = max(0, result.max_repeat - 1)
