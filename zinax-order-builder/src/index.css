@@ -1,0 +1,83 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: #f4f6f9;
+  color: #0f172a;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  .zx-input {
+    @apply w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 placeholder:text-ink-400 shadow-sm outline-none transition focus:border-navy-500 focus:ring-2 focus:ring-navy-500/15;
+  }
+  .zx-label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+  .zx-select {
+    @apply zx-input appearance-none pr-8 bg-no-repeat bg-[right_0.6rem_center];
+  }
+  .zx-card {
+    @apply rounded-2xl border border-ink-200 bg-white shadow-card;
+  }
+  .zx-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .zx-btn-primary {
+    @apply zx-btn bg-navy-800 text-white shadow-sm hover:bg-navy-900 active:bg-navy-950;
+  }
+  .zx-btn-gold {
+    @apply zx-btn bg-gold-500 text-navy-950 shadow-sm hover:bg-gold-400;
+  }
+  .zx-btn-secondary {
+    @apply zx-btn border border-ink-200 bg-white text-ink-700 hover:bg-ink-50;
+  }
+  .zx-btn-ghost {
+    @apply zx-btn text-ink-500 hover:bg-ink-100 hover:text-ink-800;
+  }
+  .zx-btn-danger {
+    @apply zx-btn text-red-600 hover:bg-red-50;
+  }
+  .zx-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-2xs font-semibold uppercase tracking-wide;
+  }
+  .zx-th {
+    @apply whitespace-nowrap border-b border-ink-200 bg-ink-50 px-3 py-2.5 text-left text-2xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+  .zx-td {
+    @apply border-b border-ink-100 px-3 py-2 align-middle text-sm text-ink-800;
+  }
+  .zx-cell-input {
+    @apply w-full rounded-md border border-transparent bg-transparent px-2 py-1.5 text-sm text-ink-800 outline-none transition focus:border-navy-500 focus:bg-navy-50/60 focus:ring-2 focus:ring-navy-500/15;
+  }
+  .zx-cell-input.invalid {
+    @apply border-red-300 bg-red-50/70;
+  }
+}

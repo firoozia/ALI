@@ -1,0 +1,107 @@
+import { useState } from "react";
+import { Save, FileSpreadsheet, FileText, Receipt, Printer } from "lucide-react";
+import OrderHeaderForm from "../components/order/OrderHeaderForm";
+import DoorOrderTable from "../components/order/DoorOrderTable";
+import InvoicePanel from "../components/order/InvoicePanel";
+import SummaryPanel from "../components/order/SummaryPanel";
+import Toast from "../components/ui/Toast";
+import { makeInitialHeader, makeInitialInvoice, makeInitialRows } from "../data/mockData";
+import { computeOrderTotals } from "../lib/calc";
+
+export default function NewOrderBuilder({ onPreviewOrder, onPreviewInvoice }) {
+  const [header, setHeader] = useState(makeInitialHeader);
+  const [invoice, setInvoice] = useState(makeInitialInvoice);
+  const [rows, setRows] = useState(makeInitialRows);
+  const [invoiceMode, setInvoiceMode] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const totals = computeOrderTotals(rows);
+
+  const flashToast = (message) => {
+    setToast(message);
+    setTimeout(() => setToast(""), 2200);
+  };
+
+  const handleExport = (kind) => {
+    const messages = {
+      draft: "Draft saved (mock) — no data was actually persisted.",
+      csv: "Production CSV export simulated for FIROO CAM import.",
+      print: "Print preview simulated.",
+    };
+    flashToast(messages[kind] || "Action simulated.");
+  };
+
+  const handlePreviewOrder = () => {
+    onPreviewOrder({ header, rows, totals });
+  };
+
+  const handlePreviewInvoice = () => {
+    onPreviewInvoice({ header, rows, invoice, totals });
+  };
+
+  return (
+    <div className="mx-auto max-w-[1500px] px-6 py-6 pb-24">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="flex flex-col gap-6">
+          <OrderHeaderForm header={header} onChange={setHeader} />
+          <DoorOrderTable
+            rows={rows}
+            onChangeRows={setRows}
+            invoiceMode={invoiceMode}
+            currency={header.currency}
+          />
+          {invoiceMode && (
+            <InvoicePanel invoice={invoice} onChange={setInvoice} totals={totals} currency={invoice.currency} />
+          )}
+        </div>
+
+        <div>
+          <SummaryPanel
+            totals={totals}
+            currency={header.currency}
+            invoiceMode={invoiceMode}
+            onToggleInvoice={setInvoiceMode}
+            onExport={handleExport}
+            onPreviewOrder={handlePreviewOrder}
+            onPreviewInvoice={handlePreviewInvoice}
+          />
+        </div>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur left-64">
+        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-6 py-3">
+          <p className="hidden text-xs text-ink-500 sm:block">
+            {header.orderNo} · {totals.totalDoors} doors · {totals.totalRows} rows
+            {invoiceMode ? ` · Grand Total ${header.currency} ${totals.grandTotal.toFixed(2)}` : ""}
+          </p>
+          <div className="flex flex-1 items-center justify-end gap-2 overflow-x-auto">
+            <button onClick={() => handleExport("draft")} className="zx-btn-secondary">
+              <Save className="h-4 w-4" />
+              Save Draft
+            </button>
+            <button onClick={() => handleExport("csv")} className="zx-btn-secondary">
+              <FileSpreadsheet className="h-4 w-4" />
+              Export CSV
+            </button>
+            <button onClick={handlePreviewOrder} className="zx-btn-primary">
+              <FileText className="h-4 w-4" />
+              Order PDF
+            </button>
+            {invoiceMode && (
+              <button onClick={handlePreviewInvoice} className="zx-btn-gold">
+                <Receipt className="h-4 w-4" />
+                Invoice PDF
+              </button>
+            )}
+            <button onClick={() => handleExport("print")} className="zx-btn-ghost">
+              <Printer className="h-4 w-4" />
+              Print
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <Toast message={toast} />
+    </div>
+  );
+}
