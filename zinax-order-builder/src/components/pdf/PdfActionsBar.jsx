@@ -2,23 +2,23 @@ import { Download, Printer, ArrowLeft } from "lucide-react";
 
 export default function PdfActionsBar({ title, subtitle, onBack, onDownload, onPrint, accent }) {
   return (
-    <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-ink-200 bg-white/95 px-6 py-4 backdrop-blur">
-      <div>
-        <h2 className="text-base font-bold text-ink-900">{title}</h2>
-        {subtitle && <p className="text-xs text-ink-500">{subtitle}</p>}
+    <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-ink-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-6 sm:py-4">
+      <div className="min-w-0">
+        <h2 className="truncate text-sm font-bold text-ink-900 sm:text-base">{title}</h2>
+        {subtitle && <p className="truncate text-xs text-ink-500">{subtitle}</p>}
       </div>
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="zx-btn-secondary">
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <button onClick={onBack} className="zx-btn-secondary !px-2.5 sm:!px-3.5">
           <ArrowLeft className="h-4 w-4" />
-          Back to Edit
+          <span className="hidden sm:inline">Back to Edit</span>
         </button>
-        <button onClick={onPrint} className="zx-btn-secondary">
+        <button onClick={onPrint} className="zx-btn-secondary !px-2.5 sm:!px-3.5">
           <Printer className="h-4 w-4" />
-          Print
+          <span className="hidden sm:inline">Print</span>
         </button>
-        <button onClick={onDownload} className={accent === "gold" ? "zx-btn-gold" : "zx-btn-primary"}>
+        <button onClick={onDownload} className={`!px-2.5 sm:!px-3.5 ${accent === "gold" ? "zx-btn-gold" : "zx-btn-primary"}`}>
           <Download className="h-4 w-4" />
-          Download PDF
+          <span className="hidden sm:inline">Download PDF</span>
         </button>
       </div>
     </div>

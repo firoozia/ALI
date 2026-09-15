@@ -27,8 +27,8 @@ export default function InvoicePdfPreview({ order, onBack }) {
         accent="gold"
       />
 
-      <div className="flex justify-center px-6 py-10">
-        <div className="w-full max-w-[1000px] rounded-sm bg-white p-12 shadow-panel print:shadow-none">
+      <div className="flex justify-center px-3 py-5 sm:px-6 sm:py-10">
+        <div className="w-full max-w-[1000px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none">
           {/* Header */}
           <div className="flex items-start justify-between border-b-2 border-gold-500 pb-6">
             <div className="flex items-center gap-3">

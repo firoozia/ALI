@@ -14,7 +14,7 @@ import { DASHBOARD_STATS, RECENT_ORDERS } from "../data/mockData";
 
 export default function Dashboard({ onNavigate, onOpenOrder }) {
   return (
-    <div className="mx-auto max-w-7xl px-6 py-6">
+    <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-ink-900">Welcome back, Ahmed</h2>

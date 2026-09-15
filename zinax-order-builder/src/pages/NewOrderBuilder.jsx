@@ -40,7 +40,7 @@ export default function NewOrderBuilder({ onPreviewOrder, onPreviewInvoice }) {
   };
 
   return (
-    <div className="mx-auto max-w-[1500px] px-6 py-6 pb-24">
+    <div className="mx-auto max-w-[1500px] px-4 py-4 pb-24 sm:px-6 sm:py-6">
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex flex-col gap-6">
           <OrderHeaderForm header={header} onChange={setHeader} />
@@ -68,34 +68,34 @@ export default function NewOrderBuilder({ onPreviewOrder, onPreviewInvoice }) {
         </div>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur left-64">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-6 py-3">
-          <p className="hidden text-xs text-ink-500 sm:block">
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur lg:left-64">
+        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-3 py-2.5 sm:px-6 sm:py-3">
+          <p className="hidden truncate text-xs text-ink-500 lg:block">
             {header.orderNo} · {totals.totalDoors} doors · {totals.totalRows} rows
             {invoiceMode ? ` · Grand Total ${header.currency} ${totals.grandTotal.toFixed(2)}` : ""}
           </p>
-          <div className="flex flex-1 items-center justify-end gap-2 overflow-x-auto">
-            <button onClick={() => handleExport("draft")} className="zx-btn-secondary">
+          <div className="flex flex-1 items-center justify-end gap-1.5 overflow-x-auto sm:gap-2">
+            <button onClick={() => handleExport("draft")} className="zx-btn-secondary !px-2.5 sm:!px-3.5">
               <Save className="h-4 w-4" />
-              Save Draft
+              <span className="hidden sm:inline">Save Draft</span>
             </button>
-            <button onClick={() => handleExport("csv")} className="zx-btn-secondary">
+            <button onClick={() => handleExport("csv")} className="zx-btn-secondary !px-2.5 sm:!px-3.5">
               <FileSpreadsheet className="h-4 w-4" />
-              Export CSV
+              <span className="hidden sm:inline">Export CSV</span>
             </button>
-            <button onClick={handlePreviewOrder} className="zx-btn-primary">
+            <button onClick={handlePreviewOrder} className="zx-btn-primary !px-2.5 sm:!px-3.5">
               <FileText className="h-4 w-4" />
-              Order PDF
+              <span className="hidden sm:inline">Order PDF</span>
             </button>
             {invoiceMode && (
-              <button onClick={handlePreviewInvoice} className="zx-btn-gold">
+              <button onClick={handlePreviewInvoice} className="zx-btn-gold !px-2.5 sm:!px-3.5">
                 <Receipt className="h-4 w-4" />
-                Invoice PDF
+                <span className="hidden sm:inline">Invoice PDF</span>
               </button>
             )}
-            <button onClick={() => handleExport("print")} className="zx-btn-ghost">
+            <button onClick={() => handleExport("print")} className="zx-btn-ghost !px-2.5 sm:!px-3.5">
               <Printer className="h-4 w-4" />
-              Print
+              <span className="hidden sm:inline">Print</span>
             </button>
           </div>
         </div>
