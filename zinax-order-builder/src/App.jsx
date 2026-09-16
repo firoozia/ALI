@@ -1,20 +1,30 @@
 import { useState } from "react";
-import { Users, Blocks, FileStack, Settings as SettingsIcon } from "lucide-react";
+import { Users, Blocks, FileStack } from "lucide-react";
 import AppLayout from "./components/layout/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import NewOrderBuilder from "./pages/NewOrderBuilder";
 import OrderPdfPreview from "./pages/OrderPdfPreview";
 import InvoicePdfPreview from "./pages/InvoicePdfPreview";
+import ExportSchemaPreview from "./pages/ExportSchemaPreview";
+import Settings from "./pages/Settings";
 import PlaceholderPage from "./pages/PlaceholderPage";
-import { makeInitialHeader, makeInitialRows } from "./data/mockData";
-import { computeOrderTotals } from "./lib/calc";
+import { makeInitialHeader, makeInitialRows } from "./core/mockData";
+import { computeOrderTotals } from "./core/calculations";
 
 export default function App() {
   const [screen, setScreen] = useState("dashboard");
   const [orderPreviewData, setOrderPreviewData] = useState(null);
   const [invoicePreviewData, setInvoicePreviewData] = useState(null);
 
-  const navItemsWithBuilder = ["dashboard", "new-order", "customers", "products", "templates", "settings"];
+  const navItemsWithBuilder = [
+    "dashboard",
+    "new-order",
+    "customers",
+    "products",
+    "templates",
+    "export-schema",
+    "settings",
+  ];
 
   const handleNavigate = (key) => {
     setScreen(key);
@@ -23,7 +33,14 @@ export default function App() {
   const handleOpenOrderFromDashboard = (order) => {
     // Populate a mock preview using the recent order's rows + default header/rows for demo purposes.
     const rows = makeInitialRows();
-    const header = { ...makeInitialHeader(), orderNo: order.orderNo, customerName: order.customer, projectName: order.project, salesperson: order.salesperson, date: order.date };
+    const header = {
+      ...makeInitialHeader(),
+      orderNo: order.orderNo,
+      customerName: order.customer,
+      projectName: order.project,
+      salesperson: order.salesperson,
+      date: order.date,
+    };
     const totals = computeOrderTotals(rows);
     setOrderPreviewData({ header, rows, totals });
     setScreen("order-preview");
@@ -57,12 +74,7 @@ export default function App() {
       );
       break;
     case "invoice-preview":
-      content = (
-        <InvoicePdfPreview
-          order={invoicePreviewData}
-          onBack={() => setScreen("new-order")}
-        />
-      );
+      content = <InvoicePdfPreview order={invoicePreviewData} onBack={() => setScreen("new-order")} />;
       break;
     case "customers":
       content = (
@@ -76,7 +88,7 @@ export default function App() {
     case "products":
       content = (
         <PlaceholderPage
-          title="Products / Designs"
+          title="Designs"
           description="Browse and manage your door design library, PVC membrane catalog and pricing presets."
           icon={Blocks}
         />
@@ -91,14 +103,11 @@ export default function App() {
         />
       );
       break;
+    case "export-schema":
+      content = <ExportSchemaPreview />;
+      break;
     case "settings":
-      content = (
-        <PlaceholderPage
-          title="Settings"
-          description="Configure company details, default VAT, currencies, salespersons and language preferences."
-          icon={SettingsIcon}
-        />
-      );
+      content = <Settings />;
       break;
     default:
       content = <Dashboard onNavigate={handleNavigate} onOpenOrder={handleOpenOrderFromDashboard} />;

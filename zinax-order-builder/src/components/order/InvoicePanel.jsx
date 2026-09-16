@@ -1,6 +1,6 @@
 import { Receipt } from "lucide-react";
-import { CURRENCIES } from "../../data/mockData";
-import { formatCurrency } from "../../lib/calc";
+import { CURRENCIES } from "../../core/mockData";
+import { formatCurrency, balanceDue as computeBalanceDue } from "../../core/calculations";
 
 function Field({ label, children, className = "" }) {
   return (
@@ -14,7 +14,7 @@ function Field({ label, children, className = "" }) {
 export default function InvoicePanel({ invoice, onChange, totals, currency }) {
   const set = (key) => (e) => onChange({ ...invoice, [key]: e.target.value });
 
-  const balanceDue = totals.grandTotal - (Number(invoice.paidAmount) || 0);
+  const balanceDue = computeBalanceDue(totals, invoice.paidAmount);
 
   return (
     <div className="zx-card p-5">

@@ -6,7 +6,7 @@ import {
   Printer,
   Info,
 } from "lucide-react";
-import { formatCurrency, formatNumber } from "../../lib/calc";
+import { formatCurrency, formatNumber } from "../../core/calculations";
 
 function Row({ label, value, strong }) {
   return (

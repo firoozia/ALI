@@ -4,6 +4,7 @@ import {
   Users,
   Blocks,
   FileStack,
+  FileJson2,
   Settings,
   Hammer,
   X,
@@ -13,8 +14,9 @@ const NAV_ITEMS = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "new-order", label: "New Order", icon: FilePlus2 },
   { key: "customers", label: "Customers", icon: Users },
-  { key: "products", label: "Products / Designs", icon: Blocks },
+  { key: "products", label: "Designs", icon: Blocks },
   { key: "templates", label: "PDF Templates", icon: FileStack },
+  { key: "export-schema", label: "Export Schema", icon: FileJson2 },
   { key: "settings", label: "Settings", icon: Settings },
 ];
 

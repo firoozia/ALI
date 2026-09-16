@@ -7,8 +7,9 @@ const TITLES = {
   "order-preview": "Order Sheet Preview",
   "invoice-preview": "Proforma Invoice Preview",
   customers: "Customers",
-  products: "Products / Designs",
+  products: "Designs",
   templates: "PDF Templates",
+  "export-schema": "Export Schema Preview",
   settings: "Settings",
 };
 

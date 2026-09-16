@@ -2,11 +2,13 @@ import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
 import Toast from "../components/ui/Toast";
 import { useState } from "react";
+import { buildOrderPdfModel } from "../core/pdfSchema";
 
 export default function OrderPdfPreview({ order, onBack }) {
   const [toast, setToast] = useState("");
   if (!order) return null;
   const { header, rows, totals } = order;
+  const model = buildOrderPdfModel(header, rows, totals);
 
   const flash = (msg) => {
     setToast(msg);
@@ -17,7 +19,7 @@ export default function OrderPdfPreview({ order, onBack }) {
     <div className="min-h-full bg-ink-100">
       <PdfActionsBar
         title="Order Sheet"
-        subtitle={`${header.orderNo} — Preview`}
+        subtitle={`${model.orderNo} — Preview`}
         onBack={onBack}
         onDownload={() => flash("Order PDF download simulated (mock).")}
         onPrint={() => flash("Print dialog simulated (mock).")}
@@ -40,17 +42,17 @@ export default function OrderPdfPreview({ order, onBack }) {
             </div>
             <div className="text-right">
               <h1 className="text-2xl font-extrabold text-ink-900">Order Sheet</h1>
-              <p className="mt-1 text-sm text-ink-500">Order No. <span className="font-semibold text-ink-800">{header.orderNo}</span></p>
-              <p className="text-sm text-ink-500">Date: <span className="font-semibold text-ink-800">{header.orderDate}</span></p>
+              <p className="mt-1 text-sm text-ink-500">Order No. <span className="font-semibold text-ink-800">{model.orderNo}</span></p>
+              <p className="text-sm text-ink-500">Date: <span className="font-semibold text-ink-800">{model.date}</span></p>
             </div>
           </div>
 
           {/* Info grid */}
           <div className="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-4">
-            <InfoField label="Customer" value={header.customerName} />
-            <InfoField label="Project" value={header.projectName} />
-            <InfoField label="Phone / WhatsApp" value={header.phone} />
-            <InfoField label="Salesperson" value={header.salesperson} />
+            <InfoField label="Customer" value={model.customer} />
+            <InfoField label="Project" value={model.project} />
+            <InfoField label="Phone / WhatsApp" value={model.phone} />
+            <InfoField label="Salesperson" value={model.salesperson} />
           </div>
 
           {/* Table */}
@@ -68,7 +70,7 @@ export default function OrderPdfPreview({ order, onBack }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, idx) => (
+                {model.rows.map((row, idx) => (
                   <tr key={row.id} className={idx % 2 === 0 ? "bg-white" : "bg-ink-50/60"}>
                     <td className="border-b border-ink-100 px-3 py-2 text-ink-500">{idx + 1}</td>
                     <td className="border-b border-ink-100 px-3 py-2 font-semibold text-navy-800">{row.designCode || "—"}</td>
@@ -89,13 +91,13 @@ export default function OrderPdfPreview({ order, onBack }) {
 
           {/* Footer */}
           <div className="mt-10 grid grid-cols-2 gap-8 border-t border-ink-200 pt-6 sm:grid-cols-4">
-            <InfoField label="Total Doors" value={totals.totalDoors} strong />
+            <InfoField label="Total Doors" value={model.totalDoors} strong />
             <InfoField
               label="Total Area"
-              value={`${totals.totalArea.toFixed(2)} m²`}
+              value={`${model.totalArea.toFixed(2)} m²`}
               strong
             />
-            <InfoField label="Prepared By" value={header.salesperson} />
+            <InfoField label="Prepared By" value={model.preparedBy} />
             <InfoField label="" value="" />
           </div>
 

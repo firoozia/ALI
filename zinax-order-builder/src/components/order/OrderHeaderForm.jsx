@@ -1,5 +1,5 @@
 import { Calendar, Hash } from "lucide-react";
-import { CURRENCIES, SALESPERSONS } from "../../data/mockData";
+import { CURRENCIES, SALESPERSONS } from "../../core/mockData";
 
 function Field({ label, children }) {
   return (

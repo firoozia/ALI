@@ -2,14 +2,16 @@ import { useState } from "react";
 import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
 import Toast from "../components/ui/Toast";
-import { lineDiscountAmount, lineVatAmount, lineTotal, formatCurrency } from "../lib/calc";
+import { discountAmount, vatAmount, lineTotal, formatCurrency } from "../core/calculations";
+import { buildInvoicePdfModel } from "../core/pdfSchema";
 
 export default function InvoicePdfPreview({ order, onBack }) {
   const [toast, setToast] = useState("");
   if (!order) return null;
   const { header, rows, invoice, totals } = order;
-  const currency = invoice.currency || header.currency;
-  const balanceDue = totals.grandTotal - (Number(invoice.paidAmount) || 0);
+  const model = buildInvoicePdfModel(header, rows, invoice, totals);
+  const currency = model.currency;
+  const balanceDue = model.balanceDue;
 
   const flash = (msg) => {
     setToast(msg);
@@ -20,7 +22,7 @@ export default function InvoicePdfPreview({ order, onBack }) {
     <div className="min-h-full bg-ink-100">
       <PdfActionsBar
         title="Proforma Invoice"
-        subtitle={`${invoice.invoiceNo} — Preview`}
+        subtitle={`${model.invoiceNo} — Preview`}
         onBack={onBack}
         onDownload={() => flash("Invoice PDF download simulated (mock).")}
         onPrint={() => flash("Print dialog simulated (mock).")}
@@ -44,15 +46,15 @@ export default function InvoicePdfPreview({ order, onBack }) {
             </div>
             <div className="text-right">
               <h1 className="text-2xl font-extrabold text-ink-900">Proforma Invoice</h1>
-              <p className="mt-1 text-sm text-ink-500">Invoice No. <span className="font-semibold text-ink-800">{invoice.invoiceNo}</span></p>
-              <p className="text-sm text-ink-500">Order No. <span className="font-semibold text-ink-800">{header.orderNo}</span></p>
+              <p className="mt-1 text-sm text-ink-500">Invoice No. <span className="font-semibold text-ink-800">{model.invoiceNo}</span></p>
+              <p className="text-sm text-ink-500">Order No. <span className="font-semibold text-ink-800">{model.orderNo}</span></p>
             </div>
           </div>
 
           <div className="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-4">
-            <InfoField label="Invoice Date" value={invoice.invoiceDate} />
-            <InfoField label="Due Date" value={invoice.dueDate} />
-            <InfoField label="Payment Terms" value={invoice.paymentTerms} />
+            <InfoField label="Invoice Date" value={model.invoiceDate} />
+            <InfoField label="Due Date" value={model.dueDate} />
+            <InfoField label="Payment Terms" value={model.paymentTerms} />
             <InfoField label="Currency" value={currency} />
           </div>
 
@@ -60,10 +62,10 @@ export default function InvoicePdfPreview({ order, onBack }) {
           <div className="mt-6 rounded-xl border border-ink-200 bg-ink-50/50 p-4">
             <p className="mb-2 text-2xs font-semibold uppercase tracking-wide text-ink-400">Bill To</p>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <InfoField label="Customer Name" value={header.customerName} />
-              <InfoField label="Company" value={header.companyName} />
-              <InfoField label="Phone" value={header.phone} />
-              <InfoField label="Project" value={header.projectName} />
+              <InfoField label="Customer Name" value={model.customerName} />
+              <InfoField label="Company" value={model.companyName} />
+              <InfoField label="Phone" value={model.phone} />
+              <InfoField label="Project" value={model.project} />
             </div>
           </div>
 
@@ -80,7 +82,7 @@ export default function InvoicePdfPreview({ order, onBack }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, idx) => (
+                {model.rows.map((row, idx) => (
                   <tr key={row.id} className={idx % 2 === 0 ? "bg-white" : "bg-ink-50/60"}>
                     <td className="border-b border-ink-100 px-3 py-2 text-ink-500">{idx + 1}</td>
                     <td className="border-b border-ink-100 px-3 py-2">{row.designName || "—"}</td>
@@ -93,10 +95,10 @@ export default function InvoicePdfPreview({ order, onBack }) {
                       {formatCurrency(row.unitPrice, currency)}
                     </td>
                     <td className="border-b border-ink-100 px-3 py-2 text-right tabular-nums">
-                      {formatCurrency(lineDiscountAmount(row), currency)}
+                      {formatCurrency(discountAmount(row), currency)}
                     </td>
                     <td className="border-b border-ink-100 px-3 py-2 text-right tabular-nums">
-                      {formatCurrency(lineVatAmount(row), currency)}
+                      {formatCurrency(vatAmount(row), currency)}
                     </td>
                     <td className="border-b border-ink-100 px-3 py-2 text-right font-semibold tabular-nums">
                       {formatCurrency(lineTotal(row), currency)}
@@ -110,12 +112,12 @@ export default function InvoicePdfPreview({ order, onBack }) {
           {/* Totals */}
           <div className="mt-6 flex justify-end">
             <div className="w-full max-w-xs space-y-1.5 rounded-xl border border-ink-200 p-4">
-              <TotalRow label="Subtotal" value={formatCurrency(totals.subtotal, currency)} />
-              <TotalRow label="Discount" value={`- ${formatCurrency(totals.totalDiscount, currency)}`} />
-              <TotalRow label="VAT" value={formatCurrency(totals.vatAmount, currency)} />
+              <TotalRow label="Subtotal" value={formatCurrency(model.totals.subtotal, currency)} />
+              <TotalRow label="Discount" value={`- ${formatCurrency(model.totals.totalDiscount, currency)}`} />
+              <TotalRow label="VAT" value={formatCurrency(model.totals.vatAmount, currency)} />
               <div className="my-1.5 h-px bg-ink-200" />
-              <TotalRow label="Grand Total" value={formatCurrency(totals.grandTotal, currency)} strong />
-              <TotalRow label="Paid Amount" value={formatCurrency(invoice.paidAmount, currency)} />
+              <TotalRow label="Grand Total" value={formatCurrency(model.totals.grandTotal, currency)} strong />
+              <TotalRow label="Paid Amount" value={formatCurrency(model.paidAmount, currency)} />
               <TotalRow
                 label="Balance Due"
                 value={formatCurrency(balanceDue, currency)}
@@ -127,8 +129,8 @@ export default function InvoicePdfPreview({ order, onBack }) {
 
           {/* Payment section */}
           <div className="mt-8 grid grid-cols-1 gap-6 border-t border-ink-200 pt-6 sm:grid-cols-2">
-            <InfoField label="Bank Details" value={invoice.bankDetails} />
-            <InfoField label="Notes" value={invoice.notes} />
+            <InfoField label="Bank Details" value={model.bankDetails} />
+            <InfoField label="Notes" value={model.notes} />
           </div>
 
           <div className="mt-10 grid grid-cols-3 gap-8 text-sm">

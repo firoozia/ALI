@@ -5,8 +5,9 @@ import DoorOrderTable from "../components/order/DoorOrderTable";
 import InvoicePanel from "../components/order/InvoicePanel";
 import SummaryPanel from "../components/order/SummaryPanel";
 import Toast from "../components/ui/Toast";
-import { makeInitialHeader, makeInitialInvoice, makeInitialRows } from "../data/mockData";
-import { computeOrderTotals } from "../lib/calc";
+import { makeInitialHeader, makeInitialInvoice, makeInitialRows } from "../core/mockData";
+import { computeOrderTotals } from "../core/calculations";
+import { PRODUCTION_CSV_COLUMNS } from "../core/csvSchema";
 
 export default function NewOrderBuilder({ onPreviewOrder, onPreviewInvoice }) {
   const [header, setHeader] = useState(makeInitialHeader);
@@ -25,7 +26,7 @@ export default function NewOrderBuilder({ onPreviewOrder, onPreviewInvoice }) {
   const handleExport = (kind) => {
     const messages = {
       draft: "Draft saved (mock) — no data was actually persisted.",
-      csv: "Production CSV export simulated for FIROO CAM import.",
+      csv: `Production CSV export simulated (${PRODUCTION_CSV_COLUMNS.length} columns) for FIROO CAM import.`,
       print: "Print preview simulated.",
     };
     flashToast(messages[kind] || "Action simulated.");

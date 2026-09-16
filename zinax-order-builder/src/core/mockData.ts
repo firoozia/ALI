@@ -1,4 +1,8 @@
-// Mock data only — no backend, no persistence. For UI preview purposes.
+// Mock/sample data only — no backend, no persistence. For UI preview
+// purposes. Reference lists here (design codes, PVC colors, ...) stand in
+// for what will later be a company-editable catalog in Settings.
+import { generateOrderNo, makeDefaultRow, type OrderHeader, type OrderRow } from "./orderSchema";
+import { generateInvoiceNo, type Invoice } from "./invoiceSchema";
 
 export const CURRENCIES = ["AED", "SAR", "USD", "QAR", "OMR"];
 
@@ -24,7 +28,7 @@ export const PVC_COLORS = [
 
 export const SALESPERSONS = ["Ahmed Al Mansoori", "Sara Khalid", "Yousef Haddad", "Layla Nasser"];
 
-export const STATUS_STYLES = {
+export const STATUS_STYLES: Record<string, string> = {
   Draft: "bg-ink-100 text-ink-600",
   "Ready for Production": "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
   Invoiced: "bg-navy-50 text-navy-700 ring-1 ring-navy-200",
@@ -91,36 +95,12 @@ export const RECENT_ORDERS = [
 export const DASHBOARD_STATS = {
   totalOrders: 148,
   draftOrders: 9,
+  readyForProduction: 21,
+  invoicedOrders: 34,
   exportedCsv: 112,
-  pendingInvoices: 14,
 };
 
-let rowIdCounter = 1;
-export function nextRowId() {
-  return `row-${rowIdCounter++}`;
-}
-
-export function makeDefaultRow(overrides = {}) {
-  return {
-    id: nextRowId(),
-    designCode: "",
-    designName: "",
-    width: "",
-    height: "",
-    qty: 1,
-    mdfThickness: "18 mm",
-    pvcCode: "",
-    pvcColor: "",
-    grain: "Vertical",
-    unitPrice: "",
-    discount: 0,
-    vat: 5,
-    notes: "",
-    ...overrides,
-  };
-}
-
-export function makeInitialRows() {
+export function makeInitialRows(): OrderRow[] {
   return [
     makeDefaultRow({
       designCode: "ZD001",
@@ -170,9 +150,9 @@ export function makeInitialRows() {
   ];
 }
 
-export function makeInitialHeader() {
+export function makeInitialHeader(): OrderHeader {
   return {
-    orderNo: "ZX-2026-0149",
+    orderNo: generateOrderNo(2026, 149),
     orderDate: "2026-09-15",
     customerName: "Khalid Al Farsi",
     companyName: "Al Farsi Interiors LLC",
@@ -185,9 +165,9 @@ export function makeInitialHeader() {
   };
 }
 
-export function makeInitialInvoice() {
+export function makeInitialInvoice(): Invoice {
   return {
-    invoiceNo: "INV-2026-0091",
+    invoiceNo: generateInvoiceNo(2026, 91),
     invoiceDate: "2026-09-15",
     dueDate: "2026-09-29",
     paymentTerms: "50% advance, 50% on delivery",

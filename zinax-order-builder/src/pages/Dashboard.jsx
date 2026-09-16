@@ -2,6 +2,7 @@ import {
   ClipboardList,
   FileClock,
   FileSpreadsheet,
+  Hammer,
   Receipt,
   FolderOpen,
   Copy,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import StatCard from "../components/ui/StatCard";
 import Badge from "../components/ui/Badge";
-import { DASHBOARD_STATS, RECENT_ORDERS } from "../data/mockData";
+import { DASHBOARD_STATS, RECENT_ORDERS } from "../core/mockData";
 
 export default function Dashboard({ onNavigate, onOpenOrder }) {
   return (
@@ -28,11 +29,12 @@ export default function Dashboard({ onNavigate, onOpenOrder }) {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard label="Total Orders" value={DASHBOARD_STATS.totalOrders} icon={ClipboardList} accent="navy" />
         <StatCard label="Draft Orders" value={DASHBOARD_STATS.draftOrders} icon={FileClock} accent="amber" />
-        <StatCard label="Exported CSV" value={DASHBOARD_STATS.exportedCsv} icon={FileSpreadsheet} accent="emerald" />
-        <StatCard label="Pending Invoices" value={DASHBOARD_STATS.pendingInvoices} icon={Receipt} accent="gold" />
+        <StatCard label="Ready for Production" value={DASHBOARD_STATS.readyForProduction} icon={Hammer} accent="gold" />
+        <StatCard label="Invoiced Orders" value={DASHBOARD_STATS.invoicedOrders} icon={Receipt} accent="navy" />
+        <StatCard label="Exported CSV Files" value={DASHBOARD_STATS.exportedCsv} icon={FileSpreadsheet} accent="emerald" />
       </div>
 
       <div className="zx-card mt-6 overflow-hidden">
