@@ -33,7 +33,9 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
     setExporting(true);
     try {
       const result = await exportInvoicePdf(order);
-      flash(`Proforma Invoice PDF downloaded (${result.fileName}).`);
+      if (result.saved) {
+        flash(`Proforma Invoice PDF downloaded (${result.fileName}).`);
+      }
     } catch {
       flash("Could not generate the PDF. Please try again.", "error");
     } finally {

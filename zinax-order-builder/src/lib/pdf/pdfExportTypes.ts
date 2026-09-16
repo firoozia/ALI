@@ -8,6 +8,8 @@ export interface PdfExportResult {
   fileName: string;
   /** Byte size of the generated file, purely informational for the UI/tests. */
   byteLength: number;
+  /** False only when a desktop save dialog was cancelled by the user. */
+  saved: boolean;
 }
 
 export type PdfEngine = "text" | "canvas";

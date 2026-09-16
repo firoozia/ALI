@@ -21,6 +21,6 @@ export async function exportInvoicePdf(order: InvoicePreviewData): Promise<PdfEx
   const element = createElement(ReactPdfInvoiceDocument, { model }) as Parameters<typeof pdf>[0];
   const instance = pdf(element);
   const blob = await instance.toBlob();
-  downloadBlob(fileName, blob);
-  return { fileName, byteLength: blob.size };
+  const saved = await downloadBlob(fileName, blob);
+  return { fileName, byteLength: blob.size, saved };
 }

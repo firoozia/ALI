@@ -44,9 +44,9 @@ export default function Customers({ customers, onChangeCustomers }: CustomersPro
     onChangeCustomers(customers.filter((c) => c.customerId !== customerId));
   };
 
-  const handleExport = () => {
-    downloadJsonFile(customersFileName(), serializeCustomersFile(buildCustomersFile(customers)));
-    flash("Customers exported.");
+  const handleExport = async () => {
+    const saved = await downloadJsonFile(customersFileName(), serializeCustomersFile(buildCustomersFile(customers)));
+    if (saved) flash("Customers exported.");
   };
 
   const handleImportFile = async (file: File) => {

@@ -23,6 +23,6 @@ export async function exportOrderPdf(order: OrderPreviewData): Promise<PdfExport
   const element = createElement(ReactPdfOrderDocument, { model, currency: header.currency }) as Parameters<typeof pdf>[0];
   const instance = pdf(element);
   const blob = await instance.toBlob();
-  downloadBlob(fileName, blob);
-  return { fileName, byteLength: blob.size };
+  const saved = await downloadBlob(fileName, blob);
+  return { fileName, byteLength: blob.size, saved };
 }

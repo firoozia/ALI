@@ -31,7 +31,9 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
     setExporting(true);
     try {
       const result = await exportOrderPdf(order);
-      flash(`Order PDF downloaded (${result.fileName}).`);
+      if (result.saved) {
+        flash(`Order PDF downloaded (${result.fileName}).`);
+      }
     } catch {
       flash("Could not generate the PDF. Please try again.", "error");
     } finally {

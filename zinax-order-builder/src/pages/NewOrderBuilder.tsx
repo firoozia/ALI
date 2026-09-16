@@ -132,18 +132,18 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
     flashToast(`Loaded ${customer.customerName || customer.customerId} into this order.`);
   };
 
-  const handleExportCsv = () => {
+  const handleExportCsv = async () => {
     if (blockIfInvalid(orderErrors, "export CSV")) return;
     const csv = buildProductionCsvString(header, rows);
-    downloadCsvFile(productionCsvFileName(header.orderNo), csv);
-    flashToast(`Production CSV downloaded (${rows.length} rows).`);
+    const saved = await downloadCsvFile(productionCsvFileName(header.orderNo), csv);
+    if (saved) flashToast(`Production CSV downloaded (${rows.length} rows).`);
   };
 
-  const handleSaveJson = () => {
+  const handleSaveJson = async () => {
     if (blockIfInvalid(orderErrors, "save order")) return;
     const file = buildOrderFile(header, rows, invoiceMode, invoice);
-    downloadJsonFile(orderFileName(header.orderNo), serializeOrderFile(file));
-    flashToast("Order file saved.");
+    const saved = await downloadJsonFile(orderFileName(header.orderNo), serializeOrderFile(file));
+    if (saved) flashToast("Order file saved.");
   };
 
   const handleOpenJsonFile = async (file: File) => {

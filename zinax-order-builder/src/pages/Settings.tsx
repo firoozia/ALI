@@ -49,9 +49,9 @@ export default function Settings({ settings, onChangeSettings, onNavigate }: Set
     reader.readAsDataURL(file);
   };
 
-  const handleExportSettings = () => {
-    downloadJsonFile(settingsFileName(), serializeSettings(settings));
-    flash("Settings exported.");
+  const handleExportSettings = async () => {
+    const saved = await downloadJsonFile(settingsFileName(), serializeSettings(settings));
+    if (saved) flash("Settings exported.");
   };
 
   const handleImportFile = async (file: File) => {
