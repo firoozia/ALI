@@ -1,0 +1,82 @@
+name: ZINAX Order Builder — Windows Desktop Build
+
+# Builds only the zinax-order-builder/ web+desktop app. Never touches the
+# FIROO CAM Python/CNC code that lives elsewhere in this repository.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - claude/zinax-order-builder-ui-jrk0vb
+    paths:
+      - "zinax-order-builder/**"
+      - ".github/workflows/zinax-order-builder-windows.yml"
+  pull_request:
+    paths:
+      - "zinax-order-builder/**"
+      - ".github/workflows/zinax-order-builder-windows.yml"
+
+defaults:
+  run:
+    working-directory: zinax-order-builder
+
+jobs:
+  build-windows:
+    name: Build Windows desktop package
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zinax-order-builder/src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Web build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build Windows desktop package (msi + nsis exe)
+        run: npm run desktop:build
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: zinax-order-builder-windows-msi
+          path: zinax-order-builder/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload NSIS installer (.exe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zinax-order-builder-windows-exe
+          path: zinax-order-builder/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload raw release binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: zinax-order-builder-windows-raw-exe
+          path: zinax-order-builder/src-tauri/target/release/*.exe
+          if-no-files-found: warn

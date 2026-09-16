@@ -29,6 +29,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "ZINAX (placeholder publisher — replace before a public release)",
+    "copyright": "Copyright (c) 2026 ZINAX. All rights reserved. (placeholder)",
+    "shortDescription": "Order, CSV, PDF and Proforma Invoice builder for MDF/PVC door production",
+    "longDescription": "ZINAX Order Builder is an order-management tool for cabinet, MDF and PVC-membrane door production: it builds Production CSV exports, Order PDFs, optional Proforma Invoice PDFs, and Order Project JSON files. It is not a CNC/CAM application.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,6 +40,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "displayLanguageSelector": false
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
