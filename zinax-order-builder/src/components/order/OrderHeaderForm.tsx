@@ -1,7 +1,8 @@
 import type { ChangeEvent, ReactNode } from "react";
-import { Calendar, Hash } from "lucide-react";
+import { Calendar, Hash, UserCheck } from "lucide-react";
 import { CURRENCIES, SALESPERSONS } from "../../core/mockData";
 import type { OrderHeader } from "../../core/orderSchema";
+import type { Customer } from "../../core/customerSchema";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -15,11 +16,13 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 interface OrderHeaderFormProps {
   header: OrderHeader;
   onChange: (header: OrderHeader) => void;
+  customers: Customer[];
+  onSelectCustomer: (customer: Customer) => void;
 }
 
 type FieldChangeEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>;
 
-export default function OrderHeaderForm({ header, onChange }: OrderHeaderFormProps) {
+export default function OrderHeaderForm({ header, onChange, customers, onSelectCustomer }: OrderHeaderFormProps) {
   const set = (key: keyof OrderHeader) => (e: FieldChangeEvent) =>
     onChange({ ...header, [key]: e.target.value });
 
@@ -29,6 +32,30 @@ export default function OrderHeaderForm({ header, onChange }: OrderHeaderFormPro
         <h3 className="text-sm font-bold text-ink-900">Order Header</h3>
         <span className="zx-badge bg-ink-100 text-ink-600">Draft</span>
       </div>
+
+      {customers.length > 0 && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-navy-100 bg-navy-50 px-3 py-2">
+          <UserCheck className="h-4 w-4 shrink-0 text-navy-700" />
+          <select
+            defaultValue=""
+            onChange={(e) => {
+              const customer = customers.find((c) => c.customerId === e.target.value);
+              if (customer) onSelectCustomer(customer);
+              e.target.value = "";
+            }}
+            className="w-full bg-transparent text-sm text-navy-800 outline-none"
+          >
+            <option value="" disabled>
+              Select existing customer to populate fields...
+            </option>
+            {customers.map((c) => (
+              <option key={c.customerId} value={c.customerId}>
+                {c.customerName} {c.companyName ? `— ${c.companyName}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Field label="Order No.">
@@ -85,8 +112,24 @@ export default function OrderHeaderForm({ header, onChange }: OrderHeaderFormPro
           <input value={header.companyName} onChange={set("companyName")} className="zx-input" placeholder="e.g. Al Farsi Interiors LLC" />
         </Field>
 
-        <Field label="Phone / WhatsApp">
+        <Field label="Phone">
           <input value={header.phone} onChange={set("phone")} className="zx-input" placeholder="+971 5X XXX XXXX" />
+        </Field>
+
+        <Field label="WhatsApp">
+          <input value={header.whatsapp} onChange={set("whatsapp")} className="zx-input" placeholder="+971 5X XXX XXXX" />
+        </Field>
+
+        <Field label="Email">
+          <input value={header.email} onChange={set("email")} className="zx-input" placeholder="customer@example.com" />
+        </Field>
+
+        <Field label="Tax / TRN Number">
+          <input value={header.taxNumber} onChange={set("taxNumber")} className="zx-input" />
+        </Field>
+
+        <Field label="Address">
+          <input value={header.address} onChange={set("address")} className="zx-input xl:col-span-2" />
         </Field>
 
         <Field label="Salesperson">

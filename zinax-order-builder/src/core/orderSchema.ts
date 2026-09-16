@@ -6,7 +6,10 @@
 // UI components must read column/field definitions from here rather than
 // hard-coding their own copy.
 
-export type GrainDirection = "Vertical" | "Horizontal";
+// Grain direction is now a company-editable catalog option (see
+// core/catalogSchema.ts), so it is stored as a plain string (the option's
+// code or label) rather than a fixed union.
+export type GrainDirection = string;
 
 export interface OrderRow {
   id: string;
@@ -31,6 +34,10 @@ export interface OrderHeader {
   customerName: string;
   companyName: string;
   phone: string;
+  whatsapp: string;
+  email: string;
+  address: string;
+  taxNumber: string;
   projectName: string;
   salesperson: string;
   deliveryDate: string;

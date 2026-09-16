@@ -1,18 +1,21 @@
-// Browser-only PDF export: rasterizes a DOM node (the same markup used for
-// the on-screen preview) into a real, multi-page A4 PDF file. This is the
-// Web edition's renderer for the PDF data models in core/pdfSchema.ts — a
-// Windows edition would render the same data model with a native PDF
-// library (e.g. ReportLab) instead of html2canvas/jsPDF.
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
-
+// Legacy image-based PDF export (html2canvas + jsPDF), rasterizing a DOM
+// node into a multi-page PDF. Superseded by the text-based engine
+// (exportOrderPdf.ts / exportInvoicePdf.ts via @react-pdf/renderer) as of
+// Phase 1C — kept here only as a fallback engine, not wired into any
+// screen by default. Both jsPDF and html2canvas load lazily via dynamic
+// import so keeping this file around costs nothing in the main bundle.
 export type PdfOrientation = "portrait" | "landscape";
 
-export async function exportElementAsPdf(
+export async function exportElementAsPdfCanvas(
   element: HTMLElement,
   fileName: string,
   orientation: PdfOrientation = "portrait"
 ): Promise<void> {
+  const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
+    import("jspdf"),
+    import("html2canvas"),
+  ]);
+
   const canvas = await html2canvas(element, {
     scale: 2,
     backgroundColor: "#ffffff",

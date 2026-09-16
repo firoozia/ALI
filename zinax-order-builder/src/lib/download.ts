@@ -2,7 +2,7 @@
 // Blob, URL.createObjectURL) — the Windows edition will write files to
 // disk directly instead, so none of this belongs in src/core/.
 
-function triggerBlobDownload(blob: Blob, fileName: string): void {
+export function downloadBlob(fileName: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -11,6 +11,10 @@ function triggerBlobDownload(blob: Blob, fileName: string): void {
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
+}
+
+function triggerBlobDownload(blob: Blob, fileName: string): void {
+  downloadBlob(fileName, blob);
 }
 
 /** Downloads CSV text as a file. Prefixes a UTF-8 BOM so Excel opens it correctly. */

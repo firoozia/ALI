@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
 import Toast, { type ToastTone } from "../components/ui/Toast";
 import { buildOrderPdfModel, type OrderPreviewData } from "../core/pdfSchema";
-import { exportElementAsPdf } from "../lib/pdfExport";
+import { lineTotal, formatCurrency } from "../core/calculations";
+import { exportOrderPdf } from "../lib/pdf/exportOrderPdf";
 
 interface OrderPdfPreviewProps {
   order: OrderPreviewData | null;
@@ -14,11 +15,11 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState<ToastTone>("success");
   const [exporting, setExporting] = useState(false);
-  const printRef = useRef<HTMLDivElement>(null);
 
   if (!order) return null;
-  const { header, rows, totals, companyProfile } = order;
-  const model = buildOrderPdfModel(header, rows, totals, companyProfile);
+  const { header, rows, totals, companyProfile, pdfTemplate } = order;
+  const model = buildOrderPdfModel(header, rows, totals, companyProfile, pdfTemplate);
+  const showPrices = model.template.showPricesOnOrderPdf;
 
   const flash = (msg: string, tone: ToastTone = "success") => {
     setToast(msg);
@@ -27,11 +28,10 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
   };
 
   const handleDownload = async () => {
-    if (!printRef.current) return;
     setExporting(true);
     try {
-      await exportElementAsPdf(printRef.current, `${model.orderNo}_order_sheet.pdf`, "landscape");
-      flash("Order PDF downloaded.");
+      const result = await exportOrderPdf(order);
+      flash(`Order PDF downloaded (${result.fileName}).`);
     } catch {
       flash("Could not generate the PDF. Please try again.", "error");
     } finally {
@@ -42,7 +42,7 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
   return (
     <div className="min-h-full bg-ink-100">
       <PdfActionsBar
-        title="Order Sheet"
+        title={model.template.orderPdfTitle}
         subtitle={`${model.orderNo} — Preview`}
         onBack={onBack}
         onDownload={handleDownload}
@@ -51,16 +51,17 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
       />
 
       <div className="flex justify-center px-3 py-5 sm:px-6 sm:py-10">
-        <div
-          ref={printRef}
-          className="w-full max-w-[1180px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none"
-        >
+        <div className="w-full max-w-[1180px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none">
           {/* Header */}
           <div className="flex items-start justify-between border-b-2 border-navy-900 pb-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-navy-950 text-gold-400">
-                <Hammer className="h-7 w-7" strokeWidth={2.2} />
-              </div>
+              {model.vendorLogoUrl ? (
+                <img src={model.vendorLogoUrl} alt="Logo" className="h-14 w-14 rounded-xl object-cover" />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-navy-950 text-gold-400">
+                  <Hammer className="h-7 w-7" strokeWidth={2.2} />
+                </div>
+              )}
               <div>
                 <p className="text-lg font-extrabold tracking-wide text-navy-950">{model.vendorBrandName}</p>
                 <p className="text-xs font-medium uppercase tracking-widest text-ink-400">
@@ -69,7 +70,7 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
               </div>
             </div>
             <div className="text-right">
-              <h1 className="text-2xl font-extrabold text-ink-900">Order Sheet</h1>
+              <h1 className="text-2xl font-extrabold text-ink-900">{model.template.orderPdfTitle}</h1>
               <p className="mt-1 text-sm text-ink-500">Order No. <span className="font-semibold text-ink-800">{model.orderNo}</span></p>
               <p className="text-sm text-ink-500">Date: <span className="font-semibold text-ink-800">{model.date}</span></p>
             </div>
@@ -88,13 +89,24 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
             <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
                 <tr className="bg-navy-950 text-white">
-                  {["No.", "Design Code", "Design Name", "Width", "Height", "Qty", "MDF", "PVC Code", "PVC Color", "Grain", "Notes"].map(
-                    (h) => (
-                      <th key={h} className="whitespace-nowrap px-3 py-2.5 text-left text-2xs font-semibold uppercase tracking-wide">
-                        {h}
-                      </th>
-                    )
-                  )}
+                  {[
+                    "No.",
+                    "Design Code",
+                    "Design Name",
+                    "Width",
+                    "Height",
+                    "Qty",
+                    "MDF",
+                    "PVC Code",
+                    "PVC Color",
+                    "Grain",
+                    "Notes",
+                    ...(showPrices ? ["Unit Price", "Line Total"] : []),
+                  ].map((h) => (
+                    <th key={h} className="whitespace-nowrap px-3 py-2.5 text-left text-2xs font-semibold uppercase tracking-wide">
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -111,6 +123,16 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
                     <td className="border-b border-ink-100 px-3 py-2">{row.pvcColor || "—"}</td>
                     <td className="border-b border-ink-100 px-3 py-2">{row.grain}</td>
                     <td className="border-b border-ink-100 px-3 py-2 whitespace-pre-wrap text-ink-500">{row.notes || "—"}</td>
+                    {showPrices && (
+                      <>
+                        <td className="border-b border-ink-100 px-3 py-2 text-right tabular-nums">
+                          {formatCurrency(row.unitPrice, header.currency)}
+                        </td>
+                        <td className="border-b border-ink-100 px-3 py-2 text-right font-semibold tabular-nums">
+                          {formatCurrency(lineTotal(row), header.currency)}
+                        </td>
+                      </>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -136,11 +158,13 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
             <InfoField label="" value="" />
           </div>
 
-          <div className="mt-10 grid grid-cols-3 gap-8 text-sm">
-            <SignatureBox label="Prepared By" />
-            <SignatureBox label="Customer Signature" />
-            <SignatureBox label="Company Stamp" />
-          </div>
+          {model.template.showSignatures && (
+            <div className="mt-10 grid grid-cols-3 gap-8 text-sm">
+              <SignatureBox label="Prepared By" />
+              <SignatureBox label="Customer Signature" />
+              <SignatureBox label="Company Stamp" imageUrl={model.vendorStampUrl} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -160,9 +184,10 @@ function InfoField({ label, value, strong }: { label: string; value: string | nu
   );
 }
 
-function SignatureBox({ label }: { label: string }) {
+function SignatureBox({ label, imageUrl }: { label: string; imageUrl?: string }) {
   return (
     <div className="pt-10">
+      {imageUrl && <img src={imageUrl} alt="" className="mb-2 h-10 w-10 object-contain" />}
       <div className="h-px w-full bg-ink-300" />
       <p className="mt-2 text-xs font-medium text-ink-500">{label}</p>
     </div>

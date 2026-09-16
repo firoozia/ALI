@@ -1,10 +1,13 @@
-// PDF data models. The Order PDF and Proforma Invoice PDF previews render
-// from these shapes rather than reaching into raw header/row/invoice state
-// themselves, so the same builder functions can back a real PDF renderer
-// in either edition later without the preview screens changing.
+// PDF data models. The Order PDF and Proforma Invoice PDF previews/exports
+// render from these shapes rather than reaching into raw header/row/invoice
+// state themselves, so any PDF renderer (image-based, text-based, or a
+// future Windows-native one) works from the exact same data. No totals or
+// business math are computed in this file beyond calling into
+// core/calculations.ts — PDF components must never recompute a total.
 import type { OrderHeader, OrderRow } from "./orderSchema";
 import type { Invoice } from "./invoiceSchema";
 import type { CompanyProfile } from "./companyProfile";
+import type { PdfTemplateSettings } from "./pdfTemplateSchema";
 import { balanceDue, type OrderTotals } from "./calculations";
 
 export interface OrderPdfModel {
@@ -20,14 +23,20 @@ export interface OrderPdfModel {
   preparedBy: string;
   notes: string;
   vendorBrandName: string;
+  vendorAddress: string;
+  vendorPhone: string;
+  vendorTaxNumber: string;
   vendorLogoUrl: string;
+  vendorStampUrl: string;
+  template: PdfTemplateSettings;
 }
 
 export function buildOrderPdfModel(
   header: OrderHeader,
   rows: OrderRow[],
   totals: OrderTotals,
-  companyProfile: CompanyProfile
+  companyProfile: CompanyProfile,
+  pdfTemplate: PdfTemplateSettings
 ): OrderPdfModel {
   return {
     orderNo: header.orderNo,
@@ -42,7 +51,12 @@ export function buildOrderPdfModel(
     preparedBy: header.salesperson,
     notes: header.notes,
     vendorBrandName: companyProfile.brandName,
+    vendorAddress: companyProfile.address,
+    vendorPhone: companyProfile.phone,
+    vendorTaxNumber: companyProfile.taxNumber,
     vendorLogoUrl: companyProfile.logoUrl,
+    vendorStampUrl: companyProfile.stampUrl,
+    template: pdfTemplate,
   };
 }
 
@@ -64,7 +78,12 @@ export interface InvoicePdfModel {
   paidAmount: number;
   balanceDue: number;
   vendorBrandName: string;
+  vendorAddress: string;
+  vendorPhone: string;
+  vendorTaxNumber: string;
   vendorLogoUrl: string;
+  vendorStampUrl: string;
+  template: PdfTemplateSettings;
 }
 
 export function buildInvoicePdfModel(
@@ -72,7 +91,8 @@ export function buildInvoicePdfModel(
   rows: OrderRow[],
   invoice: Invoice,
   totals: OrderTotals,
-  companyProfile: CompanyProfile
+  companyProfile: CompanyProfile,
+  pdfTemplate: PdfTemplateSettings
 ): InvoicePdfModel {
   const currency = invoice.currency || header.currency;
   const paidAmount = Number(invoice.paidAmount) || 0;
@@ -94,7 +114,12 @@ export function buildInvoicePdfModel(
     paidAmount,
     balanceDue: balanceDue(totals, paidAmount),
     vendorBrandName: companyProfile.brandName,
+    vendorAddress: companyProfile.address,
+    vendorPhone: companyProfile.phone,
+    vendorTaxNumber: companyProfile.taxNumber,
     vendorLogoUrl: companyProfile.logoUrl,
+    vendorStampUrl: companyProfile.stampUrl,
+    template: pdfTemplate,
   };
 }
 
@@ -103,6 +128,7 @@ export interface OrderPreviewData {
   rows: OrderRow[];
   totals: OrderTotals;
   companyProfile: CompanyProfile;
+  pdfTemplate: PdfTemplateSettings;
 }
 
 export interface InvoicePreviewData extends OrderPreviewData {

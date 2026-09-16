@@ -11,6 +11,8 @@ export interface CompanyProfile {
   taxNumber: string;
   /** Data URL or external URL placeholder; empty string = no logo set. */
   logoUrl: string;
+  /** Data URL placeholder for a company stamp image; empty string = none set. */
+  stampUrl: string;
   bankDetails: string;
   defaultCurrency: string;
   defaultVatPercent: number;
@@ -28,6 +30,7 @@ export function makeDefaultCompanyProfile(): CompanyProfile {
     email: "info@zinax-example.com",
     taxNumber: "TRN 100000000000003",
     logoUrl: "",
+    stampUrl: "",
     bankDetails: "Emirates NBD — IBAN AE07 0331 1234 5678 9012 345",
     defaultCurrency: "AED",
     defaultVatPercent: 5,

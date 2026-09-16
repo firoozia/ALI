@@ -1,11 +1,10 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
 import Toast, { type ToastTone } from "../components/ui/Toast";
 import { discountAmount, vatAmount, lineTotal, formatCurrency } from "../core/calculations";
 import { buildInvoicePdfModel, type InvoicePreviewData } from "../core/pdfSchema";
-import { invoicePdfFileName } from "../core/invoiceSchema";
-import { exportElementAsPdf } from "../lib/pdfExport";
+import { exportInvoicePdf } from "../lib/pdf/exportInvoicePdf";
 
 interface InvoicePdfPreviewProps {
   order: InvoicePreviewData | null;
@@ -16,13 +15,13 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState<ToastTone>("success");
   const [exporting, setExporting] = useState(false);
-  const printRef = useRef<HTMLDivElement>(null);
 
   if (!order) return null;
-  const { header, rows, invoice, totals, companyProfile } = order;
-  const model = buildInvoicePdfModel(header, rows, invoice, totals, companyProfile);
+  const { header, rows, invoice, totals, companyProfile, pdfTemplate } = order;
+  const model = buildInvoicePdfModel(header, rows, invoice, totals, companyProfile, pdfTemplate);
   const currency = model.currency;
   const balanceDue = model.balanceDue;
+  const t = model.template;
 
   const flash = (msg: string, tone: ToastTone = "success") => {
     setToast(msg);
@@ -31,11 +30,10 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
   };
 
   const handleDownload = async () => {
-    if (!printRef.current) return;
     setExporting(true);
     try {
-      await exportElementAsPdf(printRef.current, invoicePdfFileName(model.invoiceNo), "portrait");
-      flash("Proforma Invoice PDF downloaded.");
+      const result = await exportInvoicePdf(order);
+      flash(`Proforma Invoice PDF downloaded (${result.fileName}).`);
     } catch {
       flash("Could not generate the PDF. Please try again.", "error");
     } finally {
@@ -46,7 +44,7 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
   return (
     <div className="min-h-full bg-ink-100">
       <PdfActionsBar
-        title="Proforma Invoice"
+        title={t.invoicePdfTitle}
         subtitle={`${model.invoiceNo} — Preview`}
         onBack={onBack}
         onDownload={handleDownload}
@@ -56,25 +54,29 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
       />
 
       <div className="flex justify-center px-3 py-5 sm:px-6 sm:py-10">
-        <div
-          ref={printRef}
-          className="w-full max-w-[1000px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none"
-        >
+        <div className="w-full max-w-[1000px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none">
           {/* Header */}
           <div className="flex items-start justify-between border-b-2 border-gold-500 pb-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-navy-950 text-gold-400">
-                <Hammer className="h-7 w-7" strokeWidth={2.2} />
-              </div>
+              {model.vendorLogoUrl ? (
+                <img src={model.vendorLogoUrl} alt="Logo" className="h-14 w-14 rounded-xl object-cover" />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-navy-950 text-gold-400">
+                  <Hammer className="h-7 w-7" strokeWidth={2.2} />
+                </div>
+              )}
               <div>
                 <p className="text-lg font-extrabold tracking-wide text-navy-950">{model.vendorBrandName}</p>
                 <p className="text-xs font-medium uppercase tracking-widest text-ink-400">
                   Cabinet &amp; Membrane Door Production
                 </p>
+                {t.showTaxNumber && model.vendorTaxNumber && (
+                  <p className="text-2xs text-ink-400">TRN: {model.vendorTaxNumber}</p>
+                )}
               </div>
             </div>
             <div className="text-right">
-              <h1 className="text-2xl font-extrabold text-ink-900">Proforma Invoice</h1>
+              <h1 className="text-2xl font-extrabold text-ink-900">{t.invoicePdfTitle}</h1>
               <p className="mt-1 text-sm text-ink-500">Invoice No. <span className="font-semibold text-ink-800">{model.invoiceNo}</span></p>
               <p className="text-sm text-ink-500">Order No. <span className="font-semibold text-ink-800">{model.orderNo}</span></p>
             </div>
@@ -158,15 +160,17 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
 
           {/* Payment section */}
           <div className="mt-8 grid grid-cols-1 gap-6 border-t border-ink-200 pt-6 sm:grid-cols-2">
-            <InfoField label="Bank Details" value={model.bankDetails} />
-            <InfoField label="Notes" value={model.notes} />
+            {t.showBankDetails && <InfoField label="Bank Details" value={model.bankDetails} />}
+            <InfoField label="Notes" value={model.notes || t.footerNotes} />
           </div>
 
-          <div className="mt-10 grid grid-cols-3 gap-8 text-sm">
-            <SignatureBox label="Authorized Signature" />
-            <SignatureBox label="Customer Signature" />
-            <SignatureBox label="Company Stamp" />
-          </div>
+          {t.showSignatures && (
+            <div className="mt-10 grid grid-cols-3 gap-8 text-sm">
+              <SignatureBox label="Authorized Signature" />
+              <SignatureBox label="Customer Signature" />
+              <SignatureBox label="Company Stamp" imageUrl={model.vendorStampUrl} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -206,9 +210,10 @@ function TotalRow({
   );
 }
 
-function SignatureBox({ label }: { label: string }) {
+function SignatureBox({ label, imageUrl }: { label: string; imageUrl?: string }) {
   return (
     <div className="pt-10">
+      {imageUrl && <img src={imageUrl} alt="" className="mb-2 h-10 w-10 object-contain" />}
       <div className="h-px w-full bg-ink-300" />
       <p className="mt-2 text-xs font-medium text-ink-500">{label}</p>
     </div>

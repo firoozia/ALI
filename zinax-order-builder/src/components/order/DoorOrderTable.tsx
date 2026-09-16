@@ -2,7 +2,13 @@ import { Plus, Copy, Trash2, AlertTriangle } from "lucide-react";
 import { ORDER_ROW_COLUMNS, makeDefaultRow, type OrderRow, type OrderRowColumn } from "../../core/orderSchema";
 import { isRowFieldInvalid, rowHasErrors } from "../../core/validators";
 import { lineTotal, formatNumber } from "../../core/calculations";
-import type { Catalog } from "../../core/catalogSchema";
+import { formatMdfThickness, type Catalog } from "../../core/catalogSchema";
+
+/** Active options, plus the row's current value even if it has since been deactivated (so the select never silently blanks out an existing selection). */
+function withCurrentValue<T>(activeItems: T[], currentValue: string, codeOf: (item: T) => string, makeFallback: (code: string) => T): T[] {
+  if (!currentValue || activeItems.some((item) => codeOf(item) === currentValue)) return activeItems;
+  return [...activeItems, makeFallback(currentValue)];
+}
 
 // No., 12 schema-driven columns, computed Line Total, Notes, Actions.
 const TOTAL_COLUMN_COUNT = 1 + ORDER_ROW_COLUMNS.length + 1 + 1 + 1;
@@ -34,7 +40,13 @@ function CellInput({ row, field, type = "text", onChange, className = "", disabl
 function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFieldFn, disabled: boolean, catalog: Catalog) {
   const selectClass = `zx-cell-input ${disabled ? "opacity-40" : ""}`;
   switch (col.editor) {
-    case "select-design":
+    case "select-design": {
+      const options = withCurrentValue(
+        catalog.designs.filter((d) => d.active),
+        row.designCode,
+        (d) => d.code,
+        (code) => ({ code, name: "", family: "", description: "", minWidthMm: 0, maxWidthMm: 0, minHeightMm: 0, maxHeightMm: 0, active: false })
+      );
       return (
         <select
           value={row.designCode}
@@ -43,14 +55,22 @@ function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFie
           className={`${selectClass} ${isRowFieldInvalid(row, "designCode") ? "invalid" : ""}`}
         >
           <option value="">Select...</option>
-          {catalog.designs.map((d) => (
+          {options.map((d) => (
             <option key={d.code} value={d.code}>
               {d.code}
+              {!d.active ? " (inactive)" : ""}
             </option>
           ))}
         </select>
       );
-    case "select-pvc":
+    }
+    case "select-pvc": {
+      const options = withCurrentValue(
+        catalog.pvcColors.filter((p) => p.active),
+        row.pvcCode,
+        (p) => p.code,
+        (code) => ({ code, color: "", category: "", finish: "", active: false })
+      );
       return (
         <select
           value={row.pvcCode}
@@ -59,13 +79,15 @@ function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFie
           className={selectClass}
         >
           <option value="">Select...</option>
-          {catalog.pvcColors.map((p) => (
+          {options.map((p) => (
             <option key={p.code} value={p.code}>
               {p.code}
+              {!p.active ? " (inactive)" : ""}
             </option>
           ))}
         </select>
       );
+    }
     case "select-mdf":
       return (
         <select
@@ -74,11 +96,16 @@ function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFie
           onChange={(e) => updateField(row.id, "mdfThickness", e.target.value)}
           className={selectClass}
         >
-          {catalog.mdfThickness.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
+          {catalog.mdfThickness
+            .filter((m) => m.active)
+            .map((m) => {
+              const label = formatMdfThickness(m);
+              return (
+                <option key={m.thicknessMm} value={label}>
+                  {label}
+                </option>
+              );
+            })}
         </select>
       );
     case "select-grain":
@@ -89,11 +116,13 @@ function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFie
           onChange={(e) => updateField(row.id, "grain", e.target.value)}
           className={selectClass}
         >
-          {catalog.grainDirections.map((g) => (
-            <option key={g} value={g}>
-              {g}
-            </option>
-          ))}
+          {catalog.grainDirections
+            .filter((g) => g.active)
+            .map((g) => (
+              <option key={g.code} value={g.label}>
+                {g.label}
+              </option>
+            ))}
         </select>
       );
     case "number":

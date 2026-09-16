@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Users, Blocks, FileStack } from "lucide-react";
 import AppLayout from "./components/layout/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import NewOrderBuilder from "./pages/NewOrderBuilder";
@@ -7,10 +6,14 @@ import OrderPdfPreview from "./pages/OrderPdfPreview";
 import InvoicePdfPreview from "./pages/InvoicePdfPreview";
 import ExportSchemaPreview from "./pages/ExportSchemaPreview";
 import Settings from "./pages/Settings";
-import PlaceholderPage from "./pages/PlaceholderPage";
+import Customers from "./pages/Customers";
+import Designs from "./pages/Designs";
+import PdfTemplates from "./pages/PdfTemplates";
 import { makeInitialHeader, makeInitialRows, type RecentOrder } from "./core/mockData";
 import { computeOrderTotals } from "./core/calculations";
 import { loadSettingsFromStorage, saveSettingsToStorage, type AppSettings } from "./core/settingsSchema";
+import { loadCustomersFromStorage, saveCustomersToStorage, type Customer } from "./core/customerSchema";
+import type { Catalog } from "./core/catalogSchema";
 import type { OrderPreviewData, InvoicePreviewData } from "./core/pdfSchema";
 import type { ScreenKey } from "./types";
 
@@ -27,6 +30,7 @@ const SIDEBAR_SCREENS: ScreenKey[] = [
 export default function App() {
   const [screen, setScreen] = useState<ScreenKey>("dashboard");
   const [settings, setSettings] = useState<AppSettings>(loadSettingsFromStorage);
+  const [customers, setCustomers] = useState<Customer[]>(loadCustomersFromStorage);
   const [orderPreviewData, setOrderPreviewData] = useState<OrderPreviewData | null>(null);
   const [invoicePreviewData, setInvoicePreviewData] = useState<InvoicePreviewData | null>(null);
 
@@ -34,7 +38,13 @@ export default function App() {
     saveSettingsToStorage(settings);
   }, [settings]);
 
+  useEffect(() => {
+    saveCustomersToStorage(customers);
+  }, [customers]);
+
   const handleNavigate = (key: ScreenKey) => setScreen(key);
+
+  const handleChangeCatalog = (catalog: Catalog) => setSettings({ ...settings, catalog });
 
   const handleOpenOrderFromDashboard = (order: RecentOrder) => {
     // Populate a mock preview using the recent order's rows + default header/rows for demo purposes.
@@ -48,7 +58,7 @@ export default function App() {
       salesperson: order.salesperson,
     };
     const totals = computeOrderTotals(rows);
-    setOrderPreviewData({ header, rows, totals, companyProfile: settings.companyProfile });
+    setOrderPreviewData({ header, rows, totals, companyProfile: settings.companyProfile, pdfTemplate: settings.pdfTemplate });
     setScreen("order-preview");
   };
 
@@ -71,8 +81,8 @@ export default function App() {
     case "new-order":
       content = (
         <NewOrderBuilder
-          catalog={settings.catalog}
-          companyProfile={settings.companyProfile}
+          settings={settings}
+          customers={customers}
           onPreviewOrder={handlePreviewOrder}
           onPreviewInvoice={handlePreviewInvoice}
         />
@@ -90,37 +100,19 @@ export default function App() {
       content = <InvoicePdfPreview order={invoicePreviewData} onBack={() => setScreen("new-order")} />;
       break;
     case "customers":
-      content = (
-        <PlaceholderPage
-          title="Customers"
-          description="Manage your customer directory, contact details and project history. This module is part of the full ZINAX Order Builder release."
-          icon={Users}
-        />
-      );
+      content = <Customers customers={customers} onChangeCustomers={setCustomers} />;
       break;
     case "products":
-      content = (
-        <PlaceholderPage
-          title="Designs"
-          description="Browse and manage your door design library, PVC membrane catalog and pricing presets."
-          icon={Blocks}
-        />
-      );
+      content = <Designs catalog={settings.catalog} onChangeCatalog={handleChangeCatalog} />;
       break;
     case "templates":
-      content = (
-        <PlaceholderPage
-          title="PDF Templates"
-          description="Customize the layout and branding of your Order Sheet and Proforma Invoice PDF exports."
-          icon={FileStack}
-        />
-      );
+      content = <PdfTemplates settings={settings} onChangeSettings={setSettings} />;
       break;
     case "export-schema":
       content = <ExportSchemaPreview />;
       break;
     case "settings":
-      content = <Settings settings={settings} onChangeSettings={setSettings} />;
+      content = <Settings settings={settings} onChangeSettings={setSettings} onNavigate={handleNavigate} />;
       break;
     default:
       content = <Dashboard onNavigate={handleNavigate} onOpenOrder={handleOpenOrderFromDashboard} />;

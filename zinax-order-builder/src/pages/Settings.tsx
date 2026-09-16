@@ -4,27 +4,28 @@ import {
   Cpu,
   Monitor,
   Globe2,
-  Plus,
-  Trash2,
   Download,
   Upload,
   Image as ImageIcon,
+  Blocks,
+  FileStack,
 } from "lucide-react";
 import { ARCHITECTURE_NOTE } from "../core/exportContracts";
 import type { AppSettings } from "../core/settingsSchema";
 import { serializeSettings, settingsFileName, parseSettingsFile, mergeSettings, replaceSettings } from "../core/settingsSchema";
 import type { CompanyProfile } from "../core/companyProfile";
-import type { DesignCatalogItem, PvcCatalogItem } from "../core/catalogSchema";
-import { CURRENCIES } from "../core/mockData";
+import { CURRENCIES, SALESPERSONS } from "../core/mockData";
 import { downloadJsonFile, readFileAsText } from "../lib/download";
 import Toast, { type ToastTone } from "../components/ui/Toast";
+import type { ScreenKey } from "../types";
 
 interface SettingsProps {
   settings: AppSettings;
   onChangeSettings: (settings: AppSettings) => void;
+  onNavigate: (key: ScreenKey) => void;
 }
 
-export default function Settings({ settings, onChangeSettings }: SettingsProps) {
+export default function Settings({ settings, onChangeSettings, onNavigate }: SettingsProps) {
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState<ToastTone>("success");
   const [pendingImport, setPendingImport] = useState<AppSettings | null>(null);
@@ -163,7 +164,7 @@ export default function Settings({ settings, onChangeSettings }: SettingsProps) 
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gold-500/15 text-gold-600">
             <SettingsIcon className="h-4 w-4" />
           </div>
-          <h3 className="text-sm font-bold text-ink-900">Company Profile</h3>
+          <h3 className="text-sm font-bold text-ink-900">Company Profile &amp; Order Defaults</h3>
         </div>
 
         <div className="mb-4 flex items-center gap-4">
@@ -178,6 +179,13 @@ export default function Settings({ settings, onChangeSettings }: SettingsProps) 
             Upload Logo
             <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
           </label>
+          <p className="text-xs text-ink-500">
+            Stamp image and PDF layout toggles live on the{" "}
+            <button onClick={() => onNavigate("templates")} className="font-semibold text-navy-700 underline">
+              PDF Templates
+            </button>{" "}
+            page.
+          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -210,7 +218,20 @@ export default function Settings({ settings, onChangeSettings }: SettingsProps) 
             value={String(settings.companyProfile.defaultVatPercent)}
             onChange={(v) => updateProfile({ defaultVatPercent: Number(v) || 0 })}
           />
-          <TextField label="Default Salesperson" value={settings.companyProfile.defaultSalesperson} onChange={(v) => updateProfile({ defaultSalesperson: v })} />
+          <div>
+            <label className="zx-label">Default Salesperson</label>
+            <select
+              value={settings.companyProfile.defaultSalesperson}
+              onChange={(e) => updateProfile({ defaultSalesperson: e.target.value })}
+              className="zx-select"
+            >
+              {SALESPERSONS.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
           <TextField
             label="Default Payment Terms"
             value={settings.companyProfile.defaultPaymentTerms}
@@ -218,39 +239,38 @@ export default function Settings({ settings, onChangeSettings }: SettingsProps) 
             className="sm:col-span-2 xl:col-span-3"
           />
         </div>
+
+        <p className="mt-4 rounded-lg bg-ink-50 p-3 text-xs text-ink-500">
+          These defaults populate every new blank order — Currency, VAT %, Salesperson, and Payment Terms — without
+          overwriting an order you have already started editing.
+        </p>
       </div>
 
-      <div className="zx-card mb-5 p-5">
-        <h3 className="mb-4 text-sm font-bold text-ink-900">Design Catalog</h3>
-        <DesignListEditor
-          rows={settings.catalog.designs}
-          onChange={(designs) => onChangeSettings({ ...settings, catalog: { ...settings.catalog, designs } })}
-        />
-      </div>
-
-      <div className="zx-card mb-5 p-5">
-        <h3 className="mb-4 text-sm font-bold text-ink-900">PVC / Membrane Color Catalog</h3>
-        <PvcColorListEditor
-          rows={settings.catalog.pvcColors}
-          onChange={(pvcColors) => onChangeSettings({ ...settings, catalog: { ...settings.catalog, pvcColors } })}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-        <div className="zx-card p-5">
-          <h3 className="mb-4 text-sm font-bold text-ink-900">MDF Thickness Options</h3>
-          <StringListEditor
-            items={settings.catalog.mdfThickness}
-            onChange={(mdfThickness) => onChangeSettings({ ...settings, catalog: { ...settings.catalog, mdfThickness } })}
-          />
-        </div>
-        <div className="zx-card p-5">
-          <h3 className="mb-4 text-sm font-bold text-ink-900">Grain Direction Options</h3>
-          <StringListEditor
-            items={settings.catalog.grainDirections}
-            onChange={(grainDirections) => onChangeSettings({ ...settings, catalog: { ...settings.catalog, grainDirections } })}
-          />
-        </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <button
+          onClick={() => onNavigate("products")}
+          className="zx-card flex items-center gap-3 p-4 text-left transition hover:border-navy-300 hover:shadow-panel"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-navy-800/10 text-navy-800">
+            <Blocks className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-ink-900">Designs / Catalog</p>
+            <p className="text-xs text-ink-500">Manage door designs, PVC colors, MDF thickness, grain options</p>
+          </div>
+        </button>
+        <button
+          onClick={() => onNavigate("templates")}
+          className="zx-card flex items-center gap-3 p-4 text-left transition hover:border-navy-300 hover:shadow-panel"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gold-500/15 text-gold-600">
+            <FileStack className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-ink-900">PDF Templates</p>
+            <p className="text-xs text-ink-500">Titles, show/hide toggles, stamp, footer notes</p>
+          </div>
+        </button>
       </div>
 
       <Toast message={toast} tone={toastTone} />
@@ -275,119 +295,6 @@ function TextField({
     <div className={className}>
       <label className="zx-label">{label}</label>
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)} className="zx-input" />
-    </div>
-  );
-}
-
-function DesignListEditor({
-  rows,
-  onChange,
-}: {
-  rows: DesignCatalogItem[];
-  onChange: (rows: DesignCatalogItem[]) => void;
-}) {
-  const updateRow = (index: number, patch: Partial<DesignCatalogItem>) => {
-    onChange(rows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  };
-  const addRow = () => onChange([...rows, { code: "", name: "" }]);
-  const deleteRow = (index: number) => onChange(rows.filter((_, i) => i !== index));
-
-  return (
-    <div className="space-y-2">
-      {rows.map((row, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <input
-            value={row.code}
-            onChange={(e) => updateRow(index, { code: e.target.value })}
-            placeholder="Code"
-            className="zx-input w-32"
-          />
-          <input
-            value={row.name}
-            onChange={(e) => updateRow(index, { name: e.target.value })}
-            placeholder="Design Name"
-            className="zx-input flex-1"
-          />
-          <button onClick={() => deleteRow(index)} className="zx-btn-danger !px-2 !py-2">
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
-      <button onClick={addRow} className="zx-btn-secondary !py-1.5">
-        <Plus className="h-4 w-4" />
-        Add Row
-      </button>
-    </div>
-  );
-}
-
-function PvcColorListEditor({
-  rows,
-  onChange,
-}: {
-  rows: PvcCatalogItem[];
-  onChange: (rows: PvcCatalogItem[]) => void;
-}) {
-  const updateRow = (index: number, patch: Partial<PvcCatalogItem>) => {
-    onChange(rows.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  };
-  const addRow = () => onChange([...rows, { code: "", color: "" }]);
-  const deleteRow = (index: number) => onChange(rows.filter((_, i) => i !== index));
-
-  return (
-    <div className="space-y-2">
-      {rows.map((row, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <input
-            value={row.code}
-            onChange={(e) => updateRow(index, { code: e.target.value })}
-            placeholder="Code"
-            className="zx-input w-32"
-          />
-          <input
-            value={row.color}
-            onChange={(e) => updateRow(index, { color: e.target.value })}
-            placeholder="Color Name"
-            className="zx-input flex-1"
-          />
-          <button onClick={() => deleteRow(index)} className="zx-btn-danger !px-2 !py-2">
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
-      <button onClick={addRow} className="zx-btn-secondary !py-1.5">
-        <Plus className="h-4 w-4" />
-        Add Row
-      </button>
-    </div>
-  );
-}
-
-function StringListEditor({ items, onChange }: { items: string[]; onChange: (items: string[]) => void }) {
-  const updateItem = (index: number, value: string) => {
-    onChange(items.map((item, i) => (i === index ? value : item)));
-  };
-  const addItem = () => onChange([...items, ""]);
-  const deleteItem = (index: number) => onChange(items.filter((_, i) => i !== index));
-
-  return (
-    <div className="space-y-2">
-      {items.map((item, index) => (
-        <div key={index} className="flex items-center gap-2">
-          <input
-            value={item}
-            onChange={(e) => updateItem(index, e.target.value)}
-            className="zx-input flex-1"
-          />
-          <button onClick={() => deleteItem(index)} className="zx-btn-danger !px-2 !py-2">
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
-      <button onClick={addItem} className="zx-btn-secondary !py-1.5">
-        <Plus className="h-4 w-4" />
-        Add Option
-      </button>
     </div>
   );
 }

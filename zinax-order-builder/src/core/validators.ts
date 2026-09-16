@@ -3,6 +3,7 @@
 import type { OrderHeader, OrderRow } from "./orderSchema";
 import { ORDER_ROW_COLUMNS } from "./orderSchema";
 import type { Invoice } from "./invoiceSchema";
+import { formatMdfThickness, type Catalog } from "./catalogSchema";
 
 export const REQUIRED_ORDER_ROW_FIELDS: (keyof OrderRow)[] = ORDER_ROW_COLUMNS.filter(
   (col) => col.required
@@ -51,12 +52,32 @@ export function invoiceHasErrors(invoice: Invoice): boolean {
   });
 }
 
+// --- Catalog-aware checks -------------------------------------------------
+
+export function isDesignActive(catalog: Catalog, code: string): boolean {
+  return catalog.designs.some((d) => d.code === code && d.active);
+}
+
+export function isPvcActive(catalog: Catalog, code: string): boolean {
+  return catalog.pvcColors.some((p) => p.code === code && p.active);
+}
+
+export function isMdfThicknessActive(catalog: Catalog, mdfThickness: string): boolean {
+  return catalog.mdfThickness.some((m) => m.active && formatMdfThickness(m) === mdfThickness);
+}
+
+export function isGrainActive(catalog: Catalog, grain: string): boolean {
+  return catalog.grainDirections.some((g) => g.active && (g.code === grain || g.label === grain));
+}
+
 /**
  * Human-readable validation errors for the whole order, in the order a
  * user should fix them. Used to block export and show a concrete list
- * rather than a generic "invalid" toast.
+ * rather than a generic "invalid" toast. Catalog-aware: a design/PVC code
+ * that no longer exists or was deactivated is reported just like a blank
+ * field, so exports can never reference a retired catalog entry.
  */
-export function getOrderValidationErrors(header: OrderHeader, rows: OrderRow[]): string[] {
+export function getOrderValidationErrors(header: OrderHeader, rows: OrderRow[], catalog: Catalog): string[] {
   const errors: string[] = [];
 
   for (const field of REQUIRED_HEADER_FIELDS) {
@@ -70,24 +91,78 @@ export function getOrderValidationErrors(header: OrderHeader, rows: OrderRow[]):
   }
 
   rows.forEach((row, index) => {
+    const n = index + 1;
+
     for (const field of REQUIRED_ORDER_ROW_FIELDS) {
       if (isRowFieldInvalid(row, field)) {
         const column = ORDER_ROW_COLUMNS.find((c) => c.key === field);
-        errors.push(`Row ${index + 1}: ${column?.label ?? field} is required.`);
+        errors.push(`Row ${n}: ${column?.label ?? field} is required.`);
       }
+    }
+
+    if (row.designCode && !isDesignActive(catalog, row.designCode)) {
+      errors.push(`Row ${n}: Design Code "${row.designCode}" is not an active catalog design.`);
+    }
+    if (Number(row.width) <= 0) {
+      errors.push(`Row ${n}: Width mm must be greater than 0.`);
+    }
+    if (Number(row.height) <= 0) {
+      errors.push(`Row ${n}: Height mm must be greater than 0.`);
+    }
+    if (Number(row.qty) <= 0) {
+      errors.push(`Row ${n}: Qty must be greater than 0.`);
+    }
+    if (row.mdfThickness && !isMdfThicknessActive(catalog, row.mdfThickness)) {
+      errors.push(`Row ${n}: MDF Thickness "${row.mdfThickness}" is not an active setting.`);
+    }
+    if (!row.pvcCode) {
+      errors.push(`Row ${n}: PVC Code is required.`);
+    } else if (!isPvcActive(catalog, row.pvcCode)) {
+      errors.push(`Row ${n}: PVC Code "${row.pvcCode}" is not an active catalog color.`);
+    }
+    if (row.grain && !isGrainActive(catalog, row.grain)) {
+      errors.push(`Row ${n}: Grain Direction "${row.grain}" is not an active option.`);
     }
   });
 
   return errors;
 }
 
-export function getInvoiceValidationErrors(invoice: Invoice): string[] {
+/**
+ * Invoice validation only applies while invoice mode is ON — a zero unit
+ * price is perfectly normal while invoice mode is OFF and must never be
+ * blocked.
+ */
+export function getInvoiceValidationErrors(invoice: Invoice, rows: OrderRow[], invoiceMode: boolean): string[] {
+  if (!invoiceMode) return [];
   const errors: string[] = [];
+
   for (const field of REQUIRED_INVOICE_FIELDS) {
     const value = invoice[field.key];
     if (value === "" || value === null || value === undefined) {
       errors.push(`${field.label} is required.`);
     }
   }
+  if (!invoice.currency) {
+    errors.push("Currency is required.");
+  }
+  if (Number(invoice.paidAmount) < 0) {
+    errors.push("Paid Amount must be 0 or greater.");
+  }
+
+  rows.forEach((row, index) => {
+    const n = index + 1;
+    if (Number(row.unitPrice) < 0) {
+      errors.push(`Row ${n}: Unit Price must be 0 or greater.`);
+    }
+    const discount = Number(row.discount);
+    if (discount < 0 || discount > 100) {
+      errors.push(`Row ${n}: Discount % must be between 0 and 100.`);
+    }
+    if (Number(row.vat) < 0) {
+      errors.push(`Row ${n}: VAT % must be 0 or greater.`);
+    }
+  });
+
   return errors;
 }
