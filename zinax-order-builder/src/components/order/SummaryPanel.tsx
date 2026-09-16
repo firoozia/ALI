@@ -33,6 +33,8 @@ interface SummaryPanelProps {
   onExportInvoicePdf: () => void;
   onPrintPreview: () => void;
   invoicePdfDisabled: boolean;
+  /** Why the button is disabled, shown as a hover tooltip — e.g. the first validation error. */
+  invoicePdfDisabledReason?: string;
 }
 
 export default function SummaryPanel({
@@ -47,6 +49,7 @@ export default function SummaryPanel({
   onExportInvoicePdf,
   onPrintPreview,
   invoicePdfDisabled,
+  invoicePdfDisabledReason,
 }: SummaryPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -130,6 +133,7 @@ export default function SummaryPanel({
             <button
               onClick={onExportInvoicePdf}
               disabled={invoicePdfDisabled}
+              title={invoicePdfDisabled ? invoicePdfDisabledReason : undefined}
               className="zx-btn-gold w-full justify-start"
             >
               <Receipt className="h-4 w-4" />

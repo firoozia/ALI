@@ -136,14 +136,22 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
     if (blockIfInvalid(orderErrors, "export CSV")) return;
     const csv = buildProductionCsvString(header, rows);
     const saved = await downloadCsvFile(productionCsvFileName(header.orderNo), csv);
-    if (saved) flashToast(`Production CSV downloaded (${rows.length} rows).`);
+    if (saved) {
+      flashToast(`Production CSV downloaded (${rows.length} rows).`);
+    } else {
+      flashToast("Export cancelled — no file was saved.", "neutral");
+    }
   };
 
   const handleSaveJson = async () => {
     if (blockIfInvalid(orderErrors, "save order")) return;
     const file = buildOrderFile(header, rows, invoiceMode, invoice);
     const saved = await downloadJsonFile(orderFileName(header.orderNo), serializeOrderFile(file));
-    if (saved) flashToast("Order file saved.");
+    if (saved) {
+      flashToast("Order file saved.");
+    } else {
+      flashToast("Save cancelled — no file was saved.", "neutral");
+    }
   };
 
   const handleOpenJsonFile = async (file: File) => {
@@ -227,6 +235,7 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
             onExportInvoicePdf={handlePreviewInvoice}
             onPrintPreview={handlePreviewOrder}
             invoicePdfDisabled={invoicePdfDisabled}
+            invoicePdfDisabledReason={invoicePdfDisabled ? `Cannot export yet: ${invoiceErrors[0]}` : undefined}
           />
         </div>
       </div>

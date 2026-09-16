@@ -35,7 +35,7 @@ export default function Designs({ catalog, onChangeCatalog }: DesignsProps) {
 
   const handleExport = async () => {
     const saved = await downloadJsonFile(catalogFileName(), serializeCatalogFile(buildCatalogFile(catalog)));
-    if (saved) flash("Catalog exported.");
+    flash(saved ? "Catalog exported." : "Export cancelled — no file was saved.", saved ? "success" : "neutral");
   };
 
   const handleImportFile = async (file: File) => {

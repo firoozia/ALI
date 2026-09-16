@@ -46,7 +46,7 @@ export default function Customers({ customers, onChangeCustomers }: CustomersPro
 
   const handleExport = async () => {
     const saved = await downloadJsonFile(customersFileName(), serializeCustomersFile(buildCustomersFile(customers)));
-    if (saved) flash("Customers exported.");
+    flash(saved ? "Customers exported." : "Export cancelled — no file was saved.", saved ? "success" : "neutral");
   };
 
   const handleImportFile = async (file: File) => {

@@ -51,7 +51,7 @@ export default function Settings({ settings, onChangeSettings, onNavigate }: Set
 
   const handleExportSettings = async () => {
     const saved = await downloadJsonFile(settingsFileName(), serializeSettings(settings));
-    if (saved) flash("Settings exported.");
+    flash(saved ? "Settings exported." : "Export cancelled — no file was saved.", saved ? "success" : "neutral");
   };
 
   const handleImportFile = async (file: File) => {
