@@ -1,4 +1,12 @@
-export default function PlaceholderPage({ title, description, icon: Icon }) {
+import type { ComponentType, SVGProps } from "react";
+
+interface PlaceholderPageProps {
+  title: string;
+  description: string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+}
+
+export default function PlaceholderPage({ title, description, icon: Icon }: PlaceholderPageProps) {
   return (
     <div className="mx-auto flex max-w-3xl flex-col items-center px-6 py-24 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-navy-800/10 text-navy-800">

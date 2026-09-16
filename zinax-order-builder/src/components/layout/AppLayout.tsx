@@ -1,11 +1,19 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import type { ScreenKey } from "../../types";
 
-export default function AppLayout({ sidebarActive, topbarActive, onNavigate, children }) {
+interface AppLayoutProps {
+  sidebarActive: ScreenKey;
+  topbarActive: ScreenKey;
+  onNavigate: (key: ScreenKey) => void;
+  children: ReactNode;
+}
+
+export default function AppLayout({ sidebarActive, topbarActive, onNavigate, children }: AppLayoutProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  const handleNavigate = (key) => {
+  const handleNavigate = (key: ScreenKey) => {
     setMobileNavOpen(false);
     onNavigate(key);
   };

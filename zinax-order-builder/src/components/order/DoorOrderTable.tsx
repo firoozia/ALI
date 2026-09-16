@@ -1,13 +1,24 @@
 import { Plus, Copy, Trash2, AlertTriangle } from "lucide-react";
-import { DESIGN_LIBRARY, GRAIN_DIRECTIONS, MDF_THICKNESS, PVC_COLORS } from "../../core/mockData";
-import { ORDER_ROW_COLUMNS, makeDefaultRow } from "../../core/orderSchema";
+import { ORDER_ROW_COLUMNS, makeDefaultRow, type OrderRow, type OrderRowColumn } from "../../core/orderSchema";
 import { isRowFieldInvalid, rowHasErrors } from "../../core/validators";
 import { lineTotal, formatNumber } from "../../core/calculations";
+import type { Catalog } from "../../core/catalogSchema";
 
 // No., 12 schema-driven columns, computed Line Total, Notes, Actions.
 const TOTAL_COLUMN_COUNT = 1 + ORDER_ROW_COLUMNS.length + 1 + 1 + 1;
 
-function CellInput({ row, field, type = "text", onChange, className = "", disabled = false, ...rest }) {
+type UpdateFieldFn = (id: string, field: keyof OrderRow, value: string) => void;
+
+interface CellInputProps {
+  row: OrderRow;
+  field: keyof OrderRow;
+  type?: "text" | "number";
+  onChange: UpdateFieldFn;
+  className?: string;
+  disabled?: boolean;
+}
+
+function CellInput({ row, field, type = "text", onChange, className = "", disabled = false }: CellInputProps) {
   const invalid = isRowFieldInvalid(row, field);
   return (
     <input
@@ -16,12 +27,11 @@ function CellInput({ row, field, type = "text", onChange, className = "", disabl
       disabled={disabled}
       onChange={(e) => onChange(row.id, field, e.target.value)}
       className={`zx-cell-input ${invalid ? "invalid" : ""} ${disabled ? "opacity-40" : ""} ${className}`}
-      {...rest}
     />
   );
 }
 
-function renderEditor(col, row, updateField, disabled) {
+function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFieldFn, disabled: boolean, catalog: Catalog) {
   const selectClass = `zx-cell-input ${disabled ? "opacity-40" : ""}`;
   switch (col.editor) {
     case "select-design":
@@ -33,7 +43,7 @@ function renderEditor(col, row, updateField, disabled) {
           className={`${selectClass} ${isRowFieldInvalid(row, "designCode") ? "invalid" : ""}`}
         >
           <option value="">Select...</option>
-          {DESIGN_LIBRARY.map((d) => (
+          {catalog.designs.map((d) => (
             <option key={d.code} value={d.code}>
               {d.code}
             </option>
@@ -49,7 +59,7 @@ function renderEditor(col, row, updateField, disabled) {
           className={selectClass}
         >
           <option value="">Select...</option>
-          {PVC_COLORS.map((p) => (
+          {catalog.pvcColors.map((p) => (
             <option key={p.code} value={p.code}>
               {p.code}
             </option>
@@ -64,7 +74,7 @@ function renderEditor(col, row, updateField, disabled) {
           onChange={(e) => updateField(row.id, "mdfThickness", e.target.value)}
           className={selectClass}
         >
-          {MDF_THICKNESS.map((m) => (
+          {catalog.mdfThickness.map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
@@ -79,7 +89,7 @@ function renderEditor(col, row, updateField, disabled) {
           onChange={(e) => updateField(row.id, "grain", e.target.value)}
           className={selectClass}
         >
-          {GRAIN_DIRECTIONS.map((g) => (
+          {catalog.grainDirections.map((g) => (
             <option key={g} value={g}>
               {g}
             </option>
@@ -95,18 +105,26 @@ function renderEditor(col, row, updateField, disabled) {
   }
 }
 
-export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, currency }) {
-  const updateField = (id, field, value) => {
+interface DoorOrderTableProps {
+  rows: OrderRow[];
+  onChangeRows: (rows: OrderRow[]) => void;
+  invoiceMode: boolean;
+  currency: string;
+  catalog: Catalog;
+}
+
+export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, currency, catalog }: DoorOrderTableProps) {
+  const updateField: UpdateFieldFn = (id, field, value) => {
     onChangeRows(
       rows.map((r) => {
         if (r.id !== id) return r;
-        const next = { ...r, [field]: value };
+        const next = { ...r, [field]: value } as OrderRow;
         if (field === "designCode") {
-          const match = DESIGN_LIBRARY.find((d) => d.code === value);
+          const match = catalog.designs.find((d) => d.code === value);
           if (match) next.designName = match.name;
         }
         if (field === "pvcCode") {
-          const match = PVC_COLORS.find((p) => p.code === value);
+          const match = catalog.pvcColors.find((p) => p.code === value);
           if (match) next.pvcColor = match.color;
         }
         return next;
@@ -116,7 +134,7 @@ export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, curren
 
   const addRow = () => onChangeRows([...rows, makeDefaultRow()]);
 
-  const duplicateRow = (id) => {
+  const duplicateRow = (id: string) => {
     const idx = rows.findIndex((r) => r.id === id);
     if (idx === -1) return;
     const copy = makeDefaultRow({ ...rows[idx], id: undefined });
@@ -125,7 +143,7 @@ export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, curren
     onChangeRows(next);
   };
 
-  const deleteRow = (id) => onChangeRows(rows.filter((r) => r.id !== id));
+  const deleteRow = (id: string) => onChangeRows(rows.filter((r) => r.id !== id));
 
   const hasInvalid = rows.some(rowHasErrors);
   const totalQty = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
@@ -184,7 +202,7 @@ export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, curren
                   const disabled = Boolean(col.invoiceOnly) && !invoiceMode;
                   return (
                     <td key={col.key} className="zx-td p-1">
-                      {renderEditor(col, row, updateField, disabled)}
+                      {renderEditor(col, row, updateField, disabled, catalog)}
                     </td>
                   );
                 })}

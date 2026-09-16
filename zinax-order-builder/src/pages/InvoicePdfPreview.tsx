@@ -1,21 +1,46 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
-import Toast from "../components/ui/Toast";
+import Toast, { type ToastTone } from "../components/ui/Toast";
 import { discountAmount, vatAmount, lineTotal, formatCurrency } from "../core/calculations";
-import { buildInvoicePdfModel } from "../core/pdfSchema";
+import { buildInvoicePdfModel, type InvoicePreviewData } from "../core/pdfSchema";
+import { invoicePdfFileName } from "../core/invoiceSchema";
+import { exportElementAsPdf } from "../lib/pdfExport";
 
-export default function InvoicePdfPreview({ order, onBack }) {
+interface InvoicePdfPreviewProps {
+  order: InvoicePreviewData | null;
+  onBack: () => void;
+}
+
+export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewProps) {
   const [toast, setToast] = useState("");
+  const [toastTone, setToastTone] = useState<ToastTone>("success");
+  const [exporting, setExporting] = useState(false);
+  const printRef = useRef<HTMLDivElement>(null);
+
   if (!order) return null;
-  const { header, rows, invoice, totals } = order;
-  const model = buildInvoicePdfModel(header, rows, invoice, totals);
+  const { header, rows, invoice, totals, companyProfile } = order;
+  const model = buildInvoicePdfModel(header, rows, invoice, totals, companyProfile);
   const currency = model.currency;
   const balanceDue = model.balanceDue;
 
-  const flash = (msg) => {
+  const flash = (msg: string, tone: ToastTone = "success") => {
     setToast(msg);
-    setTimeout(() => setToast(""), 2000);
+    setToastTone(tone);
+    setTimeout(() => setToast(""), tone === "error" ? 4500 : 2500);
+  };
+
+  const handleDownload = async () => {
+    if (!printRef.current) return;
+    setExporting(true);
+    try {
+      await exportElementAsPdf(printRef.current, invoicePdfFileName(model.invoiceNo), "portrait");
+      flash("Proforma Invoice PDF downloaded.");
+    } catch {
+      flash("Could not generate the PDF. Please try again.", "error");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -24,13 +49,17 @@ export default function InvoicePdfPreview({ order, onBack }) {
         title="Proforma Invoice"
         subtitle={`${model.invoiceNo} — Preview`}
         onBack={onBack}
-        onDownload={() => flash("Invoice PDF download simulated (mock).")}
-        onPrint={() => flash("Print dialog simulated (mock).")}
+        onDownload={handleDownload}
+        onPrint={() => window.print()}
         accent="gold"
+        exporting={exporting}
       />
 
       <div className="flex justify-center px-3 py-5 sm:px-6 sm:py-10">
-        <div className="w-full max-w-[1000px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none">
+        <div
+          ref={printRef}
+          className="w-full max-w-[1000px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none"
+        >
           {/* Header */}
           <div className="flex items-start justify-between border-b-2 border-gold-500 pb-6">
             <div className="flex items-center gap-3">
@@ -38,7 +67,7 @@ export default function InvoicePdfPreview({ order, onBack }) {
                 <Hammer className="h-7 w-7" strokeWidth={2.2} />
               </div>
               <div>
-                <p className="text-lg font-extrabold tracking-wide text-navy-950">ZINAX / ARYAK</p>
+                <p className="text-lg font-extrabold tracking-wide text-navy-950">{model.vendorBrandName}</p>
                 <p className="text-xs font-medium uppercase tracking-widest text-ink-400">
                   Cabinet &amp; Membrane Door Production
                 </p>
@@ -141,12 +170,12 @@ export default function InvoicePdfPreview({ order, onBack }) {
         </div>
       </div>
 
-      <Toast message={toast} />
+      <Toast message={toast} tone={toastTone} />
     </div>
   );
 }
 
-function InfoField({ label, value }) {
+function InfoField({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-2xs font-semibold uppercase tracking-wide text-ink-400">{label}</p>
@@ -155,7 +184,17 @@ function InfoField({ label, value }) {
   );
 }
 
-function TotalRow({ label, value, strong, tone }) {
+function TotalRow({
+  label,
+  value,
+  strong,
+  tone,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  tone?: "amber" | "emerald";
+}) {
   const toneCls = tone === "amber" ? "text-amber-700" : tone === "emerald" ? "text-emerald-700" : "text-ink-900";
   return (
     <div className="flex items-center justify-between">
@@ -167,7 +206,7 @@ function TotalRow({ label, value, strong, tone }) {
   );
 }
 
-function SignatureBox({ label }) {
+function SignatureBox({ label }: { label: string }) {
   return (
     <div className="pt-10">
       <div className="h-px w-full bg-ink-300" />

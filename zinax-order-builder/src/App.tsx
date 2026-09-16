@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Users, Blocks, FileStack } from "lucide-react";
 import AppLayout from "./components/layout/AppLayout";
 import Dashboard from "./pages/Dashboard";
@@ -8,62 +8,75 @@ import InvoicePdfPreview from "./pages/InvoicePdfPreview";
 import ExportSchemaPreview from "./pages/ExportSchemaPreview";
 import Settings from "./pages/Settings";
 import PlaceholderPage from "./pages/PlaceholderPage";
-import { makeInitialHeader, makeInitialRows } from "./core/mockData";
+import { makeInitialHeader, makeInitialRows, type RecentOrder } from "./core/mockData";
 import { computeOrderTotals } from "./core/calculations";
+import { loadSettingsFromStorage, saveSettingsToStorage, type AppSettings } from "./core/settingsSchema";
+import type { OrderPreviewData, InvoicePreviewData } from "./core/pdfSchema";
+import type { ScreenKey } from "./types";
+
+const SIDEBAR_SCREENS: ScreenKey[] = [
+  "dashboard",
+  "new-order",
+  "customers",
+  "products",
+  "templates",
+  "export-schema",
+  "settings",
+];
 
 export default function App() {
-  const [screen, setScreen] = useState("dashboard");
-  const [orderPreviewData, setOrderPreviewData] = useState(null);
-  const [invoicePreviewData, setInvoicePreviewData] = useState(null);
+  const [screen, setScreen] = useState<ScreenKey>("dashboard");
+  const [settings, setSettings] = useState<AppSettings>(loadSettingsFromStorage);
+  const [orderPreviewData, setOrderPreviewData] = useState<OrderPreviewData | null>(null);
+  const [invoicePreviewData, setInvoicePreviewData] = useState<InvoicePreviewData | null>(null);
 
-  const navItemsWithBuilder = [
-    "dashboard",
-    "new-order",
-    "customers",
-    "products",
-    "templates",
-    "export-schema",
-    "settings",
-  ];
+  useEffect(() => {
+    saveSettingsToStorage(settings);
+  }, [settings]);
 
-  const handleNavigate = (key) => {
-    setScreen(key);
-  };
+  const handleNavigate = (key: ScreenKey) => setScreen(key);
 
-  const handleOpenOrderFromDashboard = (order) => {
+  const handleOpenOrderFromDashboard = (order: RecentOrder) => {
     // Populate a mock preview using the recent order's rows + default header/rows for demo purposes.
     const rows = makeInitialRows();
     const header = {
       ...makeInitialHeader(),
       orderNo: order.orderNo,
+      orderDate: order.date,
       customerName: order.customer,
       projectName: order.project,
       salesperson: order.salesperson,
-      date: order.date,
     };
     const totals = computeOrderTotals(rows);
-    setOrderPreviewData({ header, rows, totals });
+    setOrderPreviewData({ header, rows, totals, companyProfile: settings.companyProfile });
     setScreen("order-preview");
   };
 
-  const handlePreviewOrder = (data) => {
+  const handlePreviewOrder = (data: OrderPreviewData) => {
     setOrderPreviewData(data);
     setScreen("order-preview");
   };
 
-  const handlePreviewInvoice = (data) => {
+  const handlePreviewInvoice = (data: InvoicePreviewData) => {
     setInvoicePreviewData(data);
     setScreen("invoice-preview");
   };
 
-  let content = null;
+  let content: ReactNode;
 
   switch (screen) {
     case "dashboard":
       content = <Dashboard onNavigate={handleNavigate} onOpenOrder={handleOpenOrderFromDashboard} />;
       break;
     case "new-order":
-      content = <NewOrderBuilder onPreviewOrder={handlePreviewOrder} onPreviewInvoice={handlePreviewInvoice} />;
+      content = (
+        <NewOrderBuilder
+          catalog={settings.catalog}
+          companyProfile={settings.companyProfile}
+          onPreviewOrder={handlePreviewOrder}
+          onPreviewInvoice={handlePreviewInvoice}
+        />
+      );
       break;
     case "order-preview":
       content = (
@@ -107,13 +120,13 @@ export default function App() {
       content = <ExportSchemaPreview />;
       break;
     case "settings":
-      content = <Settings />;
+      content = <Settings settings={settings} onChangeSettings={setSettings} />;
       break;
     default:
       content = <Dashboard onNavigate={handleNavigate} onOpenOrder={handleOpenOrderFromDashboard} />;
   }
 
-  const sidebarActive = navItemsWithBuilder.includes(screen) ? screen : "new-order";
+  const sidebarActive: ScreenKey = SIDEBAR_SCREENS.includes(screen) ? screen : "new-order";
 
   return (
     <AppLayout sidebarActive={sidebarActive} topbarActive={screen} onNavigate={handleNavigate}>

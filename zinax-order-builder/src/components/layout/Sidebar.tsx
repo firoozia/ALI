@@ -1,3 +1,4 @@
+import type { ComponentType, SVGProps } from "react";
 import {
   LayoutDashboard,
   FilePlus2,
@@ -9,8 +10,15 @@ import {
   Hammer,
   X,
 } from "lucide-react";
+import type { ScreenKey } from "../../types";
 
-const NAV_ITEMS = [
+interface NavItem {
+  key: ScreenKey;
+  label: string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+}
+
+const NAV_ITEMS: NavItem[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "new-order", label: "New Order", icon: FilePlus2 },
   { key: "customers", label: "Customers", icon: Users },
@@ -20,7 +28,14 @@ const NAV_ITEMS = [
   { key: "settings", label: "Settings", icon: Settings },
 ];
 
-export default function Sidebar({ active, onNavigate, open, onClose }) {
+interface SidebarProps {
+  active: ScreenKey;
+  onNavigate: (key: ScreenKey) => void;
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function Sidebar({ active, onNavigate, open, onClose }: SidebarProps) {
   return (
     <>
       {open && (

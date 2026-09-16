@@ -1,30 +1,11 @@
 // Mock/sample data only — no backend, no persistence. For UI preview
-// purposes. Reference lists here (design codes, PVC colors, ...) stand in
-// for what will later be a company-editable catalog in Settings.
+// purposes. Company-editable catalogs (design codes, PVC colors, MDF
+// thickness, grain directions) live in core/catalogSchema.ts instead —
+// see Settings.
 import { generateOrderNo, makeDefaultRow, type OrderHeader, type OrderRow } from "./orderSchema";
 import { generateInvoiceNo, type Invoice } from "./invoiceSchema";
 
 export const CURRENCIES = ["AED", "SAR", "USD", "QAR", "OMR"];
-
-export const GRAIN_DIRECTIONS = ["Vertical", "Horizontal"];
-
-export const MDF_THICKNESS = ["16 mm", "18 mm", "22 mm", "25 mm"];
-
-export const DESIGN_LIBRARY = [
-  { code: "ZD001", name: "Classic Offset Door" },
-  { code: "ZD002", name: "Double Offset Door" },
-  { code: "ZD003", name: "Modern Groove Door" },
-  { code: "ZD004", name: "Shaker V-Groove" },
-  { code: "ZD005", name: "Raised Panel Classic" },
-];
-
-export const PVC_COLORS = [
-  { code: "PVC-101", color: "Walnut" },
-  { code: "PVC-202", color: "Oak" },
-  { code: "PVC-305", color: "Stone Gray" },
-  { code: "PVC-410", color: "Matte White" },
-  { code: "PVC-512", color: "Graphite" },
-];
 
 export const SALESPERSONS = ["Ahmed Al Mansoori", "Sara Khalid", "Yousef Haddad", "Layla Nasser"];
 
@@ -35,7 +16,17 @@ export const STATUS_STYLES: Record<string, string> = {
   Exported: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
 };
 
-export const RECENT_ORDERS = [
+export interface RecentOrder {
+  orderNo: string;
+  date: string;
+  customer: string;
+  project: string;
+  salesperson: string;
+  totalDoors: number;
+  status: string;
+}
+
+export const RECENT_ORDERS: RecentOrder[] = [
   {
     orderNo: "ZX-2026-0148",
     date: "2026-09-12",

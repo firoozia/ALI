@@ -1,18 +1,42 @@
+import { useRef, useState } from "react";
 import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
-import Toast from "../components/ui/Toast";
-import { useState } from "react";
-import { buildOrderPdfModel } from "../core/pdfSchema";
+import Toast, { type ToastTone } from "../components/ui/Toast";
+import { buildOrderPdfModel, type OrderPreviewData } from "../core/pdfSchema";
+import { exportElementAsPdf } from "../lib/pdfExport";
 
-export default function OrderPdfPreview({ order, onBack }) {
+interface OrderPdfPreviewProps {
+  order: OrderPreviewData | null;
+  onBack: () => void;
+}
+
+export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps) {
   const [toast, setToast] = useState("");
-  if (!order) return null;
-  const { header, rows, totals } = order;
-  const model = buildOrderPdfModel(header, rows, totals);
+  const [toastTone, setToastTone] = useState<ToastTone>("success");
+  const [exporting, setExporting] = useState(false);
+  const printRef = useRef<HTMLDivElement>(null);
 
-  const flash = (msg) => {
+  if (!order) return null;
+  const { header, rows, totals, companyProfile } = order;
+  const model = buildOrderPdfModel(header, rows, totals, companyProfile);
+
+  const flash = (msg: string, tone: ToastTone = "success") => {
     setToast(msg);
-    setTimeout(() => setToast(""), 2000);
+    setToastTone(tone);
+    setTimeout(() => setToast(""), tone === "error" ? 4500 : 2500);
+  };
+
+  const handleDownload = async () => {
+    if (!printRef.current) return;
+    setExporting(true);
+    try {
+      await exportElementAsPdf(printRef.current, `${model.orderNo}_order_sheet.pdf`, "landscape");
+      flash("Order PDF downloaded.");
+    } catch {
+      flash("Could not generate the PDF. Please try again.", "error");
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -21,12 +45,16 @@ export default function OrderPdfPreview({ order, onBack }) {
         title="Order Sheet"
         subtitle={`${model.orderNo} — Preview`}
         onBack={onBack}
-        onDownload={() => flash("Order PDF download simulated (mock).")}
-        onPrint={() => flash("Print dialog simulated (mock).")}
+        onDownload={handleDownload}
+        onPrint={() => window.print()}
+        exporting={exporting}
       />
 
       <div className="flex justify-center px-3 py-5 sm:px-6 sm:py-10">
-        <div className="w-full max-w-[1180px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none">
+        <div
+          ref={printRef}
+          className="w-full max-w-[1180px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none"
+        >
           {/* Header */}
           <div className="flex items-start justify-between border-b-2 border-navy-900 pb-6">
             <div className="flex items-center gap-3">
@@ -34,7 +62,7 @@ export default function OrderPdfPreview({ order, onBack }) {
                 <Hammer className="h-7 w-7" strokeWidth={2.2} />
               </div>
               <div>
-                <p className="text-lg font-extrabold tracking-wide text-navy-950">ZINAX / ARYAK</p>
+                <p className="text-lg font-extrabold tracking-wide text-navy-950">{model.vendorBrandName}</p>
                 <p className="text-xs font-medium uppercase tracking-widest text-ink-400">
                   Cabinet &amp; Membrane Door Production
                 </p>
@@ -82,12 +110,19 @@ export default function OrderPdfPreview({ order, onBack }) {
                     <td className="border-b border-ink-100 px-3 py-2">{row.pvcCode || "—"}</td>
                     <td className="border-b border-ink-100 px-3 py-2">{row.pvcColor || "—"}</td>
                     <td className="border-b border-ink-100 px-3 py-2">{row.grain}</td>
-                    <td className="border-b border-ink-100 px-3 py-2 text-ink-500">{row.notes || "—"}</td>
+                    <td className="border-b border-ink-100 px-3 py-2 whitespace-pre-wrap text-ink-500">{row.notes || "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {model.notes && (
+            <div className="mt-6 rounded-lg bg-ink-50 p-3 text-sm text-ink-700">
+              <p className="mb-1 text-2xs font-semibold uppercase tracking-wide text-ink-400">General Notes</p>
+              <p className="whitespace-pre-wrap">{model.notes}</p>
+            </div>
+          )}
 
           {/* Footer */}
           <div className="mt-10 grid grid-cols-2 gap-8 border-t border-ink-200 pt-6 sm:grid-cols-4">
@@ -109,12 +144,12 @@ export default function OrderPdfPreview({ order, onBack }) {
         </div>
       </div>
 
-      <Toast message={toast} />
+      <Toast message={toast} tone={toastTone} />
     </div>
   );
 }
 
-function InfoField({ label, value, strong }) {
+function InfoField({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {
   return (
     <div>
       {label && <p className="text-2xs font-semibold uppercase tracking-wide text-ink-400">{label}</p>}
@@ -125,7 +160,7 @@ function InfoField({ label, value, strong }) {
   );
 }
 
-function SignatureBox({ label }) {
+function SignatureBox({ label }: { label: string }) {
   return (
     <div className="pt-10">
       <div className="h-px w-full bg-ink-300" />

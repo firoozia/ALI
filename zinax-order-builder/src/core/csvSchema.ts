@@ -65,3 +65,34 @@ export function buildProductionCsvRows(header: OrderHeader, rows: OrderRow[]): P
     notes: row.notes,
   }));
 }
+
+/** Escapes a single CSV field per RFC 4180: quote if it contains a comma,
+ * quote, or line break, and double any embedded quotes. */
+export function escapeCsvField(value: string | number | undefined | null): string {
+  const str = value === undefined || value === null ? "" : String(value);
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
+ * Serializes rows to a CSV string using PRODUCTION_CSV_COLUMNS order (or a
+ * custom column list), with CRLF line endings. This is the single place
+ * that decides column order and escaping — the Web edition's download
+ * helper and any future Windows exporter both call this (or its
+ * equivalent) rather than re-implementing CSV formatting.
+ */
+export function buildCsvString(rows: ProductionCsvRow[], columns: CsvColumn[] = PRODUCTION_CSV_COLUMNS): string {
+  const headerLine = columns.map((col) => escapeCsvField(col.header)).join(",");
+  const lines = rows.map((row) => columns.map((col) => escapeCsvField(row[col.key])).join(","));
+  return [headerLine, ...lines].join("\r\n");
+}
+
+export function buildProductionCsvString(header: OrderHeader, rows: OrderRow[]): string {
+  return buildCsvString(buildProductionCsvRows(header, rows));
+}
+
+export function productionCsvFileName(orderNo: string): string {
+  return `${orderNo}_production.csv`;
+}

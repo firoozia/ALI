@@ -19,6 +19,10 @@ export function generateInvoiceNo(year: number, sequence: number): string {
   return `INV-${year}-${String(sequence).padStart(4, "0")}`;
 }
 
+export function invoicePdfFileName(invoiceNo: string): string {
+  return `${invoiceNo}_proforma_invoice.pdf`;
+}
+
 export function makeDefaultInvoice(overrides: Partial<Invoice> = {}): Invoice {
   return {
     invoiceNo: "",

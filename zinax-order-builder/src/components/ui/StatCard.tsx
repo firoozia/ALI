@@ -1,5 +1,17 @@
-export default function StatCard({ label, value, icon: Icon, accent = "navy", suffix }) {
-  const accents = {
+import type { ComponentType, SVGProps } from "react";
+
+type Accent = "navy" | "gold" | "emerald" | "amber";
+
+interface StatCardProps {
+  label: string;
+  value: string | number;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  accent?: Accent;
+  suffix?: string;
+}
+
+export default function StatCard({ label, value, icon: Icon, accent = "navy", suffix }: StatCardProps) {
+  const accents: Record<Accent, string> = {
     navy: "bg-navy-800/10 text-navy-800",
     gold: "bg-gold-500/15 text-gold-600",
     emerald: "bg-emerald-500/10 text-emerald-600",

@@ -4,6 +4,7 @@
 // in either edition later without the preview screens changing.
 import type { OrderHeader, OrderRow } from "./orderSchema";
 import type { Invoice } from "./invoiceSchema";
+import type { CompanyProfile } from "./companyProfile";
 import { balanceDue, type OrderTotals } from "./calculations";
 
 export interface OrderPdfModel {
@@ -17,12 +18,16 @@ export interface OrderPdfModel {
   totalDoors: number;
   totalArea: number;
   preparedBy: string;
+  notes: string;
+  vendorBrandName: string;
+  vendorLogoUrl: string;
 }
 
 export function buildOrderPdfModel(
   header: OrderHeader,
   rows: OrderRow[],
-  totals: OrderTotals
+  totals: OrderTotals,
+  companyProfile: CompanyProfile
 ): OrderPdfModel {
   return {
     orderNo: header.orderNo,
@@ -35,6 +40,9 @@ export function buildOrderPdfModel(
     totalDoors: totals.totalDoors,
     totalArea: totals.totalArea,
     preparedBy: header.salesperson,
+    notes: header.notes,
+    vendorBrandName: companyProfile.brandName,
+    vendorLogoUrl: companyProfile.logoUrl,
   };
 }
 
@@ -55,13 +63,16 @@ export interface InvoicePdfModel {
   totals: OrderTotals;
   paidAmount: number;
   balanceDue: number;
+  vendorBrandName: string;
+  vendorLogoUrl: string;
 }
 
 export function buildInvoicePdfModel(
   header: OrderHeader,
   rows: OrderRow[],
   invoice: Invoice,
-  totals: OrderTotals
+  totals: OrderTotals,
+  companyProfile: CompanyProfile
 ): InvoicePdfModel {
   const currency = invoice.currency || header.currency;
   const paidAmount = Number(invoice.paidAmount) || 0;
@@ -82,5 +93,18 @@ export function buildInvoicePdfModel(
     totals,
     paidAmount,
     balanceDue: balanceDue(totals, paidAmount),
+    vendorBrandName: companyProfile.brandName,
+    vendorLogoUrl: companyProfile.logoUrl,
   };
+}
+
+export interface OrderPreviewData {
+  header: OrderHeader;
+  rows: OrderRow[];
+  totals: OrderTotals;
+  companyProfile: CompanyProfile;
+}
+
+export interface InvoicePreviewData extends OrderPreviewData {
+  invoice: Invoice;
 }

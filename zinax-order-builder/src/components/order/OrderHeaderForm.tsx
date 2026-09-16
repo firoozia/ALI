@@ -1,7 +1,9 @@
+import type { ChangeEvent, ReactNode } from "react";
 import { Calendar, Hash } from "lucide-react";
 import { CURRENCIES, SALESPERSONS } from "../../core/mockData";
+import type { OrderHeader } from "../../core/orderSchema";
 
-function Field({ label, children }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
       <label className="zx-label">{label}</label>
@@ -10,8 +12,16 @@ function Field({ label, children }) {
   );
 }
 
-export default function OrderHeaderForm({ header, onChange }) {
-  const set = (key) => (e) => onChange({ ...header, [key]: e.target.value });
+interface OrderHeaderFormProps {
+  header: OrderHeader;
+  onChange: (header: OrderHeader) => void;
+}
+
+type FieldChangeEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>;
+
+export default function OrderHeaderForm({ header, onChange }: OrderHeaderFormProps) {
+  const set = (key: keyof OrderHeader) => (e: FieldChangeEvent) =>
+    onChange({ ...header, [key]: e.target.value });
 
   return (
     <div className="zx-card p-5">

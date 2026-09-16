@@ -11,9 +11,15 @@ import {
 } from "lucide-react";
 import StatCard from "../components/ui/StatCard";
 import Badge from "../components/ui/Badge";
-import { DASHBOARD_STATS, RECENT_ORDERS } from "../core/mockData";
+import { DASHBOARD_STATS, RECENT_ORDERS, type RecentOrder } from "../core/mockData";
+import type { ScreenKey } from "../types";
 
-export default function Dashboard({ onNavigate, onOpenOrder }) {
+interface DashboardProps {
+  onNavigate: (key: ScreenKey) => void;
+  onOpenOrder: (order: RecentOrder) => void;
+}
+
+export default function Dashboard({ onNavigate, onOpenOrder }: DashboardProps) {
   return (
     <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -72,7 +78,7 @@ export default function Dashboard({ onNavigate, onOpenOrder }) {
                   <td className="zx-td">
                     <div className="flex items-center justify-end gap-1">
                       <button
-                        onClick={() => onOpenOrder && onOpenOrder(order)}
+                        onClick={() => onOpenOrder(order)}
                         title="Open"
                         className="zx-btn-ghost !px-2 !py-1.5"
                       >

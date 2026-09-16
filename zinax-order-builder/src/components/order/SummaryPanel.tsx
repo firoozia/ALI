@@ -1,14 +1,16 @@
+import { useRef } from "react";
 import {
   Save,
+  FolderOpen,
   FileSpreadsheet,
   FileText,
   Receipt,
   Printer,
   Info,
 } from "lucide-react";
-import { formatCurrency, formatNumber } from "../../core/calculations";
+import { formatCurrency, formatNumber, type OrderTotals } from "../../core/calculations";
 
-function Row({ label, value, strong }) {
+function Row({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {
   return (
     <div className="flex items-center justify-between py-1.5">
       <span className="text-sm text-ink-500">{label}</span>
@@ -19,15 +21,35 @@ function Row({ label, value, strong }) {
   );
 }
 
+interface SummaryPanelProps {
+  totals: OrderTotals;
+  currency: string;
+  invoiceMode: boolean;
+  onToggleInvoice: (mode: boolean) => void;
+  onSaveJson: () => void;
+  onOpenJsonFile: (file: File) => void;
+  onExportCsv: () => void;
+  onExportOrderPdf: () => void;
+  onExportInvoicePdf: () => void;
+  onPrintPreview: () => void;
+  invoicePdfDisabled: boolean;
+}
+
 export default function SummaryPanel({
   totals,
   currency,
   invoiceMode,
   onToggleInvoice,
-  onExport,
-  onPreviewOrder,
-  onPreviewInvoice,
-}) {
+  onSaveJson,
+  onOpenJsonFile,
+  onExportCsv,
+  onExportOrderPdf,
+  onExportInvoicePdf,
+  onPrintPreview,
+  invoicePdfDisabled,
+}: SummaryPanelProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   return (
     <div className="flex flex-col gap-5">
       <div className="zx-card p-5">
@@ -77,25 +99,44 @@ export default function SummaryPanel({
       <div className="zx-card p-5">
         <h3 className="mb-3 text-sm font-bold text-ink-900">Export Actions</h3>
         <div className="flex flex-col gap-2">
-          <button onClick={() => onExport("draft")} className="zx-btn-secondary w-full justify-start">
+          <button onClick={onSaveJson} className="zx-btn-secondary w-full justify-start">
             <Save className="h-4 w-4" />
-            Save Draft
+            Save Order (.json)
           </button>
-          <button onClick={() => onExport("csv")} className="zx-btn-secondary w-full justify-start">
+          <button onClick={() => fileInputRef.current?.click()} className="zx-btn-secondary w-full justify-start">
+            <FolderOpen className="h-4 w-4" />
+            Open Order (.json)
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onOpenJsonFile(file);
+              e.target.value = "";
+            }}
+          />
+          <button onClick={onExportCsv} className="zx-btn-secondary w-full justify-start">
             <FileSpreadsheet className="h-4 w-4" />
             Export Production CSV
           </button>
-          <button onClick={onPreviewOrder} className="zx-btn-primary w-full justify-start">
+          <button onClick={onExportOrderPdf} className="zx-btn-primary w-full justify-start">
             <FileText className="h-4 w-4" />
             Export Order PDF
           </button>
           {invoiceMode && (
-            <button onClick={onPreviewInvoice} className="zx-btn-gold w-full justify-start">
+            <button
+              onClick={onExportInvoicePdf}
+              disabled={invoicePdfDisabled}
+              className="zx-btn-gold w-full justify-start"
+            >
               <Receipt className="h-4 w-4" />
               Export Proforma Invoice PDF
             </button>
           )}
-          <button onClick={() => onExport("print")} className="zx-btn-ghost w-full justify-start">
+          <button onClick={onPrintPreview} className="zx-btn-ghost w-full justify-start">
             <Printer className="h-4 w-4" />
             Print Preview
           </button>

@@ -1,7 +1,8 @@
-import { Search, ChevronDown, Globe, Menu } from "lucide-react";
 import { useState } from "react";
+import { Search, ChevronDown, Globe, Menu } from "lucide-react";
+import type { ScreenKey } from "../../types";
 
-const TITLES = {
+const TITLES: Record<ScreenKey, string> = {
   dashboard: "Dashboard",
   "new-order": "New Order Builder",
   "order-preview": "Order Sheet Preview",
@@ -13,8 +14,13 @@ const TITLES = {
   settings: "Settings",
 };
 
-export default function Topbar({ active, onMenuClick }) {
-  const [lang, setLang] = useState("EN");
+interface TopbarProps {
+  active: ScreenKey;
+  onMenuClick: () => void;
+}
+
+export default function Topbar({ active, onMenuClick }: TopbarProps) {
+  const [lang, setLang] = useState<"EN" | "AR">("EN");
 
   return (
     <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-ink-200 bg-white/95 px-3 backdrop-blur sm:gap-4 sm:px-6">

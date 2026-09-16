@@ -1,8 +1,10 @@
+import type { ChangeEvent, ReactNode } from "react";
 import { Receipt } from "lucide-react";
 import { CURRENCIES } from "../../core/mockData";
-import { formatCurrency, balanceDue as computeBalanceDue } from "../../core/calculations";
+import { formatCurrency, balanceDue as computeBalanceDue, type OrderTotals } from "../../core/calculations";
+import type { Invoice } from "../../core/invoiceSchema";
 
-function Field({ label, children, className = "" }) {
+function Field({ label, children, className = "" }: { label: string; children: ReactNode; className?: string }) {
   return (
     <div className={className}>
       <label className="zx-label">{label}</label>
@@ -11,8 +13,17 @@ function Field({ label, children, className = "" }) {
   );
 }
 
-export default function InvoicePanel({ invoice, onChange, totals, currency }) {
-  const set = (key) => (e) => onChange({ ...invoice, [key]: e.target.value });
+interface InvoicePanelProps {
+  invoice: Invoice;
+  onChange: (invoice: Invoice) => void;
+  totals: OrderTotals;
+  currency: string;
+}
+
+type FieldChangeEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>;
+
+export default function InvoicePanel({ invoice, onChange, totals, currency }: InvoicePanelProps) {
+  const set = (key: keyof Invoice) => (e: FieldChangeEvent) => onChange({ ...invoice, [key]: e.target.value });
 
   const balanceDue = computeBalanceDue(totals, invoice.paidAmount);
 
@@ -87,7 +98,14 @@ export default function InvoicePanel({ invoice, onChange, totals, currency }) {
   );
 }
 
-function SummaryStat({ label, value, emphasize, tone }) {
+interface SummaryStatProps {
+  label: string;
+  value: string;
+  emphasize?: boolean;
+  tone?: "amber" | "emerald";
+}
+
+function SummaryStat({ label, value, emphasize, tone }: SummaryStatProps) {
   const toneCls =
     tone === "amber" ? "text-amber-700" : tone === "emerald" ? "text-emerald-700" : "text-ink-900";
   return (
