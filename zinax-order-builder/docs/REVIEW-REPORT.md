@@ -1,146 +1,135 @@
-# گزارش فنی — ZINAX Order Builder (Phase 1B: Export-Ready Prototype)
+# گزارش فنی — ZINAX Order Builder (Phase 1C: Production PDF, Real Catalog Pages, Settings Integration)
 
 **تاریخ:** 2026-09-16
 **برنچ:** `claude/zinax-order-builder-ui-jrk0vb`
-**PR:** https://github.com/firoozia/ALI/pull/1 (باز، بدون تعارض، بدون CI پیکربندی‌شده)
-**مسیر پروژه در ریپو:** `zinax-order-builder/` (پروژه‌ی مستقل، جدا از کد Python/CNC موجود در ریشه‌ی ریپو)
+**PR:** https://github.com/firoozia/ALI/pull/1 (باز)
+**کامیت این فاز:** `ea9706f`
+**مسیر پروژه در ریپو:** `zinax-order-builder/` (پروژه‌ی مستقل، جدا از کد Python/CNC موجود در ریشه‌ی ریپو — این فاز هم هیچ فایلی از FIROO CAM را لمس نکرده)
 
-> این نسخه‌ی به‌روزشده‌ی گزارش قبلی است. تفاوت اصلی نسبت به نسخه‌ی قبل: دیگر یک UI صرفاً mock نیست — Export ها واقعی هستند (فایل واقعی دانلود می‌شود)، و کل UI به TypeScript تبدیل شده.
+> این نسخه‌ی به‌روزشده‌ی گزارش Phase 1B است. تفاوت اصلی: موتور PDF از تصویر (html2canvas) به متن واقعی (`@react-pdf/renderer`) عوض شد، صفحات Customers/Designs/PDF Templates که قبلاً فقط placeholder بودند حالا کاملاً کار می‌کنند، و «سفارش جدید» به‌صورت پیش‌فرض خالی شروع می‌شود (به‌جای دیتای نمونه‌ی ثابت) و از پیش‌فرض‌های Settings استفاده می‌کند.
 
 ---
 
-## 1. هدف پروژه
+## 1. هدف پروژه (بدون تغییر)
 
-ابزار ثبت سفارش تولید درب کابینت/MDF/ممبران PVC. **این یک اپلیکیشن CNC/CAM نیست** — هیچ G-code، DXF، Tool Database، تنظیمات ماشین یا شبیه‌سازی CNC ندارد و عمداً از آن‌ها اجتناب شده.
+ابزار ثبت سفارش تولید درب کابینت/MDF/ممبران PVC. **این یک اپلیکیشن CNC/CAM نیست** — هیچ G-code، DXF، Tool Database، تنظیمات ماشین یا شبیه‌سازی CNC ندارد.
 
-محصول فقط این خروجی‌ها را می‌سازد (همه‌شان الان **واقعی** هستند، نه mock):
+محصول فقط این خروجی‌ها را می‌سازد (همه واقعی‌اند):
 
 1. **Production CSV** — برای import به FIROO CAM
-2. **Order PDF** — برگه‌ی سفارش کامل
+2. **Order PDF** — برگه‌ی سفارش کامل (حالا متن واقعی، نه تصویر)
 3. **Proforma Invoice PDF** — فاکتور پیش‌فاکتور (اختیاری، فقط وقتی invoice mode روشن است)
-4. **Order Project JSON** (`.zinax_order.json`) — ذخیره/بازکردن یک سفارش در حال کار
-
-هنوز: بدون بک‌اند، بدون دیتابیس واقعی. تنها «دیتابیس» موجود `localStorage` مرورگر برای تنظیمات (Settings) است.
-
----
-
-## 2. استک فنی
-
-| بخش | ابزار |
-|---|---|
-| فریم‌ورک | React 19 + Vite 8 |
-| زبان | **TypeScript در کل پروژه** (همه‌ی `.jsx` قبلی به `.tsx` تبدیل شدند) |
-| استایل | Tailwind CSS 3 |
-| PDF واقعی | `jspdf` + `html2canvas` (رندر همان پیش‌نمایش HTML به PDF چندصفحه‌ای A4) |
-| تست | `vitest` — ۵ فایل، ۲۵ تست، همه پاس |
-| Lint | oxlint — بدون warning |
-| Type-check | `tsc --noEmit` — بدون خطا |
+4. **Order Project JSON** (`.zinax_order.json`)
+5. **Settings JSON**, **Customers JSON**, **Catalog JSON** — export/import مستقل با replace/merge
 
 ---
 
-## 3. معماری Shared-Core (بدون تغییر نسبت به قبل، فقط تقویت‌شده)
+## 2. تغییر اصلی: موتور PDF از تصویر به متن واقعی
 
-`src/core/` جایگزین mock برای پکیج آینده‌ی `zinax_order_core` است که هم Web Edition (React) و هم Windows Edition (PySide6) از آن استفاده خواهند کرد. کامپوننت‌های UI هیچ قانون کسب‌وکاری را خودشان تکرار نمی‌کنند.
-
-```
-src/core/
-├── orderSchema.ts        # مدل سفارش + ستون‌های جدول + generateOrderNo
-├── invoiceSchema.ts       # مدل فاکتور + generateInvoiceNo + نام فایل PDF فاکتور
-├── calculations.ts        # فرمول‌های محاسباتی (بدون تغییر، دقیقاً طبق spec)
-├── validators.ts          # اعتبارسنجی ردیف + هدر + فاکتور + لیست خطاهای قابل‌نمایش
-├── csvSchema.ts            # ستون‌های CSV + escaping واقعی (RFC 4180) + سریالایز کامل
-├── pdfSchema.ts            # مدل داده‌ی PDF (حالا شامل برندینگ از Settings هم هست)
-├── exportContracts.ts     # قرارداد هر Export — مصرف صفحه‌ی Export Schema
-├── mockData.ts             # داده‌ی نمونه (بدون کاتالوگ‌ها — کاتالوگ‌ها منتقل شدند)
-│
-│  --- جدید در این فاز ---
-├── jsonOrderFile.ts        # ذخیره/بازخوانی سفارش به‌صورت .zinax_order.json + validation نسخه
-├── companyProfile.ts       # پروفایل شرکت (نام، لوگو، بانک، VAT پیش‌فرض، ...)
-├── catalogSchema.ts        # کاتالوگ قابل‌ویرایش: کد درب، رنگ PVC، ضخامت MDF، جهت گریین
-└── settingsSchema.ts       # بسته‌بندی تنظیمات + localStorage adapter + merge/replace
-```
-
-و دو فایل جدید خارج از `core/` (چون DOM/مرورگر-محور هستند، نه منطق کسب‌وکار):
-
-```
-src/lib/
-├── download.ts   # دانلود واقعی فایل (Blob) — CSV و JSON
-└── pdfExport.ts  # رندر واقعی PDF از یک DOM node (html2canvas + jsPDF)
-```
-
-**نکته‌ی مهم معماری:** `core/` هیچ import از DOM/مرورگر ندارد (جز یک `localStorage` adapter مشخص‌شده در `settingsSchema.ts` که با کامنت علامت‌گذاری شده تا نسخه‌ی ویندوز جایگزینش کند). تولید فایل واقعی (دانلود CSV/JSON، رندر PDF) در `src/lib/` است، نه در `core/` — چون این‌ها کاملاً مخصوص مرورگرند و نسخه‌ی ویندوز باید پیاده‌سازی کاملاً متفاوتی داشته باشد (نوشتن مستقیم روی دیسک، رندر PDF با یک کتابخانه‌ی پایتونی).
-
----
-
-## 4. چیزی که از قبل تغییر کرد: تبدیل کامل به TypeScript
-
-در نسخه‌ی قبلی گزارش، این محدودیت را صریحاً نوشته بودم: *«کامپوننت‌های UI به TSX تبدیل نشده‌اند»*. این محدودیت **رفع شد** — همه‌ی ۲۲ فایل `.jsx` باقی‌مانده به `.tsx` تبدیل شدند و هیچ فایل `.jsx` در پروژه باقی نمانده. Props همه از تایپ‌های `core/` (مثل `OrderRow`, `OrderHeader`, `Invoice`, `OrderTotals`) استفاده می‌کنند.
-
----
-
-## 5. Export های واقعی — چی الان کار می‌کند
-
-| Export | قبل | الان | فایل خروجی نمونه |
-|---|---|---|---|
-| Production CSV | فقط toast (mock) | ✅ دانلود واقعی، UTF-8 BOM، ترتیب دقیق ستون‌ها، escaping صحیح کاما/کوتیشن/خط جدید | `ZX-2026-0149_production.csv` |
-| Order PDF | فقط toast (mock) | ✅ فایل PDF واقعی (چندصفحه‌ای در صورت نیاز، A4 landscape) | `ZX-2026-0149_order_sheet.pdf` |
-| Proforma Invoice PDF | فقط toast (mock) | ✅ فایل PDF واقعی (A4 portrait) | `INV-2026-0091_proforma_invoice.pdf` |
-| Order Project | وجود نداشت | ✅ Save/Open به‌صورت `.zinax_order.json` با schema_version | `ZX-2026-0149.zinax_order.json` |
-| Settings | وجود نداشت | ✅ Export/Import JSON + Replace/Merge + اتوسیو در localStorage | `zinax_settings.json` |
-
-همه‌ی این‌ها با **Playwright واقعی** روی dev server تست شدند (نه فقط build/lint) — فایل‌ها واقعاً دانلود و محتوایشان بررسی شد.
-
-### اعتبارسنجی قبل از Export
-
-قبل از هر Export، `core/validators.ts` بررسی می‌کند:
-- فیلدهای اجباری هدر (Order No., Order Date, Customer Name)
-- فیلدهای اجباری هر ردیف (Design Code, Width, Height, Qty)
-- (برای فاکتور) فیلدهای اجباری فاکتور (Invoice No., Invoice Date, Due Date)
-
-اگر خطا باشد: Export متوقف می‌شود، toast قرمز با **لیست دقیق خطاها** نمایش داده می‌شود (مثلاً «Row 2: Width mm is required»)، و هیچ فایلی دانلود نمی‌شود. دکمه‌ی Export Invoice PDF هم وقتی داده نامعتبر است، `disabled` می‌شود.
-
----
-
-## 6. صفحات
-
-| # | صفحه | وضعیت |
+| | قبل (Phase 1B) | الان (Phase 1C) |
 |---|---|---|
-| 1 | Dashboard | ✅ کامل |
-| 2 | New Order Builder | ✅ کامل — با Export های واقعی |
-| 3 | Order PDF Preview | ✅ کامل — دانلود واقعی |
-| 4 | Proforma Invoice PDF Preview | ✅ کامل — دانلود واقعی |
-| 5 | Export Schema Preview | ✅ کامل |
-| 6 | **Settings** | ✅ **کامل شد** (قبلاً جزئی بود) — پروفایل شرکت، آپلود لوگو، کاتالوگ کد درب/رنگ PVC/ضخامت MDF/جهت گریین (همه قابل افزودن/ویرایش/حذف)، Export/Import با انتخاب Replace یا Merge، ذخیره‌ی خودکار در localStorage |
-| 7 | Customers / Designs / PDF Templates | ⚪ هنوز فقط Placeholder |
+| کتابخانه | `html2canvas` + `jspdf` | `@react-pdf/renderer` |
+| نوع خروجی | عکس رندرشده از DOM چسبانده‌شده در PDF | PDF متنی واقعی با فونت embedded |
+| حجم فایل (سفارش ۳ ردیفی) | ~۱۱ مگابایت | **۴.۵ کیلوبایت** (Order) / **۵.۷ کیلوبایت** (Invoice) |
+| متن قابل انتخاب/کپی/جستجو | ❌ خیر | ✅ آره — تأیید شده (فایل دارای `/Font` واقعی است) |
+| اثر روی باندل اصلی | مستقیماً import شده، همیشه لود می‌شود | فقط با `import()` دینامیک، فقط وقتی کاربر Export می‌زند لود می‌شود |
 
-نکته: کاتالوگ Settings حالا واقعاً به Door Order Table وصل است — کدهای درب/PVC/ضخامت/جهت که در Settings تعریف می‌شوند، همان‌هایی هستند که در dropdown های جدول سفارش دیده می‌شوند (نه یک لیست ثابت جدا).
+موتور قدیمی (`html2canvas`/`jspdf`) **حذف نشده** — به‌صورت یک فایل fallback غیرفعال (`src/lib/pdf/legacyCanvasPdfExport.ts`) نگه داشته شده که خودش هم به‌صورت دینامیک import می‌شود، پس در باندل نهایی حتی یک بایت هم اضافه نمی‌کند (در build واقعی چک شد — chunk جدا برایش ساخته نمی‌شود چون هیچ‌جا صدا زده نمی‌شود).
+
+معماری abstraction (`src/lib/pdf/`):
+```
+pdfExportTypes.ts          # تایپ‌های PdfExportResult, PdfEngine
+exportOrderPdf.ts           # API عمومی: exportOrderPdf(order) → دانلود واقعی
+exportInvoicePdf.ts         # API عمومی: exportInvoicePdf(order) → دانلود واقعی
+reactPdfOrderDocument.tsx    # کامپوننت @react-pdf/renderer برای Order (A4 landscape)
+reactPdfInvoiceDocument.tsx  # کامپوننت @react-pdf/renderer برای Invoice (A4 portrait)
+legacyCanvasPdfExport.ts     # موتور قدیمی، غیرفعال، فقط fallback
+```
+هیچ محاسبه‌ی totals داخل کامپوننت‌های PDF انجام نمی‌شود — همه از `core/pdfSchema.ts` و `core/calculations.ts` خوانده می‌شود.
+
+### تأثیر روی حجم باندل (Code-splitting — نیاز صریح این فاز)
+
+| باندل | قبل | الان |
+|---|---|---|
+| باندل اصلی (بار اول صفحه) | ~906 KB (gzip ~267 KB) | **~340 KB (gzip ~96 KB)** |
+| موتور PDF (`react-pdf.browser`) | بخشی از باندل اصلی | **1.2 MB جدا، فقط lazy-load موقع Export** (gzip ~445 KB) |
+
+کاهش ~۶۴٪ در حجم JS بار اولیه — تأیید شده با `npm run build`.
 
 ---
 
-## 7. تست‌ها
+## 3. صفحات جدید (قبلاً فقط Placeholder بودند، الان کاملاً واقعی‌اند)
 
-۵ فایل تست در `src/core/__tests__/` با vitest، جمعاً ۲۵ تست:
-
-| فایل | چی رو تست می‌کند |
+| صفحه | چه کاری می‌کند |
 |---|---|
-| `csvSchema.test.ts` | ترتیب دقیق ستون‌ها، escaping RFC 4180، عدم وجود فیلدهای فاکتور |
-| `calculations.test.ts` | فرمول‌های discount/VAT/subtotal/total، VAT قابل‌تغییر، محاسبه‌ی متراژ |
-| `jsonOrderFile.test.ts` | شکل فایل ذخیره‌شده، رد فایل با نسخه/app نامعتبر، رد JSON خراب |
-| `settingsSchema.test.ts` | رفتار merge (upsert بر اساس code) در برابر replace (جایگزینی کامل) |
-| `pdfSchema.test.ts` | مدل PDF دقیقاً همان ردیف‌ها و جمع‌های سفارش را حمل می‌کند |
+| **Customers** | افزودن/ویرایش/حذف مشتری، جستجو (نام/شرکت/تلفن/واتساپ/ایمیل/شماره‌مالیاتی)، Export/Import JSON با Replace یا Merge (upsert بر اساس `customerId`)، ذخیره‌ی خودکار در `localStorage` (کلید جدا از Settings) |
+| **Designs** (کاتالوگ) | ۴ بخش مستقل: کد درب، رنگ PVC، ضخامت MDF، جهت گریین — هرکدام افزودن/ویرایش/حذف/غیرفعال‌کردن (soft-deactivate، نه حذف کامل)، Export/Import با Replace/Merge |
+| **PDF Templates** | عنوان Order PDF / Invoice PDF، ۴ سوییچ نمایش/عدم‌نمایش (شماره‌مالیاتی، اطلاعات بانکی، امضاها، قیمت روی Order PDF)، آپلود مهر (stamp)، یادداشت پایین صفحه، جای‌گیر زبان (EN/AR) |
 
-اجرا: `npm run test` (یا `npx vitest run`)
+نکته‌ی مهم: کد درب/رنگ PVC که در یک سفارش قبلی استفاده شده ولی بعداً در Designs غیرفعال شده، در آن سفارش قدیمی **همچنان نمایش داده می‌شود** (با برچسب «(inactive)») به‌جای این‌که خالی/گم شود — دیتای تاریخی خراب نمی‌شود.
 
 ---
 
-## 8. چیزهایی که هنوز ساخته **نشده**
+## 4. اتصال Settings به «سفارش جدید» (نیاز صریح این فاز)
 
-1. **صفحات Customers / Designs / PDF Templates واقعی** — فقط placeholder.
-2. **نسخه‌ی Windows (Electron/Tauri wrapper)** — فقط تصمیم معماری؛ کدی نوشته نشده. اما حالا لایه‌ی `core/` و `src/lib/` به‌وضوح جدا هستند، پس این کار آینده ساده‌تر شد.
-3. **چندزبانه/RTL واقعی (عربی)** — فقط دکمه‌ی تاگل EN/AR، بدون ترجمه واقعی.
-4. **PDF بهینه‌تر** — روش فعلی (`html2canvas` + `jsPDF`) خروجی را به عکس تبدیل می‌کند، پس فایل نسبتاً بزرگ است (برای سفارش ۳ ردیفی حدود ۱۱ مگابایت) و متن قابل انتخاب/کپی نیست. جایگزین بهتر: `@react-pdf/renderer` (متن واقعی، فایل کوچک‌تر) — نیاز به یک لایه‌ی layout جدا دارد، برای فاز بعد گذاشته شده.
-5. **Code-splitting** — باندل نهایی یک فایل JS حدود ۹۰۰ کیلوبایت است (به‌خاطر jsPDF/html2canvas). قبل از هر انتشار واقعی باید با `dynamic import()` جدا شود.
-6. **پیش‌فرض‌های Settings در سفارش جدید** — پروفایل شرکت (VAT پیش‌فرض، فروشنده‌ی پیش‌فرض و...) هنوز به فرم «سفارش جدید» وصل نیست؛ Builder همیشه از یک سفارش نمونه‌ی ثابت شروع می‌شود.
+| قبل | الان |
+|---|---|
+| Builder همیشه با یک سفارش نمونه‌ی ثابت شروع می‌شد | دکمه‌ی **«New Blank Order»** — کاملاً خالی، شماره‌ی سفارش با `generateOrderNo` واقعی ساخته می‌شود، ارز/VAT پیش‌فرض/فروشنده/شرایط پرداخت از Settings خوانده می‌شود |
+| دیتای نمونه پیش‌فرض بود | دکمه‌ی **«Load Sample Order»** — الان اختیاری، با تأیید (`window.confirm`) قبل از پاک‌کردن کار در حال انجام |
+| — | انتخاب مشتری موجود از dropdown داخل Order Header → پر شدن خودکار نام/شرکت/تلفن/واتساپ/ایمیل/آدرس/شماره‌مالیاتی |
+| — | شماره‌ی فاکتور فقط یک‌بار، دقیقاً لحظه‌ی روشن‌شدن اولِ Invoice Mode ساخته می‌شود — با خاموش/روشن‌کردن دوباره عوض نمی‌شود |
+
+تأیید شده با تست دستی زنده (Playwright روی dev server): بارگذاری سفارش نمونه → Grand Total به‌درستی AED 1,267.35 محاسبه شد، شماره‌ی فاکتور `INV-2026-0091` فقط یک‌بار ساخته شد.
+
+---
+
+## 5. قانون حیاتی اعتبارسنجی که رعایت شده
+
+> **«قیمت واحد صفر نباید وقتی Invoice Mode خاموش است بلاک شود.»**
+
+`core/validators.ts` → `getInvoiceValidationErrors(invoice, rows, invoiceMode)` وقتی `invoiceMode === false` بلافاصله `[]` برمی‌گرداند — قبل از هرگونه بررسی قیمت/تخفیف/VAT. این دقیقاً با یک تست واحد (`validators.test.ts`) پوشش داده شده: *"does NOT block a zero unit price when invoice mode is OFF"*.
+
+---
+
+## 6. تست‌ها
+
+**۹ فایل، ۵۱ تست، همه پاس** (`npm run test`):
+
+| فایل | تعداد | چی رو تست می‌کند |
+|---|---|---|
+| `orderSchema.test.ts` | ۲ (جدید) | فرمت `generateOrderNo`/`generateInvoiceNo` |
+| `csvSchema.test.ts` | — (به‌روزشده) | ستون‌ها + فیلدهای جدید هدر، بدون فیلد فاکتور |
+| `pdfSchema.test.ts` | — (به‌روزشده) | امضای جدید ۵/۶-آرگومانی builder ها، برندینگ سفارشی |
+| `settingsSchema.test.ts` | +۲ | merge برای `pdfTemplate`، پارس lenient فایل قدیمی بدون `pdfTemplate` |
+| `catalogSchema.test.ts` | ۵ (جدید) | فرمت ضخامت MDF، فقط‌آیتم‌فعال پیش‌فرض، merge بر اساس code/thickness، replace، round-trip |
+| `customerSchema.test.ts` | ۵ (جدید) | جستجوی case-insensitive، merge بر اساس `customerId`، replace، round-trip |
+| `validators.test.ts` | ۹ (جدید) | تمام قوانین سفارش/فاکتور، از‌جمله قانون بالا |
+
+اجرا: `npm run test` — نتیجه: `Test Files 9 passed | Tests 51 passed`
+
+---
+
+## 7. تست دستی زنده (Playwright روی dev server واقعی)
+
+موارد زیر واقعاً در مرورگر headless اجرا و تأیید شدند (نه فقط unit test):
+
+- ✅ New Blank Order: شماره‌ی سفارش تازه، ارز/فروشنده از Settings پر می‌شود، ۰ ردیف
+- ✅ Customers: افزودن مشتری از UI، ذخیره در `localStorage`، **باقی‌ماندن بعد از رفرش واقعی صفحه**
+- ✅ Load Sample Order → محاسبه‌ی صحیح Total Doors/Area/Grand Total
+- ✅ Export Production CSV → فایل واقعی دانلود شد، محتوا بررسی شد: **هیچ فیلد مخصوص فاکتور (قیمت/تخفیف/VAT) در آن نیست**
+- ✅ Export Order PDF → فایل ۴.۵ کیلوبایتی با فونت embedded (نه تصویر)
+- ✅ روشن‌کردن Proforma Invoice → شماره‌ی فاکتور یک‌بار ساخته شد، جدول قیمت/تخفیف/VAT/Line Total درست نمایش داده شد
+- ✅ Export Proforma Invoice PDF → فایل ۵.۷ کیلوبایتی با فونت embedded
+
+---
+
+## 8. چیزهایی که هنوز ساخته **نشده** / محدودیت‌های شناخته‌شده
+
+1. **نسخه‌ی Windows** — فقط تصمیم معماری؛ کدی نوشته نشده. جداسازی `core/`/`lib/` این کار را آسان‌تر کرده.
+2. **چندزبانه/RTL واقعی (عربی)** — فقط جای‌گیر (`PdfLanguage: "EN" | "AR"` در تنظیمات Template)، بدون ترجمه یا layout راست‌به‌چپ واقعی.
+3. **یک مکانیزم انتخاب مشتری، نه دو تا** — طبق spec باید بشود مشتری را «در سفارش جدید انتخاب کرد»؛ این با یک dropdown داخل Order Header پیاده شده (نه یک UI انتخاب جداگانه‌ی دوم در خود صفحه‌ی Customers) — یک تصمیم عمدی برای جلوگیری از تکرار UI.
+4. باندل موتور PDF (`react-pdf.browser`) با gzip حدود ۴۴۵ کیلوبایت است — قابل قبول چون فقط lazy-load می‌شود، ولی در صورت نیاز به بارگذاری سریع‌تر Export می‌توان بعداً بررسی‌اش کرد.
+5. هنوز بدون بک‌اند واقعی/دیتابیس — «دیتابیس»ها سه `localStorage` جدا هستند (Settings، Customers، و کاتالوگ که داخل Settings است).
 
 ---
 
@@ -152,21 +141,20 @@ cd ALI/zinax-order-builder
 npm install
 
 npm run dev          # dev server روی http://localhost:5173
-npm run build         # باید بدون خطا تمام شود
+npm run build         # باید بدون خطا تمام شود — چک کنید chunk جدا برای react-pdf ساخته شود
 npm run lint           # oxlint — باید بدون warning تمام شود
-npx tsc --noEmit       # type-check کامل — باید بدون خطا تمام شود
-npm run test            # vitest — باید ۲۵/۲۵ پاس شود
+npx tsc --noEmit       # باید بدون خطا تمام شود
+npm run test            # vitest — باید ۵۱/۵۱ پاس شود
 ```
 
 ---
 
 ## 10. چک‌لیست پیشنهادی برای ریویو برنامه‌نویس ارشد
 
-- [ ] آیا مرز `core/` در برابر `src/lib/` (منطق کسب‌وکار در برابر رندر مرورگر) منطقی است؟
-- [ ] آیا فرمت PDF فعلی (تصویر رندرشده) برای MVP قابل قبول است یا باید همین الان به `@react-pdf/renderer` سوییچ کنیم؟
-- [ ] آیا شکل `.zinax_order.json` و `zinax_settings.json` (schema_version + app id) با چیزی که بک‌اند/دسکتاپ واقعی نیاز دارد هم‌خوانی دارد؟
-- [ ] اولویت فاز بعدی: صفحات Customers/Designs واقعی، بسته‌بندی Windows، یا بهینه‌سازی PDF/باندل؟
+- [ ] آیا مکانیزم انتخاب مشتری (فقط dropdown در Order Header) کافی است یا باید UI انتخاب جدا هم در صفحه‌ی Customers اضافه شود؟
+- [ ] آیا حجم gzip ~۴۴۵ کیلوبایتی موتور PDF (حتی به‌صورت lazy) قابل قبول است؟
+- [ ] اولویت فاز بعدی: نسخه‌ی Windows (Electron/Tauri یا PySide6)، ترجمه‌ی واقعی عربی/RTL، یا اتصال به یک بک‌اند واقعی؟
 
 ---
 
-*این گزارش توسط دستیار (Claude) بر اساس کد فعلی روی برنچ `claude/zinax-order-builder-ui-jrk0vb` (کامیت `d693d0a`) تهیه شده است.*
+*این گزارش توسط دستیار (Claude) بر اساس کد فعلی روی برنچ `claude/zinax-order-builder-ui-jrk0vb` (کامیت `ea9706f`) تهیه شده است.*
