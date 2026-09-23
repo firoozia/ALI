@@ -79,9 +79,9 @@ export const ORDER_ROW_COLUMNS: OrderRowColumn[] = [
   { key: "mdfThickness", label: "MDF Thickness", editor: "select-mdf" },
   { key: "pvcCode", label: "PVC Code", editor: "select-pvc" },
   { key: "pvcColor", label: "PVC Color", editor: "text" },
-  { key: "grain", label: "Grain Direction", editor: "select-grain" },
-  { key: "unitPrice", label: "Unit Price", editor: "number", align: "right", invoiceOnly: true },
-  { key: "discount", label: "Discount %", editor: "number", align: "right", invoiceOnly: true },
+  { key: "grain", label: "Grain", editor: "select-grain" },
+  { key: "unitPrice", label: "Price", editor: "number", align: "right", invoiceOnly: true },
+  { key: "discount", label: "Disc %", editor: "number", align: "right", invoiceOnly: true },
   { key: "vat", label: "VAT %", editor: "number", align: "right", invoiceOnly: true },
   // "Line Total" itself is computed (see core/calculations.ts) and has no
   // OrderRow key of its own — the UI renders it alongside this schema.

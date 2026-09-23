@@ -44,6 +44,11 @@ export default function App() {
   // navigation; persisting it to localStorage means it also survives
   // closing the app, until "New Blank Order"/"Load Sample Order" resets it.
   const [orderDraft, setOrderDraft] = useState(() => loadOrderDraftFromStorage() ?? makeBlankDraft(settings.companyProfile));
+  // Also lifted here rather than living inside OrderHeaderForm — that
+  // component (and NewOrderBuilder itself) unmounts on every screen
+  // switch, which was resetting the collapsed Order Header back open every
+  // time you left and returned to New Order.
+  const [orderHeaderOpen, setOrderHeaderOpen] = useState(true);
 
   useEffect(() => {
     saveSettingsToStorage(settings);
@@ -111,6 +116,8 @@ export default function App() {
           onChangeInvoice={setInvoice}
           invoiceMode={orderDraft.invoiceMode}
           onChangeInvoiceMode={setInvoiceMode}
+          orderHeaderOpen={orderHeaderOpen}
+          onToggleOrderHeaderOpen={setOrderHeaderOpen}
           onPreviewOrder={handlePreviewOrder}
           onPreviewInvoice={handlePreviewInvoice}
         />

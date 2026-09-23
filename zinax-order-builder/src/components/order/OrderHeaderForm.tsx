@@ -19,11 +19,14 @@ interface OrderHeaderFormProps {
   onChange: (header: OrderHeader) => void;
   customers: Customer[];
   onSelectCustomer: (customer: Customer) => void;
+  /** Controlled so the collapsed/expanded state survives navigating away and back (lifted up to App.tsx). */
+  open: boolean;
+  onToggleOpen: (open: boolean) => void;
 }
 
 type FieldChangeEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>;
 
-export default function OrderHeaderForm({ header, onChange, customers, onSelectCustomer }: OrderHeaderFormProps) {
+export default function OrderHeaderForm({ header, onChange, customers, onSelectCustomer, open, onToggleOpen }: OrderHeaderFormProps) {
   const set = (key: keyof OrderHeader) => (e: FieldChangeEvent) =>
     onChange({ ...header, [key]: e.target.value });
 
@@ -32,7 +35,13 @@ export default function OrderHeaderForm({ header, onChange, customers, onSelectC
     : "No customer yet — click to expand and fill in the order header";
 
   return (
-    <CollapsibleSection title="Order Header" subtitle={summary} headerExtra={<span className="zx-badge bg-ink-100 text-ink-600">Draft</span>}>
+    <CollapsibleSection
+      title="Order Header"
+      subtitle={summary}
+      open={open}
+      onToggle={onToggleOpen}
+      headerExtra={<span className="zx-badge bg-ink-100 text-ink-600">Draft</span>}
+    >
       {customers.length > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-navy-100 bg-navy-50 px-3 py-2">
           <UserCheck className="h-4 w-4 shrink-0 text-navy-700" />

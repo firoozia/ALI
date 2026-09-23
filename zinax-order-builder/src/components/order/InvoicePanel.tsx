@@ -26,14 +26,26 @@ export default function InvoicePanel({ invoice, onChange, totals, currency }: In
   const set = (key: keyof Invoice) => (e: FieldChangeEvent) => onChange({ ...invoice, [key]: e.target.value });
 
   const balanceDue = computeBalanceDue(totals, invoice.paidAmount);
+  const isQuotation = invoice.documentType === "quotation";
 
   return (
     <div className="zx-card p-5">
-      <div className="mb-4 flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gold-500/15 text-gold-600">
-          <Receipt className="h-4 w-4" />
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gold-500/15 text-gold-600">
+            <Receipt className="h-4 w-4" />
+          </div>
+          <h3 className="text-sm font-bold text-ink-900">{isQuotation ? "Quotation Details" : "Proforma Invoice Details"}</h3>
         </div>
-        <h3 className="text-sm font-bold text-ink-900">Proforma Invoice Details</h3>
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink-600">
+          <input
+            type="checkbox"
+            checked={isQuotation}
+            onChange={(e) => onChange({ ...invoice, documentType: e.target.checked ? "quotation" : "invoice" })}
+            className="h-4 w-4 rounded border-ink-300 text-navy-800 focus:ring-navy-500"
+          />
+          This is a Quotation
+        </label>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

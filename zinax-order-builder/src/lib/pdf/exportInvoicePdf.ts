@@ -10,7 +10,7 @@ import type { PdfExportResult } from "./pdfExportTypes";
 export async function exportInvoicePdf(order: InvoicePreviewData): Promise<PdfExportResult> {
   const { header, rows, totals, companyProfile, pdfTemplate, invoice } = order;
   const model = buildInvoicePdfModel(header, rows, invoice, totals, companyProfile, pdfTemplate);
-  const fileName = invoicePdfFileName(model.invoiceNo);
+  const fileName = invoicePdfFileName(model.invoiceNo, model.documentType);
 
   const [{ pdf }, { default: ReactPdfInvoiceDocument }] = await Promise.all([
     import("@react-pdf/renderer"),

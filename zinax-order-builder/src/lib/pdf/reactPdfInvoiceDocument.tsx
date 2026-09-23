@@ -3,7 +3,7 @@
 // balance due) are read from model.totals / model.balanceDue — computed
 // exclusively by core/calculations.ts, never recalculated here.
 import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
-import type { InvoicePdfModel } from "../../core/pdfSchema";
+import { INVOICE_LINE_COLUMNS, type InvoicePdfModel } from "../../core/pdfSchema";
 import { discountAmount, vatAmount, lineTotal, formatCurrency, formatNumber } from "../../core/calculations";
 
 const styles = StyleSheet.create({
@@ -43,17 +43,20 @@ const styles = StyleSheet.create({
   signatureLabel: { fontSize: 8, color: "#64748b" },
 });
 
-const INVOICE_COLUMNS = [
-  { key: "no", label: "No.", flex: 0.4 },
-  { key: "description", label: "Description", flex: 1.6 },
-  { key: "designCode", label: "Design Code", flex: 1 },
-  { key: "size", label: "Size", flex: 1 },
-  { key: "qty", label: "Qty", flex: 0.5 },
-  { key: "unitPrice", label: "Unit Price", flex: 0.9 },
-  { key: "discount", label: "Discount", flex: 0.9 },
-  { key: "vat", label: "VAT", flex: 0.9 },
-  { key: "lineTotal", label: "Line Total", flex: 1 },
-];
+// Flex ratios for the shared INVOICE_LINE_COLUMNS list (core/pdfSchema.ts) —
+// column set/labels live there so the PDF and the on-screen preview can't
+// drift apart; only this file's layout (flex widths) is local to it.
+const COLUMN_FLEX: Record<string, number> = {
+  no: 0.4,
+  designCode: 1,
+  pvcCode: 1,
+  size: 1,
+  qty: 0.5,
+  unitPrice: 0.9,
+  discount: 0.9,
+  vat: 0.9,
+  lineTotal: 1,
+};
 
 export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfModel }) {
   const currency = model.currency;
@@ -74,7 +77,7 @@ export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfMo
             </View>
           </View>
           <View style={styles.titleBlock}>
-            <Text style={styles.title}>{t.invoicePdfTitle}</Text>
+            <Text style={styles.title}>{model.documentTitle}</Text>
             <Text style={styles.metaLine}>Invoice No. {model.invoiceNo}</Text>
             <Text style={styles.metaLine}>Order No. {model.orderNo}</Text>
           </View>
@@ -122,14 +125,14 @@ export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfMo
         </View>
 
         <View style={styles.tableHeaderRow} fixed>
-          {INVOICE_COLUMNS.map((col) => {
+          {INVOICE_LINE_COLUMNS.map((col) => {
             // Amount columns drop the currency code from every row cell to
             // cut repetition — it appears here once instead, in the header.
             const isAmountCol = ["unitPrice", "discount", "vat", "lineTotal"].includes(col.key);
             return (
               <Text
                 key={col.key}
-                style={[styles.tableHeaderCell, { flex: col.flex }, col.key !== "description" && col.key !== "designCode" ? { textAlign: "right" } : {}]}
+                style={[styles.tableHeaderCell, { flex: COLUMN_FLEX[col.key] }, col.align === "right" ? { textAlign: "right" } : {}]}
               >
                 {col.label}
                 {isAmountCol ? ` (${currency})` : ""}
@@ -140,17 +143,17 @@ export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfMo
 
         {model.rows.map((row, idx) => (
           <View key={row.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]} wrap={false}>
-            <Text style={[styles.tableCell, { flex: INVOICE_COLUMNS[0].flex }]}>{idx + 1}</Text>
-            <Text style={[styles.tableCell, { flex: INVOICE_COLUMNS[1].flex }]}>{row.designName || "-"}</Text>
-            <Text style={[styles.tableCell, { flex: INVOICE_COLUMNS[2].flex }]}>{row.designCode || "-"}</Text>
-            <Text style={[styles.tableCell, { flex: INVOICE_COLUMNS[3].flex }]}>
+            <Text style={[styles.tableCell, { flex: COLUMN_FLEX.no }]}>{idx + 1}</Text>
+            <Text style={[styles.tableCell, { flex: COLUMN_FLEX.designCode }]}>{row.designCode || "-"}</Text>
+            <Text style={[styles.tableCell, { flex: COLUMN_FLEX.pvcCode }]}>{row.pvcCode || "-"}</Text>
+            <Text style={[styles.tableCell, { flex: COLUMN_FLEX.size }]}>
               {row.width || "-"} × {row.height || "-"}
             </Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[4].flex }]}>{row.qty || "-"}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[5].flex }]}>{formatNumber(row.unitPrice)}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[6].flex }]}>{formatNumber(discountAmount(row))}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[7].flex }]}>{formatNumber(vatAmount(row))}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[8].flex }]}>{formatNumber(lineTotal(row))}</Text>
+            <Text style={[styles.tableCellRight, { flex: COLUMN_FLEX.qty }]}>{row.qty || "-"}</Text>
+            <Text style={[styles.tableCellRight, { flex: COLUMN_FLEX.unitPrice }]}>{formatNumber(row.unitPrice)}</Text>
+            <Text style={[styles.tableCellRight, { flex: COLUMN_FLEX.discount }]}>{formatNumber(discountAmount(row))}</Text>
+            <Text style={[styles.tableCellRight, { flex: COLUMN_FLEX.vat }]}>{formatNumber(vatAmount(row))}</Text>
+            <Text style={[styles.tableCellRight, { flex: COLUMN_FLEX.lineTotal }]}>{formatNumber(lineTotal(row))}</Text>
           </View>
         ))}
 

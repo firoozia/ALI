@@ -16,7 +16,7 @@ import type { OrderPreviewData, InvoicePreviewData } from "../core/pdfSchema";
 import type { AppSettings } from "../core/settingsSchema";
 import type { Customer } from "../core/customerSchema";
 import { downloadCsvFile, downloadJsonFile, readFileAsText } from "../lib/download";
-import { makeBlankHeader, makeBlankInvoice, nextInvoiceNo } from "../lib/orderDraft";
+import { makeBlankHeader, makeBlankInvoice } from "../lib/orderDraft";
 
 interface NewOrderBuilderProps {
   settings: AppSettings;
@@ -29,6 +29,8 @@ interface NewOrderBuilderProps {
   onChangeInvoice: (invoice: Invoice) => void;
   invoiceMode: boolean;
   onChangeInvoiceMode: (mode: boolean) => void;
+  orderHeaderOpen: boolean;
+  onToggleOrderHeaderOpen: (open: boolean) => void;
   onPreviewOrder: (data: OrderPreviewData) => void;
   onPreviewInvoice: (data: InvoicePreviewData) => void;
 }
@@ -44,6 +46,8 @@ export default function NewOrderBuilder({
   onChangeInvoice,
   invoiceMode,
   onChangeInvoiceMode,
+  orderHeaderOpen,
+  onToggleOrderHeaderOpen,
   onPreviewOrder,
   onPreviewInvoice,
 }: NewOrderBuilderProps) {
@@ -64,10 +68,12 @@ export default function NewOrderBuilder({
   };
 
   const orderErrors = getOrderValidationErrors(header, rows, settings.catalog);
-  const invoiceErrors = invoiceMode
-    ? [...orderErrors, ...getInvoiceValidationErrors(invoice, rows, invoiceMode)]
-    : [];
-  const invoicePdfDisabled = invoiceMode && invoiceErrors.length > 0;
+  // Generating the Invoice/Quotation PDF is always available — it no
+  // longer depends on the "Proforma Invoice" toggle above the Door Order
+  // Table, which only controls whether pricing columns are shown there.
+  const invoiceErrors = [...orderErrors, ...getInvoiceValidationErrors(invoice, rows, true)];
+  const invoicePdfDisabled = invoiceErrors.length > 0;
+  const invoicePdfLabel = invoice.documentType === "quotation" ? "Quotation PDF" : "Invoice PDF";
 
   /** Shows an error toast and returns true if there are validation errors to block on. */
   const blockIfInvalid = (errors: string[], action: string): boolean => {
@@ -94,13 +100,6 @@ export default function NewOrderBuilder({
     onChangeRows(makeInitialRows());
     onChangeInvoiceMode(false);
     flashToast("Sample order loaded.");
-  };
-
-  const handleToggleInvoiceMode = (next: boolean) => {
-    onChangeInvoiceMode(next);
-    if (next && !invoice.invoiceNo) {
-      onChangeInvoice({ ...invoice, invoiceNo: nextInvoiceNo() });
-    }
   };
 
   const handleSelectCustomer = (customer: Customer) => {
@@ -183,7 +182,7 @@ export default function NewOrderBuilder({
   };
 
   return (
-    <div className="mx-auto max-w-[1500px] px-4 py-4 pb-32 sm:px-6 sm:py-6">
+    <div className="mx-auto max-w-[1500px] px-4 py-4 pb-40 sm:px-6 sm:py-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
           <button onClick={handleNewBlankOrder} className="zx-btn-secondary">
@@ -212,6 +211,8 @@ export default function NewOrderBuilder({
             onChange={onChangeHeader}
             customers={customers}
             onSelectCustomer={handleSelectCustomer}
+            open={orderHeaderOpen}
+            onToggleOpen={onToggleOrderHeaderOpen}
           />
           <DoorOrderTable
             rows={rows}
@@ -220,9 +221,7 @@ export default function NewOrderBuilder({
             currency={header.currency}
             catalog={settings.catalog}
           />
-          {invoiceMode && (
-            <InvoicePanel invoice={invoice} onChange={onChangeInvoice} totals={totals} currency={invoice.currency} />
-          )}
+          <InvoicePanel invoice={invoice} onChange={onChangeInvoice} totals={totals} currency={invoice.currency} />
         </div>
 
         {!sidebarCollapsed && (
@@ -231,13 +230,14 @@ export default function NewOrderBuilder({
               totals={totals}
               currency={header.currency}
               invoiceMode={invoiceMode}
-              onToggleInvoice={handleToggleInvoiceMode}
+              onToggleInvoice={onChangeInvoiceMode}
               onSaveJson={handleSaveJson}
               onOpenJsonFile={handleOpenJsonFile}
               onExportCsv={handleExportCsv}
               onExportOrderPdf={handlePreviewOrder}
               onExportInvoicePdf={handlePreviewInvoice}
               onPrintPreview={handlePreviewOrder}
+              invoicePdfLabel={invoicePdfLabel}
               invoicePdfDisabled={invoicePdfDisabled}
               invoicePdfDisabledReason={invoicePdfDisabled ? `Cannot export yet: ${invoiceErrors[0]}` : undefined}
             />
@@ -248,8 +248,8 @@ export default function NewOrderBuilder({
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur lg:left-64">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-3 py-2.5 sm:px-6 sm:py-3">
           <p className="hidden truncate text-xs text-ink-500 lg:block">
-            {header.orderNo} · {totals.totalDoors} doors · {totals.totalRows} rows
-            {invoiceMode ? ` · Grand Total ${header.currency} ${totals.finalTotal.toFixed(2)}` : ""}
+            {header.orderNo} · {totals.totalDoors} doors · {totals.totalRows} rows · Grand Total {header.currency}{" "}
+            {totals.finalTotal.toFixed(2)}
           </p>
           <div className="flex flex-1 items-center justify-end gap-1.5 overflow-x-auto sm:gap-2">
             <button onClick={handleSaveJson} className="zx-btn-secondary !px-2.5 sm:!px-3.5">
@@ -264,16 +264,15 @@ export default function NewOrderBuilder({
               <FileText className="h-4 w-4" />
               <span className="hidden sm:inline">Order PDF</span>
             </button>
-            {invoiceMode && (
-              <button
-                onClick={handlePreviewInvoice}
-                disabled={invoicePdfDisabled}
-                className="zx-btn-gold !px-2.5 sm:!px-3.5"
-              >
-                <Receipt className="h-4 w-4" />
-                <span className="hidden sm:inline">Invoice PDF</span>
-              </button>
-            )}
+            <button
+              onClick={handlePreviewInvoice}
+              disabled={invoicePdfDisabled}
+              title={invoicePdfDisabled ? `Cannot export yet: ${invoiceErrors[0]}` : undefined}
+              className="zx-btn-gold !px-2.5 sm:!px-3.5"
+            >
+              <Receipt className="h-4 w-4" />
+              <span className="hidden sm:inline">{invoicePdfLabel}</span>
+            </button>
             <button onClick={handlePreviewOrder} className="zx-btn-ghost !px-2.5 sm:!px-3.5">
               <Printer className="h-4 w-4" />
               <span className="hidden sm:inline">Print</span>

@@ -5,6 +5,9 @@ interface CollapsibleSectionProps {
   title: string;
   subtitle?: string;
   defaultOpen?: boolean;
+  /** Controlled open state — when passed (with onToggle), the section no longer tracks its own open/closed state, so a caller can persist it across remounts. */
+  open?: boolean;
+  onToggle?: (open: boolean) => void;
   /** Rendered to the right of the header, outside the toggle button (e.g. a switch) so it never triggers collapse. */
   headerExtra?: ReactNode;
   children: ReactNode;
@@ -22,17 +25,21 @@ export default function CollapsibleSection({
   title,
   subtitle,
   defaultOpen = true,
+  open: controlledOpen,
+  onToggle,
   headerExtra,
   children,
 }: CollapsibleSectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [localOpen, setLocalOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? localOpen;
+  const toggle = () => (onToggle ? onToggle(!open) : setLocalOpen((o) => !o));
 
   return (
     <div className="zx-card overflow-hidden">
       <div className="flex items-center justify-between gap-2 p-5">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={toggle}
           aria-expanded={open}
           className="flex flex-1 items-center gap-2 text-left"
         >

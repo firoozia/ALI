@@ -42,7 +42,7 @@ export function makeBlankHeader(companyProfile: CompanyProfile): OrderHeader {
 
 export function makeBlankInvoice(companyProfile: CompanyProfile): Invoice {
   return {
-    invoiceNo: "",
+    invoiceNo: generateInvoiceNo(new Date().getFullYear(), nextInvoiceSequence()),
     invoiceDate: new Date().toISOString().slice(0, 10),
     dueDate: "",
     paymentTerms: companyProfile.defaultPaymentTerms,
@@ -51,6 +51,7 @@ export function makeBlankInvoice(companyProfile: CompanyProfile): Invoice {
     bankDetails: companyProfile.bankDetails,
     paidAmount: 0,
     orderDiscountPercent: 0,
+    documentType: "invoice",
     notes: "",
   };
 }

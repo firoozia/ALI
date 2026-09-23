@@ -171,6 +171,7 @@ export function makeInitialInvoice(): Invoice {
     bankDetails: "Emirates NBD — IBAN AE07 0331 1234 5678 9012 345 — Al Farsi Interiors LLC",
     paidAmount: 700,
     orderDiscountPercent: 0,
+    documentType: "invoice",
     notes: "Proforma invoice — subject to final confirmation of quantities.",
   };
 }

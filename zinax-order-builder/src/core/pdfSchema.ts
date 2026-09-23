@@ -5,10 +5,36 @@
 // business math are computed in this file beyond calling into
 // core/calculations.ts — PDF components must never recompute a total.
 import type { OrderHeader, OrderRow } from "./orderSchema";
-import type { Invoice } from "./invoiceSchema";
+import type { Invoice, InvoiceDocumentType } from "./invoiceSchema";
 import type { CompanyProfile } from "./companyProfile";
 import type { PdfTemplateSettings } from "./pdfTemplateSchema";
 import { balanceDue, type OrderTotals } from "./calculations";
+
+/**
+ * The invoice/quotation line-item table's columns — shared by the
+ * downloadable PDF (lib/pdf/reactPdfInvoiceDocument.tsx) and the on-screen
+ * preview (pages/InvoicePdfPreview.tsx) so the two can never drift apart
+ * the way they previously did (one got fixed, the other kept showing the
+ * old columns). Only the design + PVC/color codes identify the line item —
+ * no design name/description, per the production team's request.
+ */
+export interface InvoiceLineColumn {
+  key: "no" | "designCode" | "pvcCode" | "size" | "qty" | "unitPrice" | "discount" | "vat" | "lineTotal";
+  label: string;
+  align?: "left" | "right";
+}
+
+export const INVOICE_LINE_COLUMNS: InvoiceLineColumn[] = [
+  { key: "no", label: "No." },
+  { key: "designCode", label: "Design Code" },
+  { key: "pvcCode", label: "PVC Code" },
+  { key: "size", label: "Size" },
+  { key: "qty", label: "Qty", align: "right" },
+  { key: "unitPrice", label: "Unit Price", align: "right" },
+  { key: "discount", label: "Discount", align: "right" },
+  { key: "vat", label: "VAT", align: "right" },
+  { key: "lineTotal", label: "Line Total", align: "right" },
+];
 
 // The PDF engine (@react-pdf/renderer) can only decode raster images
 // (PNG/JPEG) for its <Image> component — never SVG. A logo/stamp saved
@@ -78,6 +104,9 @@ export interface InvoicePdfModel {
   invoiceNo: string;
   invoiceDate: string;
   dueDate: string;
+  documentType: InvoiceDocumentType;
+  /** "Quotation" when documentType is "quotation", otherwise the configured Proforma Invoice title from the PDF template. */
+  documentTitle: string;
   orderNo: string;
   customerName: string;
   companyName: string;
@@ -114,6 +143,8 @@ export function buildInvoicePdfModel(
     invoiceNo: invoice.invoiceNo,
     invoiceDate: invoice.invoiceDate,
     dueDate: invoice.dueDate,
+    documentType: invoice.documentType,
+    documentTitle: invoice.documentType === "quotation" ? "Quotation" : pdfTemplate.invoicePdfTitle,
     orderNo: header.orderNo,
     customerName: header.customerName,
     companyName: header.companyName,

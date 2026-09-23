@@ -33,6 +33,8 @@ interface SummaryPanelProps {
   onExportOrderPdf: () => void;
   onExportInvoicePdf: () => void;
   onPrintPreview: () => void;
+  /** "Invoice PDF" or "Quotation PDF" — generating either is always available, independent of the pricing-columns toggle below. */
+  invoicePdfLabel: string;
   invoicePdfDisabled: boolean;
   /** Why the button is disabled, shown as a hover tooltip — e.g. the first validation error. */
   invoicePdfDisabledReason?: string;
@@ -49,6 +51,7 @@ export default function SummaryPanel({
   onExportOrderPdf,
   onExportInvoicePdf,
   onPrintPreview,
+  invoicePdfLabel,
   invoicePdfDisabled,
   invoicePdfDisabledReason,
 }: SummaryPanelProps) {
@@ -63,7 +66,7 @@ export default function SummaryPanel({
           <Row label="Total Area" value={`${formatNumber(totals.totalArea)} m²`} />
           <Row label="Est. PVC Consumption" value={`${formatNumber(totals.pvcConsumption)} m²`} />
           <Row label="Currency" value={currency} />
-          {invoiceMode && <Row label="Grand Total" value={formatCurrency(totals.finalTotal, currency)} strong />}
+          <Row label="Grand Total" value={formatCurrency(totals.finalTotal, currency)} strong />
         </div>
       </CollapsibleSection>
 
@@ -130,17 +133,15 @@ export default function SummaryPanel({
             <FileText className="h-4 w-4" />
             Export Order PDF
           </button>
-          {invoiceMode && (
-            <button
-              onClick={onExportInvoicePdf}
-              disabled={invoicePdfDisabled}
-              title={invoicePdfDisabled ? invoicePdfDisabledReason : undefined}
-              className="zx-btn-gold w-full justify-start"
-            >
-              <Receipt className="h-4 w-4" />
-              Export Proforma Invoice PDF
-            </button>
-          )}
+          <button
+            onClick={onExportInvoicePdf}
+            disabled={invoicePdfDisabled}
+            title={invoicePdfDisabled ? invoicePdfDisabledReason : undefined}
+            className="zx-btn-gold w-full justify-start"
+          >
+            <Receipt className="h-4 w-4" />
+            Export {invoicePdfLabel}
+          </button>
           <button onClick={onPrintPreview} className="zx-btn-ghost w-full justify-start">
             <Printer className="h-4 w-4" />
             Print Preview
