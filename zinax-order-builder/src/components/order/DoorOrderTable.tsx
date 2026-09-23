@@ -301,7 +301,7 @@ export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, curren
       </div>
 
       <div className="max-h-[480px] overflow-auto">
-        <table className="w-full min-w-[1500px] border-collapse">
+        <table className="border-collapse">
           <thead>
             <tr className="sticky top-0 z-10">
               <th className="zx-th sticky left-0 z-20 w-12 bg-ink-50">No.</th>

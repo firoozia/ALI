@@ -182,7 +182,7 @@ export default function NewOrderBuilder({
   };
 
   return (
-    <div className="mx-auto max-w-[1500px] px-4 py-4 pb-40 sm:px-6 sm:py-6">
+    <div className="mx-auto max-w-[1500px] px-4 pt-4 pb-40 sm:px-6 sm:pt-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
           <button onClick={handleNewBlankOrder} className="zx-btn-secondary">
