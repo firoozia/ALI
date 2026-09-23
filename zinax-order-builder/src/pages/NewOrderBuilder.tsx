@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Save, FileSpreadsheet, FileText, Receipt, Printer, FilePlus2, FlaskConical, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Save, FileSpreadsheet, FileText, Receipt, Printer, FilePlus2, PanelRightClose, PanelRightOpen } from "lucide-react";
 import OrderHeaderForm from "../components/order/OrderHeaderForm";
 import DoorOrderTable from "../components/order/DoorOrderTable";
 import InvoicePanel from "../components/order/InvoicePanel";
 import SummaryPanel from "../components/order/SummaryPanel";
 import Toast, { type ToastTone } from "../components/ui/Toast";
-import { makeInitialHeader, makeInitialInvoice, makeInitialRows } from "../core/mockData";
 import { computeOrderTotals } from "../core/calculations";
 import { buildProductionCsvString, productionCsvFileName } from "../core/csvSchema";
 import { buildOrderFile, serializeOrderFile, orderFileName, parseOrderFile } from "../core/jsonOrderFile";
@@ -15,6 +14,7 @@ import { type Invoice } from "../core/invoiceSchema";
 import type { OrderPreviewData, InvoicePreviewData } from "../core/pdfSchema";
 import type { AppSettings } from "../core/settingsSchema";
 import type { Customer } from "../core/customerSchema";
+import type { OrderStatus } from "../core/orderHistorySchema";
 import { downloadCsvFile, downloadJsonFile, readFileAsText } from "../lib/download";
 import { makeBlankHeader, makeBlankInvoice } from "../lib/orderDraft";
 
@@ -31,6 +31,8 @@ interface NewOrderBuilderProps {
   onChangeInvoiceMode: (mode: boolean) => void;
   orderHeaderOpen: boolean;
   onToggleOrderHeaderOpen: (open: boolean) => void;
+  /** Records this order's furthest-reached status (Draft/Ready for Production/Exported/Invoiced) into the Dashboard's order history. */
+  onRecordOrderEvent: (status: OrderStatus, totalDoors: number) => void;
   onPreviewOrder: (data: OrderPreviewData) => void;
   onPreviewInvoice: (data: InvoicePreviewData) => void;
 }
@@ -48,6 +50,7 @@ export default function NewOrderBuilder({
   onChangeInvoiceMode,
   orderHeaderOpen,
   onToggleOrderHeaderOpen,
+  onRecordOrderEvent,
   onPreviewOrder,
   onPreviewInvoice,
 }: NewOrderBuilderProps) {
@@ -93,15 +96,6 @@ export default function NewOrderBuilder({
     flashToast("Started a new blank order.");
   };
 
-  const handleLoadSampleOrder = () => {
-    if (!window.confirm("This replaces the current order with sample data. Continue?")) return;
-    onChangeHeader(makeInitialHeader());
-    onChangeInvoice(makeInitialInvoice());
-    onChangeRows(makeInitialRows());
-    onChangeInvoiceMode(false);
-    flashToast("Sample order loaded.");
-  };
-
   const handleSelectCustomer = (customer: Customer) => {
     onChangeHeader({
       ...header,
@@ -122,6 +116,7 @@ export default function NewOrderBuilder({
       const csv = buildProductionCsvString(header, rows);
       const saved = await downloadCsvFile(productionCsvFileName(header.orderNo), csv);
       if (saved) {
+        onRecordOrderEvent("Exported", totals.totalDoors);
         flashToast(`Production CSV downloaded (${rows.length} rows).`);
       } else {
         flashToast("Export cancelled — no file was saved.", "neutral");
@@ -137,6 +132,7 @@ export default function NewOrderBuilder({
       const file = buildOrderFile(header, rows, invoiceMode, invoice);
       const saved = await downloadJsonFile(orderFileName(header.orderNo), serializeOrderFile(file));
       if (saved) {
+        onRecordOrderEvent("Draft", totals.totalDoors);
         flashToast("Order file saved.");
       } else {
         flashToast("Save cancelled — no file was saved.", "neutral");
@@ -166,11 +162,13 @@ export default function NewOrderBuilder({
 
   const handlePreviewOrder = () => {
     if (blockIfInvalid(orderErrors, "export Order PDF")) return;
+    onRecordOrderEvent("Ready for Production", totals.totalDoors);
     onPreviewOrder({ header, rows, totals, companyProfile: settings.companyProfile, pdfTemplate: settings.pdfTemplate });
   };
 
   const handlePreviewInvoice = () => {
     if (blockIfInvalid(invoiceErrors, "export Invoice PDF")) return;
+    onRecordOrderEvent("Invoiced", totals.totalDoors);
     onPreviewInvoice({
       header,
       rows,
@@ -188,10 +186,6 @@ export default function NewOrderBuilder({
           <button onClick={handleNewBlankOrder} className="zx-btn-secondary">
             <FilePlus2 className="h-4 w-4" />
             New Blank Order
-          </button>
-          <button onClick={handleLoadSampleOrder} className="zx-btn-ghost">
-            <FlaskConical className="h-4 w-4" />
-            Load Sample Order
           </button>
         </div>
         <button

@@ -9,15 +9,21 @@ import Settings from "./pages/Settings";
 import Customers from "./pages/Customers";
 import Designs from "./pages/Designs";
 import PdfTemplates from "./pages/PdfTemplates";
-import { makeInitialHeader, makeInitialRows, type RecentOrder } from "./core/mockData";
-import { computeOrderTotals } from "./core/calculations";
 import type { OrderHeader, OrderRow } from "./core/orderSchema";
 import type { Invoice } from "./core/invoiceSchema";
 import { loadSettingsFromStorage, saveSettingsToStorage, type AppSettings } from "./core/settingsSchema";
 import { loadCustomersFromStorage, saveCustomersToStorage, type Customer } from "./core/customerSchema";
 import type { Catalog } from "./core/catalogSchema";
 import type { OrderPreviewData, InvoicePreviewData } from "./core/pdfSchema";
-import { makeBlankDraft, loadOrderDraftFromStorage, saveOrderDraftToStorage } from "./lib/orderDraft";
+import {
+  makeOrderRecord,
+  upsertOrderRecord,
+  loadOrderHistoryFromStorage,
+  saveOrderHistoryToStorage,
+  type OrderRecord,
+  type OrderStatus,
+} from "./core/orderHistorySchema";
+import { makeBlankDraft, duplicateOrderRecord, loadOrderDraftFromStorage, saveOrderDraftToStorage } from "./lib/orderDraft";
 import type { ScreenKey } from "./types";
 
 const SIDEBAR_SCREENS: ScreenKey[] = [
@@ -42,13 +48,17 @@ export default function App() {
   // time the screen switches to a PDF preview and back, which used to
   // silently wipe the whole order. Keeping it here means it survives that
   // navigation; persisting it to localStorage means it also survives
-  // closing the app, until "New Blank Order"/"Load Sample Order" resets it.
+  // closing the app, until "New Blank Order" resets it.
   const [orderDraft, setOrderDraft] = useState(() => loadOrderDraftFromStorage() ?? makeBlankDraft(settings.companyProfile));
   // Also lifted here rather than living inside OrderHeaderForm — that
   // component (and NewOrderBuilder itself) unmounts on every screen
   // switch, which was resetting the collapsed Order Header back open every
   // time you left and returned to New Order.
   const [orderHeaderOpen, setOrderHeaderOpen] = useState(true);
+  // The running history of every order that's been saved/exported at
+  // least once — this is what gives the Dashboard real stats and a real
+  // "Recent Orders" list instead of static mock data.
+  const [orderHistory, setOrderHistory] = useState<OrderRecord[]>(loadOrderHistoryFromStorage);
 
   useEffect(() => {
     saveSettingsToStorage(settings);
@@ -62,6 +72,10 @@ export default function App() {
     saveOrderDraftToStorage(orderDraft);
   }, [orderDraft]);
 
+  useEffect(() => {
+    saveOrderHistoryToStorage(orderHistory);
+  }, [orderHistory]);
+
   const setHeader = (header: OrderHeader) => setOrderDraft((prev) => ({ ...prev, header }));
   const setRows = (rows: OrderRow[]) => setOrderDraft((prev) => ({ ...prev, rows }));
   const setInvoice = (invoice: Invoice) => setOrderDraft((prev) => ({ ...prev, invoice }));
@@ -71,20 +85,20 @@ export default function App() {
 
   const handleChangeCatalog = (catalog: Catalog) => setSettings({ ...settings, catalog });
 
-  const handleOpenOrderFromDashboard = (order: RecentOrder) => {
-    // Populate a mock preview using the recent order's rows + default header/rows for demo purposes.
-    const rows = makeInitialRows();
-    const header = {
-      ...makeInitialHeader(),
-      orderNo: order.orderNo,
-      orderDate: order.date,
-      customerName: order.customer,
-      projectName: order.project,
-      salesperson: order.salesperson,
-    };
-    const totals = computeOrderTotals(rows);
-    setOrderPreviewData({ header, rows, totals, companyProfile: settings.companyProfile, pdfTemplate: settings.pdfTemplate });
-    setScreen("order-preview");
+  const handleRecordOrderEvent = (status: OrderStatus, totalDoors: number) => {
+    setOrderHistory((prev) =>
+      upsertOrderRecord(prev, makeOrderRecord(orderDraft.header, orderDraft.rows, orderDraft.invoice, orderDraft.invoiceMode, status, totalDoors))
+    );
+  };
+
+  const handleOpenOrderFromDashboard = (order: OrderRecord) => {
+    setOrderDraft({ header: order.header, rows: order.rows, invoice: order.invoice, invoiceMode: order.invoiceMode });
+    setScreen("new-order");
+  };
+
+  const handleDuplicateOrderFromDashboard = (order: OrderRecord) => {
+    setOrderDraft(duplicateOrderRecord(order));
+    setScreen("new-order");
   };
 
   const handlePreviewOrder = (data: OrderPreviewData) => {
@@ -101,7 +115,14 @@ export default function App() {
 
   switch (screen) {
     case "dashboard":
-      content = <Dashboard onNavigate={handleNavigate} onOpenOrder={handleOpenOrderFromDashboard} />;
+      content = (
+        <Dashboard
+          onNavigate={handleNavigate}
+          orders={orderHistory}
+          onOpenOrder={handleOpenOrderFromDashboard}
+          onDuplicateOrder={handleDuplicateOrderFromDashboard}
+        />
+      );
       break;
     case "new-order":
       content = (
@@ -118,6 +139,7 @@ export default function App() {
           onChangeInvoiceMode={setInvoiceMode}
           orderHeaderOpen={orderHeaderOpen}
           onToggleOrderHeaderOpen={setOrderHeaderOpen}
+          onRecordOrderEvent={handleRecordOrderEvent}
           onPreviewOrder={handlePreviewOrder}
           onPreviewInvoice={handlePreviewInvoice}
         />
@@ -150,7 +172,14 @@ export default function App() {
       content = <Settings settings={settings} onChangeSettings={setSettings} onNavigate={handleNavigate} />;
       break;
     default:
-      content = <Dashboard onNavigate={handleNavigate} onOpenOrder={handleOpenOrderFromDashboard} />;
+      content = (
+        <Dashboard
+          onNavigate={handleNavigate}
+          orders={orderHistory}
+          onOpenOrder={handleOpenOrderFromDashboard}
+          onDuplicateOrder={handleDuplicateOrderFromDashboard}
+        />
+      );
   }
 
   const sidebarActive: ScreenKey = SIDEBAR_SCREENS.includes(screen) ? screen : "new-order";

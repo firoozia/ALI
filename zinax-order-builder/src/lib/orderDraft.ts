@@ -8,10 +8,11 @@
 // back — previously the draft lived inside NewOrderBuilder, which
 // unmounts on every screen switch, silently wiping the whole order. It
 // also persists to localStorage so a draft survives closing the app,
-// until "New Blank Order" or "Load Sample Order" is explicitly clicked.
-import { generateOrderNo, type OrderHeader, type OrderRow } from "../core/orderSchema";
+// until "New Blank Order" is explicitly clicked.
+import { generateOrderNo, nextRowId, type OrderHeader, type OrderRow } from "../core/orderSchema";
 import { generateInvoiceNo, type Invoice } from "../core/invoiceSchema";
 import type { CompanyProfile } from "../core/companyProfile";
+import type { OrderRecord } from "../core/orderHistorySchema";
 import { nextOrderSequence, nextInvoiceSequence } from "./orderSequence";
 
 export interface OrderDraft {
@@ -67,6 +68,20 @@ export function makeBlankDraft(companyProfile: CompanyProfile): OrderDraft {
 
 export function nextInvoiceNo(): string {
   return generateInvoiceNo(new Date().getFullYear(), nextInvoiceSequence());
+}
+
+/** Builds a fresh draft from a past order record — new order/invoice numbers and today's date, new row ids, everything else copied. */
+export function duplicateOrderRecord(record: OrderRecord): OrderDraft {
+  return {
+    header: {
+      ...record.header,
+      orderNo: generateOrderNo(new Date().getFullYear(), nextOrderSequence()),
+      orderDate: new Date().toISOString().slice(0, 10),
+    },
+    rows: record.rows.map((row) => ({ ...row, id: nextRowId() })),
+    invoice: { ...record.invoice, invoiceNo: nextInvoiceNo() },
+    invoiceMode: record.invoiceMode,
+  };
 }
 
 const LOCAL_STORAGE_KEY = "zinax_order_draft_v1";
