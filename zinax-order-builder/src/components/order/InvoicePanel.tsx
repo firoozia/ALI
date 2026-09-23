@@ -62,6 +62,9 @@ export default function InvoicePanel({ invoice, onChange, totals, currency }: In
         <Field label="VAT % (default)">
           <input type="number" value={invoice.vat} onChange={set("vat")} className="zx-input" />
         </Field>
+        <Field label="Overall Discount %">
+          <input type="number" value={invoice.orderDiscountPercent} onChange={set("orderDiscountPercent")} className="zx-input" />
+        </Field>
         <Field label="Paid Amount">
           <input type="number" value={invoice.paidAmount} onChange={set("paidAmount")} className="zx-input" />
         </Field>
@@ -80,12 +83,14 @@ export default function InvoicePanel({ invoice, onChange, totals, currency }: In
         </Field>
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-ink-100 bg-ink-50/60 p-4 sm:grid-cols-4 xl:grid-cols-7">
+      <div className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-ink-100 bg-ink-50/60 p-4 sm:grid-cols-3 xl:grid-cols-5">
         <SummaryStat label="Subtotal" value={formatCurrency(totals.subtotal, currency)} />
-        <SummaryStat label="Total Discount" value={formatCurrency(totals.totalDiscount, currency)} />
+        <SummaryStat label="Row Discounts" value={formatCurrency(totals.totalDiscount, currency)} />
         <SummaryStat label="Taxable Amount" value={formatCurrency(totals.taxable, currency)} />
         <SummaryStat label="VAT Amount" value={formatCurrency(totals.vatAmount, currency)} />
-        <SummaryStat label="Grand Total" value={formatCurrency(totals.grandTotal, currency)} emphasize />
+        <SummaryStat label="Grand Total" value={formatCurrency(totals.grandTotal, currency)} />
+        <SummaryStat label="Overall Discount" value={formatCurrency(totals.orderDiscountAmount, currency)} />
+        <SummaryStat label="Net Total" value={formatCurrency(totals.finalTotal, currency)} emphasize />
         <SummaryStat label="Paid Amount" value={formatCurrency(invoice.paidAmount, currency)} />
         <SummaryStat
           label="Balance Due"

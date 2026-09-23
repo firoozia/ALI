@@ -23,6 +23,10 @@ export interface DesignCatalogItem {
   maxWidthMm: number;
   minHeightMm: number;
   maxHeightMm: number;
+  /** Auto-filled into a Door Order row's Unit Price when this design is selected; 0 = no default, row keeps its own value. Still editable per-row afterward. */
+  defaultUnitPrice: number;
+  /** Auto-filled into a Door Order row's MDF Thickness when this design is selected — must match an mdfThickness option's formatted label (e.g. "18 mm"); "" = no default. */
+  defaultMdfThickness: string;
   active: boolean;
 }
 
@@ -32,6 +36,8 @@ export interface PvcCatalogItem {
   color: string;
   category: string;
   finish: string;
+  /** Auto-filled into a Door Order row's Grain Direction when this color is selected — must match a grainDirections option's label; "" = no default. */
+  defaultGrain: string;
   active: boolean;
 }
 
@@ -55,14 +61,23 @@ export function nextCatalogItemId(): string {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Backfills `id` on any catalog entries loaded from storage/import before this field existed. */
+/** Backfills `id` (and any newer fields) on catalog entries loaded from storage/import before those fields existed. */
 export function ensureCatalogIds(catalog: Catalog): Catalog {
   const withId = <T extends { id?: string }>(items: T[]): T[] =>
     items.map((item) => (item.id ? item : { ...item, id: nextCatalogItemId() }));
+  const designs = withId(catalog.designs).map((d) => ({
+    ...d,
+    defaultUnitPrice: d.defaultUnitPrice ?? 0,
+    defaultMdfThickness: d.defaultMdfThickness ?? "",
+  }));
+  const pvcColors = withId(catalog.pvcColors).map((p) => ({
+    ...p,
+    defaultGrain: p.defaultGrain ?? "",
+  }));
   return {
     ...catalog,
-    designs: withId(catalog.designs),
-    pvcColors: withId(catalog.pvcColors),
+    designs,
+    pvcColors,
     grainDirections: withId(catalog.grainDirections),
   };
 }
@@ -79,19 +94,19 @@ export function formatMdfThickness(option: MdfThicknessOption): string {
 }
 
 const DEFAULT_DESIGNS: DesignCatalogItem[] = [
-  { id: "seed-zd001", code: "ZD001", name: "Classic Offset Door", family: "Offset", description: "Single offset panel with routed edge.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
-  { id: "seed-zd002", code: "ZD002", name: "Double Offset Door", family: "Offset", description: "Twin offset panel groove.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
-  { id: "seed-zd003", code: "ZD003", name: "Modern Groove Door", family: "Groove", description: "Horizontal modern groove line.", minWidthMm: 350, maxWidthMm: 800, minHeightMm: 600, maxHeightMm: 1300, active: true },
-  { id: "seed-zd004", code: "ZD004", name: "Shaker V-Groove", family: "Shaker", description: "Classic shaker frame with V-groove center.", minWidthMm: 300, maxWidthMm: 650, minHeightMm: 600, maxHeightMm: 1200, active: true },
-  { id: "seed-zd005", code: "ZD005", name: "Raised Panel Classic", family: "Classic", description: "Traditional raised center panel.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1250, active: true },
+  { id: "seed-zd001", code: "ZD001", name: "Classic Offset Door", family: "Offset", description: "Single offset panel with routed edge.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, defaultUnitPrice: 185, defaultMdfThickness: "18 mm", active: true },
+  { id: "seed-zd002", code: "ZD002", name: "Double Offset Door", family: "Offset", description: "Twin offset panel groove.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, defaultUnitPrice: 165, defaultMdfThickness: "18 mm", active: true },
+  { id: "seed-zd003", code: "ZD003", name: "Modern Groove Door", family: "Groove", description: "Horizontal modern groove line.", minWidthMm: 350, maxWidthMm: 800, minHeightMm: 600, maxHeightMm: 1300, defaultUnitPrice: 210, defaultMdfThickness: "18 mm", active: true },
+  { id: "seed-zd004", code: "ZD004", name: "Shaker V-Groove", family: "Shaker", description: "Classic shaker frame with V-groove center.", minWidthMm: 300, maxWidthMm: 650, minHeightMm: 600, maxHeightMm: 1200, defaultUnitPrice: 195, defaultMdfThickness: "22 mm", active: true },
+  { id: "seed-zd005", code: "ZD005", name: "Raised Panel Classic", family: "Classic", description: "Traditional raised center panel.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1250, defaultUnitPrice: 220, defaultMdfThickness: "22 mm", active: true },
 ];
 
 const DEFAULT_PVC_COLORS: PvcCatalogItem[] = [
-  { id: "seed-pvc-101", code: "PVC-101", color: "Walnut", category: "Wood Tone", finish: "Matte", active: true },
-  { id: "seed-pvc-202", code: "PVC-202", color: "Oak", category: "Wood Tone", finish: "Matte", active: true },
-  { id: "seed-pvc-305", code: "PVC-305", color: "Stone Gray", category: "Solid", finish: "Matte", active: true },
-  { id: "seed-pvc-410", code: "PVC-410", color: "Matte White", category: "Solid", finish: "Matte", active: true },
-  { id: "seed-pvc-512", code: "PVC-512", color: "Graphite", category: "Solid", finish: "Gloss", active: true },
+  { id: "seed-pvc-101", code: "PVC-101", color: "Walnut", category: "Wood Tone", finish: "Matte", defaultGrain: "Vertical", active: true },
+  { id: "seed-pvc-202", code: "PVC-202", color: "Oak", category: "Wood Tone", finish: "Matte", defaultGrain: "Vertical", active: true },
+  { id: "seed-pvc-305", code: "PVC-305", color: "Stone Gray", category: "Solid", finish: "Matte", defaultGrain: "Horizontal", active: true },
+  { id: "seed-pvc-410", code: "PVC-410", color: "Matte White", category: "Solid", finish: "Matte", defaultGrain: "Horizontal", active: true },
+  { id: "seed-pvc-512", code: "PVC-512", color: "Graphite", category: "Solid", finish: "Gloss", defaultGrain: "Vertical", active: true },
 ];
 
 const DEFAULT_MDF_THICKNESS: MdfThicknessOption[] = [

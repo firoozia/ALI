@@ -163,8 +163,18 @@ export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfMo
           </View>
           <View style={styles.totalsDivider} />
           <View style={styles.totalsRow}>
-            <Text style={styles.totalsStrongLabel}>Grand Total</Text>
-            <Text style={styles.totalsStrongValue}>{formatCurrency(model.totals.grandTotal, currency)}</Text>
+            <Text style={styles.totalsLabel}>Grand Total</Text>
+            <Text style={styles.totalsValue}>{formatCurrency(model.totals.grandTotal, currency)}</Text>
+          </View>
+          {model.totals.orderDiscountAmount > 0 ? (
+            <View style={styles.totalsRow}>
+              <Text style={styles.totalsLabel}>Overall Discount</Text>
+              <Text style={styles.totalsValue}>- {formatCurrency(model.totals.orderDiscountAmount, currency)}</Text>
+            </View>
+          ) : null}
+          <View style={styles.totalsRow}>
+            <Text style={styles.totalsStrongLabel}>Net Total</Text>
+            <Text style={styles.totalsStrongValue}>{formatCurrency(model.totals.finalTotal, currency)}</Text>
           </View>
           <View style={styles.totalsRow}>
             <Text style={styles.totalsLabel}>Paid Amount</Text>

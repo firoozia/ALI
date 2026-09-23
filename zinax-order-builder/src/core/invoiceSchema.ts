@@ -9,6 +9,8 @@ export interface Invoice {
   currency: string;
   bankDetails: string;
   paidAmount: number | "";
+  /** Overall discount % applied to the whole order's Grand Total, on top of any per-row discounts. 0 = none. */
+  orderDiscountPercent: number | "";
   notes: string;
 }
 
@@ -33,6 +35,7 @@ export function makeDefaultInvoice(overrides: Partial<Invoice> = {}): Invoice {
     currency: "AED",
     bankDetails: "",
     paidAmount: 0,
+    orderDiscountPercent: 0,
     notes: "",
     ...overrides,
   };

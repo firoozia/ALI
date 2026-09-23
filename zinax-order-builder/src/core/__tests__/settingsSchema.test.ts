@@ -17,6 +17,8 @@ describe("settingsSchema", () => {
       maxWidthMm: 700,
       minHeightMm: 600,
       maxHeightMm: 1200,
+      defaultUnitPrice: 0,
+      defaultMdfThickness: "",
       active: true,
     });
 
@@ -56,6 +58,8 @@ describe("settingsSchema", () => {
       maxWidthMm: 700,
       minHeightMm: 600,
       maxHeightMm: 1200,
+      defaultUnitPrice: 0,
+      defaultMdfThickness: "",
       active: true,
     };
     incoming.catalog.designs = [onlyDesign];

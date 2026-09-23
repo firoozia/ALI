@@ -10,60 +10,43 @@ import { computeOrderTotals } from "../core/calculations";
 import { buildProductionCsvString, productionCsvFileName } from "../core/csvSchema";
 import { buildOrderFile, serializeOrderFile, orderFileName, parseOrderFile } from "../core/jsonOrderFile";
 import { getOrderValidationErrors, getInvoiceValidationErrors } from "../core/validators";
-import { generateOrderNo, type OrderHeader, type OrderRow } from "../core/orderSchema";
-import { generateInvoiceNo, type Invoice } from "../core/invoiceSchema";
+import type { OrderHeader, OrderRow } from "../core/orderSchema";
+import { type Invoice } from "../core/invoiceSchema";
 import type { OrderPreviewData, InvoicePreviewData } from "../core/pdfSchema";
 import type { AppSettings } from "../core/settingsSchema";
-import type { CompanyProfile } from "../core/companyProfile";
 import type { Customer } from "../core/customerSchema";
 import { downloadCsvFile, downloadJsonFile, readFileAsText } from "../lib/download";
-import { nextOrderSequence, nextInvoiceSequence } from "../lib/orderSequence";
+import { makeBlankHeader, makeBlankInvoice, nextInvoiceNo } from "../lib/orderDraft";
 
 interface NewOrderBuilderProps {
   settings: AppSettings;
   customers: Customer[];
+  header: OrderHeader;
+  onChangeHeader: (header: OrderHeader) => void;
+  rows: OrderRow[];
+  onChangeRows: (rows: OrderRow[]) => void;
+  invoice: Invoice;
+  onChangeInvoice: (invoice: Invoice) => void;
+  invoiceMode: boolean;
+  onChangeInvoiceMode: (mode: boolean) => void;
   onPreviewOrder: (data: OrderPreviewData) => void;
   onPreviewInvoice: (data: InvoicePreviewData) => void;
 }
 
-function makeBlankHeader(companyProfile: CompanyProfile): OrderHeader {
-  return {
-    orderNo: generateOrderNo(new Date().getFullYear(), nextOrderSequence()),
-    orderDate: new Date().toISOString().slice(0, 10),
-    customerName: "",
-    companyName: "",
-    phone: "",
-    whatsapp: "",
-    email: "",
-    address: "",
-    taxNumber: "",
-    projectName: "",
-    salesperson: companyProfile.defaultSalesperson,
-    deliveryDate: "",
-    currency: companyProfile.defaultCurrency,
-    notes: "",
-  };
-}
-
-function makeBlankInvoice(companyProfile: CompanyProfile): Invoice {
-  return {
-    invoiceNo: "",
-    invoiceDate: new Date().toISOString().slice(0, 10),
-    dueDate: "",
-    paymentTerms: companyProfile.defaultPaymentTerms,
-    vat: companyProfile.defaultVatPercent,
-    currency: companyProfile.defaultCurrency,
-    bankDetails: companyProfile.bankDetails,
-    paidAmount: 0,
-    notes: "",
-  };
-}
-
-export default function NewOrderBuilder({ settings, customers, onPreviewOrder, onPreviewInvoice }: NewOrderBuilderProps) {
-  const [header, setHeader] = useState<OrderHeader>(() => makeBlankHeader(settings.companyProfile));
-  const [invoice, setInvoice] = useState<Invoice>(() => makeBlankInvoice(settings.companyProfile));
-  const [rows, setRows] = useState<OrderRow[]>([]);
-  const [invoiceMode, setInvoiceMode] = useState(false);
+export default function NewOrderBuilder({
+  settings,
+  customers,
+  header,
+  onChangeHeader,
+  rows,
+  onChangeRows,
+  invoice,
+  onChangeInvoice,
+  invoiceMode,
+  onChangeInvoiceMode,
+  onPreviewOrder,
+  onPreviewInvoice,
+}: NewOrderBuilderProps) {
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState<ToastTone>("success");
   // Collapsing the summary sidebar hands its width back to the Door Order
@@ -72,7 +55,7 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
   // (only the open/close mechanic is borrowed, nothing CNC-related).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  const totals = computeOrderTotals(rows);
+  const totals = computeOrderTotals(rows, invoice.orderDiscountPercent);
 
   const flashToast = (message: string, tone: ToastTone = "success") => {
     setToast(message);
@@ -97,35 +80,32 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
     if ((rows.length > 0 || header.customerName) && !window.confirm("This replaces the current order. Continue?")) {
       return;
     }
-    setHeader(makeBlankHeader(settings.companyProfile));
-    setInvoice(makeBlankInvoice(settings.companyProfile));
-    setRows([]);
-    setInvoiceMode(false);
+    onChangeHeader(makeBlankHeader(settings.companyProfile));
+    onChangeInvoice(makeBlankInvoice(settings.companyProfile));
+    onChangeRows([]);
+    onChangeInvoiceMode(false);
     flashToast("Started a new blank order.");
   };
 
   const handleLoadSampleOrder = () => {
     if (!window.confirm("This replaces the current order with sample data. Continue?")) return;
-    setHeader(makeInitialHeader());
-    setInvoice(makeInitialInvoice());
-    setRows(makeInitialRows());
-    setInvoiceMode(false);
+    onChangeHeader(makeInitialHeader());
+    onChangeInvoice(makeInitialInvoice());
+    onChangeRows(makeInitialRows());
+    onChangeInvoiceMode(false);
     flashToast("Sample order loaded.");
   };
 
   const handleToggleInvoiceMode = (next: boolean) => {
-    setInvoiceMode(next);
+    onChangeInvoiceMode(next);
     if (next && !invoice.invoiceNo) {
-      setInvoice((prev) => ({
-        ...prev,
-        invoiceNo: generateInvoiceNo(new Date().getFullYear(), nextInvoiceSequence()),
-      }));
+      onChangeInvoice({ ...invoice, invoiceNo: nextInvoiceNo() });
     }
   };
 
   const handleSelectCustomer = (customer: Customer) => {
-    setHeader((prev) => ({
-      ...prev,
+    onChangeHeader({
+      ...header,
       customerName: customer.customerName,
       companyName: customer.companyName,
       phone: customer.phone,
@@ -133,7 +113,7 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
       email: customer.email,
       address: customer.address,
       taxNumber: customer.taxNumber,
-    }));
+    });
     flashToast(`Loaded ${customer.customerName || customer.customerId} into this order.`);
   };
 
@@ -175,10 +155,10 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
         flashToast(`Cannot open order file: ${result.error}`, "error");
         return;
       }
-      setHeader(result.file.header);
-      setRows(result.file.rows);
-      setInvoiceMode(result.file.invoiceMode);
-      setInvoice(result.file.invoice);
+      onChangeHeader(result.file.header);
+      onChangeRows(result.file.rows);
+      onChangeInvoiceMode(result.file.invoiceMode);
+      onChangeInvoice(result.file.invoice);
       flashToast(`Order ${result.file.header.orderNo} loaded from file.`);
     } catch (err) {
       flashToast(`Cannot open order file: ${err instanceof Error ? err.message : "unknown error"}`, "error");
@@ -204,14 +184,24 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
 
   return (
     <div className="mx-auto max-w-[1500px] px-4 py-4 pb-24 sm:px-6 sm:py-6">
-      <div className="mb-4 flex flex-wrap gap-2">
-        <button onClick={handleNewBlankOrder} className="zx-btn-secondary">
-          <FilePlus2 className="h-4 w-4" />
-          New Blank Order
-        </button>
-        <button onClick={handleLoadSampleOrder} className="zx-btn-ghost">
-          <FlaskConical className="h-4 w-4" />
-          Load Sample Order
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button onClick={handleNewBlankOrder} className="zx-btn-secondary">
+            <FilePlus2 className="h-4 w-4" />
+            New Blank Order
+          </button>
+          <button onClick={handleLoadSampleOrder} className="zx-btn-ghost">
+            <FlaskConical className="h-4 w-4" />
+            Load Sample Order
+          </button>
+        </div>
+        <button
+          onClick={() => setSidebarCollapsed((v) => !v)}
+          title={sidebarCollapsed ? "Show summary panel" : "Hide summary panel"}
+          className="hidden items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-xs font-medium text-ink-500 hover:bg-ink-50 xl:flex"
+        >
+          {sidebarCollapsed ? <PanelRightOpen className="h-3.5 w-3.5" /> : <PanelRightClose className="h-3.5 w-3.5" />}
+          {sidebarCollapsed ? "Show panel" : "Hide panel"}
         </button>
       </div>
 
@@ -219,42 +209,24 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
         <div className="flex flex-col gap-6">
           <OrderHeaderForm
             header={header}
-            onChange={setHeader}
+            onChange={onChangeHeader}
             customers={customers}
             onSelectCustomer={handleSelectCustomer}
           />
           <DoorOrderTable
             rows={rows}
-            onChangeRows={setRows}
+            onChangeRows={onChangeRows}
             invoiceMode={invoiceMode}
             currency={header.currency}
             catalog={settings.catalog}
           />
           {invoiceMode && (
-            <InvoicePanel invoice={invoice} onChange={setInvoice} totals={totals} currency={invoice.currency} />
+            <InvoicePanel invoice={invoice} onChange={onChangeInvoice} totals={totals} currency={invoice.currency} />
           )}
         </div>
 
-        {sidebarCollapsed ? (
-          <button
-            onClick={() => setSidebarCollapsed(false)}
-            title="Show summary panel"
-            className="hidden h-fit items-center gap-1.5 self-start rounded-lg border border-ink-200 bg-white px-2.5 py-3 text-ink-500 shadow-card hover:bg-ink-50 xl:flex"
-          >
-            <PanelRightOpen className="h-4 w-4" />
-          </button>
-        ) : (
+        {!sidebarCollapsed && (
           <div className="w-full xl:w-[360px]">
-            <div className="mb-2 hidden justify-end xl:flex">
-              <button
-                onClick={() => setSidebarCollapsed(true)}
-                title="Hide summary panel"
-                className="flex items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-xs font-medium text-ink-500 hover:bg-ink-50"
-              >
-                <PanelRightClose className="h-3.5 w-3.5" />
-                Hide panel
-              </button>
-            </div>
             <SummaryPanel
               totals={totals}
               currency={header.currency}
@@ -277,7 +249,7 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-3 py-2.5 sm:px-6 sm:py-3">
           <p className="hidden truncate text-xs text-ink-500 lg:block">
             {header.orderNo} · {totals.totalDoors} doors · {totals.totalRows} rows
-            {invoiceMode ? ` · Grand Total ${header.currency} ${totals.grandTotal.toFixed(2)}` : ""}
+            {invoiceMode ? ` · Grand Total ${header.currency} ${totals.finalTotal.toFixed(2)}` : ""}
           </p>
           <div className="flex flex-1 items-center justify-end gap-1.5 overflow-x-auto sm:gap-2">
             <button onClick={handleSaveJson} className="zx-btn-secondary !px-2.5 sm:!px-3.5">

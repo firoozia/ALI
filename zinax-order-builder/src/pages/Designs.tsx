@@ -13,6 +13,7 @@ import {
   mergeCatalog,
   replaceCatalog,
   nextCatalogItemId,
+  formatMdfThickness,
 } from "../core/catalogSchema";
 import { downloadJsonFile, readFileAsText } from "../lib/download";
 import Toast, { type ToastTone } from "../components/ui/Toast";
@@ -167,9 +168,10 @@ function DesignsSection({ catalog, onChangeCatalog }: DesignsProps) {
       ...catalog,
       designs: [
         ...designs,
-        { id: nextCatalogItemId(), code: "", name: "", family: "", description: "", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
+        { id: nextCatalogItemId(), code: "", name: "", family: "", description: "", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, defaultUnitPrice: 0, defaultMdfThickness: "", active: true },
       ],
     });
+  const mdfOptions = catalog.mdfThickness.filter((m) => m.active);
 
   return (
     <div className="zx-card mb-5 p-5">
@@ -180,9 +182,12 @@ function DesignsSection({ catalog, onChangeCatalog }: DesignsProps) {
           Add Design
         </button>
       </div>
+      <p className="mb-3 text-xs text-ink-500">
+        Default Price and Default MDF are auto-filled into a Door Order row when this design is picked — the row stays editable afterward.
+      </p>
       <SectionSearch query={query} onChange={setQuery} />
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[900px] border-collapse text-sm">
+        <table className="w-full min-w-[1080px] border-collapse text-sm">
           <thead>
             <tr>
               <th className="zx-th">Code</th>
@@ -193,6 +198,8 @@ function DesignsSection({ catalog, onChangeCatalog }: DesignsProps) {
               <th className="zx-th text-right">Max W</th>
               <th className="zx-th text-right">Min H</th>
               <th className="zx-th text-right">Max H</th>
+              <th className="zx-th text-right">Default Price</th>
+              <th className="zx-th">Default MDF</th>
               <th className="zx-th text-center">Active</th>
               <th className="zx-th"></th>
             </tr>
@@ -208,6 +215,20 @@ function DesignsSection({ catalog, onChangeCatalog }: DesignsProps) {
                 <td className="zx-td p-1"><input type="number" value={d.maxWidthMm} onChange={(e) => update(d.id, { maxWidthMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
                 <td className="zx-td p-1"><input type="number" value={d.minHeightMm} onChange={(e) => update(d.id, { minHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
                 <td className="zx-td p-1"><input type="number" value={d.maxHeightMm} onChange={(e) => update(d.id, { maxHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
+                <td className="zx-td p-1"><input type="number" value={d.defaultUnitPrice} onChange={(e) => update(d.id, { defaultUnitPrice: Number(e.target.value) || 0 })} className="zx-cell-input w-24 text-right" /></td>
+                <td className="zx-td p-1">
+                  <select value={d.defaultMdfThickness} onChange={(e) => update(d.id, { defaultMdfThickness: e.target.value })} className="zx-cell-input w-28">
+                    <option value="">—</option>
+                    {mdfOptions.map((m) => {
+                      const label = formatMdfThickness(m);
+                      return (
+                        <option key={m.thicknessMm} value={label}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </td>
                 <td className="zx-td text-center">
                   <input type="checkbox" checked={d.active} onChange={(e) => update(d.id, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
                 </td>
@@ -235,8 +256,9 @@ function PvcSection({ catalog, onChangeCatalog }: DesignsProps) {
   const add = () =>
     onChangeCatalog({
       ...catalog,
-      pvcColors: [...items, { id: nextCatalogItemId(), code: "", color: "", category: "", finish: "", active: true }],
+      pvcColors: [...items, { id: nextCatalogItemId(), code: "", color: "", category: "", finish: "", defaultGrain: "", active: true }],
     });
+  const grainOptions = catalog.grainDirections.filter((g) => g.active);
 
   return (
     <div className="zx-card mb-5 p-5">
@@ -247,15 +269,19 @@ function PvcSection({ catalog, onChangeCatalog }: DesignsProps) {
           Add Color
         </button>
       </div>
+      <p className="mb-3 text-xs text-ink-500">
+        Default Grain is auto-filled into a Door Order row when this color is picked — the row stays editable afterward.
+      </p>
       <SectionSearch query={query} onChange={setQuery} />
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[700px] border-collapse text-sm">
+        <table className="w-full min-w-[820px] border-collapse text-sm">
           <thead>
             <tr>
               <th className="zx-th">Code</th>
               <th className="zx-th">Color</th>
               <th className="zx-th">Category</th>
               <th className="zx-th">Finish</th>
+              <th className="zx-th">Default Grain</th>
               <th className="zx-th text-center">Active</th>
               <th className="zx-th"></th>
             </tr>
@@ -267,6 +293,16 @@ function PvcSection({ catalog, onChangeCatalog }: DesignsProps) {
                 <td className="zx-td p-1"><input value={p.color} onChange={(e) => update(p.id, { color: e.target.value })} className="zx-cell-input" /></td>
                 <td className="zx-td p-1"><input value={p.category} onChange={(e) => update(p.id, { category: e.target.value })} className="zx-cell-input w-32" /></td>
                 <td className="zx-td p-1"><input value={p.finish} onChange={(e) => update(p.id, { finish: e.target.value })} className="zx-cell-input w-28" /></td>
+                <td className="zx-td p-1">
+                  <select value={p.defaultGrain} onChange={(e) => update(p.id, { defaultGrain: e.target.value })} className="zx-cell-input w-28">
+                    <option value="">—</option>
+                    {grainOptions.map((g) => (
+                      <option key={g.id} value={g.label}>
+                        {g.label}
+                      </option>
+                    ))}
+                  </select>
+                </td>
                 <td className="zx-td text-center">
                   <input type="checkbox" checked={p.active} onChange={(e) => update(p.id, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
                 </td>

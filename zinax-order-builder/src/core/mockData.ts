@@ -170,6 +170,7 @@ export function makeInitialInvoice(): Invoice {
     currency: "AED",
     bankDetails: "Emirates NBD — IBAN AE07 0331 1234 5678 9012 345 — Al Farsi Interiors LLC",
     paidAmount: 700,
+    orderDiscountPercent: 0,
     notes: "Proforma invoice — subject to final confirmation of quantities.",
   };
 }

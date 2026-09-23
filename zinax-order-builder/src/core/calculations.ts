@@ -43,11 +43,17 @@ export interface OrderTotals {
   totalDiscount: number;
   taxable: number;
   vatAmount: number;
+  /** Sum of line totals, before the overall order-level discount below. */
   grandTotal: number;
+  /** Overall discount % applied on top of grandTotal — set on the invoice, separate from any per-row discount. */
+  orderDiscountPercent: number;
+  orderDiscountAmount: number;
+  /** grandTotal minus the overall order discount — the actual amount payable. */
+  finalTotal: number;
   pvcConsumption: number;
 }
 
-export function computeOrderTotals(rows: OrderRow[]): OrderTotals {
+export function computeOrderTotals(rows: OrderRow[], orderDiscountPercent: number | "" = 0): OrderTotals {
   const totalDoors = rows.reduce((sum, r) => sum + num(r.qty), 0);
   const totalArea = rows.reduce((sum, r) => sum + rowAreaSqm(r), 0);
   const subtotal = rows.reduce((sum, r) => sum + lineSubtotal(r), 0);
@@ -55,6 +61,9 @@ export function computeOrderTotals(rows: OrderRow[]): OrderTotals {
   const taxable = subtotal - totalDiscount;
   const vat = rows.reduce((sum, r) => sum + vatAmount(r), 0);
   const grandTotal = taxable + vat;
+  const discountPct = num(orderDiscountPercent);
+  const orderDiscountAmount = (grandTotal * discountPct) / 100;
+  const finalTotal = grandTotal - orderDiscountAmount;
   // Rough estimate: PVC membrane consumption is door face area plus 10% wastage.
   const pvcConsumption = totalArea * 1.1;
 
@@ -67,12 +76,15 @@ export function computeOrderTotals(rows: OrderRow[]): OrderTotals {
     taxable,
     vatAmount: vat,
     grandTotal,
+    orderDiscountPercent: discountPct,
+    orderDiscountAmount,
+    finalTotal,
     pvcConsumption,
   };
 }
 
 export function balanceDue(totals: OrderTotals, paidAmount: number | ""): number {
-  return totals.grandTotal - num(paidAmount);
+  return totals.finalTotal - num(paidAmount);
 }
 
 export function formatCurrency(value: number | "", currency = "AED"): string {

@@ -63,7 +63,7 @@ export default function SummaryPanel({
           <Row label="Total Area" value={`${formatNumber(totals.totalArea)} m²`} />
           <Row label="Est. PVC Consumption" value={`${formatNumber(totals.pvcConsumption)} m²`} />
           <Row label="Currency" value={currency} />
-          {invoiceMode && <Row label="Grand Total" value={formatCurrency(totals.grandTotal, currency)} strong />}
+          {invoiceMode && <Row label="Grand Total" value={formatCurrency(totals.finalTotal, currency)} strong />}
         </div>
       </CollapsibleSection>
 
