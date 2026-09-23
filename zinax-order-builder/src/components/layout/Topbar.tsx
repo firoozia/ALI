@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, ChevronDown, Globe, Menu } from "lucide-react";
+import { Search, ChevronDown, Globe, Menu, LogOut } from "lucide-react";
 import type { ScreenKey } from "../../types";
 
 const TITLES: Record<ScreenKey, string> = {
@@ -17,9 +17,11 @@ const TITLES: Record<ScreenKey, string> = {
 interface TopbarProps {
   active: ScreenKey;
   onMenuClick: () => void;
+  tenantName?: string;
+  onSignOut?: () => void;
 }
 
-export default function Topbar({ active, onMenuClick }: TopbarProps) {
+export default function Topbar({ active, onMenuClick, tenantName, onSignOut }: TopbarProps) {
   const [lang, setLang] = useState<"EN" | "AR">("EN");
 
   return (
@@ -64,14 +66,30 @@ export default function Topbar({ active, onMenuClick }: TopbarProps) {
 
         <div className="flex items-center gap-2.5 rounded-lg border border-ink-200 py-1.5 pl-1.5 pr-1.5 sm:pr-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-navy-800 text-xs font-bold text-white">
-            AM
+            {tenantName ? initials(tenantName) : "AM"}
           </div>
           <div className="hidden text-left leading-tight sm:block">
-            <p className="text-sm font-semibold text-ink-800">Ahmed Al Mansoori</p>
-            <p className="text-2xs text-ink-400">Salesperson</p>
+            <p className="max-w-[10rem] truncate text-sm font-semibold text-ink-800">
+              {tenantName || "Ahmed Al Mansoori"}
+            </p>
+            <p className="text-2xs text-ink-400">{tenantName ? "Factory Account" : "Salesperson"}</p>
           </div>
+          {onSignOut && (
+            <button
+              onClick={onSignOut}
+              title="Sign out"
+              className="rounded-md p-1.5 text-ink-400 hover:bg-ink-100 hover:text-ink-700"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
     </header>
   );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }

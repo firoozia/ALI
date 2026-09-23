@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import AppLayout from "./components/layout/AppLayout";
+import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import NewOrderBuilder from "./pages/NewOrderBuilder";
 import OrderPdfPreview from "./pages/OrderPdfPreview";
@@ -24,6 +25,9 @@ import {
   type OrderStatus,
 } from "./core/orderHistorySchema";
 import { makeBlankDraft, duplicateOrderRecord, loadOrderDraftFromStorage, saveOrderDraftToStorage } from "./lib/orderDraft";
+import { isBackendConfigured } from "./lib/supabaseClient";
+import { restoreTenantSession, signOutTenant, type TenantSession } from "./lib/tenantAuth";
+import { loadRemoteOrderHistory, upsertRemoteOrder } from "./lib/remoteOrderHistory";
 import type { ScreenKey } from "./types";
 
 const SIDEBAR_SCREENS: ScreenKey[] = [
@@ -60,6 +64,22 @@ export default function App() {
   // "Recent Orders" list instead of static mock data.
   const [orderHistory, setOrderHistory] = useState<OrderRecord[]>(loadOrderHistoryFromStorage);
 
+  // Multi-tenant backend (Supabase) is optional — when it isn't configured
+  // (no VITE_SUPABASE_URL/ANON_KEY), authChecked starts true and
+  // tenantSession stays null forever, so the app behaves exactly as the
+  // local-only, no-login prototype it always was.
+  const [tenantSession, setTenantSession] = useState<TenantSession | null>(null);
+  const [authChecked, setAuthChecked] = useState(!isBackendConfigured());
+
+  useEffect(() => {
+    if (!isBackendConfigured()) return;
+    restoreTenantSession().then((session) => {
+      setTenantSession(session);
+      setAuthChecked(true);
+      if (session) loadRemoteOrderHistory(session.tenantId).then(setOrderHistory);
+    });
+  }, []);
+
   useEffect(() => {
     saveSettingsToStorage(settings);
   }, [settings]);
@@ -73,8 +93,11 @@ export default function App() {
   }, [orderDraft]);
 
   useEffect(() => {
+    // Once signed in to a tenant, the backend is the source of truth —
+    // writes go through handleRecordOrderEvent/upsertRemoteOrder instead.
+    if (tenantSession) return;
     saveOrderHistoryToStorage(orderHistory);
-  }, [orderHistory]);
+  }, [orderHistory, tenantSession]);
 
   const setHeader = (header: OrderHeader) => setOrderDraft((prev) => ({ ...prev, header }));
   const setRows = (rows: OrderRow[]) => setOrderDraft((prev) => ({ ...prev, rows }));
@@ -86,9 +109,22 @@ export default function App() {
   const handleChangeCatalog = (catalog: Catalog) => setSettings({ ...settings, catalog });
 
   const handleRecordOrderEvent = (status: OrderStatus, totalDoors: number) => {
-    setOrderHistory((prev) =>
-      upsertOrderRecord(prev, makeOrderRecord(orderDraft.header, orderDraft.rows, orderDraft.invoice, orderDraft.invoiceMode, status, totalDoors))
-    );
+    const record = makeOrderRecord(orderDraft.header, orderDraft.rows, orderDraft.invoice, orderDraft.invoiceMode, status, totalDoors);
+    setOrderHistory((prev) => upsertOrderRecord(prev, record));
+    if (tenantSession) upsertRemoteOrder(tenantSession.tenantId, record).catch(() => {});
+  };
+
+  const handleSignedIn = (session: TenantSession) => {
+    setTenantSession(session);
+    loadRemoteOrderHistory(session.tenantId).then(setOrderHistory);
+  };
+
+  const handleSignOut = () => {
+    signOutTenant().then(() => {
+      setTenantSession(null);
+      setOrderHistory(loadOrderHistoryFromStorage());
+      setScreen("dashboard");
+    });
   };
 
   const handleOpenOrderFromDashboard = (order: OrderRecord) => {
@@ -184,8 +220,17 @@ export default function App() {
 
   const sidebarActive: ScreenKey = SIDEBAR_SCREENS.includes(screen) ? screen : "new-order";
 
+  if (!authChecked) return null;
+  if (isBackendConfigured() && !tenantSession) return <Login onSignedIn={handleSignedIn} />;
+
   return (
-    <AppLayout sidebarActive={sidebarActive} topbarActive={screen} onNavigate={handleNavigate}>
+    <AppLayout
+      sidebarActive={sidebarActive}
+      topbarActive={screen}
+      onNavigate={handleNavigate}
+      tenantName={tenantSession?.companyName}
+      onSignOut={tenantSession ? handleSignOut : undefined}
+    >
       {content}
     </AppLayout>
   );

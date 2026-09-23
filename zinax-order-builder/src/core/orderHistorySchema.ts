@@ -118,3 +118,59 @@ export function saveOrderHistoryToStorage(records: OrderRecord[]): void {
     // Storage unavailable (private mode, quota exceeded) — history just won't persist.
   }
 }
+
+// --- Remote persistence adapter (Supabase, one tenant's orders) --------
+//
+// Row Level Security in supabase/schema.sql is what actually enforces the
+// tenant boundary — tenantId here is only used to shape the query, never
+// trusted as the access-control check itself.
+
+export interface RemoteOrderRow {
+  order_no: string;
+  order_date: string;
+  customer_name: string;
+  project_name: string;
+  salesperson: string;
+  total_doors: number;
+  status: OrderStatus;
+  updated_at: string;
+  header: OrderHeader;
+  rows: OrderRow[];
+  invoice: Invoice;
+  invoice_mode: boolean;
+}
+
+export function recordToRemoteRow(tenantId: string, record: OrderRecord) {
+  return {
+    tenant_id: tenantId,
+    order_no: record.orderNo,
+    order_date: record.orderDate,
+    customer_name: record.customerName,
+    project_name: record.projectName,
+    salesperson: record.salesperson,
+    total_doors: record.totalDoors,
+    status: record.status,
+    updated_at: record.updatedAt,
+    header: record.header,
+    rows: record.rows,
+    invoice: record.invoice,
+    invoice_mode: record.invoiceMode,
+  };
+}
+
+export function remoteRowToRecord(row: RemoteOrderRow): OrderRecord {
+  return {
+    orderNo: row.order_no,
+    orderDate: row.order_date,
+    customerName: row.customer_name,
+    projectName: row.project_name,
+    salesperson: row.salesperson,
+    totalDoors: row.total_doors,
+    status: row.status,
+    updatedAt: row.updated_at,
+    header: row.header,
+    rows: row.rows,
+    invoice: row.invoice,
+    invoiceMode: row.invoice_mode,
+  };
+}

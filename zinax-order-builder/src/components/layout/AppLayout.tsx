@@ -8,9 +8,18 @@ interface AppLayoutProps {
   topbarActive: ScreenKey;
   onNavigate: (key: ScreenKey) => void;
   children: ReactNode;
+  tenantName?: string;
+  onSignOut?: () => void;
 }
 
-export default function AppLayout({ sidebarActive, topbarActive, onNavigate, children }: AppLayoutProps) {
+export default function AppLayout({
+  sidebarActive,
+  topbarActive,
+  onNavigate,
+  children,
+  tenantName,
+  onSignOut,
+}: AppLayoutProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const handleNavigate = (key: ScreenKey) => {
@@ -27,7 +36,12 @@ export default function AppLayout({ sidebarActive, topbarActive, onNavigate, chi
         onClose={() => setMobileNavOpen(false)}
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Topbar active={topbarActive} onMenuClick={() => setMobileNavOpen(true)} />
+        <Topbar
+          active={topbarActive}
+          onMenuClick={() => setMobileNavOpen(true)}
+          tenantName={tenantName}
+          onSignOut={onSignOut}
+        />
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>
