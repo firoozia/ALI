@@ -119,6 +119,7 @@ const DEFAULT_MDF_THICKNESS: MdfThicknessOption[] = [
 const DEFAULT_GRAIN_DIRECTIONS: GrainDirectionOption[] = [
   { id: "seed-vertical", code: "vertical", label: "Vertical", active: true },
   { id: "seed-horizontal", code: "horizontal", label: "Horizontal", active: true },
+  { id: "seed-none", code: "none", label: "None", active: true },
 ];
 
 export function makeDefaultCatalog(): Catalog {

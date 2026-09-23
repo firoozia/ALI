@@ -4,7 +4,7 @@
 // exclusively by core/calculations.ts, never recalculated here.
 import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
 import type { InvoicePdfModel } from "../../core/pdfSchema";
-import { discountAmount, vatAmount, lineTotal, formatCurrency } from "../../core/calculations";
+import { discountAmount, vatAmount, lineTotal, formatCurrency, formatNumber } from "../../core/calculations";
 
 const styles = StyleSheet.create({
   page: { padding: 32, fontSize: 9, fontFamily: "Helvetica", color: "#0f172a" },
@@ -122,14 +122,20 @@ export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfMo
         </View>
 
         <View style={styles.tableHeaderRow} fixed>
-          {INVOICE_COLUMNS.map((col) => (
-            <Text
-              key={col.key}
-              style={[styles.tableHeaderCell, { flex: col.flex }, col.key !== "description" && col.key !== "designCode" ? { textAlign: "right" } : {}]}
-            >
-              {col.label}
-            </Text>
-          ))}
+          {INVOICE_COLUMNS.map((col) => {
+            // Amount columns drop the currency code from every row cell to
+            // cut repetition — it appears here once instead, in the header.
+            const isAmountCol = ["unitPrice", "discount", "vat", "lineTotal"].includes(col.key);
+            return (
+              <Text
+                key={col.key}
+                style={[styles.tableHeaderCell, { flex: col.flex }, col.key !== "description" && col.key !== "designCode" ? { textAlign: "right" } : {}]}
+              >
+                {col.label}
+                {isAmountCol ? ` (${currency})` : ""}
+              </Text>
+            );
+          })}
         </View>
 
         {model.rows.map((row, idx) => (
@@ -141,10 +147,10 @@ export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfMo
               {row.width || "-"} × {row.height || "-"}
             </Text>
             <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[4].flex }]}>{row.qty || "-"}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[5].flex }]}>{formatCurrency(row.unitPrice, currency)}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[6].flex }]}>{formatCurrency(discountAmount(row), currency)}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[7].flex }]}>{formatCurrency(vatAmount(row), currency)}</Text>
-            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[8].flex }]}>{formatCurrency(lineTotal(row), currency)}</Text>
+            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[5].flex }]}>{formatNumber(row.unitPrice)}</Text>
+            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[6].flex }]}>{formatNumber(discountAmount(row))}</Text>
+            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[7].flex }]}>{formatNumber(vatAmount(row))}</Text>
+            <Text style={[styles.tableCellRight, { flex: INVOICE_COLUMNS[8].flex }]}>{formatNumber(lineTotal(row))}</Text>
           </View>
         ))}
 

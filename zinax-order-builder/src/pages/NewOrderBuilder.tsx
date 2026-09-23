@@ -183,7 +183,7 @@ export default function NewOrderBuilder({
   };
 
   return (
-    <div className="mx-auto max-w-[1500px] px-4 py-4 pb-24 sm:px-6 sm:py-6">
+    <div className="mx-auto max-w-[1500px] px-4 py-4 pb-32 sm:px-6 sm:py-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
           <button onClick={handleNewBlankOrder} className="zx-btn-secondary">
@@ -205,7 +205,7 @@ export default function NewOrderBuilder({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_auto]">
+      <div className={`grid grid-cols-1 gap-6 ${sidebarCollapsed ? "" : "xl:grid-cols-[minmax(0,1fr)_auto]"}`}>
         <div className="flex flex-col gap-6">
           <OrderHeaderForm
             header={header}

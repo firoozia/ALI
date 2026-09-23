@@ -3,6 +3,7 @@ import { Calendar, Hash, UserCheck } from "lucide-react";
 import { CURRENCIES, SALESPERSONS } from "../../core/mockData";
 import type { OrderHeader } from "../../core/orderSchema";
 import type { Customer } from "../../core/customerSchema";
+import CollapsibleSection from "../ui/CollapsibleSection";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -26,13 +27,12 @@ export default function OrderHeaderForm({ header, onChange, customers, onSelectC
   const set = (key: keyof OrderHeader) => (e: FieldChangeEvent) =>
     onChange({ ...header, [key]: e.target.value });
 
-  return (
-    <div className="zx-card p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-bold text-ink-900">Order Header</h3>
-        <span className="zx-badge bg-ink-100 text-ink-600">Draft</span>
-      </div>
+  const summary = header.customerName
+    ? `${header.customerName}${header.companyName ? ` — ${header.companyName}` : ""}`
+    : "No customer yet — click to expand and fill in the order header";
 
+  return (
+    <CollapsibleSection title="Order Header" subtitle={summary} headerExtra={<span className="zx-badge bg-ink-100 text-ink-600">Draft</span>}>
       {customers.length > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-navy-100 bg-navy-50 px-3 py-2">
           <UserCheck className="h-4 w-4 shrink-0 text-navy-700" />
@@ -167,7 +167,7 @@ export default function OrderHeaderForm({ header, onChange, customers, onSelectC
           />
         </div>
       </div>
-    </div>
+    </CollapsibleSection>
   );
 }
 

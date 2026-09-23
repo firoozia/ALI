@@ -67,7 +67,7 @@ export default function Designs({ catalog, onChangeCatalog }: DesignsProps) {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-4 pb-16 sm:px-6 sm:py-6">
+    <div className="mx-auto max-w-[1500px] px-4 py-4 pb-16 sm:px-6 sm:py-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold text-ink-900">Designs / Catalog</h2>
