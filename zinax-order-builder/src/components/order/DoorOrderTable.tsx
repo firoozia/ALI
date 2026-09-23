@@ -45,7 +45,7 @@ function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFie
         catalog.designs.filter((d) => d.active),
         row.designCode,
         (d) => d.code,
-        (code) => ({ code, name: "", family: "", description: "", minWidthMm: 0, maxWidthMm: 0, minHeightMm: 0, maxHeightMm: 0, active: false })
+        (code) => ({ id: code, code, name: "", family: "", description: "", minWidthMm: 0, maxWidthMm: 0, minHeightMm: 0, maxHeightMm: 0, active: false })
       );
       return (
         <select
@@ -69,7 +69,7 @@ function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFie
         catalog.pvcColors.filter((p) => p.active),
         row.pvcCode,
         (p) => p.code,
-        (code) => ({ code, color: "", category: "", finish: "", active: false })
+        (code) => ({ id: code, code, color: "", category: "", finish: "", active: false })
       );
       return (
         <select

@@ -8,6 +8,7 @@ describe("settingsSchema", () => {
     // Modify one existing design's name and add a brand-new one.
     incoming.catalog.designs[0] = { ...incoming.catalog.designs[0], name: "Updated Name" };
     incoming.catalog.designs.push({
+      id: "test-zd999",
       code: "ZD999",
       name: "Brand New Design",
       family: "Custom",
@@ -46,6 +47,7 @@ describe("settingsSchema", () => {
     const incoming = makeDefaultSettings();
     incoming.companyProfile.companyName = "Fresh Name";
     const onlyDesign = {
+      id: "test-only",
       code: "ONLY",
       name: "Only Design",
       family: "Custom",

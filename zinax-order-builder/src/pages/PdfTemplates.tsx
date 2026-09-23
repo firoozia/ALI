@@ -3,6 +3,8 @@ import { FileStack, Image as ImageIcon, Stamp } from "lucide-react";
 import type { AppSettings } from "../core/settingsSchema";
 import type { PdfTemplateSettings } from "../core/pdfTemplateSchema";
 import type { CompanyProfile } from "../core/companyProfile";
+import { isPdfSafeImageFile } from "../lib/pdfSafeImage";
+import Toast, { type ToastTone } from "../components/ui/Toast";
 
 interface PdfTemplatesProps {
   settings: AppSettings;
@@ -11,6 +13,14 @@ interface PdfTemplatesProps {
 
 export default function PdfTemplates({ settings, onChangeSettings }: PdfTemplatesProps) {
   const [previewMode, setPreviewMode] = useState<"order" | "invoice">("order");
+  const [toast, setToast] = useState("");
+  const [toastTone, setToastTone] = useState<ToastTone>("success");
+
+  const flash = (msg: string, tone: ToastTone = "success") => {
+    setToast(msg);
+    setToastTone(tone);
+    setTimeout(() => setToast(""), tone === "error" ? 4500 : 2500);
+  };
 
   const updateTemplate = (patch: Partial<PdfTemplateSettings>) => {
     onChangeSettings({ ...settings, pdfTemplate: { ...settings.pdfTemplate, ...patch } });
@@ -23,6 +33,10 @@ export default function PdfTemplates({ settings, onChangeSettings }: PdfTemplate
   const handleStampUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!isPdfSafeImageFile(file)) {
+      flash("Stamp must be a PNG or JPG image — this file type can't be placed on the generated PDFs.", "error");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => updateProfile({ stampUrl: String(reader.result ?? "") });
     reader.readAsDataURL(file);
@@ -94,9 +108,11 @@ export default function PdfTemplates({ settings, onChangeSettings }: PdfTemplate
           <label className="zx-btn-secondary cursor-pointer !py-1.5">
             <ImageIcon className="h-4 w-4" />
             Upload Stamp
-            <input type="file" accept="image/*" className="hidden" onChange={handleStampUpload} />
+            <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={handleStampUpload} />
           </label>
-          <p className="text-xs text-ink-500">Appears in the Company Stamp signature box, when signatures are shown.</p>
+          <p className="text-xs text-ink-500">
+            PNG or JPG only. Appears in the Company Stamp signature box, when signatures are shown.
+          </p>
         </div>
       </div>
 
@@ -135,6 +151,8 @@ export default function PdfTemplates({ settings, onChangeSettings }: PdfTemplate
           </p>
         </div>
       </div>
+
+      <Toast message={toast} tone={toastTone} />
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { serializeSettings, settingsFileName, parseSettingsFile, mergeSettings, 
 import type { CompanyProfile } from "../core/companyProfile";
 import { CURRENCIES, SALESPERSONS } from "../core/mockData";
 import { downloadJsonFile, readFileAsText } from "../lib/download";
+import { isPdfSafeImageFile } from "../lib/pdfSafeImage";
 import Toast, { type ToastTone } from "../components/ui/Toast";
 import type { ScreenKey } from "../types";
 
@@ -44,6 +45,10 @@ export default function Settings({ settings, onChangeSettings, onNavigate }: Set
   const handleLogoUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!isPdfSafeImageFile(file)) {
+      flash("Logo must be a PNG or JPG image — this file type can't be placed on the generated PDFs.", "error");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => updateProfile({ logoUrl: String(reader.result ?? "") });
     reader.readAsDataURL(file);
@@ -177,10 +182,10 @@ export default function Settings({ settings, onChangeSettings, onNavigate }: Set
           </div>
           <label className="zx-btn-secondary cursor-pointer !py-1.5">
             Upload Logo
-            <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+            <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={handleLogoUpload} />
           </label>
           <p className="text-xs text-ink-500">
-            Stamp image and PDF layout toggles live on the{" "}
+            PNG or JPG only. Stamp image and PDF layout toggles live on the{" "}
             <button onClick={() => onNavigate("templates")} className="font-semibold text-navy-700 underline">
               PDF Templates
             </button>{" "}

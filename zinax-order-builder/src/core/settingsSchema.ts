@@ -4,7 +4,7 @@
 // will implement the same four function signatures against a local
 // settings file instead; nothing above that line is web-specific.
 import { type CompanyProfile, makeDefaultCompanyProfile } from "./companyProfile";
-import { type Catalog, makeDefaultCatalog } from "./catalogSchema";
+import { type Catalog, makeDefaultCatalog, ensureCatalogIds } from "./catalogSchema";
 import { type PdfTemplateSettings, makeDefaultPdfTemplateSettings } from "./pdfTemplateSchema";
 
 export const SETTINGS_SCHEMA_VERSION = "1.1";
@@ -77,7 +77,7 @@ export function parseSettingsFile(jsonText: string): ParseSettingsResult {
       schema_version: candidate.schema_version,
       app: candidate.app,
       companyProfile: { ...makeDefaultCompanyProfile(), ...candidate.companyProfile },
-      catalog: { ...makeDefaultCatalog(), ...candidate.catalog },
+      catalog: ensureCatalogIds({ ...makeDefaultCatalog(), ...candidate.catalog }),
       pdfTemplate: { ...makeDefaultPdfTemplateSettings(), ...candidate.pdfTemplate },
     },
   };

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Plus, Trash2, Search, Download, Upload, Users } from "lucide-react";
+import { Plus, Trash2, Search, Download, Upload, Users, ChevronRight, ArrowLeft, Save } from "lucide-react";
 import {
   type Customer,
   makeDefaultCustomer,
@@ -26,6 +26,13 @@ export default function Customers({ customers, onChangeCustomers }: CustomersPro
   const [pendingImport, setPendingImport] = useState<Customer[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // The customer currently open for editing, as a local, uncommitted copy.
+  // Nothing here reaches the saved list — or shows up anywhere else in the
+  // app — until Save is clicked. A brand-new customer (from "Add
+  // Customer") lives only in `draft` too, so it doesn't appear in the list
+  // below until it's actually saved.
+  const [draft, setDraft] = useState<Customer | null>(null);
+
   const flash = (msg: string, tone: ToastTone = "success") => {
     setToast(msg);
     setToastTone(tone);
@@ -33,15 +40,26 @@ export default function Customers({ customers, onChangeCustomers }: CustomersPro
   };
 
   const visible = searchCustomers(customers, query);
+  const isNewDraft = draft !== null && !customers.some((c) => c.customerId === draft.customerId);
 
-  const updateCustomer = (customerId: string, patch: Partial<Customer>) => {
-    onChangeCustomers(customers.map((c) => (c.customerId === customerId ? { ...c, ...patch } : c)));
+  const openCustomer = (customer: Customer) => setDraft({ ...customer });
+  const openNewCustomer = () => setDraft(makeDefaultCustomer());
+  const closeEditor = () => setDraft(null);
+
+  const saveDraft = () => {
+    if (!draft) return;
+    const exists = customers.some((c) => c.customerId === draft.customerId);
+    onChangeCustomers(
+      exists ? customers.map((c) => (c.customerId === draft.customerId ? draft : c)) : [draft, ...customers]
+    );
+    flash(`${draft.customerName || draft.customerId} saved.`);
+    setDraft(null);
   };
-
-  const addCustomer = () => onChangeCustomers([makeDefaultCustomer(), ...customers]);
 
   const deleteCustomer = (customerId: string) => {
     onChangeCustomers(customers.filter((c) => c.customerId !== customerId));
+    if (draft?.customerId === customerId) setDraft(null);
+    flash("Customer deleted.");
   };
 
   const handleExport = async () => {
@@ -71,6 +89,57 @@ export default function Customers({ customers, onChangeCustomers }: CustomersPro
     flash(mode === "merge" ? "Customers merged." : "Customers replaced.");
   };
 
+  if (draft) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-4 pb-16 sm:px-6 sm:py-6">
+        <button onClick={closeEditor} className="zx-btn-ghost mb-4 !px-2.5">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Customers
+        </button>
+
+        <div className="zx-card p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-ink-900">
+                {isNewDraft ? "New Customer" : draft.customerName || draft.customerId}
+              </h2>
+              <p className="mt-0.5 text-xs text-ink-500">{draft.customerId}</p>
+            </div>
+            {!isNewDraft && (
+              <button onClick={() => deleteCustomer(draft.customerId)} className="zx-btn-danger !px-2.5 !py-1.5">
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Field label="Customer Name" value={draft.customerName} onChange={(v) => setDraft({ ...draft, customerName: v })} />
+            <Field label="Company Name" value={draft.companyName} onChange={(v) => setDraft({ ...draft, companyName: v })} />
+            <Field label="Phone" value={draft.phone} onChange={(v) => setDraft({ ...draft, phone: v })} />
+            <Field label="WhatsApp" value={draft.whatsapp} onChange={(v) => setDraft({ ...draft, whatsapp: v })} />
+            <Field label="Email" value={draft.email} onChange={(v) => setDraft({ ...draft, email: v })} />
+            <Field label="Tax Number" value={draft.taxNumber} onChange={(v) => setDraft({ ...draft, taxNumber: v })} />
+            <Field label="Address" value={draft.address} onChange={(v) => setDraft({ ...draft, address: v })} className="sm:col-span-2" />
+            <Field label="Notes" value={draft.notes} onChange={(v) => setDraft({ ...draft, notes: v })} className="sm:col-span-2 xl:col-span-4" />
+          </div>
+
+          <div className="mt-5 flex gap-2 border-t border-ink-100 pt-4">
+            <button onClick={saveDraft} className="zx-btn-primary">
+              <Save className="h-4 w-4" />
+              Save
+            </button>
+            <button onClick={closeEditor} className="zx-btn-secondary">
+              Cancel
+            </button>
+          </div>
+        </div>
+
+        <Toast message={toast} tone={toastTone} />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-4 pb-16 sm:px-6 sm:py-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -98,7 +167,7 @@ export default function Customers({ customers, onChangeCustomers }: CustomersPro
               e.target.value = "";
             }}
           />
-          <button onClick={addCustomer} className="zx-btn-primary">
+          <button onClick={openNewCustomer} className="zx-btn-primary">
             <Plus className="h-4 w-4" />
             Add Customer
           </button>
@@ -145,25 +214,30 @@ export default function Customers({ customers, onChangeCustomers }: CustomersPro
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="zx-card divide-y divide-ink-100 overflow-hidden">
           {visible.map((customer) => (
-            <div key={customer.customerId} className="zx-card p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-2xs font-semibold uppercase tracking-wide text-ink-400">{customer.customerId}</span>
-                <button onClick={() => deleteCustomer(customer.customerId)} className="zx-btn-danger !px-2 !py-1.5">
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <Field label="Customer Name" value={customer.customerName} onChange={(v) => updateCustomer(customer.customerId, { customerName: v })} />
-                <Field label="Company Name" value={customer.companyName} onChange={(v) => updateCustomer(customer.customerId, { companyName: v })} />
-                <Field label="Phone" value={customer.phone} onChange={(v) => updateCustomer(customer.customerId, { phone: v })} />
-                <Field label="WhatsApp" value={customer.whatsapp} onChange={(v) => updateCustomer(customer.customerId, { whatsapp: v })} />
-                <Field label="Email" value={customer.email} onChange={(v) => updateCustomer(customer.customerId, { email: v })} />
-                <Field label="Tax Number" value={customer.taxNumber} onChange={(v) => updateCustomer(customer.customerId, { taxNumber: v })} />
-                <Field label="Address" value={customer.address} onChange={(v) => updateCustomer(customer.customerId, { address: v })} className="sm:col-span-2" />
-                <Field label="Notes" value={customer.notes} onChange={(v) => updateCustomer(customer.customerId, { notes: v })} className="sm:col-span-2 xl:col-span-4" />
-              </div>
+            <div key={customer.customerId} className="flex items-center gap-2">
+              <button
+                onClick={() => openCustomer(customer)}
+                className="flex flex-1 items-center justify-between gap-3 px-4 py-3 text-left hover:bg-ink-50"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink-900">
+                    {customer.customerName || customer.customerId}
+                  </p>
+                  <p className="truncate text-xs text-ink-500">
+                    {[customer.companyName, customer.phone].filter(Boolean).join(" · ") || "No details yet"}
+                  </p>
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-ink-400" />
+              </button>
+              <button
+                onClick={() => deleteCustomer(customer.customerId)}
+                title="Delete customer"
+                className="zx-btn-danger !mr-3 !px-2 !py-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
             </div>
           ))}
         </div>

@@ -10,6 +10,20 @@ import type { CompanyProfile } from "./companyProfile";
 import type { PdfTemplateSettings } from "./pdfTemplateSchema";
 import { balanceDue, type OrderTotals } from "./calculations";
 
+// The PDF engine (@react-pdf/renderer) can only decode raster images
+// (PNG/JPEG) for its <Image> component — never SVG. A logo/stamp saved
+// before upload screens started rejecting unsupported formats (or edited
+// directly into an imported settings file) would otherwise crash PDF
+// generation with an opaque "Could not generate the PDF" error. Every
+// vendor image is filtered through here on the way into a PDF model, so a
+// stray non-raster value is simply omitted from the PDF instead of
+// breaking it.
+const PDF_SAFE_IMAGE_PREFIXES = ["data:image/png", "data:image/jpeg"];
+
+function sanitizeVendorImage(dataUrl: string): string {
+  return PDF_SAFE_IMAGE_PREFIXES.some((prefix) => dataUrl.startsWith(prefix)) ? dataUrl : "";
+}
+
 export interface OrderPdfModel {
   orderNo: string;
   date: string;
@@ -54,8 +68,8 @@ export function buildOrderPdfModel(
     vendorAddress: companyProfile.address,
     vendorPhone: companyProfile.phone,
     vendorTaxNumber: companyProfile.taxNumber,
-    vendorLogoUrl: companyProfile.logoUrl,
-    vendorStampUrl: companyProfile.stampUrl,
+    vendorLogoUrl: sanitizeVendorImage(companyProfile.logoUrl),
+    vendorStampUrl: sanitizeVendorImage(companyProfile.stampUrl),
     template: pdfTemplate,
   };
 }
@@ -117,8 +131,8 @@ export function buildInvoicePdfModel(
     vendorAddress: companyProfile.address,
     vendorPhone: companyProfile.phone,
     vendorTaxNumber: companyProfile.taxNumber,
-    vendorLogoUrl: companyProfile.logoUrl,
-    vendorStampUrl: companyProfile.stampUrl,
+    vendorLogoUrl: sanitizeVendorImage(companyProfile.logoUrl),
+    vendorStampUrl: sanitizeVendorImage(companyProfile.stampUrl),
     template: pdfTemplate,
   };
 }

@@ -9,6 +9,7 @@ import {
   Info,
 } from "lucide-react";
 import { formatCurrency, formatNumber, type OrderTotals } from "../../core/calculations";
+import CollapsibleSection from "../ui/CollapsibleSection";
 
 function Row({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {
   return (
@@ -55,9 +56,8 @@ export default function SummaryPanel({
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="zx-card p-5">
-        <h3 className="text-sm font-bold text-ink-900">Order Summary</h3>
-        <div className="mt-2 divide-y divide-ink-100">
+      <CollapsibleSection title="Order Summary">
+        <div className="divide-y divide-ink-100">
           <Row label="Total Rows" value={totals.totalRows} />
           <Row label="Total Doors" value={totals.totalDoors} />
           <Row label="Total Area" value={`${formatNumber(totals.totalArea)} m²`} />
@@ -65,18 +65,19 @@ export default function SummaryPanel({
           <Row label="Currency" value={currency} />
           {invoiceMode && <Row label="Grand Total" value={formatCurrency(totals.grandTotal, currency)} strong />}
         </div>
-      </div>
+      </CollapsibleSection>
 
-      <div className="zx-card p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-ink-900">Proforma Invoice</h3>
-            <p className="mt-0.5 text-xs text-ink-500">Enable pricing &amp; VAT columns</p>
-          </div>
+      <CollapsibleSection
+        title="Proforma Invoice"
+        subtitle="Enable pricing & VAT columns"
+        headerExtra={
           <button
             role="switch"
             aria-checked={invoiceMode}
-            onClick={() => onToggleInvoice(!invoiceMode)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleInvoice(!invoiceMode);
+            }}
             className={`relative h-6 w-11 shrink-0 rounded-full transition ${
               invoiceMode ? "bg-navy-800" : "bg-ink-200"
             }`}
@@ -87,7 +88,8 @@ export default function SummaryPanel({
               }`}
             />
           </button>
-        </div>
+        }
+      >
         <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-600">
           <input
             type="checkbox"
@@ -97,10 +99,9 @@ export default function SummaryPanel({
           />
           Generate Proforma Invoice
         </label>
-      </div>
+      </CollapsibleSection>
 
-      <div className="zx-card p-5">
-        <h3 className="mb-3 text-sm font-bold text-ink-900">Export Actions</h3>
+      <CollapsibleSection title="Export Actions">
         <div className="flex flex-col gap-2">
           <button onClick={onSaveJson} className="zx-btn-secondary w-full justify-start">
             <Save className="h-4 w-4" />
@@ -150,7 +151,7 @@ export default function SummaryPanel({
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <p>CSV is for FIROO CAM import. PDF is for customer and production approval.</p>
         </div>
-      </div>
+      </CollapsibleSection>
     </div>
   );
 }

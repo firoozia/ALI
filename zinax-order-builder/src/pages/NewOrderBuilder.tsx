@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Save, FileSpreadsheet, FileText, Receipt, Printer, FilePlus2, FlaskConical } from "lucide-react";
+import { Save, FileSpreadsheet, FileText, Receipt, Printer, FilePlus2, FlaskConical, PanelRightClose, PanelRightOpen } from "lucide-react";
 import OrderHeaderForm from "../components/order/OrderHeaderForm";
 import DoorOrderTable from "../components/order/DoorOrderTable";
 import InvoicePanel from "../components/order/InvoicePanel";
@@ -66,6 +66,11 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
   const [invoiceMode, setInvoiceMode] = useState(false);
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState<ToastTone>("success");
+  // Collapsing the summary sidebar hands its width back to the Door Order
+  // Table so every column is visible without horizontal scrolling —
+  // requested after seeing a CAD/CAM tool panel's collapsible-dock pattern
+  // (only the open/close mechanic is borrowed, nothing CNC-related).
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const totals = computeOrderTotals(rows);
 
@@ -202,7 +207,7 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex flex-col gap-6">
           <OrderHeaderForm
             header={header}
@@ -222,22 +227,42 @@ export default function NewOrderBuilder({ settings, customers, onPreviewOrder, o
           )}
         </div>
 
-        <div>
-          <SummaryPanel
-            totals={totals}
-            currency={header.currency}
-            invoiceMode={invoiceMode}
-            onToggleInvoice={handleToggleInvoiceMode}
-            onSaveJson={handleSaveJson}
-            onOpenJsonFile={handleOpenJsonFile}
-            onExportCsv={handleExportCsv}
-            onExportOrderPdf={handlePreviewOrder}
-            onExportInvoicePdf={handlePreviewInvoice}
-            onPrintPreview={handlePreviewOrder}
-            invoicePdfDisabled={invoicePdfDisabled}
-            invoicePdfDisabledReason={invoicePdfDisabled ? `Cannot export yet: ${invoiceErrors[0]}` : undefined}
-          />
-        </div>
+        {sidebarCollapsed ? (
+          <button
+            onClick={() => setSidebarCollapsed(false)}
+            title="Show summary panel"
+            className="hidden h-fit items-center gap-1.5 self-start rounded-lg border border-ink-200 bg-white px-2.5 py-3 text-ink-500 shadow-card hover:bg-ink-50 xl:flex"
+          >
+            <PanelRightOpen className="h-4 w-4" />
+          </button>
+        ) : (
+          <div className="w-full xl:w-[360px]">
+            <div className="mb-2 hidden justify-end xl:flex">
+              <button
+                onClick={() => setSidebarCollapsed(true)}
+                title="Hide summary panel"
+                className="flex items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-xs font-medium text-ink-500 hover:bg-ink-50"
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+                Hide panel
+              </button>
+            </div>
+            <SummaryPanel
+              totals={totals}
+              currency={header.currency}
+              invoiceMode={invoiceMode}
+              onToggleInvoice={handleToggleInvoiceMode}
+              onSaveJson={handleSaveJson}
+              onOpenJsonFile={handleOpenJsonFile}
+              onExportCsv={handleExportCsv}
+              onExportOrderPdf={handlePreviewOrder}
+              onExportInvoicePdf={handlePreviewInvoice}
+              onPrintPreview={handlePreviewOrder}
+              invoicePdfDisabled={invoicePdfDisabled}
+              invoicePdfDisabledReason={invoicePdfDisabled ? `Cannot export yet: ${invoiceErrors[0]}` : undefined}
+            />
+          </div>
+        )}
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur lg:left-64">

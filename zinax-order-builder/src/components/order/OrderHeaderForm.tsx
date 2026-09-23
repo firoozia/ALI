@@ -1,4 +1,4 @@
-import type { ChangeEvent, ReactNode } from "react";
+import { useState, type ChangeEvent, type ReactNode } from "react";
 import { Calendar, Hash, UserCheck } from "lucide-react";
 import { CURRENCIES, SALESPERSONS } from "../../core/mockData";
 import type { OrderHeader } from "../../core/orderSchema";
@@ -105,7 +105,12 @@ export default function OrderHeaderForm({ header, onChange, customers, onSelectC
         </Field>
 
         <Field label="Customer Name">
-          <input value={header.customerName} onChange={set("customerName")} className="zx-input" placeholder="e.g. Khalid Al Farsi" />
+          <CustomerNameAutocomplete
+            value={header.customerName}
+            customers={customers}
+            onChange={set("customerName")}
+            onSelectCustomer={onSelectCustomer}
+          />
         </Field>
 
         <Field label="Company Name">
@@ -162,6 +167,67 @@ export default function OrderHeaderForm({ header, onChange, customers, onSelectC
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+interface CustomerNameAutocompleteProps {
+  value: string;
+  customers: Customer[];
+  onChange: (e: FieldChangeEvent) => void;
+  onSelectCustomer: (customer: Customer) => void;
+}
+
+/**
+ * Typing into Customer Name used to be completely disconnected from the
+ * saved customer list — the only way to reuse a customer's details was the
+ * separate dropdown above. This suggests matching customers as you type,
+ * so picking one still auto-fills phone/email/address/etc. the same way
+ * that dropdown does.
+ */
+function CustomerNameAutocomplete({ value, customers, onChange, onSelectCustomer }: CustomerNameAutocompleteProps) {
+  const [open, setOpen] = useState(false);
+
+  const query = value.trim().toLowerCase();
+  const matches = query
+    ? customers.filter((c) => c.customerName.toLowerCase().includes(query)).slice(0, 6)
+    : [];
+
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        className="zx-input"
+        placeholder="e.g. Khalid Al Farsi"
+        autoComplete="off"
+      />
+      {open && matches.length > 0 && (
+        <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-ink-200 bg-white py-1 shadow-panel">
+          {matches.map((c) => (
+            <li key={c.customerId}>
+              <button
+                type="button"
+                // Runs before the input's onBlur closes the list, so the click still registers.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onSelectCustomer(c);
+                  setOpen(false);
+                }}
+                className="flex w-full flex-col items-start px-3 py-1.5 text-left hover:bg-navy-50"
+              >
+                <span className="text-sm font-medium text-ink-800">{c.customerName || c.customerId}</span>
+                {c.companyName && <span className="text-xs text-ink-500">{c.companyName}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

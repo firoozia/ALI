@@ -8,7 +8,13 @@
 // outright, so historical orders that reference a retired code still
 // display correctly — only new rows are restricted to active entries.
 
+// `id` is a stable internal identifier, generated once when a row is
+// created and never edited by the user — unlike `code`, which the user
+// freely retypes. UI lists must key/look up rows by `id`, not `code`:
+// keying by `code` breaks mid-edit (React remounts the row, and its input
+// loses focus, the instant the user's first keystroke changes the key).
 export interface DesignCatalogItem {
+  id: string;
   code: string;
   name: string;
   family: string;
@@ -21,6 +27,7 @@ export interface DesignCatalogItem {
 }
 
 export interface PvcCatalogItem {
+  id: string;
   code: string;
   color: string;
   category: string;
@@ -34,9 +41,30 @@ export interface MdfThicknessOption {
 }
 
 export interface GrainDirectionOption {
+  id: string;
   code: string;
   label: string;
   active: boolean;
+}
+
+/** Generates a stable id for a new catalog row. Never derived from `code`. */
+export function nextCatalogItemId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Backfills `id` on any catalog entries loaded from storage/import before this field existed. */
+export function ensureCatalogIds(catalog: Catalog): Catalog {
+  const withId = <T extends { id?: string }>(items: T[]): T[] =>
+    items.map((item) => (item.id ? item : { ...item, id: nextCatalogItemId() }));
+  return {
+    ...catalog,
+    designs: withId(catalog.designs),
+    pvcColors: withId(catalog.pvcColors),
+    grainDirections: withId(catalog.grainDirections),
+  };
 }
 
 export interface Catalog {
@@ -51,19 +79,19 @@ export function formatMdfThickness(option: MdfThicknessOption): string {
 }
 
 const DEFAULT_DESIGNS: DesignCatalogItem[] = [
-  { code: "ZD001", name: "Classic Offset Door", family: "Offset", description: "Single offset panel with routed edge.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
-  { code: "ZD002", name: "Double Offset Door", family: "Offset", description: "Twin offset panel groove.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
-  { code: "ZD003", name: "Modern Groove Door", family: "Groove", description: "Horizontal modern groove line.", minWidthMm: 350, maxWidthMm: 800, minHeightMm: 600, maxHeightMm: 1300, active: true },
-  { code: "ZD004", name: "Shaker V-Groove", family: "Shaker", description: "Classic shaker frame with V-groove center.", minWidthMm: 300, maxWidthMm: 650, minHeightMm: 600, maxHeightMm: 1200, active: true },
-  { code: "ZD005", name: "Raised Panel Classic", family: "Classic", description: "Traditional raised center panel.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1250, active: true },
+  { id: "seed-zd001", code: "ZD001", name: "Classic Offset Door", family: "Offset", description: "Single offset panel with routed edge.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
+  { id: "seed-zd002", code: "ZD002", name: "Double Offset Door", family: "Offset", description: "Twin offset panel groove.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
+  { id: "seed-zd003", code: "ZD003", name: "Modern Groove Door", family: "Groove", description: "Horizontal modern groove line.", minWidthMm: 350, maxWidthMm: 800, minHeightMm: 600, maxHeightMm: 1300, active: true },
+  { id: "seed-zd004", code: "ZD004", name: "Shaker V-Groove", family: "Shaker", description: "Classic shaker frame with V-groove center.", minWidthMm: 300, maxWidthMm: 650, minHeightMm: 600, maxHeightMm: 1200, active: true },
+  { id: "seed-zd005", code: "ZD005", name: "Raised Panel Classic", family: "Classic", description: "Traditional raised center panel.", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1250, active: true },
 ];
 
 const DEFAULT_PVC_COLORS: PvcCatalogItem[] = [
-  { code: "PVC-101", color: "Walnut", category: "Wood Tone", finish: "Matte", active: true },
-  { code: "PVC-202", color: "Oak", category: "Wood Tone", finish: "Matte", active: true },
-  { code: "PVC-305", color: "Stone Gray", category: "Solid", finish: "Matte", active: true },
-  { code: "PVC-410", color: "Matte White", category: "Solid", finish: "Matte", active: true },
-  { code: "PVC-512", color: "Graphite", category: "Solid", finish: "Gloss", active: true },
+  { id: "seed-pvc-101", code: "PVC-101", color: "Walnut", category: "Wood Tone", finish: "Matte", active: true },
+  { id: "seed-pvc-202", code: "PVC-202", color: "Oak", category: "Wood Tone", finish: "Matte", active: true },
+  { id: "seed-pvc-305", code: "PVC-305", color: "Stone Gray", category: "Solid", finish: "Matte", active: true },
+  { id: "seed-pvc-410", code: "PVC-410", color: "Matte White", category: "Solid", finish: "Matte", active: true },
+  { id: "seed-pvc-512", code: "PVC-512", color: "Graphite", category: "Solid", finish: "Gloss", active: true },
 ];
 
 const DEFAULT_MDF_THICKNESS: MdfThicknessOption[] = [
@@ -74,8 +102,8 @@ const DEFAULT_MDF_THICKNESS: MdfThicknessOption[] = [
 ];
 
 const DEFAULT_GRAIN_DIRECTIONS: GrainDirectionOption[] = [
-  { code: "vertical", label: "Vertical", active: true },
-  { code: "horizontal", label: "Horizontal", active: true },
+  { id: "seed-vertical", code: "vertical", label: "Vertical", active: true },
+  { id: "seed-horizontal", code: "horizontal", label: "Horizontal", active: true },
 ];
 
 export function makeDefaultCatalog(): Catalog {
@@ -134,7 +162,7 @@ export function parseCatalogFile(jsonText: string): ParseCatalogFileResult {
   if (!candidate.catalog) {
     return { ok: false, error: "File is missing catalog data." };
   }
-  return { ok: true, catalog: candidate.catalog };
+  return { ok: true, catalog: ensureCatalogIds(candidate.catalog) };
 }
 
 function upsertByCode<T extends { code: string }>(current: T[], incoming: T[]): T[] {

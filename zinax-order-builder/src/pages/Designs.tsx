@@ -12,6 +12,7 @@ import {
   parseCatalogFile,
   mergeCatalog,
   replaceCatalog,
+  nextCatalogItemId,
 } from "../core/catalogSchema";
 import { downloadJsonFile, readFileAsText } from "../lib/download";
 import Toast, { type ToastTone } from "../components/ui/Toast";
@@ -148,16 +149,21 @@ function DesignsSection({ catalog, onChangeCatalog }: DesignsProps) {
     `${d.code} ${d.name} ${d.family}`.toLowerCase().includes(query.toLowerCase())
   );
 
-  const update = (code: string, patch: Partial<DesignCatalogItem>) => {
-    onChangeCatalog({ ...catalog, designs: designs.map((d) => (d.code === code ? { ...d, ...patch } : d)) });
+  // Keyed by the row's stable internal `id`, never by `code` — `code` is
+  // exactly what the user is typing into, and re-keying rows on every
+  // keystroke of the field they're editing is what caused the "typing
+  // exits the field after one character" bug (React remounts the row and
+  // its <input> loses focus the instant `code`, its key, changes).
+  const update = (id: string, patch: Partial<DesignCatalogItem>) => {
+    onChangeCatalog({ ...catalog, designs: designs.map((d) => (d.id === id ? { ...d, ...patch } : d)) });
   };
-  const remove = (code: string) => onChangeCatalog({ ...catalog, designs: designs.filter((d) => d.code !== code) });
+  const remove = (id: string) => onChangeCatalog({ ...catalog, designs: designs.filter((d) => d.id !== id) });
   const add = () =>
     onChangeCatalog({
       ...catalog,
       designs: [
         ...designs,
-        { code: "", name: "", family: "", description: "", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
+        { id: nextCatalogItemId(), code: "", name: "", family: "", description: "", minWidthMm: 300, maxWidthMm: 700, minHeightMm: 600, maxHeightMm: 1200, active: true },
       ],
     });
 
@@ -188,21 +194,21 @@ function DesignsSection({ catalog, onChangeCatalog }: DesignsProps) {
             </tr>
           </thead>
           <tbody>
-            {visible.map((d, index) => (
-              <tr key={d.code || `design-${index}`} className={!d.active ? "opacity-50" : ""}>
-                <td className="zx-td p-1"><input value={d.code} onChange={(e) => update(d.code, { code: e.target.value })} className="zx-cell-input w-24" /></td>
-                <td className="zx-td p-1"><input value={d.name} onChange={(e) => update(d.code, { name: e.target.value })} className="zx-cell-input" /></td>
-                <td className="zx-td p-1"><input value={d.family} onChange={(e) => update(d.code, { family: e.target.value })} className="zx-cell-input w-28" /></td>
-                <td className="zx-td p-1"><input value={d.description} onChange={(e) => update(d.code, { description: e.target.value })} className="zx-cell-input" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.minWidthMm} onChange={(e) => update(d.code, { minWidthMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.maxWidthMm} onChange={(e) => update(d.code, { maxWidthMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.minHeightMm} onChange={(e) => update(d.code, { minHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.maxHeightMm} onChange={(e) => update(d.code, { maxHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
+            {visible.map((d) => (
+              <tr key={d.id} className={!d.active ? "opacity-50" : ""}>
+                <td className="zx-td p-1"><input value={d.code} onChange={(e) => update(d.id, { code: e.target.value })} className="zx-cell-input w-24" /></td>
+                <td className="zx-td p-1"><input value={d.name} onChange={(e) => update(d.id, { name: e.target.value })} className="zx-cell-input" /></td>
+                <td className="zx-td p-1"><input value={d.family} onChange={(e) => update(d.id, { family: e.target.value })} className="zx-cell-input w-28" /></td>
+                <td className="zx-td p-1"><input value={d.description} onChange={(e) => update(d.id, { description: e.target.value })} className="zx-cell-input" /></td>
+                <td className="zx-td p-1"><input type="number" value={d.minWidthMm} onChange={(e) => update(d.id, { minWidthMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
+                <td className="zx-td p-1"><input type="number" value={d.maxWidthMm} onChange={(e) => update(d.id, { maxWidthMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
+                <td className="zx-td p-1"><input type="number" value={d.minHeightMm} onChange={(e) => update(d.id, { minHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
+                <td className="zx-td p-1"><input type="number" value={d.maxHeightMm} onChange={(e) => update(d.id, { maxHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
                 <td className="zx-td text-center">
-                  <input type="checkbox" checked={d.active} onChange={(e) => update(d.code, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
+                  <input type="checkbox" checked={d.active} onChange={(e) => update(d.id, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
                 </td>
                 <td className="zx-td">
-                  <button onClick={() => remove(d.code)} className="zx-btn-danger !px-2 !py-1.5"><Trash2 className="h-3.5 w-3.5" /></button>
+                  <button onClick={() => remove(d.id)} className="zx-btn-danger !px-2 !py-1.5"><Trash2 className="h-3.5 w-3.5" /></button>
                 </td>
               </tr>
             ))}
@@ -218,12 +224,15 @@ function PvcSection({ catalog, onChangeCatalog }: DesignsProps) {
   const items = catalog.pvcColors;
   const visible = items.filter((p) => `${p.code} ${p.color} ${p.category}`.toLowerCase().includes(query.toLowerCase()));
 
-  const update = (code: string, patch: Partial<PvcCatalogItem>) => {
-    onChangeCatalog({ ...catalog, pvcColors: items.map((p) => (p.code === code ? { ...p, ...patch } : p)) });
+  const update = (id: string, patch: Partial<PvcCatalogItem>) => {
+    onChangeCatalog({ ...catalog, pvcColors: items.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
   };
-  const remove = (code: string) => onChangeCatalog({ ...catalog, pvcColors: items.filter((p) => p.code !== code) });
+  const remove = (id: string) => onChangeCatalog({ ...catalog, pvcColors: items.filter((p) => p.id !== id) });
   const add = () =>
-    onChangeCatalog({ ...catalog, pvcColors: [...items, { code: "", color: "", category: "", finish: "", active: true }] });
+    onChangeCatalog({
+      ...catalog,
+      pvcColors: [...items, { id: nextCatalogItemId(), code: "", color: "", category: "", finish: "", active: true }],
+    });
 
   return (
     <div className="zx-card mb-5 p-5">
@@ -248,17 +257,17 @@ function PvcSection({ catalog, onChangeCatalog }: DesignsProps) {
             </tr>
           </thead>
           <tbody>
-            {visible.map((p, index) => (
-              <tr key={p.code || `pvc-${index}`} className={!p.active ? "opacity-50" : ""}>
-                <td className="zx-td p-1"><input value={p.code} onChange={(e) => update(p.code, { code: e.target.value })} className="zx-cell-input w-28" /></td>
-                <td className="zx-td p-1"><input value={p.color} onChange={(e) => update(p.code, { color: e.target.value })} className="zx-cell-input" /></td>
-                <td className="zx-td p-1"><input value={p.category} onChange={(e) => update(p.code, { category: e.target.value })} className="zx-cell-input w-32" /></td>
-                <td className="zx-td p-1"><input value={p.finish} onChange={(e) => update(p.code, { finish: e.target.value })} className="zx-cell-input w-28" /></td>
+            {visible.map((p) => (
+              <tr key={p.id} className={!p.active ? "opacity-50" : ""}>
+                <td className="zx-td p-1"><input value={p.code} onChange={(e) => update(p.id, { code: e.target.value })} className="zx-cell-input w-28" /></td>
+                <td className="zx-td p-1"><input value={p.color} onChange={(e) => update(p.id, { color: e.target.value })} className="zx-cell-input" /></td>
+                <td className="zx-td p-1"><input value={p.category} onChange={(e) => update(p.id, { category: e.target.value })} className="zx-cell-input w-32" /></td>
+                <td className="zx-td p-1"><input value={p.finish} onChange={(e) => update(p.id, { finish: e.target.value })} className="zx-cell-input w-28" /></td>
                 <td className="zx-td text-center">
-                  <input type="checkbox" checked={p.active} onChange={(e) => update(p.code, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
+                  <input type="checkbox" checked={p.active} onChange={(e) => update(p.id, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
                 </td>
                 <td className="zx-td">
-                  <button onClick={() => remove(p.code)} className="zx-btn-danger !px-2 !py-1.5"><Trash2 className="h-3.5 w-3.5" /></button>
+                  <button onClick={() => remove(p.id)} className="zx-btn-danger !px-2 !py-1.5"><Trash2 className="h-3.5 w-3.5" /></button>
                 </td>
               </tr>
             ))}
@@ -310,11 +319,12 @@ function MdfSection({ catalog, onChangeCatalog }: DesignsProps) {
 
 function GrainSection({ catalog, onChangeCatalog }: DesignsProps) {
   const items = catalog.grainDirections;
-  const update = (code: string, patch: Partial<GrainDirectionOption>) => {
-    onChangeCatalog({ ...catalog, grainDirections: items.map((g) => (g.code === code ? { ...g, ...patch } : g)) });
+  const update = (id: string, patch: Partial<GrainDirectionOption>) => {
+    onChangeCatalog({ ...catalog, grainDirections: items.map((g) => (g.id === id ? { ...g, ...patch } : g)) });
   };
-  const remove = (code: string) => onChangeCatalog({ ...catalog, grainDirections: items.filter((g) => g.code !== code) });
-  const add = () => onChangeCatalog({ ...catalog, grainDirections: [...items, { code: "", label: "", active: true }] });
+  const remove = (id: string) => onChangeCatalog({ ...catalog, grainDirections: items.filter((g) => g.id !== id) });
+  const add = () =>
+    onChangeCatalog({ ...catalog, grainDirections: [...items, { id: nextCatalogItemId(), code: "", label: "", active: true }] });
 
   return (
     <div className="zx-card p-5">
@@ -326,15 +336,15 @@ function GrainSection({ catalog, onChangeCatalog }: DesignsProps) {
         </button>
       </div>
       <div className="space-y-2">
-        {items.map((g, index) => (
-          <div key={g.code || `grain-${index}`} className={`flex items-center gap-2 ${!g.active ? "opacity-50" : ""}`}>
-            <input value={g.code} onChange={(e) => update(g.code, { code: e.target.value })} placeholder="code" className="zx-input w-28" />
-            <input value={g.label} onChange={(e) => update(g.code, { label: e.target.value })} placeholder="Label" className="zx-input flex-1" />
+        {items.map((g) => (
+          <div key={g.id} className={`flex items-center gap-2 ${!g.active ? "opacity-50" : ""}`}>
+            <input value={g.code} onChange={(e) => update(g.id, { code: e.target.value })} placeholder="code" className="zx-input w-28" />
+            <input value={g.label} onChange={(e) => update(g.id, { label: e.target.value })} placeholder="Label" className="zx-input flex-1" />
             <label className="flex items-center gap-1.5 text-xs text-ink-600">
-              <input type="checkbox" checked={g.active} onChange={(e) => update(g.code, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
+              <input type="checkbox" checked={g.active} onChange={(e) => update(g.id, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
               Active
             </label>
-            <button onClick={() => remove(g.code)} className="zx-btn-danger !px-2 !py-2"><Trash2 className="h-3.5 w-3.5" /></button>
+            <button onClick={() => remove(g.id)} className="zx-btn-danger !px-2 !py-2"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>
         ))}
       </div>
