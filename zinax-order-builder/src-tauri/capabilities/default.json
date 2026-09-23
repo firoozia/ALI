@@ -12,6 +12,8 @@
     "fs:allow-write-text-file",
     "fs:allow-read-text-file",
     "fs:allow-write",
-    "fs:allow-read"
+    "fs:allow-read",
+    "fs:allow-home-write-recursive",
+    "fs:allow-home-read-recursive"
   ]
 }
