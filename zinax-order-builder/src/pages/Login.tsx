@@ -2,6 +2,18 @@ import { useState } from "react";
 import { Lock } from "lucide-react";
 import { signInTenant, signUpTenant, type TenantSession } from "../lib/tenantAuth";
 
+// Supabase throws plain {message, code, ...} objects for auth/database
+// errors, not native Error instances, so `err instanceof Error` misses
+// them and was collapsing every real failure (e.g. an RLS violation) into
+// an unhelpful "Something went wrong."
+function extractErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err !== null && "message" in err && typeof err.message === "string") {
+    return err.message;
+  }
+  return "Something went wrong. Please try again.";
+}
+
 interface LoginProps {
   onSignedIn: (session: TenantSession) => void;
 }
@@ -23,7 +35,7 @@ export default function Login({ onSignedIn }: LoginProps) {
         mode === "sign-up" ? await signUpTenant(email, password, companyName) : await signInTenant(email, password);
       onSignedIn(session);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setError(extractErrorMessage(err));
     } finally {
       setBusy(false);
     }
