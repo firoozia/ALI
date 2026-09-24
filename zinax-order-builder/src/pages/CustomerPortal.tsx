@@ -44,6 +44,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
   const [tenant, setTenant] = useState<PublicTenant | null>(null);
   const [designs, setDesigns] = useState<PublicDesign[]>([]);
   const [colors, setColors] = useState<PublicColor[]>([]);
+  const [catalogError, setCatalogError] = useState(false);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "not-found">("loading");
 
   const [view, setView] = useState<"form" | "history">("form");
@@ -76,10 +77,18 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
         return;
       }
       setTenant(t);
+      let failed = false;
       const [designList, colorList] = await Promise.all([
-        fetchPublicDesigns(t.id).catch(() => []),
-        fetchPublicColors(t.id).catch(() => []),
+        fetchPublicDesigns(t.id).catch(() => {
+          failed = true;
+          return [];
+        }),
+        fetchPublicColors(t.id).catch(() => {
+          failed = true;
+          return [];
+        }),
       ]);
+      setCatalogError(failed);
       setDesigns(designList);
       setColors(colorList);
       setItems(blankItems(designList, colorList));
@@ -208,7 +217,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
   return (
     <div className="min-h-screen bg-ink-50">
       <div className="border-b border-ink-100 bg-white px-4 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gold-400 text-navy-950 font-bold">
               {tenant?.companyName.slice(0, 2).toUpperCase()}
@@ -241,7 +250,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
         </div>
       </div>
 
-      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-8">
+      <div className="mx-auto max-w-5xl px-4 py-6 sm:px-8">
         {view === "history" ? (
           <>
             <div className="mb-5 grid grid-cols-2 gap-4">
@@ -315,6 +324,13 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
               <div className="zx-card mb-5 p-4 text-sm text-ink-600 ring-1 ring-amber-200">
                 This order was already sent — only {tenant?.companyName} can make changes to it now. Contact them
                 directly if something needs to change.
+              </div>
+            )}
+
+            {!readOnly && catalogError && (
+              <div className="zx-card mb-5 p-4 text-sm text-red-700 ring-1 ring-red-200">
+                Could not load {tenant?.companyName}'s design/color codes — check your internet connection and reopen
+                this order form. (This is different from "not published yet": it means the request itself failed.)
               </div>
             )}
 
