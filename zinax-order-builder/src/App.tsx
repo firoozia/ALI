@@ -76,6 +76,10 @@ export default function App() {
   // local-only, no-login prototype it always was.
   const [tenantSession, setTenantSession] = useState<TenantSession | null>(null);
   const [authChecked, setAuthChecked] = useState(!isBackendConfigured());
+  // A factory floor may have no reliable internet — "Continue offline" on
+  // the login screen skips signing in for this launch and falls back to
+  // the same local-only behavior as when no backend is configured at all.
+  const [offlineChosen, setOfflineChosen] = useState(false);
 
   useEffect(() => {
     if (!isBackendConfigured()) return;
@@ -231,7 +235,9 @@ export default function App() {
   const sidebarActive: ScreenKey = SIDEBAR_SCREENS.includes(screen) ? screen : "new-order";
 
   if (!authChecked) return null;
-  if (isBackendConfigured() && !tenantSession) return <Login onSignedIn={handleSignedIn} />;
+  if (isBackendConfigured() && !tenantSession && !offlineChosen) {
+    return <Login onSignedIn={handleSignedIn} onContinueOffline={() => setOfflineChosen(true)} />;
+  }
 
   return (
     <AppLayout

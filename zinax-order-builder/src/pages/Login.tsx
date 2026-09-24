@@ -16,9 +16,10 @@ function extractErrorMessage(err: unknown): string {
 
 interface LoginProps {
   onSignedIn: (session: TenantSession) => void;
+  onContinueOffline: () => void;
 }
 
-export default function Login({ onSignedIn }: LoginProps) {
+export default function Login({ onSignedIn, onContinueOffline }: LoginProps) {
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
@@ -108,6 +109,19 @@ export default function Login({ onSignedIn }: LoginProps) {
         >
           {mode === "sign-in" ? "New factory? Create an account" : "Already have an account? Sign in"}
         </button>
+
+        <div className="mt-4 border-t border-ink-100 pt-4">
+          <button
+            type="button"
+            onClick={onContinueOffline}
+            className="w-full text-center text-xs font-medium text-ink-500 hover:text-ink-700"
+          >
+            No internet, or don't need an account right now? Continue offline
+          </button>
+          <p className="mt-1 text-center text-2xs text-ink-400">
+            Works locally on this computer only — no order sync or customer portal until you sign in.
+          </p>
+        </div>
       </div>
     </div>
   );
