@@ -8,6 +8,7 @@ const TITLES: Record<ScreenKey, string> = {
   "order-preview": "Order Sheet Preview",
   "invoice-preview": "Proforma Invoice Preview",
   customers: "Customers",
+  submissions: "Customer Orders",
   products: "Designs",
   templates: "PDF Templates",
   "export-schema": "Export Schema Preview",

@@ -131,3 +131,15 @@ create policy "tenant owner can read own submissions" on customer_submissions
   for select using (
     tenant_id in (select id from tenants where owner_user_id = auth.uid())
   );
+
+-- ...and mark them imported/dismissed, or clear them out, from the
+-- factory's own Customer Orders inbox screen.
+create policy "tenant owner can update own submissions" on customer_submissions
+  for update using (
+    tenant_id in (select id from tenants where owner_user_id = auth.uid())
+  );
+
+create policy "tenant owner can delete own submissions" on customer_submissions
+  for delete using (
+    tenant_id in (select id from tenants where owner_user_id = auth.uid())
+  );

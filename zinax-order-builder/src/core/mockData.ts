@@ -14,6 +14,9 @@ export const STATUS_STYLES: Record<string, string> = {
   "Ready for Production": "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
   Invoiced: "bg-navy-50 text-navy-700 ring-1 ring-navy-200",
   Exported: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
+  new: "bg-gold-100 text-gold-600 ring-1 ring-gold-300",
+  imported: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
+  dismissed: "bg-ink-100 text-ink-500",
 };
 
 export function makeInitialRows(): OrderRow[] {

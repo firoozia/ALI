@@ -3,6 +3,7 @@
 // customer_submissions from Supabase) whose customer sent the file some
 // other way (WhatsApp, email, USB), instead of it landing in the database.
 import type { CustomerSubmission } from "./publicCatalogSchema";
+import { makeDefaultRow, type OrderHeader, type OrderRow } from "./orderSchema";
 
 export const CUSTOMER_SUBMISSION_FILE_SCHEMA_VERSION = "1.0";
 export const CUSTOMER_SUBMISSION_FILE_APP_ID = "ZINAX_CUSTOMER_PORTAL";
@@ -70,6 +71,39 @@ export function parseCustomerSubmissionFile(jsonText: string): ParseCustomerSubm
       app: candidate.app,
       submittedAt: candidate.submittedAt ?? new Date().toISOString(),
       submission: candidate.submission,
+    },
+  };
+}
+
+/**
+ * Merges a customer's submitted items/details into an in-progress order —
+ * shared by both import paths (a downloaded file, or an online submission
+ * picked up from the Customer Orders inbox), so they behave identically.
+ */
+export function mergeCustomerSubmissionIntoOrder(
+  header: OrderHeader,
+  rows: OrderRow[],
+  submission: CustomerSubmission
+): { header: OrderHeader; rows: OrderRow[] } {
+  const newRows = submission.items.map((item) =>
+    makeDefaultRow({
+      designCode: item.designCode,
+      width: item.width,
+      height: item.height,
+      qty: item.qty,
+      pvcCode: item.colorCode,
+      grain: item.direction,
+    })
+  );
+  return {
+    rows: [...rows, ...newRows],
+    header: {
+      ...header,
+      customerName: submission.customerName || header.customerName,
+      projectName: submission.endCustomerName || header.projectName,
+      notes: submission.siteName
+        ? `${header.notes ? header.notes + " — " : ""}Site: ${submission.siteName}`
+        : header.notes,
     },
   };
 }

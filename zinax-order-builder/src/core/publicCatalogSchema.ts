@@ -30,3 +30,12 @@ export interface CustomerSubmission {
   siteName: string;
   items: CustomerPortalItem[];
 }
+
+export type CustomerSubmissionStatus = "new" | "imported" | "dismissed";
+
+/** A CustomerSubmission as stored in the factory's online inbox (customer_submissions table). */
+export interface CustomerSubmissionRecord extends CustomerSubmission {
+  id: string;
+  submittedAt: string;
+  status: CustomerSubmissionStatus;
+}

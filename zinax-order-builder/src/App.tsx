@@ -10,9 +10,12 @@ import InvoicePdfPreview from "./pages/InvoicePdfPreview";
 import ExportSchemaPreview from "./pages/ExportSchemaPreview";
 import Settings from "./pages/Settings";
 import Customers from "./pages/Customers";
+import CustomerSubmissions from "./pages/CustomerSubmissions";
 import Designs from "./pages/Designs";
 import PdfTemplates from "./pages/PdfTemplates";
 import type { OrderHeader, OrderRow } from "./core/orderSchema";
+import { mergeCustomerSubmissionIntoOrder } from "./core/customerSubmissionFile";
+import type { CustomerSubmissionRecord } from "./core/publicCatalogSchema";
 import type { Invoice } from "./core/invoiceSchema";
 import { loadSettingsFromStorage, saveSettingsToStorage, type AppSettings } from "./core/settingsSchema";
 import { loadCustomersFromStorage, saveCustomersToStorage, type Customer } from "./core/customerSchema";
@@ -36,6 +39,7 @@ const SIDEBAR_SCREENS: ScreenKey[] = [
   "dashboard",
   "new-order",
   "customers",
+  "submissions",
   "products",
   "templates",
   "export-schema",
@@ -159,6 +163,14 @@ function FactoryApp() {
     setScreen("new-order");
   };
 
+  const handleImportSubmission = (submission: CustomerSubmissionRecord) => {
+    setOrderDraft((prev) => {
+      const merged = mergeCustomerSubmissionIntoOrder(prev.header, prev.rows, submission);
+      return { ...prev, header: merged.header, rows: merged.rows };
+    });
+    setScreen("new-order");
+  };
+
   const handlePreviewOrder = (data: OrderPreviewData) => {
     setOrderPreviewData(data);
     setScreen("order-preview");
@@ -216,6 +228,9 @@ function FactoryApp() {
       break;
     case "customers":
       content = <Customers customers={customers} onChangeCustomers={setCustomers} />;
+      break;
+    case "submissions":
+      content = <CustomerSubmissions tenantSession={tenantSession} onImportSubmission={handleImportSubmission} />;
       break;
     case "products":
       content = (

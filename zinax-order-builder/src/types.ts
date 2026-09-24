@@ -6,6 +6,7 @@ export type ScreenKey =
   | "order-preview"
   | "invoice-preview"
   | "customers"
+  | "submissions"
   | "products"
   | "templates"
   | "export-schema"
