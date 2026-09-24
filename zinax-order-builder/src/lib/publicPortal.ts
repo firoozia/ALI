@@ -61,26 +61,3 @@ export async function fetchMyCustomerSubmissions(submissionIds: string[]): Promi
   if (error) throw error;
   return (data as SubmissionRow[]).map(toRecord);
 }
-
-/**
- * Public, unauthenticated edit of one of the customer's own past
- * submissions — only takes effect while the factory hasn't picked it up
- * yet (status still "new"; see update_customer_submission in schema.sql).
- * Returns null if it's already been imported/dismissed.
- */
-export async function updateMyCustomerSubmission(
-  submissionId: string,
-  submission: CustomerSubmission
-): Promise<CustomerSubmissionRecord | null> {
-  if (!supabase) throw new Error("Backend is not configured.");
-  const { data, error } = await supabase.rpc("update_customer_submission", {
-    submission_id: submissionId,
-    new_customer_name: submission.customerName,
-    new_end_customer_name: submission.endCustomerName,
-    new_site_name: submission.siteName,
-    new_items: submission.items,
-  });
-  if (error) throw error;
-  const row = Array.isArray(data) ? data[0] : data;
-  return row ? toRecord(row as SubmissionRow) : null;
-}

@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 import { Lock, CheckCircle2, Download, FileText, Printer, ClipboardList, FilePlus2, ArrowLeft } from "lucide-react";
-import {
-  resolveTenantBySlug,
-  submitCustomerOrder,
-  fetchMyCustomerSubmissions,
-  updateMyCustomerSubmission,
-} from "../lib/publicPortal";
+import { resolveTenantBySlug, submitCustomerOrder, fetchMyCustomerSubmissions } from "../lib/publicPortal";
 import { fetchPublicDesigns } from "../lib/remoteDesigns";
 import { fetchPublicColors } from "../lib/remoteColors";
 import { rememberSubmission, listRememberedSubmissions } from "../lib/customerOrderHistory";
@@ -150,22 +145,9 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
     setError(null);
     try {
       const submission = { ...currentSubmission(), items: validItems };
-      if (activeSubmission) {
-        const updated = await updateMyCustomerSubmission(activeSubmission.id, submission);
-        if (!updated) {
-          flash("The factory has already picked up this order, so it can no longer be edited.", "error");
-          setActiveSubmission({ ...activeSubmission, status: "imported" });
-        } else {
-          setActiveSubmission(updated);
-          flash("Changes saved — the factory sees the updated order.");
-          setView("history");
-          loadHistory();
-        }
-      } else {
-        const id = await submitCustomerOrder(tenant.id, submission);
-        rememberSubmission(slug, id);
-        setSubmitted(true);
-      }
+      const id = await submitCustomerOrder(tenant.id, submission);
+      rememberSubmission(slug, id);
+      setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {
@@ -217,7 +199,10 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
     );
   }
 
-  const readOnly = activeSubmission !== null && activeSubmission.status !== "new";
+  // Editing only happens before an order is sent — once submitted, the
+  // customer can view it here but only the factory can change it (from
+  // its own Customer Orders inbox).
+  const readOnly = activeSubmission !== null;
   const totalDoors = history.reduce((s, r) => s + r.items.reduce((s2, it) => s2 + (Number(it.qty) || 0), 0), 0);
 
   return (
@@ -328,7 +313,8 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
 
             {readOnly && (
               <div className="zx-card mb-5 p-4 text-sm text-ink-600 ring-1 ring-amber-200">
-                This order has already been picked up by {tenant?.companyName} and can no longer be edited.
+                This order was already sent — only {tenant?.companyName} can make changes to it now. Contact them
+                directly if something needs to change.
               </div>
             )}
 
@@ -377,7 +363,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
 
             {!readOnly && (
               <button onClick={handleSubmit} disabled={validItems.length === 0 || submitting} className="zx-btn-primary w-full">
-                {submitting ? "Sending…" : activeSubmission ? "Save Changes" : "Submit Order to Factory"}
+                {submitting ? "Sending…" : "Submit Order to Factory"}
               </button>
             )}
 

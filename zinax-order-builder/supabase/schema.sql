@@ -175,10 +175,12 @@ create policy "tenant owner can delete own submissions" on customer_submissions
 -- tracked client-side (the submission ids it created, remembered in that
 -- browser's local storage) rather than by any server-side identity. A
 -- plain "public can select" RLS policy would leak every tenant's every
--- customer's orders to anyone, so instead these two functions are the
--- only way an anonymous caller can read/update a submission — and only
--- ever the exact, unguessable id(s) it already has (bypassing table RLS
--- via security definer, but never returning or touching any other row).
+-- customer's orders to anyone, so instead this function is the only way
+-- an anonymous caller can read a submission — and only ever the exact,
+-- unguessable id(s) it already has (bypassing table RLS via security
+-- definer, but never returning any other row). It's read-only: once an
+-- order is sent, only the factory (via its own authenticated Customer
+-- Orders inbox) can change it — the customer can view but not edit here.
 create or replace function get_customer_submissions(submission_ids uuid[])
 returns setof customer_submissions
 language sql
@@ -189,35 +191,3 @@ as $$
 $$;
 
 grant execute on function get_customer_submissions(uuid[]) to anon, authenticated;
-
--- Lets the customer edit their own submission from their history list —
--- but only while the factory hasn't picked it up yet (status = 'new');
--- once imported/dismissed it's frozen, and this silently returns no row.
-create or replace function update_customer_submission(
-  submission_id uuid,
-  new_customer_name text,
-  new_end_customer_name text,
-  new_site_name text,
-  new_items jsonb
-)
-returns customer_submissions
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  result customer_submissions;
-begin
-  update customer_submissions
-  set customer_name = new_customer_name,
-      end_customer_name = new_end_customer_name,
-      site_name = new_site_name,
-      items = new_items
-  where id = submission_id and status = 'new'
-  returning * into result;
-
-  return result;
-end;
-$$;
-
-grant execute on function update_customer_submission(uuid, text, text, text, jsonb) to anon, authenticated;
