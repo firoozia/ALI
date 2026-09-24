@@ -48,6 +48,19 @@ create table if not exists designs (
   unique (tenant_id, code)
 );
 
+-- The factory's own PVC/membrane color codes — published here so the
+-- public customer portal can offer a Color Code dropdown instead of free
+-- text, the same way `designs` backs the Door Code dropdown.
+create table if not exists colors (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants (id) on delete cascade,
+  code text not null,
+  color text not null default '',
+  active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, code)
+);
+
 -- Orders submitted by an end customer through the public portal, before
 -- the factory has reviewed/accepted them into its real order history.
 -- Deliberately a separate table from `orders`: the public portal writes
@@ -67,6 +80,7 @@ create table if not exists customer_submissions (
 alter table tenants enable row level security;
 alter table orders enable row level security;
 alter table designs enable row level security;
+alter table colors enable row level security;
 alter table customer_submissions enable row level security;
 
 -- A user can only see/manage the tenant row they own.
@@ -119,6 +133,19 @@ create policy "tenant owner can manage own designs" on designs
 
 -- ...and anyone (the unauthenticated customer portal) can read the active ones.
 create policy "public can read active designs" on designs
+  for select using (active = true);
+
+-- Colors: same pattern as designs — the factory manages its own codes...
+create policy "tenant owner can manage own colors" on colors
+  for all using (
+    tenant_id in (select id from tenants where owner_user_id = auth.uid())
+  )
+  with check (
+    tenant_id in (select id from tenants where owner_user_id = auth.uid())
+  );
+
+-- ...and anyone (the unauthenticated customer portal) can read the active ones.
+create policy "public can read active colors" on colors
   for select using (active = true);
 
 -- Customer submissions: anyone can submit an order through the public

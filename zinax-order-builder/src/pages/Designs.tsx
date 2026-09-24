@@ -17,6 +17,7 @@ import {
 } from "../core/catalogSchema";
 import { downloadJsonFile, readFileAsText } from "../lib/download";
 import { publishDesignsToPortal } from "../lib/remoteDesigns";
+import { publishColorsToPortal } from "../lib/remoteColors";
 import type { TenantSession } from "../lib/tenantAuth";
 import Toast, { type ToastTone } from "../components/ui/Toast";
 
@@ -75,7 +76,8 @@ export default function Designs({ catalog, onChangeCatalog, tenantSession }: Des
     setPublishing(true);
     try {
       await publishDesignsToPortal(tenantSession.tenantId, catalog.designs);
-      flash("Published — your customer portal now shows these design codes.");
+      await publishColorsToPortal(tenantSession.tenantId, catalog.pvcColors);
+      flash("Published — your customer portal now shows these design and color codes.");
     } catch (err) {
       flash(`Could not publish: ${err instanceof Error ? err.message : "unknown error"}`, "error");
     } finally {
@@ -147,7 +149,7 @@ export default function Designs({ catalog, onChangeCatalog, tenantSession }: Des
           </div>
           <p className="mb-3 text-xs text-ink-500">
             Your customers order from a public link — no account needed on their side. It shows only your active
-            design codes below, and nothing from any other factory.
+            design and color codes below, and nothing from any other factory.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <input readOnly value={portalUrl} onFocus={(e) => e.target.select()} className="zx-input flex-1 !text-xs" />

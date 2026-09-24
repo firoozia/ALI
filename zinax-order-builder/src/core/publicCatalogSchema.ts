@@ -9,6 +9,12 @@ export interface PublicDesign {
   active: boolean;
 }
 
+export interface PublicColor {
+  code: string;
+  color: string;
+  active: boolean;
+}
+
 export interface PublicTenant {
   id: string;
   slug: string;

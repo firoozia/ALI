@@ -2,7 +2,14 @@ import { useEffect, useState } from "react";
 import { Lock, Plus, Trash2, CheckCircle2, Download, FileText, Printer } from "lucide-react";
 import { resolveTenantBySlug, submitCustomerOrder } from "../lib/publicPortal";
 import { fetchPublicDesigns } from "../lib/remoteDesigns";
-import type { PublicTenant, PublicDesign, CustomerPortalItem, CustomerSubmission } from "../core/publicCatalogSchema";
+import { fetchPublicColors } from "../lib/remoteColors";
+import type {
+  PublicTenant,
+  PublicDesign,
+  PublicColor,
+  CustomerPortalItem,
+  CustomerSubmission,
+} from "../core/publicCatalogSchema";
 import {
   buildCustomerSubmissionFile,
   serializeCustomerSubmissionFile,
@@ -18,6 +25,7 @@ interface CustomerPortalProps {
 export default function CustomerPortal({ slug }: CustomerPortalProps) {
   const [tenant, setTenant] = useState<PublicTenant | null>(null);
   const [designs, setDesigns] = useState<PublicDesign[]>([]);
+  const [colors, setColors] = useState<PublicColor[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "not-found">("loading");
 
   const [customerName, setCustomerName] = useState("");
@@ -45,9 +53,17 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
         return;
       }
       setTenant(t);
-      const list = await fetchPublicDesigns(t.id).catch(() => []);
-      setDesigns(list);
-      if (list.length > 0) setDraft((d) => ({ ...d, designCode: list[0].code }));
+      const [designList, colorList] = await Promise.all([
+        fetchPublicDesigns(t.id).catch(() => []),
+        fetchPublicColors(t.id).catch(() => []),
+      ]);
+      setDesigns(designList);
+      setColors(colorList);
+      setDraft((d) => ({
+        ...d,
+        designCode: designList.length > 0 ? designList[0].code : "",
+        colorCode: colorList.length > 0 ? colorList[0].code : "",
+      }));
       setLoadState("ready");
     });
   }, [slug]);
@@ -191,7 +207,26 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
             </div>
             <div>
               <label className="zx-label">Color Code</label>
-              <input value={draft.colorCode} onChange={(e) => setDraft((d) => ({ ...d, colorCode: e.target.value }))} className="zx-input" placeholder="e.g. PVC-101" />
+              {colors.length > 0 ? (
+                <select
+                  value={draft.colorCode}
+                  onChange={(e) => setDraft((d) => ({ ...d, colorCode: e.target.value }))}
+                  className="zx-select"
+                >
+                  {colors.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code} — {c.color}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={draft.colorCode}
+                  onChange={(e) => setDraft((d) => ({ ...d, colorCode: e.target.value }))}
+                  className="zx-input"
+                  placeholder="e.g. PVC-101"
+                />
+              )}
             </div>
             <div>
               <label className="zx-label">Direction</label>
