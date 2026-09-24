@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "customer:build": "tauri build --config src-tauri/tauri.customer.conf.json"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.9.0",

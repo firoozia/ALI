@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import AppLayout from "./components/layout/AppLayout";
 import Login from "./pages/Login";
 import CustomerPortal from "./pages/CustomerPortal";
+import CustomerAppEntry from "./pages/CustomerAppEntry";
 import Dashboard from "./pages/Dashboard";
 import NewOrderBuilder from "./pages/NewOrderBuilder";
 import OrderPdfPreview from "./pages/OrderPdfPreview";
@@ -42,11 +43,22 @@ const SIDEBAR_SCREENS: ScreenKey[] = [
 ];
 
 export default function App() {
-  // A factory's customer opens this without ever logging in — checked
-  // before anything else (Login, AppLayout) so it works regardless of
-  // whether the operator viewing this browser is signed in on this device.
+  // A factory's customer opens this without ever logging in, and the
+  // standalone customer desktop build (VITE_APP_ROLE=customer, set at build
+  // time in the Windows workflow) never shows the factory's own
+  // Login/Dashboard at all — both cases are decided here, before the
+  // factory app's own hooks run, so neither depends on being signed in.
   const portalSlug = new URLSearchParams(window.location.search).get("factory");
+  if (import.meta.env.VITE_APP_ROLE === "customer") {
+    return <CustomerAppEntry urlSlug={portalSlug} />;
+  }
+  if (portalSlug) {
+    return <CustomerPortal slug={portalSlug} />;
+  }
+  return <FactoryApp />;
+}
 
+function FactoryApp() {
   const [screen, setScreen] = useState<ScreenKey>("dashboard");
   const [settings, setSettings] = useState<AppSettings>(loadSettingsFromStorage);
   const [customers, setCustomers] = useState<Customer[]>(loadCustomersFromStorage);
@@ -108,8 +120,6 @@ export default function App() {
     if (tenantSession) return;
     saveOrderHistoryToStorage(orderHistory);
   }, [orderHistory, tenantSession]);
-
-  if (portalSlug) return <CustomerPortal slug={portalSlug} />;
 
   const setHeader = (header: OrderHeader) => setOrderDraft((prev) => ({ ...prev, header }));
   const setRows = (rows: OrderRow[]) => setOrderDraft((prev) => ({ ...prev, rows }));
