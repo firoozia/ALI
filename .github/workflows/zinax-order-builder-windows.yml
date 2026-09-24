@@ -24,6 +24,13 @@ jobs:
   build-windows:
     name: Build Windows desktop package
     runs-on: windows-latest
+    # These are the Supabase *publishable* key and project URL — by design
+    # safe to ship in a built client (Row Level Security is what actually
+    # protects the data, not keeping this pair secret), so they're set
+    # directly here rather than as encrypted repo secrets.
+    env:
+      VITE_SUPABASE_URL: https://rupjlgmnwqwgabnafwpb.supabase.co
+      VITE_SUPABASE_ANON_KEY: sb_publishable_zO7PmIa6_7BPWXKT3Bbt1A_a785zQsh
 
     steps:
       - name: Checkout
