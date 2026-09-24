@@ -5,6 +5,7 @@ export interface TenantSession {
   email: string;
   tenantId: string;
   companyName: string;
+  slug: string;
 }
 
 /** Signs up a brand-new factory account and creates its tenant row. */
@@ -28,7 +29,7 @@ export async function signUpTenant(
     .single();
   if (tenantError) throw tenantError;
 
-  return { userId, email, tenantId: tenantRow.id, companyName: tenantRow.company_name };
+  return { userId, email, tenantId: tenantRow.id, companyName: tenantRow.company_name, slug: tenantRow.slug };
 }
 
 /** Signs in an existing factory account and loads its tenant row. */
@@ -46,7 +47,13 @@ export async function signInTenant(email: string, password: string): Promise<Ten
     .single();
   if (tenantError) throw tenantError;
 
-  return { userId, email: data.user.email ?? email, tenantId: tenantRow.id, companyName: tenantRow.company_name };
+  return {
+    userId,
+    email: data.user.email ?? email,
+    tenantId: tenantRow.id,
+    companyName: tenantRow.company_name,
+    slug: tenantRow.slug,
+  };
 }
 
 export async function signOutTenant(): Promise<void> {
@@ -65,7 +72,13 @@ export async function restoreTenantSession(): Promise<TenantSession | null> {
   const { data: tenantRow, error } = await supabase.from("tenants").select().eq("owner_user_id", user.id).single();
   if (error || !tenantRow) return null;
 
-  return { userId: user.id, email: user.email ?? "", tenantId: tenantRow.id, companyName: tenantRow.company_name };
+  return {
+    userId: user.id,
+    email: user.email ?? "",
+    tenantId: tenantRow.id,
+    companyName: tenantRow.company_name,
+    slug: tenantRow.slug,
+  };
 }
 
 function slugify(name: string): string {

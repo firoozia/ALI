@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Plus, Trash2, Search, Download, Upload } from "lucide-react";
+import { Plus, Trash2, Search, Download, Upload, Globe } from "lucide-react";
 import {
   type Catalog,
   type DesignCatalogItem,
@@ -16,17 +16,21 @@ import {
   formatMdfThickness,
 } from "../core/catalogSchema";
 import { downloadJsonFile, readFileAsText } from "../lib/download";
+import { publishDesignsToPortal } from "../lib/remoteDesigns";
+import type { TenantSession } from "../lib/tenantAuth";
 import Toast, { type ToastTone } from "../components/ui/Toast";
 
 interface DesignsProps {
   catalog: Catalog;
   onChangeCatalog: (catalog: Catalog) => void;
+  tenantSession?: TenantSession | null;
 }
 
-export default function Designs({ catalog, onChangeCatalog }: DesignsProps) {
+export default function Designs({ catalog, onChangeCatalog, tenantSession }: DesignsProps) {
   const [toast, setToast] = useState("");
   const [toastTone, setToastTone] = useState<ToastTone>("success");
   const [pendingImport, setPendingImport] = useState<Catalog | null>(null);
+  const [publishing, setPublishing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const flash = (msg: string, tone: ToastTone = "success") => {
@@ -65,6 +69,21 @@ export default function Designs({ catalog, onChangeCatalog }: DesignsProps) {
     setPendingImport(null);
     flash(mode === "merge" ? "Catalog merged." : "Catalog replaced.");
   };
+
+  const handlePublish = async () => {
+    if (!tenantSession) return;
+    setPublishing(true);
+    try {
+      await publishDesignsToPortal(tenantSession.tenantId, catalog.designs);
+      flash("Published — your customer portal now shows these design codes.");
+    } catch (err) {
+      flash(`Could not publish: ${err instanceof Error ? err.message : "unknown error"}`, "error");
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const portalUrl = tenantSession ? `${window.location.origin}${window.location.pathname}?factory=${tenantSession.slug}` : "";
 
   return (
     <div className="mx-auto max-w-[1500px] px-4 py-4 pb-16 sm:px-6 sm:py-6">
@@ -115,6 +134,25 @@ export default function Designs({ catalog, onChangeCatalog }: DesignsProps) {
             </button>
             <button onClick={() => setPendingImport(null)} className="zx-btn-ghost !py-1.5">
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tenantSession && (
+        <div className="zx-card mb-5 p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <Globe className="h-4 w-4 text-navy-700" />
+            <h3 className="text-sm font-bold text-ink-900">Customer Portal</h3>
+          </div>
+          <p className="mb-3 text-xs text-ink-500">
+            Your customers order from a public link — no account needed on their side. It shows only your active
+            design codes below, and nothing from any other factory.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input readOnly value={portalUrl} onFocus={(e) => e.target.select()} className="zx-input flex-1 !text-xs" />
+            <button onClick={handlePublish} disabled={publishing} className="zx-btn-primary !py-1.5">
+              {publishing ? "Publishing…" : "Publish Active Designs"}
             </button>
           </div>
         </div>
