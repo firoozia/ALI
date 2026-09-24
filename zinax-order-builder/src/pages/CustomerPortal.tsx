@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
-import { Lock, Plus, Trash2, CheckCircle2, Download, FileText, Printer } from "lucide-react";
-import { resolveTenantBySlug, submitCustomerOrder } from "../lib/publicPortal";
+import { Lock, CheckCircle2, Download, FileText, Printer, ClipboardList, FilePlus2, ArrowLeft } from "lucide-react";
+import {
+  resolveTenantBySlug,
+  submitCustomerOrder,
+  fetchMyCustomerSubmissions,
+  updateMyCustomerSubmission,
+} from "../lib/publicPortal";
 import { fetchPublicDesigns } from "../lib/remoteDesigns";
 import { fetchPublicColors } from "../lib/remoteColors";
+import { rememberSubmission, listRememberedSubmissions } from "../lib/customerOrderHistory";
 import type {
   PublicTenant,
   PublicDesign,
   PublicColor,
   CustomerPortalItem,
   CustomerSubmission,
+  CustomerSubmissionRecord,
 } from "../core/publicCatalogSchema";
 import {
   buildCustomerSubmissionFile,
@@ -17,9 +24,25 @@ import {
 } from "../core/customerSubmissionFile";
 import { downloadJsonFile } from "../lib/download";
 import { exportCustomerOrderPdf } from "../lib/pdf/exportCustomerOrderPdf";
+import CustomerItemsTable from "../components/customerPortal/CustomerItemsTable";
+import Badge from "../components/ui/Badge";
+import Toast, { type ToastTone } from "../components/ui/Toast";
 
 interface CustomerPortalProps {
   slug: string;
+}
+
+function blankItems(designs: PublicDesign[], colors: PublicColor[]): CustomerPortalItem[] {
+  return [
+    {
+      designCode: designs[0]?.code ?? "",
+      width: 0,
+      height: 0,
+      qty: 1,
+      colorCode: colors[0]?.code ?? "",
+      direction: "Vertical",
+    },
+  ];
 }
 
 export default function CustomerPortal({ slug }: CustomerPortalProps) {
@@ -28,23 +51,28 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
   const [colors, setColors] = useState<PublicColor[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "not-found">("loading");
 
+  const [view, setView] = useState<"form" | "history">("form");
+  const [activeSubmission, setActiveSubmission] = useState<CustomerSubmissionRecord | null>(null);
+
   const [customerName, setCustomerName] = useState("");
   const [endCustomerName, setEndCustomerName] = useState("");
   const [siteName, setSiteName] = useState("");
   const [items, setItems] = useState<CustomerPortalItem[]>([]);
 
-  const [draft, setDraft] = useState<CustomerPortalItem>({
-    designCode: "",
-    width: 0,
-    height: 0,
-    qty: 1,
-    colorCode: "",
-    direction: "Vertical",
-  });
+  const [history, setHistory] = useState<CustomerSubmissionRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState("");
+  const [toastTone, setToastTone] = useState<ToastTone>("success");
+
+  const flash = (msg: string, tone: ToastTone = "success") => {
+    setToast(msg);
+    setToastTone(tone);
+    setTimeout(() => setToast(""), tone === "error" ? 4500 : 2500);
+  };
 
   useEffect(() => {
     resolveTenantBySlug(slug).then(async (t) => {
@@ -59,43 +87,85 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
       ]);
       setDesigns(designList);
       setColors(colorList);
-      setDraft((d) => ({
-        ...d,
-        designCode: designList.length > 0 ? designList[0].code : "",
-        colorCode: colorList.length > 0 ? colorList[0].code : "",
-      }));
+      setItems(blankItems(designList, colorList));
       setLoadState("ready");
     });
   }, [slug]);
 
-  const addItem = () => {
-    if (!draft.designCode || draft.width <= 0 || draft.height <= 0 || draft.qty <= 0) return;
-    setItems((prev) => [...prev, draft]);
-    setDraft((d) => ({ ...d, width: 0, height: 0, qty: 1 }));
+  const loadHistory = () => {
+    setHistoryLoading(true);
+    const ids = listRememberedSubmissions(slug).map((r) => r.id);
+    fetchMyCustomerSubmissions(ids)
+      .then((records) => {
+        const order = new Map(ids.map((id, i) => [id, i]));
+        setHistory([...records].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)));
+      })
+      .catch(() => flash("Could not load your past orders.", "error"))
+      .finally(() => setHistoryLoading(false));
   };
 
-  const removeItem = (index: number) => setItems((prev) => prev.filter((_, i) => i !== index));
+  const openMyOrders = () => {
+    setView("history");
+    loadHistory();
+  };
+
+  const startNewOrder = () => {
+    setActiveSubmission(null);
+    setCustomerName("");
+    setEndCustomerName("");
+    setSiteName("");
+    setItems(blankItems(designs, colors));
+    setError(null);
+    setView("form");
+  };
+
+  const openSubmission = (record: CustomerSubmissionRecord) => {
+    setActiveSubmission(record);
+    setCustomerName(record.customerName);
+    setEndCustomerName(record.endCustomerName);
+    setSiteName(record.siteName);
+    setItems(record.items);
+    setError(null);
+    setView("form");
+  };
 
   const currentSubmission = (): CustomerSubmission => ({ customerName, endCustomerName, siteName, items });
 
+  const validItems = items.filter((it) => it.designCode && it.width > 0 && it.height > 0 && it.qty > 0);
+
   const handleDownloadFile = async () => {
-    if (items.length === 0) return;
-    const file = buildCustomerSubmissionFile(currentSubmission());
+    if (validItems.length === 0) return;
+    const file = buildCustomerSubmissionFile({ ...currentSubmission(), items: validItems });
     await downloadJsonFile(customerSubmissionFileName(customerName), serializeCustomerSubmissionFile(file));
   };
 
   const handleDownloadPdf = async () => {
-    if (items.length === 0 || !tenant) return;
-    await exportCustomerOrderPdf(tenant.companyName, currentSubmission());
+    if (validItems.length === 0 || !tenant) return;
+    await exportCustomerOrderPdf(tenant.companyName, { ...currentSubmission(), items: validItems });
   };
 
   const handleSubmit = async () => {
-    if (!tenant || items.length === 0) return;
+    if (!tenant || validItems.length === 0) return;
     setSubmitting(true);
     setError(null);
     try {
-      await submitCustomerOrder(tenant.id, { customerName, endCustomerName, siteName, items });
-      setSubmitted(true);
+      const submission = { ...currentSubmission(), items: validItems };
+      if (activeSubmission) {
+        const updated = await updateMyCustomerSubmission(activeSubmission.id, submission);
+        if (!updated) {
+          flash("The factory has already picked up this order, so it can no longer be edited.", "error");
+          setActiveSubmission({ ...activeSubmission, status: "imported" });
+        } else {
+          setActiveSubmission(updated);
+          flash("Changes saved — the factory sees the updated order.");
+          setView("history");
+          loadHistory();
+        }
+      } else {
+        const id = await submitCustomerOrder(tenant.id, submission);
+        rememberSubmission(slug, id);
+        setSubmitted(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {
@@ -131,172 +201,212 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
             <FileText className="h-4 w-4" />
             Download a Copy for Yourself (PDF)
           </button>
+          <button
+            onClick={() => {
+              setSubmitted(false);
+              startNewOrder();
+              openMyOrders();
+            }}
+            className="zx-btn-ghost mt-2 w-full"
+          >
+            <ClipboardList className="h-4 w-4" />
+            View My Orders
+          </button>
         </div>
       </div>
     );
   }
 
+  const readOnly = activeSubmission !== null && activeSubmission.status !== "new";
+  const totalDoors = history.reduce((s, r) => s + r.items.reduce((s2, it) => s2 + (Number(it.qty) || 0), 0), 0);
+
   return (
     <div className="min-h-screen bg-ink-50">
       <div className="border-b border-ink-100 bg-white px-4 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gold-400 text-navy-950">
-            {tenant?.companyName.slice(0, 2).toUpperCase()}
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gold-400 text-navy-950 font-bold">
+              {tenant?.companyName.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-sm font-bold text-ink-900">{tenant?.companyName}</p>
+              <p className="text-xs text-ink-500">Customer Order Portal</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-bold text-ink-900">{tenant?.companyName}</p>
-            <p className="text-xs text-ink-500">Customer Order Form</p>
+          <div className="flex items-center gap-1 rounded-lg border border-ink-200 bg-ink-50 p-1">
+            <button
+              onClick={startNewOrder}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                view === "form" ? "bg-white text-navy-800 shadow-sm" : "text-ink-500 hover:text-ink-800"
+              }`}
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+              New Order
+            </button>
+            <button
+              onClick={openMyOrders}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                view === "history" ? "bg-white text-navy-800 shadow-sm" : "text-ink-500 hover:text-ink-800"
+              }`}
+            >
+              <ClipboardList className="h-3.5 w-3.5" />
+              My Orders
+            </button>
           </div>
         </div>
       </div>
 
       <div className="mx-auto max-w-3xl px-4 py-6 sm:px-8">
-        <div className="zx-card mb-5 p-5">
-          <h2 className="mb-1 text-base font-bold text-ink-900">Order Details</h2>
-          <p className="mb-4 text-xs text-ink-500">Only the information production needs to build your order.</p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div>
-              <label className="zx-label">Customer Name</label>
-              <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="zx-input" placeholder="e.g. Khalid Al Farsi" />
+        {view === "history" ? (
+          <>
+            <div className="mb-5 grid grid-cols-2 gap-4">
+              <div className="zx-card p-5">
+                <p className="text-2xs font-semibold uppercase tracking-wide text-ink-500">Orders Sent</p>
+                <p className="mt-0.5 text-2xl font-bold text-ink-900">{history.length}</p>
+              </div>
+              <div className="zx-card p-5">
+                <p className="text-2xs font-semibold uppercase tracking-wide text-ink-500">Total Doors</p>
+                <p className="mt-0.5 text-2xl font-bold text-ink-900">{totalDoors}</p>
+              </div>
             </div>
-            <div>
-              <label className="zx-label">End Customer Name</label>
-              <input value={endCustomerName} onChange={(e) => setEndCustomerName(e.target.value)} className="zx-input" placeholder="e.g. Marina Residence" />
-            </div>
-            <div>
-              <label className="zx-label">Installation Unit / Site</label>
-              <input value={siteName} onChange={(e) => setSiteName(e.target.value)} className="zx-input" placeholder="e.g. Unit 12, Tower A" />
-            </div>
-          </div>
-        </div>
 
-        <div className="zx-card mb-5 p-5">
-          <h2 className="mb-1 text-base font-bold text-ink-900">Add Item</h2>
-          <p className="mb-4 text-xs text-ink-500">
-            {designs.length === 0
-              ? "This factory hasn't published any design codes yet."
-              : "Pick a design code and enter the size."}
-          </p>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div>
-              <label className="zx-label">Door Code</label>
-              <select
-                value={draft.designCode}
-                onChange={(e) => setDraft((d) => ({ ...d, designCode: e.target.value }))}
-                className="zx-select"
-                disabled={designs.length === 0}
-              >
-                {designs.map((d) => (
-                  <option key={d.code} value={d.code}>
-                    {d.code} — {d.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="zx-label">Width (mm)</label>
-              <input type="number" value={draft.width || ""} onChange={(e) => setDraft((d) => ({ ...d, width: Number(e.target.value) || 0 }))} className="zx-input" />
-            </div>
-            <div>
-              <label className="zx-label">Height (mm)</label>
-              <input type="number" value={draft.height || ""} onChange={(e) => setDraft((d) => ({ ...d, height: Number(e.target.value) || 0 }))} className="zx-input" />
-            </div>
-            <div>
-              <label className="zx-label">Qty</label>
-              <input type="number" value={draft.qty} onChange={(e) => setDraft((d) => ({ ...d, qty: Number(e.target.value) || 1 }))} className="zx-input" />
-            </div>
-            <div>
-              <label className="zx-label">Color Code</label>
-              {colors.length > 0 ? (
-                <select
-                  value={draft.colorCode}
-                  onChange={(e) => setDraft((d) => ({ ...d, colorCode: e.target.value }))}
-                  className="zx-select"
-                >
-                  {colors.map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code} — {c.color}
-                    </option>
-                  ))}
-                </select>
+            <div className="zx-card overflow-hidden">
+              <div className="border-b border-ink-100 px-5 py-4">
+                <h2 className="text-sm font-bold text-ink-900">My Orders</h2>
+                <p className="mt-0.5 text-xs text-ink-500">
+                  Tracked on this device only — orders you send from another phone or browser won't show up here.
+                </p>
+              </div>
+              {historyLoading ? (
+                <p className="px-5 py-10 text-center text-sm text-ink-500">Loading…</p>
+              ) : history.length === 0 ? (
+                <p className="px-5 py-10 text-center text-sm text-ink-400">
+                  No orders sent from this device yet. Go to "New Order" to send your first one.
+                </p>
               ) : (
-                <input
-                  value={draft.colorCode}
-                  onChange={(e) => setDraft((d) => ({ ...d, colorCode: e.target.value }))}
-                  className="zx-input"
-                  placeholder="e.g. PVC-101"
-                />
+                <div className="divide-y divide-ink-100">
+                  {history.map((record) => {
+                    const qty = record.items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+                    return (
+                      <button
+                        key={record.id}
+                        onClick={() => openSubmission(record)}
+                        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-ink-50/60"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-ink-900">
+                              {new Date(record.submittedAt).toLocaleDateString(undefined, {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </span>
+                            <Badge status={record.status} />
+                          </div>
+                          <p className="mt-0.5 text-xs text-ink-500">
+                            {record.items.length} item(s) · {qty} door(s)
+                            {record.siteName ? ` · ${record.siteName}` : ""}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-xs font-semibold text-navy-700">Open →</span>
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
-            <div>
-              <label className="zx-label">Direction</label>
-              <select value={draft.direction} onChange={(e) => setDraft((d) => ({ ...d, direction: e.target.value }))} className="zx-select">
-                <option>Vertical</option>
-                <option>Horizontal</option>
-              </select>
-            </div>
-          </div>
-          <button onClick={addItem} disabled={designs.length === 0} className="zx-btn-secondary mt-4 w-full">
-            <Plus className="h-4 w-4" />
-            Add Item to List
-          </button>
-        </div>
+          </>
+        ) : (
+          <>
+            {activeSubmission && (
+              <button onClick={() => setView("history")} className="zx-btn-ghost mb-4 !py-1.5">
+                <ArrowLeft className="h-4 w-4" />
+                Back to My Orders
+              </button>
+            )}
 
-        {items.length > 0 && (
-          <div className="zx-card mb-5 p-5">
-            <h2 className="mb-3 text-base font-bold text-ink-900">Order Items ({items.length})</h2>
-            <div className="space-y-2">
-              {items.map((item, i) => (
-                <div key={i} className="flex items-center justify-between rounded-lg bg-navy-50 px-3 py-2 text-sm">
-                  <div>
-                    <span className="font-semibold text-navy-900">
-                      {item.width} × {item.height} mm
-                    </span>{" "}
-                    <span className="text-ink-500">
-                      — Qty {item.qty} · {item.designCode} · {item.colorCode || "—"} · {item.direction}
-                    </span>
-                  </div>
-                  <button onClick={() => removeItem(i)} className="zx-btn-ghost !p-1.5">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+            {readOnly && (
+              <div className="zx-card mb-5 p-4 text-sm text-ink-600 ring-1 ring-amber-200">
+                This order has already been picked up by {tenant?.companyName} and can no longer be edited.
+              </div>
+            )}
+
+            <div className="zx-card mb-5 p-5">
+              <h2 className="mb-1 text-base font-bold text-ink-900">Order Details</h2>
+              <p className="mb-4 text-xs text-ink-500">Only the information production needs to build your order.</p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                  <label className="zx-label">Customer Name</label>
+                  <input
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    className="zx-input"
+                    placeholder="e.g. Khalid Al Farsi"
+                    disabled={readOnly}
+                  />
                 </div>
-              ))}
+                <div>
+                  <label className="zx-label">End Customer Name</label>
+                  <input
+                    value={endCustomerName}
+                    onChange={(e) => setEndCustomerName(e.target.value)}
+                    className="zx-input"
+                    placeholder="e.g. Marina Residence"
+                    disabled={readOnly}
+                  />
+                </div>
+                <div>
+                  <label className="zx-label">Installation Unit / Site</label>
+                  <input
+                    value={siteName}
+                    onChange={(e) => setSiteName(e.target.value)}
+                    className="zx-input"
+                    placeholder="e.g. Unit 12, Tower A"
+                    disabled={readOnly}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
+
+            <div className="mb-5">
+              <CustomerItemsTable items={items} onChangeItems={setItems} designs={designs} colors={colors} readOnly={readOnly} />
+            </div>
+
+            {error && <p className="mb-3 text-sm font-medium text-red-600">{error}</p>}
+
+            {!readOnly && (
+              <button onClick={handleSubmit} disabled={validItems.length === 0 || submitting} className="zx-btn-primary w-full">
+                {submitting ? "Sending…" : activeSubmission ? "Save Changes" : "Submit Order to Factory"}
+              </button>
+            )}
+
+            {!activeSubmission && (
+              <button onClick={handleDownloadFile} disabled={validItems.length === 0} className="zx-btn-secondary mt-2 w-full">
+                <Download className="h-4 w-4" />
+                Download as File Instead
+              </button>
+            )}
+            {!activeSubmission && (
+              <p className="mt-1.5 text-center text-2xs text-ink-400">
+                For when the factory is offline — send them this file directly (WhatsApp, email) and they can import it.
+              </p>
+            )}
+
+            <button onClick={handleDownloadPdf} disabled={validItems.length === 0} className="zx-btn-secondary mt-2 w-full">
+              <Printer className="h-4 w-4" />
+              Download / Print a Copy for Yourself
+            </button>
+
+            <p className="mt-6 flex items-center justify-center gap-1.5 text-2xs text-ink-400">
+              <Lock className="h-3 w-3" />
+              Your details are sent directly and privately to {tenant?.companyName}.
+            </p>
+          </>
         )}
-
-        {error && <p className="mb-3 text-sm font-medium text-red-600">{error}</p>}
-
-        <button onClick={handleSubmit} disabled={items.length === 0 || submitting} className="zx-btn-primary w-full">
-          {submitting ? "Sending…" : "Submit Order to Factory"}
-        </button>
-
-        <button
-          onClick={handleDownloadFile}
-          disabled={items.length === 0}
-          className="zx-btn-secondary mt-2 w-full"
-        >
-          <Download className="h-4 w-4" />
-          Download as File Instead
-        </button>
-        <p className="mt-1.5 text-center text-2xs text-ink-400">
-          For when the factory is offline — send them this file directly (WhatsApp, email) and they can import it.
-        </p>
-
-        <button
-          onClick={handleDownloadPdf}
-          disabled={items.length === 0}
-          className="zx-btn-secondary mt-2 w-full"
-        >
-          <Printer className="h-4 w-4" />
-          Download / Print a Copy for Yourself
-        </button>
-
-        <p className="mt-6 flex items-center justify-center gap-1.5 text-2xs text-ink-400">
-          <Lock className="h-3 w-3" />
-          Your details are sent directly and privately to {tenant?.companyName}.
-        </p>
       </div>
+
+      <Toast message={toast} tone={toastTone} />
     </div>
   );
 }
