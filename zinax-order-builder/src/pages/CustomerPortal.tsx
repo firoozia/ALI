@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
-import { Lock, Plus, Trash2, CheckCircle2 } from "lucide-react";
+import { Lock, Plus, Trash2, CheckCircle2, Download } from "lucide-react";
 import { resolveTenantBySlug, submitCustomerOrder } from "../lib/publicPortal";
 import { fetchPublicDesigns } from "../lib/remoteDesigns";
 import type { PublicTenant, PublicDesign, CustomerPortalItem } from "../core/publicCatalogSchema";
+import {
+  buildCustomerSubmissionFile,
+  serializeCustomerSubmissionFile,
+  customerSubmissionFileName,
+} from "../core/customerSubmissionFile";
+import { downloadJsonFile } from "../lib/download";
 
 interface CustomerPortalProps {
   slug: string;
@@ -52,6 +58,12 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
   };
 
   const removeItem = (index: number) => setItems((prev) => prev.filter((_, i) => i !== index));
+
+  const handleDownloadFile = async () => {
+    if (items.length === 0) return;
+    const file = buildCustomerSubmissionFile({ customerName, endCustomerName, siteName, items });
+    await downloadJsonFile(customerSubmissionFileName(customerName), serializeCustomerSubmissionFile(file));
+  };
 
   const handleSubmit = async () => {
     if (!tenant || items.length === 0) return;
@@ -211,6 +223,18 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
         <button onClick={handleSubmit} disabled={items.length === 0 || submitting} className="zx-btn-primary w-full">
           {submitting ? "Sending…" : "Submit Order to Factory"}
         </button>
+
+        <button
+          onClick={handleDownloadFile}
+          disabled={items.length === 0}
+          className="zx-btn-secondary mt-2 w-full"
+        >
+          <Download className="h-4 w-4" />
+          Download as File Instead
+        </button>
+        <p className="mt-1.5 text-center text-2xs text-ink-400">
+          For when the factory is offline — send them this file directly (WhatsApp, email) and they can import it.
+        </p>
 
         <p className="mt-6 flex items-center justify-center gap-1.5 text-2xs text-ink-400">
           <Lock className="h-3 w-3" />

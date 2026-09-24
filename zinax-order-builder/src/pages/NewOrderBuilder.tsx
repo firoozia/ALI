@@ -8,8 +8,9 @@ import Toast, { type ToastTone } from "../components/ui/Toast";
 import { computeOrderTotals } from "../core/calculations";
 import { buildProductionCsvString, productionCsvFileName } from "../core/csvSchema";
 import { buildOrderFile, serializeOrderFile, orderFileName, parseOrderFile } from "../core/jsonOrderFile";
+import { parseCustomerSubmissionFile } from "../core/customerSubmissionFile";
 import { getOrderValidationErrors, getInvoiceValidationErrors } from "../core/validators";
-import type { OrderHeader, OrderRow } from "../core/orderSchema";
+import { makeDefaultRow, type OrderHeader, type OrderRow } from "../core/orderSchema";
 import { type Invoice } from "../core/invoiceSchema";
 import type { OrderPreviewData, InvoicePreviewData } from "../core/pdfSchema";
 import type { AppSettings } from "../core/settingsSchema";
@@ -160,6 +161,38 @@ export default function NewOrderBuilder({
     }
   };
 
+  const handleImportCustomerFile = async (file: File) => {
+    try {
+      const text = await readFileAsText(file);
+      const result = parseCustomerSubmissionFile(text);
+      if (!result.ok) {
+        flashToast(`Cannot import customer order: ${result.error}`, "error");
+        return;
+      }
+      const { submission } = result.file;
+      const newRows = submission.items.map((item) =>
+        makeDefaultRow({
+          designCode: item.designCode,
+          width: item.width,
+          height: item.height,
+          qty: item.qty,
+          pvcCode: item.colorCode,
+          grain: item.direction,
+        })
+      );
+      onChangeRows([...rows, ...newRows]);
+      onChangeHeader({
+        ...header,
+        customerName: submission.customerName || header.customerName,
+        projectName: submission.endCustomerName || header.projectName,
+        notes: submission.siteName ? `${header.notes ? header.notes + " — " : ""}Site: ${submission.siteName}` : header.notes,
+      });
+      flashToast(`${newRows.length} item(s) imported from ${submission.customerName || "customer"}'s order.`);
+    } catch (err) {
+      flashToast(`Cannot import customer order: ${err instanceof Error ? err.message : "unknown error"}`, "error");
+    }
+  };
+
   const handlePreviewOrder = () => {
     if (blockIfInvalid(orderErrors, "export Order PDF")) return;
     onRecordOrderEvent("Ready for Production", totals.totalDoors);
@@ -227,6 +260,7 @@ export default function NewOrderBuilder({
               onToggleInvoice={onChangeInvoiceMode}
               onSaveJson={handleSaveJson}
               onOpenJsonFile={handleOpenJsonFile}
+              onImportCustomerFile={handleImportCustomerFile}
               onExportCsv={handleExportCsv}
               onExportOrderPdf={handlePreviewOrder}
               onExportInvoicePdf={handlePreviewInvoice}

@@ -7,6 +7,7 @@ import {
   Receipt,
   Printer,
   Info,
+  Inbox,
 } from "lucide-react";
 import { formatCurrency, formatNumber, type OrderTotals } from "../../core/calculations";
 import CollapsibleSection from "../ui/CollapsibleSection";
@@ -29,6 +30,7 @@ interface SummaryPanelProps {
   onToggleInvoice: (mode: boolean) => void;
   onSaveJson: () => void;
   onOpenJsonFile: (file: File) => void;
+  onImportCustomerFile: (file: File) => void;
   onExportCsv: () => void;
   onExportOrderPdf: () => void;
   onExportInvoicePdf: () => void;
@@ -47,6 +49,7 @@ export default function SummaryPanel({
   onToggleInvoice,
   onSaveJson,
   onOpenJsonFile,
+  onImportCustomerFile,
   onExportCsv,
   onExportOrderPdf,
   onExportInvoicePdf,
@@ -56,6 +59,7 @@ export default function SummaryPanel({
   invoicePdfDisabledReason,
 }: SummaryPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const customerFileInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="flex flex-col gap-5">
@@ -122,6 +126,21 @@ export default function SummaryPanel({
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) onOpenJsonFile(file);
+              e.target.value = "";
+            }}
+          />
+          <button onClick={() => customerFileInputRef.current?.click()} className="zx-btn-secondary w-full justify-start">
+            <Inbox className="h-4 w-4" />
+            Import Customer Order
+          </button>
+          <input
+            ref={customerFileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onImportCustomerFile(file);
               e.target.value = "";
             }}
           />
