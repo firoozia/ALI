@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { Lock, Plus, Trash2, CheckCircle2, Download } from "lucide-react";
+import { Lock, Plus, Trash2, CheckCircle2, Download, FileText, Printer } from "lucide-react";
 import { resolveTenantBySlug, submitCustomerOrder } from "../lib/publicPortal";
 import { fetchPublicDesigns } from "../lib/remoteDesigns";
-import type { PublicTenant, PublicDesign, CustomerPortalItem } from "../core/publicCatalogSchema";
+import type { PublicTenant, PublicDesign, CustomerPortalItem, CustomerSubmission } from "../core/publicCatalogSchema";
 import {
   buildCustomerSubmissionFile,
   serializeCustomerSubmissionFile,
   customerSubmissionFileName,
 } from "../core/customerSubmissionFile";
 import { downloadJsonFile } from "../lib/download";
+import { exportCustomerOrderPdf } from "../lib/pdf/exportCustomerOrderPdf";
 
 interface CustomerPortalProps {
   slug: string;
@@ -59,10 +60,17 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
 
   const removeItem = (index: number) => setItems((prev) => prev.filter((_, i) => i !== index));
 
+  const currentSubmission = (): CustomerSubmission => ({ customerName, endCustomerName, siteName, items });
+
   const handleDownloadFile = async () => {
     if (items.length === 0) return;
-    const file = buildCustomerSubmissionFile({ customerName, endCustomerName, siteName, items });
+    const file = buildCustomerSubmissionFile(currentSubmission());
     await downloadJsonFile(customerSubmissionFileName(customerName), serializeCustomerSubmissionFile(file));
+  };
+
+  const handleDownloadPdf = async () => {
+    if (items.length === 0 || !tenant) return;
+    await exportCustomerOrderPdf(tenant.companyName, currentSubmission());
   };
 
   const handleSubmit = async () => {
@@ -103,6 +111,10 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
           <p className="mt-2 text-sm text-ink-500">
             Your order was sent directly to {tenant?.companyName}. They will contact you to confirm the details.
           </p>
+          <button onClick={handleDownloadPdf} className="zx-btn-secondary mt-5 w-full">
+            <FileText className="h-4 w-4" />
+            Download a Copy for Yourself (PDF)
+          </button>
         </div>
       </div>
     );
@@ -235,6 +247,15 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
         <p className="mt-1.5 text-center text-2xs text-ink-400">
           For when the factory is offline — send them this file directly (WhatsApp, email) and they can import it.
         </p>
+
+        <button
+          onClick={handleDownloadPdf}
+          disabled={items.length === 0}
+          className="zx-btn-secondary mt-2 w-full"
+        >
+          <Printer className="h-4 w-4" />
+          Download / Print a Copy for Yourself
+        </button>
 
         <p className="mt-6 flex items-center justify-center gap-1.5 text-2xs text-ink-400">
           <Lock className="h-3 w-3" />
