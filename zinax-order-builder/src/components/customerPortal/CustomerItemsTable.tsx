@@ -10,7 +10,7 @@ function makeItem(source?: Partial<CustomerPortalItem>): CustomerPortalItem {
     height: 0,
     qty: 1,
     colorCode: source?.colorCode ?? "",
-    direction: source?.direction ?? "Vertical",
+    direction: source?.direction ?? "",
   };
 }
 
@@ -178,6 +178,7 @@ export default function CustomerItemsTable({ items, onChangeItems, designs, colo
                       className="zx-cell-input"
                       disabled={readOnly}
                     >
+                      <option value="">Select...</option>
                       {colors.map((c) => (
                         <option key={c.code} value={c.code}>
                           {c.code} — {c.color}
@@ -201,6 +202,7 @@ export default function CustomerItemsTable({ items, onChangeItems, designs, colo
                     className="zx-cell-input"
                     disabled={readOnly}
                   >
+                    <option value="">Select...</option>
                     <option>Vertical</option>
                     <option>Horizontal</option>
                   </select>

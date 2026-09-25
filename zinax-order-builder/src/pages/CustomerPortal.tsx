@@ -4,6 +4,7 @@ import { resolveTenantBySlug, submitCustomerOrder, fetchMyCustomerSubmissions } 
 import { fetchPublicDesigns } from "../lib/remoteDesigns";
 import { fetchPublicColors } from "../lib/remoteColors";
 import { rememberSubmission, listRememberedSubmissions } from "../lib/customerOrderHistory";
+import { extractErrorMessage } from "../lib/errors";
 import type {
   PublicTenant,
   PublicDesign,
@@ -27,17 +28,8 @@ interface CustomerPortalProps {
   slug: string;
 }
 
-function blankItems(designs: PublicDesign[], colors: PublicColor[]): CustomerPortalItem[] {
-  return [
-    {
-      designCode: designs[0]?.code ?? "",
-      width: 0,
-      height: 0,
-      qty: 1,
-      colorCode: colors[0]?.code ?? "",
-      direction: "Vertical",
-    },
-  ];
+function blankItems(): CustomerPortalItem[] {
+  return [{ designCode: "", width: 0, height: 0, qty: 1, colorCode: "", direction: "" }];
 }
 
 export default function CustomerPortal({ slug }: CustomerPortalProps) {
@@ -91,7 +83,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
       setCatalogError(failed);
       setDesigns(designList);
       setColors(colorList);
-      setItems(blankItems(designList, colorList));
+      setItems(blankItems());
       setLoadState("ready");
     });
   }, [slug]);
@@ -118,9 +110,23 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
     setCustomerName("");
     setEndCustomerName("");
     setSiteName("");
-    setItems(blankItems(designs, colors));
+    setItems(blankItems());
     setError(null);
     setView("form");
+  };
+
+  /**
+   * The "New Order" tab: if the customer was viewing a locked past order,
+   * leaving it starts a fresh blank draft. Otherwise they're already
+   * mid-draft (e.g. just glanced at "My Orders" and came back) — switch
+   * the tab without wiping what they typed.
+   */
+  const goToNewOrderTab = () => {
+    if (activeSubmission) {
+      startNewOrder();
+    } else {
+      setView("form");
+    }
   };
 
   const openSubmission = (record: CustomerSubmissionRecord) => {
@@ -158,7 +164,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
       rememberSubmission(slug, id);
       setSubmitted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setError(extractErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -229,7 +235,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
           </div>
           <div className="flex items-center gap-1 rounded-lg border border-ink-200 bg-ink-50 p-1">
             <button
-              onClick={startNewOrder}
+              onClick={goToNewOrderTab}
               className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
                 view === "form" ? "bg-white text-navy-800 shadow-sm" : "text-ink-500 hover:text-ink-800"
               }`}
@@ -376,6 +382,12 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
             </div>
 
             {error && <p className="mb-3 text-sm font-medium text-red-600">{error}</p>}
+
+            {!readOnly && validItems.length === 0 && (
+              <p className="mb-3 text-sm font-medium text-amber-700">
+                Fill in a Door Code, Width, Height and Qty for at least one row before submitting.
+              </p>
+            )}
 
             {!readOnly && (
               <button onClick={handleSubmit} disabled={validItems.length === 0 || submitting} className="zx-btn-primary w-full">
