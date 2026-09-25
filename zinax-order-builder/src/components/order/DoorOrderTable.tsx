@@ -1,0 +1,379 @@
+import { useEffect, useRef } from "react";
+import type { KeyboardEvent } from "react";
+import { Plus, Copy, Trash2, AlertTriangle } from "lucide-react";
+import { ORDER_ROW_COLUMNS, makeDefaultRow, type OrderRow, type OrderRowColumn } from "../../core/orderSchema";
+import { isRowFieldInvalid, rowHasErrors } from "../../core/validators";
+import { lineTotal, formatNumber } from "../../core/calculations";
+import { formatMdfThickness, type Catalog } from "../../core/catalogSchema";
+
+/** Active options, plus the row's current value even if it has since been deactivated (so the select never silently blanks out an existing selection). */
+function withCurrentValue<T>(activeItems: T[], currentValue: string, codeOf: (item: T) => string, makeFallback: (code: string) => T): T[] {
+  if (!currentValue || activeItems.some((item) => codeOf(item) === currentValue)) return activeItems;
+  return [...activeItems, makeFallback(currentValue)];
+}
+
+/** Re-applies the selected design's defaults (name, and — if set — default price/MDF). Used both on manual selection and when a new row copies a design from the previous one, so the two paths never drift apart. */
+function applyDesignDefaults(row: OrderRow, catalog: Catalog): OrderRow {
+  const match = catalog.designs.find((d) => d.code === row.designCode);
+  if (!match) return row;
+  return {
+    ...row,
+    designName: match.name,
+    unitPrice: match.defaultUnitPrice || row.unitPrice,
+    mdfThickness: match.defaultMdfThickness || row.mdfThickness,
+  };
+}
+
+/** Re-applies the selected PVC color's defaults (color name, and — if set — default grain). See applyDesignDefaults. */
+function applyPvcDefaults(row: OrderRow, catalog: Catalog): OrderRow {
+  const match = catalog.pvcColors.find((p) => p.code === row.pvcCode);
+  if (!match) return row;
+  return { ...row, pvcColor: match.color, grain: match.defaultGrain || row.grain };
+}
+
+// Table auto-layout sizes each column from its widest cell. A bare input
+// has no intrinsic width to claim, so a short header label like "Qty" (or
+// a short code like "PVC-101" hidden behind a narrow select) left these
+// columns too narrow to show what was typed/selected — an explicit floor
+// fixes it regardless of editor type.
+const COLUMN_MIN_WIDTH: Partial<Record<keyof OrderRow, string>> = {
+  width: "min-w-[88px]",
+  height: "min-w-[88px]",
+  qty: "min-w-[72px]",
+  pvcCode: "min-w-[110px]",
+  unitPrice: "min-w-[96px]",
+  discount: "min-w-[80px]",
+  vat: "min-w-[72px]",
+};
+
+// Only these three fields are part of the Enter-to-advance fast-entry flow.
+type HopField = "width" | "height" | "qty";
+const HOP_ORDER: HopField[] = ["width", "height", "qty"];
+
+type UpdateFieldFn = (id: string, field: keyof OrderRow, value: string) => void;
+
+interface CellInputProps {
+  row: OrderRow;
+  field: keyof OrderRow;
+  type?: "text" | "number";
+  onChange: UpdateFieldFn;
+  className?: string;
+  disabled?: boolean;
+  inputRef?: (el: HTMLInputElement | null) => void;
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
+}
+
+function CellInput({ row, field, type = "text", onChange, className = "", disabled = false, inputRef, onKeyDown }: CellInputProps) {
+  const invalid = isRowFieldInvalid(row, field);
+  return (
+    <input
+      ref={inputRef}
+      type={type}
+      value={row[field]}
+      disabled={disabled}
+      onChange={(e) => onChange(row.id, field, e.target.value)}
+      onKeyDown={onKeyDown}
+      className={`zx-cell-input ${invalid ? "invalid" : ""} ${disabled ? "opacity-40" : ""} ${className}`}
+    />
+  );
+}
+
+interface RenderEditorHelpers {
+  registerRef: (rowId: string, field: keyof OrderRow) => (el: HTMLInputElement | null) => void;
+  focusField: (rowId: string, field: keyof OrderRow) => void;
+  onEnterInNewRow: (rowId: string) => void;
+}
+
+function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFieldFn, catalog: Catalog, helpers: RenderEditorHelpers) {
+  const selectClass = "zx-cell-input";
+  switch (col.editor) {
+    case "select-design": {
+      const options = withCurrentValue(
+        catalog.designs.filter((d) => d.active),
+        row.designCode,
+        (d) => d.code,
+        (code) => ({ id: code, code, name: "", family: "", description: "", minWidthMm: 0, maxWidthMm: 0, minHeightMm: 0, maxHeightMm: 0, defaultUnitPrice: 0, defaultMdfThickness: "", active: false })
+      );
+      return (
+        <select
+          value={row.designCode}
+          onChange={(e) => updateField(row.id, "designCode", e.target.value)}
+          className={`${selectClass} ${isRowFieldInvalid(row, "designCode") ? "invalid" : ""}`}
+        >
+          <option value="">Select...</option>
+          {options.map((d) => (
+            <option key={d.code} value={d.code}>
+              {d.code}
+              {!d.active ? " (inactive)" : ""}
+            </option>
+          ))}
+        </select>
+      );
+    }
+    case "select-pvc": {
+      const options = withCurrentValue(
+        catalog.pvcColors.filter((p) => p.active),
+        row.pvcCode,
+        (p) => p.code,
+        (code) => ({ id: code, code, color: "", category: "", finish: "", defaultGrain: "", active: false })
+      );
+      return (
+        <select value={row.pvcCode} onChange={(e) => updateField(row.id, "pvcCode", e.target.value)} className={selectClass}>
+          <option value="">Select...</option>
+          {options.map((p) => (
+            <option key={p.code} value={p.code}>
+              {p.code}
+              {!p.active ? " (inactive)" : ""}
+            </option>
+          ))}
+        </select>
+      );
+    }
+    case "select-mdf":
+      return (
+        <select value={row.mdfThickness} onChange={(e) => updateField(row.id, "mdfThickness", e.target.value)} className={selectClass}>
+          {catalog.mdfThickness
+            .filter((m) => m.active)
+            .map((m) => {
+              const label = formatMdfThickness(m);
+              return (
+                <option key={m.thicknessMm} value={label}>
+                  {label}
+                </option>
+              );
+            })}
+        </select>
+      );
+    case "select-grain":
+      // Shown as a single letter (H/V/N) rather than the full word — the
+      // stored value is still the full label (row.grain, and every PDF/CSV
+      // export), this only shortens what the in-row dropdown displays so
+      // PVC Code/Color have more room.
+      return (
+        <select value={row.grain} onChange={(e) => updateField(row.id, "grain", e.target.value)} className={selectClass}>
+          {catalog.grainDirections
+            .filter((g) => g.active)
+            .map((g) => (
+              <option key={g.code} value={g.label} title={g.label}>
+                {g.label.charAt(0).toUpperCase()}
+              </option>
+            ))}
+        </select>
+      );
+    case "number": {
+      const widthClass = COLUMN_MIN_WIDTH[col.key] ?? "";
+      const hopField = HOP_ORDER.includes(col.key as HopField) ? (col.key as HopField) : null;
+      const onKeyDown = hopField
+        ? (e: KeyboardEvent<HTMLInputElement>) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            const nextIdx = HOP_ORDER.indexOf(hopField) + 1;
+            if (nextIdx < HOP_ORDER.length) {
+              helpers.focusField(row.id, HOP_ORDER[nextIdx]);
+            } else {
+              helpers.onEnterInNewRow(row.id);
+            }
+          }
+        : undefined;
+      return (
+        <CellInput
+          row={row}
+          field={col.key}
+          type="number"
+          onChange={updateField}
+          className={`text-right ${widthClass}`}
+          inputRef={hopField ? helpers.registerRef(row.id, hopField) : undefined}
+          onKeyDown={onKeyDown}
+        />
+      );
+    }
+    default:
+      return <CellInput row={row} field={col.key} onChange={updateField} />;
+  }
+}
+
+interface DoorOrderTableProps {
+  rows: OrderRow[];
+  onChangeRows: (rows: OrderRow[]) => void;
+  invoiceMode: boolean;
+  currency: string;
+  catalog: Catalog;
+}
+
+export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, currency, catalog }: DoorOrderTableProps) {
+  const inputRefs = useRef(new Map<string, HTMLInputElement>());
+  // Purely an imperative signal for the effect below — not rendered from,
+  // so it lives in a ref rather than state (avoids an extra render pass).
+  const pendingFocusRowId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const id = pendingFocusRowId.current;
+    if (!id) return;
+    inputRefs.current.get(`${id}:width`)?.focus();
+    pendingFocusRowId.current = null;
+  }, [rows]);
+
+  const registerRef = (rowId: string, field: keyof OrderRow) => (el: HTMLInputElement | null) => {
+    const key = `${rowId}:${field}`;
+    if (el) inputRefs.current.set(key, el);
+    else inputRefs.current.delete(key);
+  };
+
+  const focusField = (rowId: string, field: keyof OrderRow) => {
+    inputRefs.current.get(`${rowId}:${field}`)?.focus();
+  };
+
+  const updateField: UpdateFieldFn = (id, field, value) => {
+    onChangeRows(
+      rows.map((r) => {
+        if (r.id !== id) return r;
+        let next = { ...r, [field]: value } as OrderRow;
+        if (field === "designCode") next = applyDesignDefaults(next, catalog);
+        if (field === "pvcCode") next = applyPvcDefaults(next, catalog);
+        return next;
+      })
+    );
+  };
+
+  /**
+   * Adds a row, carrying over the design/color from the last row and
+   * re-applying their catalog defaults (name, price, MDF, grain) exactly
+   * as manual selection would — then focuses the new row's Width input so
+   * typing can continue immediately. Width→Height→Qty→Enter starts the
+   * next row the same way, for fast repeat-product entry.
+   */
+  const addRow = () => {
+    const source = rows[rows.length - 1];
+    let newRow = makeDefaultRow(source ? { designCode: source.designCode, pvcCode: source.pvcCode } : {});
+    newRow = applyDesignDefaults(newRow, catalog);
+    newRow = applyPvcDefaults(newRow, catalog);
+    onChangeRows([...rows, newRow]);
+    pendingFocusRowId.current = newRow.id;
+  };
+
+  const duplicateRow = (id: string) => {
+    const idx = rows.findIndex((r) => r.id === id);
+    if (idx === -1) return;
+    const copy = makeDefaultRow({ ...rows[idx], id: undefined });
+    const next = [...rows];
+    next.splice(idx + 1, 0, copy);
+    onChangeRows(next);
+  };
+
+  const deleteRow = (id: string) => onChangeRows(rows.filter((r) => r.id !== id));
+
+  const helpers: RenderEditorHelpers = { registerRef, focusField, onEnterInNewRow: addRow };
+
+  // While Proforma Invoice is off, pricing columns are hidden entirely
+  // (not just disabled) to keep the table focused on production data —
+  // this only changes what's rendered; the row data underneath (unit
+  // price, discount, VAT) is untouched and reappears the moment invoice
+  // mode is switched back on.
+  const visibleColumns = invoiceMode ? ORDER_ROW_COLUMNS : ORDER_ROW_COLUMNS.filter((col) => !col.invoiceOnly);
+  // No., visible schema-driven columns, computed Line Total (invoice mode only), Notes, Actions.
+  const totalColumnCount = 1 + visibleColumns.length + (invoiceMode ? 1 : 0) + 1 + 1;
+
+  const hasInvalid = rows.some(rowHasErrors);
+  const totalQty = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+  const totalLine = rows.reduce((s, r) => s + lineTotal(r), 0);
+
+  return (
+    <div className="zx-card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 px-5 py-4">
+        <div>
+          <h3 className="text-sm font-bold text-ink-900">Door Order Table</h3>
+          <p className="mt-0.5 text-xs text-ink-500">
+            Spreadsheet-style entry — click any cell to edit inline. Press Enter in Width/Height/Qty to jump to the next field, then start a new row.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {hasInvalid && (
+            <span className="flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-2xs font-semibold text-red-600 ring-1 ring-red-200">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Missing required fields
+            </span>
+          )}
+          <button onClick={addRow} className="zx-btn-primary !py-1.5">
+            <Plus className="h-4 w-4" />
+            Add Row
+          </button>
+        </div>
+      </div>
+
+      <div className="max-h-[480px] overflow-auto">
+        <table className="border-collapse">
+          <thead>
+            <tr className="sticky top-0 z-10">
+              <th className="zx-th sticky left-0 z-20 w-12 bg-ink-50">No.</th>
+              {visibleColumns.map((col) => (
+                <th key={col.key} className={`zx-th ${COLUMN_MIN_WIDTH[col.key] ?? ""} ${col.align === "right" ? "text-right" : ""}`}>
+                  {col.label}
+                </th>
+              ))}
+              {invoiceMode && <th className="zx-th w-32 text-right">Line Total ({currency})</th>}
+              <th className="zx-th w-48">Notes</th>
+              <th className="zx-th sticky right-0 z-20 w-24 bg-ink-50 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, idx) => (
+              <tr key={row.id} className="group hover:bg-navy-50/30">
+                <td className="zx-td sticky left-0 z-10 bg-white text-center font-semibold text-ink-500 group-hover:bg-navy-50/30">
+                  {idx + 1}
+                </td>
+                {visibleColumns.map((col) => (
+                  <td key={col.key} className="zx-td p-1">
+                    {renderEditor(col, row, updateField, catalog, helpers)}
+                  </td>
+                ))}
+                {invoiceMode && (
+                  <td className="zx-td text-right font-semibold tabular-nums text-ink-900">{formatNumber(lineTotal(row))}</td>
+                )}
+                <td className="zx-td p-1">
+                  <CellInput row={row} field="notes" onChange={updateField} />
+                </td>
+                <td className="zx-td sticky right-0 z-10 bg-white text-right group-hover:bg-navy-50/30">
+                  <div className="flex items-center justify-end gap-1">
+                    <button onClick={() => duplicateRow(row.id)} title="Duplicate row" className="zx-btn-ghost !px-1.5 !py-1">
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                    <button onClick={() => deleteRow(row.id)} title="Delete row" className="zx-btn-danger !px-1.5 !py-1">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={totalColumnCount} className="px-5 py-10 text-center text-sm text-ink-400">
+                  No rows yet. Click "Add Row" to start building this order.
+                </td>
+              </tr>
+            )}
+          </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr className="sticky bottom-0 bg-ink-50 font-semibold">
+                <td className="zx-td sticky left-0 bg-ink-50 text-ink-700" colSpan={5}>
+                  Total
+                </td>
+                <td className="zx-td text-right text-ink-900 tabular-nums">{totalQty}</td>
+                <td className="zx-td" colSpan={4}></td>
+                {invoiceMode && <td className="zx-td" colSpan={3}></td>}
+                {invoiceMode && (
+                  <td className="zx-td text-right text-ink-900 tabular-nums">
+                    {currency} {formatNumber(totalLine)}
+                  </td>
+                )}
+                <td className="zx-td"></td>
+                <td className="zx-td sticky right-0 bg-ink-50"></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
