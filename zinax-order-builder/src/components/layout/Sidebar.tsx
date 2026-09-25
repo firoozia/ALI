@@ -49,7 +49,7 @@ export default function Sidebar({ active, onNavigate, open, onClose }: SidebarPr
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-full w-64 shrink-0 flex-col border-r border-ink-200 bg-navy-950 text-white transition-transform duration-200 lg:static lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex h-full w-64 shrink-0 flex-col border-r border-ink-200 bg-navy-950 text-white transition-transform duration-200 lg:static lg:translate-x-0 print:hidden ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >

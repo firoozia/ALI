@@ -46,7 +46,7 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
   };
 
   return (
-    <div className="min-h-full bg-ink-100">
+    <div className="min-h-full bg-ink-100 print:bg-white">
       <PdfActionsBar
         title={model.documentTitle}
         subtitle={`${model.invoiceNo} — Preview`}
@@ -57,7 +57,7 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
         exporting={exporting}
       />
 
-      <div className="flex justify-center px-3 py-5 sm:px-6 sm:py-10">
+      <div className="flex justify-center px-3 py-5 sm:px-6 sm:py-10 print:p-0">
         <div className="w-full max-w-[1000px] rounded-sm bg-white p-5 shadow-panel sm:p-8 lg:p-12 print:shadow-none">
           {/* Header */}
           <div className="flex items-start justify-between border-b-2 border-gold-500 pb-6">

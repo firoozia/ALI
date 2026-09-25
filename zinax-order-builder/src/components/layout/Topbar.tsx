@@ -26,7 +26,7 @@ export default function Topbar({ active, onMenuClick, tenantName, onSignOut }: T
   const [lang, setLang] = useState<"EN" | "AR">("EN");
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-ink-200 bg-white/95 px-3 backdrop-blur sm:gap-4 sm:px-6">
+    <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-ink-200 bg-white/95 px-3 backdrop-blur sm:gap-4 sm:px-6 print:hidden">
       <button
         onClick={onMenuClick}
         className="rounded-lg p-2 text-ink-600 hover:bg-ink-100 lg:hidden"

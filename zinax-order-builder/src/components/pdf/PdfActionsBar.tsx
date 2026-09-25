@@ -20,7 +20,7 @@ export default function PdfActionsBar({
   exporting = false,
 }: PdfActionsBarProps) {
   return (
-    <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-ink-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-6 sm:py-4">
+    <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-ink-200 bg-white/95 px-3 py-3 backdrop-blur sm:px-6 sm:py-4 print:hidden">
       <div className="min-w-0">
         <h2 className="truncate text-sm font-bold text-ink-900 sm:text-base">{title}</h2>
         {subtitle && <p className="truncate text-xs text-ink-500">{subtitle}</p>}

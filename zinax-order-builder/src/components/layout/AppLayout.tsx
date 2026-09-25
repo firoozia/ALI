@@ -28,21 +28,21 @@ export default function AppLayout({
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#f4f6f9]">
+    <div className="flex h-screen w-full overflow-hidden bg-[#f4f6f9] print:h-auto print:overflow-visible">
       <Sidebar
         active={sidebarActive}
         onNavigate={handleNavigate}
         open={mobileNavOpen}
         onClose={() => setMobileNavOpen(false)}
       />
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden print:h-auto print:overflow-visible">
         <Topbar
           active={topbarActive}
           onMenuClick={() => setMobileNavOpen(true)}
           tenantName={tenantName}
           onSignOut={onSignOut}
         />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main className="flex-1 overflow-y-auto print:h-auto print:overflow-visible">{children}</main>
       </div>
     </div>
   );
