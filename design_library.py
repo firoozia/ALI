@@ -48,10 +48,33 @@ CATEGORY_LABELS = {
     },
 }
 CATEGORY_MAP = CATEGORY_LABELS["en"]
-CATEGORIES = ["All", "designs", "vitrines", "hoods", "columns", "decorative", "others", "custom_doors"]
+BUILTIN_CATEGORIES = ["All", "designs", "vitrines", "hoods", "columns", "decorative", "others", "custom_doors"]
+CATEGORIES = list(BUILTIN_CATEGORIES)   # extended at runtime with custom groups
 
 def category_label(cat: str, lang_code: str = "en") -> str:
     return CATEGORY_LABELS.get(lang_code, CATEGORY_LABELS["en"]).get(cat, cat)
+
+
+def _ask_group_name(parent, title: str, default: str) -> tuple[str, bool]:
+    """Simple one-field dialog; returns (name, ok)."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setFixedWidth(300)
+    lay = QVBoxLayout(dlg)
+    lay.setSpacing(10)
+    lay.setContentsMargins(16, 16, 16, 12)
+    edit = QLineEdit(default)
+    edit.setPlaceholderText("Group name (letters, spaces, digits)")
+    edit.selectAll()
+    lay.addWidget(QLabel("Group name:"))
+    lay.addWidget(edit)
+    bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    bb.accepted.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    lay.addWidget(bb)
+    edit.returnPressed.connect(dlg.accept)
+    ok = dlg.exec() == QDialog.Accepted
+    return edit.text().strip(), ok
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -246,14 +269,43 @@ class DesignLibraryWidget(QWidget):
             Path(config.output_folder).parent / "designs")
         Path(self._designs_dir).mkdir(parents=True, exist_ok=True)
 
-        self._all_meta:  List[Dict]    = []
-        self._cards:     List[DesignCard] = []
-        self._selected:  Optional[str] = None
-        self._lang: str = "en"
+        self._all_meta:     List[Dict]       = []
+        self._cards:        List[DesignCard] = []
+        self._selected:     Optional[str]    = None
+        self._lang:         str              = "en"
+        self._custom_groups: List[str]       = []   # keys only; display name = key
 
+        self._load_custom_groups()
         self._build()
         self._apply_style()
         self.refresh()
+
+    # ── custom groups persistence ─────────────────────────────
+    def _groups_file(self) -> Path:
+        return Path(self._designs_dir) / "groups.json"
+
+    def _load_custom_groups(self):
+        gf = self._groups_file()
+        if gf.exists():
+            try:
+                data = json.loads(gf.read_text(encoding="utf-8"))
+                self._custom_groups = [g for g in data.get("groups", [])
+                                       if g not in BUILTIN_CATEGORIES]
+            except Exception:
+                self._custom_groups = []
+        else:
+            self._custom_groups = []
+
+    def _save_custom_groups(self):
+        try:
+            self._groups_file().write_text(
+                json.dumps({"groups": self._custom_groups}, ensure_ascii=False, indent=2),
+                encoding="utf-8")
+        except Exception:
+            pass
+
+    def _all_categories(self) -> List[str]:
+        return BUILTIN_CATEGORIES + self._custom_groups
 
     def set_language(self, lang_code: str):
         self._lang = lang_code if lang_code in CATEGORY_LABELS else "en"
@@ -273,15 +325,8 @@ class DesignLibraryWidget(QWidget):
             self._search.setPlaceholderText(labels[5])
             self._lbl_detail_title.setText(labels[6])
             self._lbl_filter_category.setText(labels[7])
-            current = self._cat_filter.currentData() or "All"
-            self._cat_filter.blockSignals(True)
-            self._cat_filter.clear()
-            for c in CATEGORIES:
-                self._cat_filter.addItem(category_label(c, self._lang), c)
-            idx = self._cat_filter.findData(current)
-            self._cat_filter.setCurrentIndex(idx if idx >= 0 else 0)
-            self._cat_filter.blockSignals(False)
-            self._update_category_buttons()
+            self._sync_cat_combo()
+            self._rebuild_group_bar()
             self._apply_filter()
 
     # ══════════════════════════════════════════════════════════
@@ -374,46 +419,52 @@ class DesignLibraryWidget(QWidget):
         self._btn_refresh.clicked.connect(self.refresh)
         return tb
 
-    def _build_filter_bar(self) -> QFrame:
+    def _build_filter_bar(self) -> QWidget:
+        wrapper = QWidget()
+        wl = QVBoxLayout(wrapper)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.setSpacing(0)
+
+        # ── Row 1: search + combo ────────────────────────────
         fb = QFrame(); fb.setFixedHeight(36)
         fb.setStyleSheet(f"background:{C_PANEL.name()};")
         fl = QHBoxLayout(fb)
-        fl.setContentsMargins(8,4,8,4)
+        fl.setContentsMargins(8, 4, 8, 4)
         fl.setSpacing(8)
 
         lbl = QLabel("Search:")
         lbl.setStyleSheet(f"color:{C_DIM.name()};")
         self._search = QLineEdit()
-        self._search.setPlaceholderText(
-            "Search by name or code...")
+        self._search.setPlaceholderText("Search by name or code...")
         self._search.setFixedHeight(26)
         self._search.textChanged.connect(self._apply_filter)
 
         self._lbl_filter_category = QLabel("Category:")
-        lbl2 = self._lbl_filter_category
-        lbl2.setStyleSheet(f"color:{C_DIM.name()};")
+        self._lbl_filter_category.setStyleSheet(f"color:{C_DIM.name()};")
         self._cat_filter = QComboBox()
-        for c in CATEGORIES:
+        for c in self._all_categories():
             self._cat_filter.addItem(category_label(c, self._lang), c)
         self._cat_filter.setFixedWidth(130)
-        self._cat_filter.currentIndexChanged.connect(
-            self._apply_filter)
+        self._cat_filter.currentIndexChanged.connect(self._apply_filter)
 
         fl.addWidget(lbl); fl.addWidget(self._search, 1)
-        fl.addWidget(lbl2); fl.addWidget(self._cat_filter)
+        fl.addWidget(self._lbl_filter_category)
+        fl.addWidget(self._cat_filter)
+        wl.addWidget(fb)
 
-        # Cwood-style quick category tabs/buttons
+        # ── Row 2: group tab bar ─────────────────────────────
+        self._group_bar = QFrame()
+        self._group_bar.setFixedHeight(32)
+        self._group_bar.setStyleSheet(
+            f"background:{C_BG.name()}; border-bottom:1px solid {C_BORDER.name()};")
+        self._group_bar_layout = QHBoxLayout(self._group_bar)
+        self._group_bar_layout.setContentsMargins(6, 2, 6, 2)
+        self._group_bar_layout.setSpacing(2)
         self._cat_buttons = []
-        for c in CATEGORIES[:7]:
-            b = QPushButton(category_label(c, self._lang))
-            b.setFixedHeight(26)
-            b.setMinimumWidth(72)
-            b.setProperty("cat", c)
-            b.clicked.connect(lambda checked=False, cat=c: self._select_category(cat))
-            b.setStyleSheet(self._cat_button_style(False))
-            fl.addWidget(b)
-            self._cat_buttons.append(b)
-        return fb
+        self._rebuild_group_bar()
+        wl.addWidget(self._group_bar)
+
+        return wrapper
 
     def _build_detail_panel(self) -> QWidget:
         w   = QWidget(); w.setFixedWidth(220)
@@ -525,6 +576,166 @@ class DesignLibraryWidget(QWidget):
         return designs
 
     # ══════════════════════════════════════════════════════════
+    # GROUP BAR  (dynamic — built-in + custom groups)
+    # ══════════════════════════════════════════════════════════
+    def _rebuild_group_bar(self):
+        """Rebuild the group-tab row from scratch."""
+        lay = self._group_bar_layout
+        # Clear old widgets
+        while lay.count():
+            item = lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._cat_buttons = []
+
+        current = (self._cat_filter.currentData()
+                   if hasattr(self, "_cat_filter") else "All") or "All"
+
+        for c in self._all_categories():
+            btn = QPushButton(category_label(c, self._lang))
+            btn.setFixedHeight(24)
+            btn.setMinimumWidth(64)
+            btn.setProperty("cat", c)
+            btn.clicked.connect(lambda chk=False, cat=c: self._select_category(cat))
+            btn.setStyleSheet(self._cat_button_style(c == current))
+            lay.addWidget(btn)
+            self._cat_buttons.append(btn)
+
+            # Rename + Delete buttons for custom groups
+            if c not in BUILTIN_CATEGORIES:
+                btn_r = QPushButton("✏")
+                btn_r.setFixedSize(20, 24)
+                btn_r.setToolTip(f"Rename group '{c}'")
+                btn_r.setStyleSheet(
+                    f"background:#2d2d30;border:none;color:{C_DIM.name()};font-size:10px;")
+                btn_r.clicked.connect(lambda chk=False, cat=c: self._rename_group(cat))
+                lay.addWidget(btn_r)
+
+                btn_d = QPushButton("×")
+                btn_d.setFixedSize(18, 24)
+                btn_d.setToolTip(f"Delete group '{c}'")
+                btn_d.setStyleSheet(
+                    f"background:#2d2d30;border:none;color:{C_WARN.name()};font-size:12px;font-weight:700;")
+                btn_d.clicked.connect(lambda chk=False, cat=c: self._delete_group(cat))
+                lay.addWidget(btn_d)
+
+        lay.addStretch()
+
+        # "+" button at the end
+        btn_add = QPushButton("＋  New Group")
+        btn_add.setFixedHeight(24)
+        btn_add.setMinimumWidth(90)
+        btn_add.setStyleSheet(
+            f"background:#2d2d30;border:1px solid {C_BORDER.name()};"
+            f"border-radius:3px;color:{C_GOOD.name()};font-size:11px;font-weight:600;")
+        btn_add.clicked.connect(self._add_group)
+        lay.addWidget(btn_add)
+
+    def _add_group(self):
+        name, ok = _ask_group_name(self, "New Group", "")
+        if not ok or not name:
+            return
+        key = name.strip().lower().replace(" ", "_")
+        if not key or key in BUILTIN_CATEGORIES or key in self._custom_groups:
+            QMessageBox.warning(self, "Duplicate", f"Group '{key}' already exists.")
+            return
+        self._custom_groups.append(key)
+        self._save_custom_groups()
+        self._sync_cat_combo()
+        self._rebuild_group_bar()
+
+    def _rename_group(self, old_key: str):
+        old_display = old_key.replace("_", " ").title()
+        name, ok = _ask_group_name(self, "Rename Group", old_display)
+        if not ok or not name:
+            return
+        new_key = name.strip().lower().replace(" ", "_")
+        if not new_key or new_key == old_key:
+            return
+        if new_key in BUILTIN_CATEGORIES or new_key in self._custom_groups:
+            QMessageBox.warning(self, "Duplicate", f"Group '{new_key}' already exists.")
+            return
+        # Update meta for any designs in this group
+        for m in self._all_meta:
+            if m.get("category") == old_key:
+                m["category"] = new_key
+        # Update the index file
+        self._rewrite_index_categories(old_key, new_key)
+        idx = self._custom_groups.index(old_key)
+        self._custom_groups[idx] = new_key
+        self._save_custom_groups()
+        self._sync_cat_combo()
+        self._rebuild_group_bar()
+        self._apply_filter()
+
+    def _delete_group(self, key: str):
+        # Check if any designs are in this group
+        count = sum(1 for m in self._all_meta if m.get("category") == key)
+        if count:
+            reply = QMessageBox.question(
+                self, "Delete Group",
+                f"Group '{key}' has {count} design(s).\n"
+                f"They will be moved to 'others'. Continue?",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+            self._rewrite_index_categories(key, "others")
+            for m in self._all_meta:
+                if m.get("category") == key:
+                    m["category"] = "others"
+        self._custom_groups.remove(key)
+        self._save_custom_groups()
+        self._sync_cat_combo()
+        self._rebuild_group_bar()
+        if (self._cat_filter.currentData() or "All") == key:
+            self._select_category("All")
+        else:
+            self._apply_filter()
+
+    def _sync_cat_combo(self):
+        """Keep the combo box in sync with _all_categories()."""
+        current = self._cat_filter.currentData() or "All"
+        self._cat_filter.blockSignals(True)
+        self._cat_filter.clear()
+        for c in self._all_categories():
+            self._cat_filter.addItem(category_label(c, self._lang), c)
+        idx = self._cat_filter.findData(current)
+        self._cat_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        self._cat_filter.blockSignals(False)
+
+    def _rewrite_index_categories(self, old_key: str, new_key: str):
+        """Rename category in _index.json and in individual .fdr files."""
+        d = Path(self._designs_dir)
+        idx_path = d / "_index.json"
+        if idx_path.exists():
+            try:
+                data = json.loads(idx_path.read_text(encoding="utf-8"))
+                changed = False
+                for entry in data.get("designs", []):
+                    if entry.get("category") == old_key:
+                        entry["category"] = new_key
+                        changed = True
+                if changed:
+                    idx_path.write_text(
+                        json.dumps(data, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+            except Exception:
+                pass
+        # Also patch individual files for designs in this group
+        for m in self._all_meta:
+            if m.get("category") == old_key:
+                fp = Path(m.get("path", ""))
+                if fp.exists():
+                    try:
+                        dd = json.loads(fp.read_text(encoding="utf-8"))
+                        dd["category"] = new_key
+                        fp.write_text(
+                            json.dumps(dd, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+                    except Exception:
+                        pass
+
+    # ══════════════════════════════════════════════════════════
     # FILTER
     # ══════════════════════════════════════════════════════════
     def _select_category(self, cat: str):
@@ -533,10 +744,10 @@ class DesignLibraryWidget(QWidget):
             self._cat_filter.setCurrentIndex(idx)
         self._apply_filter()
 
-    def _update_category_buttons(self):
+    def _update_group_bar_selection(self):
+        """Update only the selected-state highlight on group tab buttons."""
         current = self._cat_filter.currentData() or "All"
         for b in getattr(self, "_cat_buttons", []):
-            b.setText(category_label(b.property("cat"), self._lang))
             b.setStyleSheet(self._cat_button_style(b.property("cat") == current))
 
     def _cat_button_style(self, selected: bool) -> str:
@@ -563,7 +774,7 @@ class DesignLibraryWidget(QWidget):
                     continue
             filtered.append(m)
 
-        self._update_category_buttons()
+        self._update_group_bar_selection()
         self._rebuild_grid(filtered)
         self._lbl_status.setText(
             f"  {len(filtered)} of {len(self._all_meta)}"
