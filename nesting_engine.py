@@ -103,6 +103,7 @@ class SheetDef:
     quantity:   int   = 999
     priority:   int   = 3   # 1 = Highest … 5 = Lowest
     is_remnant: bool  = False
+    colour:     str   = ""  # empty = accepts any colour
 
     def __str__(self):
         tag = "🔸Remnant" if self.is_remnant else "📦Sheet"
@@ -173,6 +174,7 @@ class NestingEngine:
             key=lambda s: (
                 0 if s.is_remnant else 1,
                 int(s.priority or 3),
+                s.colour or "",
                 float(s.width) * float(s.height),
             )
         )
@@ -195,6 +197,55 @@ class NestingEngine:
             time_limit=float(time_limit),
             population=max(6, min(10, int(population or 8))),
         )
+
+    def nest_by_colour_groups(self, parts, stop_event, on_progress=None,
+                               time_limit=30.0, population=10) -> dict:
+        """
+        Split parts into colour groups and run nesting per group.
+        Returns {group_key: list_of_Sheet}.
+
+        Group keys:
+          melamine  → (material, colour, thickness)  e.g. ("MEL", "MEL-W", 18.0)
+          vacuum    → (material, colour)              e.g. ("MDF", "White")
+          no colour → (material, "")                  all together
+        """
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for p in parts:
+            mat = (getattr(p, "material", "MDF") or "MDF").upper()
+            col = (getattr(p, "colour", "") or "").strip()
+            if mat.startswith("MEL"):
+                key = (mat, col, float(p.thickness))
+            else:
+                key = (mat, col)
+            groups[key].append(p)
+
+        results = {}
+        for key, group_parts in groups.items():
+            mat   = key[0]
+            col   = key[1]
+            thick = key[2] if len(key) > 2 else None
+
+            eligible = [s for s in self.sheet_defs
+                        if (s.material or "MDF").upper() == mat
+                        and (s.colour == "" or s.colour == col)
+                        and (thick is None or
+                             abs(float(s.thickness) - thick) < 0.01)]
+            if not eligible:
+                eligible = [s for s in self.sheet_defs
+                            if (s.material or "MDF").upper() == mat]
+
+            old_defs = self.sheet_defs
+            self.sheet_defs = eligible
+            result = self.run_continuous(
+                parts=group_parts, stop_event=stop_event,
+                on_progress=on_progress,
+                time_limit=time_limit, population=population,
+            )
+            self.sheet_defs = old_defs
+            results[key] = result
+
+        return results
 
     def run_continuous(self, parts: List[Part], stop_event,
                        on_progress=None, time_limit: Optional[float] = None,
@@ -734,12 +785,22 @@ class NestingEngine:
 
         def candidates_for(p):
             """Return [(pw, ph, rotated)] that might fit somewhere."""
+            # colour guard: sheet with a colour only accepts matching parts
+            sheet_col = (sheet_def.colour or "").strip()
+            part_col  = (getattr(p, "colour", "") or "").strip()
+            if sheet_col and part_col and sheet_col != part_col:
+                return []
+            # thickness guard for melamine sheets
+            mat_is_mel = (sheet_def.material or "").upper().startswith("MEL")
+            if mat_is_mel and abs(float(p.thickness) - float(sheet_def.thickness)) > 0.01:
+                return []
+
             w0 = float(p.width)  + self.gap
             h0 = float(p.height) + self.gap
             opts = []
             if w0 <= uw + 1e-9 and h0 <= uh + 1e-9:
                 opts.append((w0, h0, False))
-            if self.auto_rotate:
+            if self.auto_rotate and getattr(p, "allow_rotation", True):
                 w1, h1 = h0, w0   # swap
                 if (w1, h1) != (w0, h0) and w1 <= uw + 1e-9 and h1 <= uh + 1e-9:
                     opts.append((w1, h1, True))
