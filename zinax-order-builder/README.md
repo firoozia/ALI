@@ -24,14 +24,21 @@ This is **not** a CNC/CAM application. It only produces:
 ## Screens
 
 - **Dashboard** — order stats and a recent orders table
-- **New Order Builder** — order header, editable door order table, invoice
+- **New Order Builder** — order header, two tabs over one order (Vacuum
+  doors, and Melamine panels with edges E1–E4 and rotation), invoice
   toggle, summary panel, export bar (New Blank Order or Load Sample Order)
 - **Order Sheet Preview** — printable, text-based order sheet PDF
 - **Proforma Invoice Preview** — printable invoice PDF with totals and
   payment info
 - **Customers** — customer list with search and JSON export/import
-- **Designs** — design codes, PVC colors, MDF thicknesses, and grain
-  directions used by the order table's dropdowns
+- **Designs** — design codes, PVC colors, MDF thicknesses, grain
+  directions, and melamine edge-band codes used by the order table's
+  dropdowns (edge bands can be imported from ZINAX CAM's exported list)
+
+The Production CSV follows ZINAX CAM's contract (`docs/contracts/ORDER_CSV_V2.md`
+in the zinax-cam repository): after `notes` come `product_type`,
+`edge_1`..`edge_4` (seen from the front: bottom, top, left, right; each
+`N`, a band code, `S`, or `S/<band>`) and `rotation` (`Y`/`N`).
 - **PDF Templates** — titles, show/hide toggles, and branding for the
   generated PDFs
 - **Settings** — company profile and defaults, with localStorage persistence
