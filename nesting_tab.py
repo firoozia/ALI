@@ -135,21 +135,35 @@ class NestingWorker(QThread):
 # Sheet Canvas
 # ═══════════════════════════════════════════════════════════════
 class SheetCanvas(QWidget):
+    part_clicked = Signal(object)   # emits the Part that was clicked
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._sheet   = None
         self._labels  = True
         self._selected= False
+        self._part_rects: list = []   # [(QRectF, part), ...]
         self.setMinimumSize(80, 60)
+        self.setCursor(Qt.PointingHandCursor)
 
     def set_sheet(self, sheet, labels=True):
         self._sheet  = sheet
         self._labels = labels
+        self._part_rects = []
         self.update()
 
     def set_selected(self, v):
         self._selected = v
         self.update()
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            pos = ev.position() if hasattr(ev, "position") else ev.localPos()
+            for rect, part in reversed(self._part_rects):
+                if rect.contains(pos):
+                    self.part_clicked.emit(part)
+                    return
+        super().mousePressEvent(ev)
 
     def paintEvent(self, ev):
         p = QPainter(self)
@@ -180,6 +194,7 @@ class SheetCanvas(QWidget):
             p.setPen(QPen(pen_c, 2 if self._selected else 1))
             p.drawRect(QRectF(rx(0), ry(sh), sw*sc, sh*sc))
 
+            self._part_rects = []
             # Parts + optional door design overlay
             for i, part in enumerate(s.parts):
                 col  = PART_COLORS[i % len(PART_COLORS)]
@@ -187,11 +202,14 @@ class SheetCanvas(QWidget):
                 prx = rx(part.x); pry = ry(part.y+ph)
                 prw = pw*sc;       prh = ph*sc
 
+                rect = QRectF(prx, pry, prw, prh)
+                self._part_rects.append((rect, part))
+
                 # Draw part background
                 fill = QColor(col); fill.setAlpha(180)
                 p.setBrush(QBrush(fill))
                 p.setPen(QPen(col.lighter(130), 0.8))
-                p.drawRect(QRectF(prx, pry, prw, prh))
+                p.drawRect(rect)
 
                 # Draw door design layers if available
                 if self._labels:
@@ -434,6 +452,121 @@ class LiveLineGraph(QWidget):
         end_lbl = f"{int(x_max)}s" if x_max < 60 else f"{int(x_max // 60)}m{int(x_max % 60):02d}s"
         p.drawText(QRectF(PAD_L + W - 35, PAD_T + H + 3, 40, 12),
                    Qt.AlignRight, end_lbl)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Part Info Popup  — shown when user clicks a part on the canvas
+# ═══════════════════════════════════════════════════════════════
+class PartInfoPopup(QDialog):
+    def __init__(self, part, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Part Info")
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._build(part)
+
+    def _build(self, part):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        card = QFrame()
+        card.setObjectName("card")
+        card.setStyleSheet(f"""
+            #card {{
+                background: {C_PANEL.name()};
+                border: 1px solid {C_ACCENT.name()};
+                border-radius: 8px;
+            }}
+            QLabel#title {{
+                background: {C_ACCENT.name()};
+                color: white;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 6px 12px;
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+            }}
+            QLabel#row_key {{
+                color: {C_DIM.name()};
+                font-size: 11px;
+                padding: 2px 12px 2px 12px;
+            }}
+            QLabel#row_val {{
+                color: {C_TEXT.name()};
+                font-size: 11px;
+                font-weight: 600;
+                padding: 2px 12px 2px 4px;
+            }}
+        """)
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(0, 0, 0, 8)
+        card_lay.setSpacing(0)
+
+        # Title row
+        pc = getattr(part, "part_code", "Part") or "Part"
+        title = QLabel(f"  {pc}")
+        title.setObjectName("title")
+        card_lay.addWidget(title)
+
+        # Build rows
+        rows = []
+        cust = getattr(part, "customer", "") or ""
+        if cust:
+            rows.append(("Customer", cust))
+
+        w = getattr(part, "width",  0); h = getattr(part, "height", 0)
+        rot = getattr(part, "rotated", False)
+        dims = f"{int(w)} × {int(h)} mm"
+        if rot:
+            dims += "  (rotated)"
+        rows.append(("Dimensions", dims))
+
+        mat = getattr(part, "material", "") or ""
+        thick = getattr(part, "thickness", "") or ""
+        if mat or thick:
+            rows.append(("Material", f"{mat}  {thick}mm".strip()))
+
+        col = getattr(part, "colour", "") or ""
+        if col:
+            rows.append(("Colour", col))
+
+        pt = getattr(part, "product_type", "") or ""
+        if pt:
+            rows.append(("Type", pt.replace("_", " ").title()))
+
+        dc = getattr(part, "design_code", "") or ""
+        if dc and dc not in ("cd0", "0", ""):
+            rows.append(("Design", dc))
+
+        grain = getattr(part, "grain", "") or ""
+        if grain:
+            rows.append(("Grain", grain))
+
+        edges = [getattr(part, f"edge_{i}", "N") or "N" for i in range(1, 5)]
+        if any(e != "N" for e in edges):
+            rows.append(("Edges", " / ".join(edges)))
+
+        allow_rot = getattr(part, "allow_rotation", True)
+        rows.append(("Rotation", "Allowed" if allow_rot else "Locked"))
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setHorizontalSpacing(0)
+        grid.setVerticalSpacing(1)
+        for r, (k, v) in enumerate(rows):
+            lk = QLabel(k + ":")
+            lk.setObjectName("row_key")
+            lv = QLabel(str(v))
+            lv.setObjectName("row_val")
+            grid.addWidget(lk, r, 0, Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(lv, r, 1, Qt.AlignLeft  | Qt.AlignVCenter)
+        card_lay.addLayout(grid)
+
+        lay.addWidget(card)
+
+    def mousePressEvent(self, ev):
+        self.close()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1600,7 +1733,19 @@ class NestingTab(QWidget):
             canvas.setFixedSize(220, 160)
             canvas.set_sheet(sheet, labels=True)
             canvas.set_selected(i == 0)
-            canvas.mousePressEvent = lambda ev, idx=i: self._on_thumb_click(idx)
+            canvas.part_clicked.connect(self._on_part_clicked)
+            # Thumb-select on blank-area click (no part hit)
+            _orig = canvas.mousePressEvent
+            def _thumb_press(ev, idx=i, c=canvas, orig=_orig):
+                orig(ev)
+                if not c._part_rects:
+                    self._on_thumb_click(idx)
+                else:
+                    pos = ev.position() if hasattr(ev, "position") else ev.localPos()
+                    hit = any(r.contains(pos) for r, _ in c._part_rects)
+                    if not hit:
+                        self._on_thumb_click(idx)
+            canvas.mousePressEvent = _thumb_press
             col_l.addWidget(canvas)
 
             # x5 / x10 / x1 label — BIG like Solid Edge
@@ -1613,6 +1758,14 @@ class NestingTab(QWidget):
             self._thumbs_layout.addWidget(col_w)
 
         self._thumbs_layout.addStretch()
+
+    def _on_part_clicked(self, part):
+        """Show part info popup when user clicks a part on the canvas."""
+        from PySide6.QtGui import QCursor
+        popup = PartInfoPopup(part, parent=self)
+        gp = QCursor.pos()
+        popup.move(gp.x() + 8, gp.y() + 8)
+        popup.exec()
 
     def _on_thumb_click(self, idx):
         self._show_thumb_at(idx)
