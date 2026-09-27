@@ -388,10 +388,10 @@ class PartsTab(QWidget):
     parts_changed = Signal(list)
 
     # Column indices for both grid modes
-    # Standard:  Name(0) DimX(1) DimY(2) Qty(3) Preview(4)
-    # Detailed:  Name(0) DimX(1) DimY(2) Qty(3) Rotation(4) Tilt(5) Mirror(6) Priority(7) Preview(8)
-    STANDARD_COLS = ["Name","Dim X","Dim Y","Quantity","Design Code","Preview"]
-    DETAILED_COLS = ["Name","Dim X","Dim Y","Quantity","Allowed Rotation","Tilt","Mirror","Priority","Design Code","Preview"]
+    # Standard:  Name(0) DimX(1) DimY(2) Qty(3) DesignCode(4) Colour(5) Preview(6)
+    # Detailed:  Name(0) DimX(1) DimY(2) Qty(3) Rotation(4) Tilt(5) Mirror(6) Priority(7) DesignCode(8) Colour(9) Preview(10)
+    STANDARD_COLS = ["Name","Dim X","Dim Y","Quantity","Design Code","Colour","Preview"]
+    DETAILED_COLS = ["Name","Dim X","Dim Y","Quantity","Allowed Rotation","Tilt","Mirror","Priority","Design Code","Colour","Preview"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -440,7 +440,8 @@ class PartsTab(QWidget):
 
         # Import group
         self._btn_dxf_dwg  = btn("DXF/DWG",  "Import DXF/DWG file",  "📄", 70)
-        self._btn_csv      = btn("CSV",       "Import CSV order",     "📊", 60)
+        self._btn_csv      = btn("CSV",       "Import CSV (replace)", "📊", 60)
+        self._btn_csv_add  = btn("Add CSV",   "Add from CSV (append)","📥", 65)
         self._btn_shapes   = btn("Shapes",    "Add standard shapes",  "⬛", 60)
         div1 = self._vdiv()
 
@@ -461,7 +462,7 @@ class PartsTab(QWidget):
         self._btn_edit_tilt = btn("Edit\nTilt",    "Edit tilt",      "◸",  60)
         self._btn_edit_rot.hide(); self._btn_edit_tilt.hide()
 
-        for w in [self._btn_dxf_dwg, self._btn_csv, self._btn_shapes]: tl.addWidget(w)
+        for w in [self._btn_dxf_dwg, self._btn_csv, self._btn_csv_add, self._btn_shapes]: tl.addWidget(w)
         tl.addWidget(self._group_label("Import Parts"))
         tl.addWidget(div1)
         self._std_btns = [self._btn_edit_qty, self._btn_remove,
@@ -478,6 +479,7 @@ class PartsTab(QWidget):
         self._btn_switch.clicked.connect(self._toggle_grid_mode)
         self._btn_dxf_dwg.clicked.connect(self._import_dxf)
         self._btn_csv.clicked.connect(self._import_csv)
+        self._btn_csv_add.clicked.connect(self._append_csv)
         self._btn_shapes.clicked.connect(self._open_shapes)
         self._btn_edit_qty.clicked.connect(self._edit_quantity)
         self._btn_remove.clicked.connect(self._remove_selected)
@@ -536,8 +538,8 @@ class PartsTab(QWidget):
         t.itemSelectionChanged.connect(self._on_selection_changed)
         t.itemChanged.connect(self._on_item_changed)
         hdr = t.horizontalHeader(); hdr.setSectionResizeMode(0, QHeaderView.Stretch)
-        for i in range(1,5): hdr.setSectionResizeMode(i, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(5, QHeaderView.Fixed); t.setColumnWidth(5, 60)
+        for i in range(1,6): hdr.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(6, QHeaderView.Fixed); t.setColumnWidth(6, 60)
         t.setIconSize(QSize(32,20)); return t
 
     def _build_stats_panel(self) -> QWidget:
@@ -610,11 +612,13 @@ class PartsTab(QWidget):
                     item=QTableWidgetItem(val); item.setTextAlignment(Qt.AlignCenter)
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                     t.setItem(row,col,item)
-                dc_col   = 8
-                prev_col = 9
+                dc_col     = 8
+                colour_col = 9
+                prev_col   = 10
             else:
-                dc_col   = 4
-                prev_col = 5
+                dc_col     = 4
+                colour_col = 5
+                prev_col   = 6
 
             # Design Code column — persistent QComboBox dropdown
             dc = part.get("design_code","") or "cd0"
@@ -637,6 +641,12 @@ class PartsTab(QWidget):
             _cmb.currentTextChanged.connect(
                 lambda val, r=_row_ref: self._on_dc_changed(r, val))
             t.setCellWidget(row, dc_col, _cmb)
+
+            # Colour column — editable text
+            colour_val = part.get("colour","") or ""
+            colour_item = QTableWidgetItem(colour_val)
+            colour_item.setTextAlignment(Qt.AlignCenter)
+            t.setItem(row, colour_col, colour_item)
 
             pix=make_preview_pixmap(raw_w, raw_h, color); prev=QTableWidgetItem()
             prev.setData(Qt.DecorationRole, pix)
@@ -704,6 +714,28 @@ class PartsTab(QWidget):
             QMessageBox.information(self,"Import OK",
                 f"Imported {len(self._rows)} unique parts\n({order.total_parts()} total)")
         except Exception as e: QMessageBox.critical(self,"Import Error",str(e))
+
+    # ── Append from CSV ──────────────────────────────────────
+    def _append_csv(self):
+        path,_=QFileDialog.getOpenFileName(self,"Add from CSV",str(Path.home()),"CSV Files (*.csv);;All Files (*)")
+        if not path: return
+        try:
+            from csv_handler import parse_csv, get_unique_rows
+            order,errors=parse_csv(path)
+            if errors: QMessageBox.warning(self,"Import Warnings","\n".join(errors[:10]))
+            if not order.parts: QMessageBox.warning(self,"Add CSV","No parts found."); return
+            new_rows=get_unique_rows(order.parts)
+            for r in new_rows:
+                w=r.get("width",0); h=r.get("height",0)
+                r["width"]=max(w,h); r["height"]=min(w,h)
+                if not r.get("rotation"): r["rotation"]="90"
+                if not r.get("priority"): r["priority"]="Normal"
+                r.setdefault("tilt",0.0); r.setdefault("mirror",False)
+            self._rows.extend(new_rows)
+            self._refresh_table(); self._emit()
+            QMessageBox.information(self,"Add CSV OK",
+                f"Added {len(new_rows)} unique parts\n({order.total_parts()} total)\nTotal now: {len(self._rows)}")
+        except Exception as e: QMessageBox.critical(self,"Add CSV Error",str(e))
 
     # ── Import DXF ────────────────────────────────────────────
     def _import_dxf(self):
@@ -857,11 +889,18 @@ class PartsTab(QWidget):
         if row < 0 or row >= len(self._rows):
             return
 
-        dc_col = 8 if self._detailed_mode else 4
+        dc_col     = 8 if self._detailed_mode else 4
+        colour_col = 9 if self._detailed_mode else 5
         col = item.column()
 
         # Design Code is a QComboBox cellWidget, not a normal table item.
         if col == dc_col:
+            return
+
+        # Colour column — editable, syncs back to _rows
+        if col == colour_col:
+            self._rows[row]["colour"] = (item.text() or "").strip()
+            self._emit()
             return
 
         # Quantity column is always column 3 in both modes.
