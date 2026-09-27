@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Save, FileSpreadsheet, FileText, Receipt, Printer, FilePlus2, PanelRightClose, PanelRightOpen } from "lucide-react";
 import OrderHeaderForm from "../components/order/OrderHeaderForm";
 import DoorOrderTable from "../components/order/DoorOrderTable";
+import MelamineOrderTable from "../components/order/MelamineOrderTable";
+import { PRODUCT_MELAMINE } from "../core/melamine";
 import InvoicePanel from "../components/order/InvoicePanel";
 import SummaryPanel from "../components/order/SummaryPanel";
 import Toast, { type ToastTone } from "../components/ui/Toast";
@@ -64,6 +66,13 @@ export default function NewOrderBuilder({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const totals = computeOrderTotals(rows, invoice.orderDiscountPercent);
+  // One row list; the tabs only filter it. Doors are kept before panels so CSV
+  // line numbers stay stable while either tab is edited.
+  const doorRows = rows.filter((r) => r.productType !== PRODUCT_MELAMINE);
+  const melamineRows = rows.filter((r) => r.productType === PRODUCT_MELAMINE);
+  const [productTab, setProductTab] = useState<"doors" | "melamine">(
+    doorRows.length === 0 && melamineRows.length > 0 ? "melamine" : "doors"
+  );
 
   const flashToast = (message: string, tone: ToastTone = "success") => {
     setToast(message);
@@ -227,13 +236,41 @@ export default function NewOrderBuilder({
             open={orderHeaderOpen}
             onToggleOpen={onToggleOrderHeaderOpen}
           />
-          <DoorOrderTable
-            rows={rows}
-            onChangeRows={onChangeRows}
-            invoiceMode={invoiceMode}
-            currency={header.currency}
-            catalog={settings.catalog}
-          />
+          <div className="flex items-center gap-1 rounded-xl bg-ink-100 p-1 self-start" role="tablist">
+            {([
+              ["doors", `Vacuum doors (${doorRows.length})`],
+              ["melamine", `Melamine (${melamineRows.length})`],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={productTab === key}
+                onClick={() => setProductTab(key)}
+                className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${
+                  productTab === key ? "bg-white text-navy-800 shadow-sm" : "text-ink-500 hover:text-ink-800"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {productTab === "doors" ? (
+            <DoorOrderTable
+              rows={doorRows}
+              onChangeRows={(next) => onChangeRows([...next, ...melamineRows])}
+              invoiceMode={invoiceMode}
+              currency={header.currency}
+              catalog={settings.catalog}
+            />
+          ) : (
+            <MelamineOrderTable
+              rows={melamineRows}
+              onChangeRows={(next) => onChangeRows([...doorRows, ...next])}
+              invoiceMode={invoiceMode}
+              currency={header.currency}
+              catalog={settings.catalog}
+            />
+          )}
           <InvoicePanel invoice={invoice} onChange={onChangeInvoice} totals={totals} currency={invoice.currency} />
         </div>
 
@@ -262,7 +299,8 @@ export default function NewOrderBuilder({
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur lg:left-64">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-3 py-2.5 sm:px-6 sm:py-3">
           <p className="hidden truncate text-xs text-ink-500 lg:block">
-            {header.orderNo} · {totals.totalDoors} doors · {totals.totalRows} rows · Grand Total {header.currency}{" "}
+            {header.orderNo} · {totals.totalDoors} doors
+            {totals.totalPanels > 0 ? ` · ${totals.totalPanels} panels` : ""} · {totals.totalRows} rows · Grand Total {header.currency}{" "}
             {totals.finalTotal.toFixed(2)}
           </p>
           <div className="flex flex-1 items-center justify-end gap-1.5 overflow-x-auto sm:gap-2">

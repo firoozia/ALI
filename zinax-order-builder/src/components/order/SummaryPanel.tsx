@@ -67,6 +67,7 @@ export default function SummaryPanel({
         <div className="divide-y divide-ink-100">
           <Row label="Total Rows" value={totals.totalRows} />
           <Row label="Total Doors" value={totals.totalDoors} />
+          {totals.totalPanels > 0 && <Row label="Melamine Panels" value={totals.totalPanels} />}
           <Row label="Total Area" value={`${formatNumber(totals.totalArea)} m²`} />
           <Row label="Est. PVC Consumption" value={`${formatNumber(totals.pvcConsumption)} m²`} />
           <Row label="Currency" value={currency} />

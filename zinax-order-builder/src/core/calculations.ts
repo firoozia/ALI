@@ -37,7 +37,10 @@ export function rowAreaSqm(row: OrderRow): number {
 
 export interface OrderTotals {
   totalRows: number;
+  /** Vacuum-door pieces (melamine panels are counted in totalPanels). */
   totalDoors: number;
+  /** Melamine panel pieces. */
+  totalPanels: number;
   totalArea: number;
   subtotal: number;
   totalDiscount: number;
@@ -54,8 +57,12 @@ export interface OrderTotals {
 }
 
 export function computeOrderTotals(rows: OrderRow[], orderDiscountPercent: number | "" = 0): OrderTotals {
-  const totalDoors = rows.reduce((sum, r) => sum + num(r.qty), 0);
+  const doors = rows.filter((r) => r.productType !== "melamine");
+  const totalDoors = doors.reduce((sum, r) => sum + num(r.qty), 0);
+  const totalPanels = rows.reduce((sum, r) => sum + (r.productType === "melamine" ? num(r.qty) : 0), 0);
   const totalArea = rows.reduce((sum, r) => sum + rowAreaSqm(r), 0);
+  // PVC membrane only covers vacuum doors, never melamine panels.
+  const doorArea = doors.reduce((sum, r) => sum + rowAreaSqm(r), 0);
   const subtotal = rows.reduce((sum, r) => sum + lineSubtotal(r), 0);
   const totalDiscount = rows.reduce((sum, r) => sum + discountAmount(r), 0);
   const taxable = subtotal - totalDiscount;
@@ -65,11 +72,12 @@ export function computeOrderTotals(rows: OrderRow[], orderDiscountPercent: numbe
   const orderDiscountAmount = (grandTotal * discountPct) / 100;
   const finalTotal = grandTotal - orderDiscountAmount;
   // Rough estimate: PVC membrane consumption is door face area plus 10% wastage.
-  const pvcConsumption = totalArea * 1.1;
+  const pvcConsumption = doorArea * 1.1;
 
   return {
     totalRows: rows.length,
     totalDoors,
+    totalPanels,
     totalArea,
     subtotal,
     totalDiscount,

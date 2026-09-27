@@ -16,10 +16,12 @@ import {
   formatMdfThickness,
 } from "../core/catalogSchema";
 import { downloadJsonFile, readFileAsText } from "../lib/download";
+import { edgeBandCodeError, parseEdgeBandCodesCsv, type EdgeBandCatalogItem } from "../core/melamine";
 import { publishDesignsToPortal } from "../lib/remoteDesigns";
 import { publishColorsToPortal } from "../lib/remoteColors";
 import type { TenantSession } from "../lib/tenantAuth";
 import Toast, { type ToastTone } from "../components/ui/Toast";
+import NumberCell from "../components/ui/NumberCell";
 
 interface DesignsProps {
   catalog: Catalog;
@@ -168,6 +170,8 @@ export default function Designs({ catalog, onChangeCatalog, tenantSession }: Des
         <GrainSection catalog={catalog} onChangeCatalog={onChangeCatalog} />
       </div>
 
+      <EdgeBandSection catalog={catalog} onChangeCatalog={onChangeCatalog} onToast={flash} />
+
       <Toast message={toast} tone={toastTone} />
     </div>
   );
@@ -251,11 +255,11 @@ function DesignsSection({ catalog, onChangeCatalog }: DesignsProps) {
                 <td className="zx-td p-1"><input value={d.name} onChange={(e) => update(d.id, { name: e.target.value })} className="zx-cell-input" /></td>
                 <td className="zx-td p-1"><input value={d.family} onChange={(e) => update(d.id, { family: e.target.value })} className="zx-cell-input w-28" /></td>
                 <td className="zx-td p-1"><input value={d.description} onChange={(e) => update(d.id, { description: e.target.value })} className="zx-cell-input" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.minWidthMm} onChange={(e) => update(d.id, { minWidthMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.maxWidthMm} onChange={(e) => update(d.id, { maxWidthMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.minHeightMm} onChange={(e) => update(d.id, { minHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.maxHeightMm} onChange={(e) => update(d.id, { maxHeightMm: Number(e.target.value) || 0 })} className="zx-cell-input w-20 text-right" /></td>
-                <td className="zx-td p-1"><input type="number" value={d.defaultUnitPrice} onChange={(e) => update(d.id, { defaultUnitPrice: Number(e.target.value) || 0 })} className="zx-cell-input w-24 text-right" /></td>
+                <td className="zx-td p-1"><NumberCell value={d.minWidthMm} onCommit={(v) => update(d.id, { minWidthMm: v })} className="w-20" /></td>
+                <td className="zx-td p-1"><NumberCell value={d.maxWidthMm} onCommit={(v) => update(d.id, { maxWidthMm: v })} className="w-20" /></td>
+                <td className="zx-td p-1"><NumberCell value={d.minHeightMm} onCommit={(v) => update(d.id, { minHeightMm: v })} className="w-20" /></td>
+                <td className="zx-td p-1"><NumberCell value={d.maxHeightMm} onCommit={(v) => update(d.id, { maxHeightMm: v })} className="w-20" /></td>
+                <td className="zx-td p-1"><NumberCell value={d.defaultUnitPrice} onCommit={(v) => update(d.id, { defaultUnitPrice: v })} className="w-24" /></td>
                 <td className="zx-td p-1">
                   <select value={d.defaultMdfThickness} onChange={(e) => update(d.id, { defaultMdfThickness: e.target.value })} className="zx-cell-input w-28">
                     <option value="">—</option>
@@ -378,12 +382,7 @@ function MdfSection({ catalog, onChangeCatalog }: DesignsProps) {
       <div className="space-y-2">
         {items.map((m, index) => (
           <div key={index} className={`flex items-center gap-2 ${!m.active ? "opacity-50" : ""}`}>
-            <input
-              type="number"
-              value={m.thicknessMm}
-              onChange={(e) => update(index, { thicknessMm: Number(e.target.value) || 0 })}
-              className="zx-input w-24"
-            />
+            <NumberCell value={m.thicknessMm} onCommit={(v) => update(index, { thicknessMm: v })} variant="field" className="w-24" />
             <span className="text-sm text-ink-500">mm</span>
             <label className="ml-2 flex items-center gap-1.5 text-xs text-ink-600">
               <input type="checkbox" checked={m.active} onChange={(e) => update(index, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
@@ -427,6 +426,135 @@ function GrainSection({ catalog, onChangeCatalog }: DesignsProps) {
             <button onClick={() => remove(g.id)} className="zx-btn-danger !px-2 !py-2"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function EdgeBandSection({
+  catalog,
+  onChangeCatalog,
+  onToast,
+}: DesignsProps & { onToast: (message: string, tone?: ToastTone) => void }) {
+  const items = catalog.edgeBands ?? [];
+  const fileRef = useRef<HTMLInputElement>(null);
+  const update = (id: string, patch: Partial<EdgeBandCatalogItem>) => {
+    onChangeCatalog({ ...catalog, edgeBands: items.map((b) => (b.id === id ? { ...b, ...patch } : b)) });
+  };
+  const remove = (id: string) => onChangeCatalog({ ...catalog, edgeBands: items.filter((b) => b.id !== id) });
+  const add = () => {
+    const used = new Set(items.map((b) => b.code.toUpperCase()));
+    let n = 1;
+    while (used.has(`P${n}`)) n++;
+    onChangeCatalog({
+      ...catalog,
+      edgeBands: [...items, { id: nextCatalogItemId(), code: `P${n}`, name: "", thicknessMm: 1, widthMm: 22, color: "", active: true }],
+    });
+  };
+
+  /** Adds or updates bands by code from the list ZINAX CAM exports; keeps codes not in the file. */
+  const importFromCam = async (file: File) => {
+    try {
+      const text = await readFileAsText(file);
+      const { bands, errors } = parseEdgeBandCodesCsv(text, nextCatalogItemId);
+      if (bands.length === 0) {
+        onToast(`No edge bands imported. ${errors[0] ?? ""}`.trim(), "error");
+        return;
+      }
+      const byCode = new Map(items.map((b) => [b.code.toUpperCase(), b]));
+      for (const band of bands) {
+        const existing = byCode.get(band.code.toUpperCase());
+        byCode.set(band.code.toUpperCase(), existing ? { ...band, id: existing.id } : band);
+      }
+      onChangeCatalog({ ...catalog, edgeBands: Array.from(byCode.values()) });
+      onToast(
+        errors.length
+          ? `${bands.length} edge band(s) imported, ${errors.length} row(s) skipped: ${errors[0]}`
+          : `${bands.length} edge band(s) imported from ZINAX CAM.`,
+        errors.length ? "error" : "success"
+      );
+    } catch (err) {
+      onToast(`Cannot import edge bands: ${err instanceof Error ? err.message : "unknown error"}`, "error");
+    }
+  };
+
+  return (
+    <div className="zx-card p-5">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-ink-900">Edge Bands (melamine)</h3>
+        <div className="flex gap-2">
+          <button onClick={() => fileRef.current?.click()} className="zx-btn-secondary !py-1.5" title="CSV from ZINAX CAM → Settings → Edge banding → Export codes…">
+            <Upload className="h-4 w-4" />
+            Import from ZINAX CAM
+          </button>
+          <button onClick={add} className="zx-btn-secondary !py-1.5">
+            <Plus className="h-4 w-4" />
+            Add
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void importFromCam(file);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      </div>
+      <p className="mb-3 text-xs text-ink-500">
+        Codes must match ZINAX CAM (P1, P2, …). ZINAX CAM subtracts the thickness from the cut size; here the codes are only chosen per edge.
+      </p>
+      <div className="overflow-auto">
+        <table className="border-collapse">
+          <thead>
+            <tr>
+              <th className="zx-th">Code</th>
+              <th className="zx-th">Name</th>
+              <th className="zx-th text-right">Thickness mm</th>
+              <th className="zx-th text-right">Width mm</th>
+              <th className="zx-th">Color</th>
+              <th className="zx-th">Active</th>
+              <th className="zx-th"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((b) => {
+              const codeError = edgeBandCodeError(b.code, items, b.id);
+              const thicknessBad = !(b.thicknessMm > 0);
+              return (
+                <tr key={b.id} className={!b.active ? "opacity-50" : ""}>
+                  <td className="zx-td p-1">
+                    <input
+                      value={b.code}
+                      onChange={(e) => update(b.id, { code: e.target.value })}
+                      title={codeError || undefined}
+                      className={`zx-cell-input w-20 font-semibold ${codeError ? "invalid" : ""}`}
+                    />
+                  </td>
+                  <td className="zx-td p-1"><input value={b.name} onChange={(e) => update(b.id, { name: e.target.value })} className="zx-cell-input w-40" /></td>
+                  <td className="zx-td p-1">
+                    <NumberCell value={b.thicknessMm} step={0.1} invalid={thicknessBad} onCommit={(v) => update(b.id, { thicknessMm: v })} className="w-24" />
+                  </td>
+                  <td className="zx-td p-1">
+                    <NumberCell value={b.widthMm} onCommit={(v) => update(b.id, { widthMm: v })} className="w-20" />
+                  </td>
+                  <td className="zx-td p-1"><input value={b.color} onChange={(e) => update(b.id, { color: e.target.value })} className="zx-cell-input w-28" /></td>
+                  <td className="zx-td p-1 text-center">
+                    <input type="checkbox" checked={b.active} onChange={(e) => update(b.id, { active: e.target.checked })} className="h-4 w-4 rounded border-ink-300 text-navy-800" />
+                  </td>
+                  <td className="zx-td p-1">
+                    <button onClick={() => remove(b.id)} className="zx-btn-danger !px-2 !py-1.5" title="Orders that use this code will show it as unknown">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
