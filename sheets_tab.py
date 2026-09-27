@@ -290,6 +290,9 @@ class AddSheetsDialog(QDialog):
 
         self._material = QLineEdit("MDF")
 
+        self._colour   = QLineEdit("")
+        self._colour.setPlaceholderText("e.g. White, MEL-W, Oak  (blank = any)")
+
         self._qty      = QSpinBox()
         self._qty.setRange(1, 9999); self._qty.setValue(100)
 
@@ -305,6 +308,7 @@ class AddSheetsDialog(QDialog):
         form.addRow("Width (mm):",    self._width)
         form.addRow("Thickness:",     self._thick)
         form.addRow("Material:",      self._material)
+        form.addRow("Colour:",        self._colour)
         form.addRow("Quantity:",      self._qty)
         form.addRow("Priority:",      self._priority)
         form.addRow("",               self._remnant)
@@ -371,6 +375,7 @@ class AddSheetsDialog(QDialog):
         self._thick.setValue(data.get("thickness", 18))
         self._material.setText(data.get("material", "MDF"))
         self._qty.setValue(data.get("quantity", 100))
+        self._colour.setText(data.get("colour", ""))
         pri = data.get("priority", 3)
         for i in range(self._priority.count()):
             if self._priority.itemData(i) == pri:
@@ -384,6 +389,7 @@ class AddSheetsDialog(QDialog):
             "height":     self._width.value(),
             "thickness":  self._thick.value(),
             "material":   self._material.text().strip() or "MDF",
+            "colour":     self._colour.text().strip(),
             "quantity":   self._qty.value(),
             "priority":   self._priority.currentData(),
             "is_remnant": self._remnant.isChecked(),

@@ -62,21 +62,29 @@ class Pattern:
 
 @dataclass
 class Part:
-    part_id:     str   = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    part_code:   str   = ""
-    width:       float = 900.0
-    height:      float = 500.0
-    thickness:   float = 18.0
-    design_code: str   = "101"
-    customer:    str   = ""
-    material:    str   = "MDF"
-    label:       str   = ""
-    sheet_id:    int   = -1
-    x:           float = 0.0
-    y:           float = 0.0
-    rotated:     bool  = False
-    locked:      bool  = False
-    status:      str   = "pending"
+    part_id:        str   = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    part_code:      str   = ""
+    width:          float = 900.0
+    height:         float = 500.0
+    thickness:      float = 18.0
+    design_code:    str   = "101"
+    customer:       str   = ""
+    material:       str   = "MDF"
+    colour:         str   = ""   # pvc_color for vacuum; melamine colour for mel panels
+    product_type:   str   = "vacuum_door"  # "vacuum_door" | "melamine"
+    grain:          str   = ""   # "none" | "length" | "width"
+    edge_1:         str   = "N"  # bottom edge band code
+    edge_2:         str   = "N"  # top
+    edge_3:         str   = "N"  # left
+    edge_4:         str   = "N"  # right
+    allow_rotation: bool  = True  # False when CSV rotation == "none"
+    label:          str   = ""
+    sheet_id:       int   = -1
+    x:              float = 0.0
+    y:              float = 0.0
+    rotated:        bool  = False
+    locked:         bool  = False
+    status:         str   = "pending"
 
     def actual_width(self) -> float:
         return self.height if self.rotated else self.width
