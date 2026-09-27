@@ -394,6 +394,260 @@ class DoorPreviewCanvas(QWidget):
         p.end()
 
 
+# ── SimulationCanvas ──────────────────────────────────────────────────────
+
+# Tool colours for simulation (one per tool slot T1-T8)
+_SIM_TOOL_COLORS = [
+    QColor('#f85149'),  # T1 red — profile / outer cut
+    QColor('#bf5af2'),  # T2 purple — V-bit / engraving
+    QColor('#f1c40f'),  # T3 yellow — form tool
+    QColor('#3fb950'),  # T4 green — ballnose
+    QColor('#58a6ff'),  # T5 blue — endmill
+    QColor('#ff9800'),  # T6 orange
+    QColor('#00bcd4'),  # T7 cyan
+    QColor('#e91e63'),  # T8 pink
+]
+
+class SimulationCanvas(QWidget):
+    """
+    Animates the tool path over the door preview.
+    Segments are generated from DesignData.generate_toolpath_preview();
+    each segment carries {operation, tool_id, points: [(x,y), ...]}.
+    The timer advances a cursor through all segments, drawing the portion
+    already travelled and a tool-position dot at the head.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._design  = None
+        self._zoom    = 1.0
+        self._ox      = 40
+        self._oy      = 40
+
+        # Simulation state
+        self._segments:   list  = []   # [{tool_id, color, points: [(x,y)...]}, ...]
+        self._flat_pts:   list  = []   # flattened [(seg_idx, pt_idx, x, y), ...]
+        self._cursor:     int   = 0    # index into _flat_pts
+        self._total_pts:  int   = 0
+        self._running:    bool  = False
+        self._step_size:  int   = 1    # pts advanced per tick
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)    # ~60fps
+        self._timer.timeout.connect(self._tick)
+
+        self.setMinimumSize(520, 420)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
+        self._drag = False; self._last = QPointF()
+
+    # ── public API ────────────────────────────────────────────
+    def load_design(self, design):
+        self._design = design
+        self._build_segments()
+        self.reset()
+        self.fit_to_window()
+
+    def play(self):
+        if not self._flat_pts:
+            return
+        self._running = True
+        self._timer.start()
+
+    def pause(self):
+        self._running = False
+        self._timer.stop()
+        self.update()
+
+    def stop(self):
+        self._running = False
+        self._timer.stop()
+        self._cursor = 0
+        self.update()
+
+    def reset(self):
+        self._cursor  = 0
+        self._running = False
+        self._timer.stop()
+        self.update()
+
+    def set_speed(self, v: int):
+        """v: 1-10.  step_size and interval adapt together."""
+        v = max(1, min(10, v))
+        # speed 5 → step 2, interval 16ms; 10 → step 16, interval 8ms; 1 → step 1, interval 32ms
+        self._step_size    = max(1, int(2 ** ((v - 5) * 0.5 + 1)))
+        self._timer.setInterval(max(4, 32 - v * 3))
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def progress(self) -> float:
+        if not self._total_pts:
+            return 0.0
+        return self._cursor / self._total_pts
+
+    # ── internal ──────────────────────────────────────────────
+    def _build_segments(self):
+        self._segments  = []
+        self._flat_pts  = []
+        if not self._design:
+            self._total_pts = 0
+            return
+        paths = self._design.generate_toolpath_preview()
+        tool_color_map: dict = {}
+        color_idx = 0
+        for path in paths:
+            tid  = path.get('tool_id') or path.get('operation') or 'T1'
+            if tid not in tool_color_map:
+                tool_color_map[tid] = _SIM_TOOL_COLORS[color_idx % len(_SIM_TOOL_COLORS)]
+                color_idx += 1
+            pts  = path.get('points') or []
+            if len(pts) < 2:
+                continue
+            seg_idx = len(self._segments)
+            self._segments.append({
+                'tool_id': tid,
+                'color':   tool_color_map[tid],
+                'points':  pts,
+                'operation': path.get('operation', ''),
+            })
+            for pi, pt in enumerate(pts):
+                self._flat_pts.append((seg_idx, pi, pt[0], pt[1]))
+        self._total_pts = len(self._flat_pts)
+
+    def _tick(self):
+        if not self._running:
+            return
+        self._cursor = min(self._cursor + self._step_size, self._total_pts)
+        self.update()
+        if self._cursor >= self._total_pts:
+            self._running = False
+            self._timer.stop()
+
+    # ── coordinate helpers ────────────────────────────────────
+    def _sx(self, x): return self._ox + x * self._zoom
+    def _sy(self, y):
+        if not self._design: return y
+        return self._oy + (self._design.height - y) * self._zoom
+
+    def fit_to_window(self):
+        if not self._design:
+            return
+        pad = 50
+        aw = max(1, self.width()  - 2 * pad)
+        ah = max(1, self.height() - 2 * pad)
+        self._zoom = min(aw / self._design.width, ah / self._design.height)
+        self._ox = pad + (aw - self._design.width  * self._zoom) / 2
+        self._oy = pad + (ah - self._design.height * self._zoom) / 2
+        self.update()
+
+    def resizeEvent(self, e): self.fit_to_window()
+    def wheelEvent(self, e):
+        self._zoom = max(.05, min(20, self._zoom * (1.15 if e.angleDelta().y() > 0 else .87)))
+        self.update()
+    def mousePressEvent(self, e):   self._drag = True;  self._last = e.position()
+    def mouseMoveEvent(self, e):
+        if self._drag:
+            p = e.position()
+            self._ox += p.x() - self._last.x()
+            self._oy += p.y() - self._last.y()
+            self._last = p; self.update()
+    def mouseReleaseEvent(self, e): self._drag = False
+    def mouseDoubleClickEvent(self, e): self.fit_to_window()
+
+    # ── paint ─────────────────────────────────────────────────
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), C_BG)
+
+        if not self._design:
+            p.setPen(C_DIM)
+            p.drawText(self.rect(), Qt.AlignCenter,
+                       'Load a design and press ▶ Play')
+            p.end()
+            return
+
+        d  = self._design
+        dw, dh = d.width, d.height
+
+        # Door background
+        door = QRectF(self._sx(0), self._sy(dh), dw * self._zoom, dh * self._zoom)
+        grad = QLinearGradient(door.topLeft(), door.bottomRight())
+        grad.setColorAt(0, QColor('#403022'))
+        grad.setColorAt(1, QColor('#251a13'))
+        p.fillRect(door, grad)
+        p.setPen(QPen(QColor('#6b4c3b'), 2))
+        p.drawRect(door)
+
+        # Geometry (dim)
+        for ent in d.generate_geometry():
+            pts = ent.get('points') or []
+            if len(pts) < 2: continue
+            col = QColor(ent.get('color', '#333'))
+            col.setAlpha(60)
+            p.setPen(QPen(col, 1))
+            for a, b2 in zip(pts, pts[1:]):
+                p.drawLine(int(self._sx(a[0])), int(self._sy(a[1])),
+                           int(self._sx(b2[0])), int(self._sy(b2[1])))
+
+        # Travelled path: replay flat_pts up to _cursor
+        # Build per-segment drawn-so-far lists
+        drawn: dict = {}   # seg_idx → [(x, y), ...]
+        cursor_pt   = None
+        for i in range(min(self._cursor, self._total_pts)):
+            si, pi, x, y = self._flat_pts[i]
+            drawn.setdefault(si, []).append((x, y))
+            cursor_pt = (si, x, y)
+
+        for si, pts_drawn in drawn.items():
+            seg   = self._segments[si]
+            col   = seg['color']
+            p.setPen(QPen(col, 2.0))
+            p.setBrush(Qt.NoBrush)
+            for a, b2 in zip(pts_drawn, pts_drawn[1:]):
+                p.drawLine(int(self._sx(a[0])), int(self._sy(a[1])),
+                           int(self._sx(b2[0])), int(self._sy(b2[1])))
+
+        # Tool head dot
+        if cursor_pt is not None:
+            si, cx, cy = cursor_pt
+            col  = self._segments[si]['color']
+            r    = max(4.0, 6.0 * min(1.5, self._zoom / 0.3))
+            glow = QColor(col); glow.setAlpha(80)
+            p.setBrush(QBrush(glow))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QPointF(self._sx(cx), self._sy(cy)), r * 1.8, r * 1.8)
+            p.setBrush(QBrush(col))
+            p.setPen(QPen(QColor('white'), 1.0))
+            p.drawEllipse(QPointF(self._sx(cx), self._sy(cy)), r, r)
+
+        # Legend
+        f9 = QFont('Segoe UI'); f9.setPixelSize(10); p.setFont(f9)
+        lx, ly = 8, 8
+        seen_tools: set = set()
+        for seg in self._segments:
+            tid = seg['tool_id']
+            if tid in seen_tools: continue
+            seen_tools.add(tid)
+            col = seg['color']
+            p.setBrush(QBrush(col)); p.setPen(Qt.NoPen)
+            p.drawRect(lx, ly, 14, 10)
+            p.setPen(QPen(C_TEXT))
+            p.drawText(lx + 18, ly + 9, f"{tid}  {seg['operation']}")
+            ly += 16
+
+        # Progress text
+        pct = int(self.progress * 100)
+        p.setPen(QPen(C_DIM))
+        p.drawText(self.rect().adjusted(0, 0, -8, -8),
+                   Qt.AlignBottom | Qt.AlignRight,
+                   f'{pct}%  ({self._cursor}/{self._total_pts} pts)')
+        p.end()
+
+
 # ── ToolPickerDialog ───────────────────────────────────────────────────────
 
 class ToolPickerDialog(QDialog):
@@ -518,6 +772,7 @@ class DesignEditorWidget(QWidget):
         self._tabs.addTab(self._tab_inner(), 'Inner Pattern')
         self._tabs.addTab(self._tab_toolpaths(), 'Layers / Toolpath')
         self._tabs.addTab(self._tab_validate(), 'Save / Validate')
+        self._tabs.addTab(self._tab_simulate(), '▶  Simulate')
         ll.addWidget(self._tabs); split.addWidget(left)
         right = QWidget(); rl = QVBoxLayout(right); rl.setContentsMargins(0, 0, 0, 0)
         bar = QHBoxLayout(); bar.setContentsMargins(8, 4, 8, 4)
@@ -701,6 +956,143 @@ class DesignEditorWidget(QWidget):
         self._btn_validate.clicked.connect(self._validate_model)
         lay.addWidget(self._btn_validate); lay.addWidget(self._validate_text)
         return w
+
+    def _tab_simulate(self):
+        """Toolpath simulation tab with Play/Pause/Stop/Speed controls."""
+        w = QWidget()
+        root = QVBoxLayout(w)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Control bar ────────────────────────────────────────
+        bar = QFrame()
+        bar.setFixedHeight(40)
+        bar.setStyleSheet(
+            f"background:{C_PANEL.name()};"
+            f"border-bottom:1px solid {C_BORDER.name()};")
+        bl = QHBoxLayout(bar)
+        bl.setContentsMargins(8, 4, 8, 4)
+        bl.setSpacing(8)
+
+        def _btn(txt, tip, w=80):
+            b = QPushButton(txt)
+            b.setFixedHeight(28); b.setFixedWidth(w)
+            b.setToolTip(tip)
+            return b
+
+        self._sim_btn_play  = _btn('▶  Play',  'Start simulation')
+        self._sim_btn_pause = _btn('⏸  Pause', 'Pause simulation')
+        self._sim_btn_stop  = _btn('■  Stop',  'Stop and reset')
+        self._sim_btn_pause.setEnabled(False)
+        self._sim_btn_stop.setEnabled(False)
+        bl.addWidget(self._sim_btn_play)
+        bl.addWidget(self._sim_btn_pause)
+        bl.addWidget(self._sim_btn_stop)
+
+        # Separator
+        sep = QFrame(); sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet(f"color:{C_BORDER.name()};")
+        bl.addWidget(sep)
+
+        # Speed
+        bl.addWidget(QLabel('Speed:'))
+        from PySide6.QtWidgets import QSlider
+        self._sim_speed = QSlider(Qt.Horizontal)
+        self._sim_speed.setRange(1, 10)
+        self._sim_speed.setValue(5)
+        self._sim_speed.setFixedWidth(120)
+        self._sim_speed.setToolTip('1 = slow  |  10 = fast')
+        bl.addWidget(self._sim_speed)
+        self._sim_speed_lbl = QLabel('5')
+        self._sim_speed_lbl.setFixedWidth(20)
+        self._sim_speed_lbl.setStyleSheet(f"color:{C_DIM.name()};font-size:11px;")
+        bl.addWidget(self._sim_speed_lbl)
+
+        bl.addStretch()
+
+        # Progress label
+        self._sim_progress_lbl = QLabel('0%')
+        self._sim_progress_lbl.setStyleSheet(f"color:{C_DIM.name()};font-size:11px;")
+        bl.addWidget(self._sim_progress_lbl)
+
+        root.addWidget(bar)
+
+        # ── Canvas ─────────────────────────────────────────────
+        self._sim_canvas = SimulationCanvas()
+        root.addWidget(self._sim_canvas, 1)
+
+        # ── Wire up ────────────────────────────────────────────
+        self._sim_btn_play.clicked.connect(self._sim_play)
+        self._sim_btn_pause.clicked.connect(self._sim_pause)
+        self._sim_btn_stop.clicked.connect(self._sim_stop)
+        self._sim_speed.valueChanged.connect(self._sim_speed_changed)
+
+        # Progress update timer
+        self._sim_progress_timer = QTimer(self)
+        self._sim_progress_timer.setInterval(100)
+        self._sim_progress_timer.timeout.connect(self._sim_update_progress)
+
+        # When this tab is selected, load the current design
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+
+        return w
+
+    def _sim_play(self):
+        if not self._sim_canvas._segments:
+            self._sim_canvas.load_design(self._design)
+        self._sim_canvas.play()
+        self._sim_btn_play.setEnabled(False)
+        self._sim_btn_pause.setEnabled(True)
+        self._sim_btn_stop.setEnabled(True)
+        self._sim_progress_timer.start()
+
+    def _sim_pause(self):
+        if self._sim_canvas.is_running:
+            self._sim_canvas.pause()
+            self._sim_btn_play.setEnabled(True)
+            self._sim_btn_pause.setEnabled(False)
+        else:
+            # Resume
+            self._sim_canvas.play()
+            self._sim_btn_play.setEnabled(False)
+            self._sim_btn_pause.setEnabled(True)
+
+    def _sim_stop(self):
+        self._sim_canvas.stop()
+        self._sim_btn_play.setEnabled(True)
+        self._sim_btn_pause.setEnabled(False)
+        self._sim_btn_stop.setEnabled(False)
+        self._sim_progress_timer.stop()
+        self._sim_progress_lbl.setText('0%')
+
+    def _sim_speed_changed(self, v: int):
+        self._sim_speed_lbl.setText(str(v))
+        self._sim_canvas.set_speed(v)
+
+    def _sim_update_progress(self):
+        pct = int(self._sim_canvas.progress * 100)
+        self._sim_progress_lbl.setText(f'{pct}%')
+        if not self._sim_canvas.is_running:
+            self._sim_progress_timer.stop()
+            self._sim_btn_play.setEnabled(True)
+            self._sim_btn_pause.setEnabled(False)
+            self._sim_btn_stop.setEnabled(False)
+
+    def _on_tab_changed(self, idx: int):
+        """When the Simulate tab is activated, reload the design into the canvas."""
+        if not hasattr(self, '_sim_canvas'):
+            return
+        tab_widget = self.sender()
+        if not hasattr(tab_widget, 'tabText'):
+            return
+        if '▶' in (tab_widget.tabText(idx) or ''):
+            self._sim_canvas.load_design(self._design)
+            self._sim_canvas.set_speed(self._sim_speed.value())
+            # Reset play/pause/stop button states
+            self._sim_btn_play.setEnabled(True)
+            self._sim_btn_pause.setEnabled(False)
+            self._sim_btn_stop.setEnabled(False)
+            self._sim_progress_lbl.setText('0%')
 
     # ── Event handlers ─────────────────────────────────────────────────────
 
