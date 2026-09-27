@@ -2,10 +2,11 @@ import { useEffect, useRef } from "react";
 import type { KeyboardEvent } from "react";
 import { Plus, Copy, Trash2, AlertTriangle, Lock, RotateCw } from "lucide-react";
 import { makeDefaultRow, type OrderRow } from "../../core/orderSchema";
+import { makeMelamineRow } from "../../core/melamineRows";
 import { isEdgeInvalid } from "../../core/validators";
 import { lineTotal, formatNumber } from "../../core/calculations";
 import { formatMdfThickness, type Catalog } from "../../core/catalogSchema";
-import { EDGE_KEYS, EDGE_LABELS, PRODUCT_MELAMINE, edgeOptions, parseEdge, type EdgeKey } from "../../core/melamine";
+import { EDGE_KEYS, EDGE_LABELS, edgeOptions, parseEdge, type EdgeKey } from "../../core/melamine";
 
 type NumberField = "width" | "height" | "qty" | "unitPrice" | "discount" | "vat";
 type TextField = "designName" | "pvcCode" | "pvcColor" | "notes";
@@ -37,24 +38,6 @@ interface MelamineOrderTableProps {
   invoiceMode: boolean;
   currency: string;
   catalog: Catalog;
-}
-
-export function makeMelamineRow(source: OrderRow | undefined, overrides: Partial<OrderRow> = {}): OrderRow {
-  return makeDefaultRow({
-    productType: PRODUCT_MELAMINE,
-    grain: "None",
-    designCode: "",
-    mdfThickness: source?.mdfThickness ?? "18 mm",
-    pvcCode: source?.pvcCode ?? "",
-    pvcColor: source?.pvcColor ?? "",
-    edge1: source?.edge1 ?? "N",
-    edge2: source?.edge2 ?? "N",
-    edge3: source?.edge3 ?? "N",
-    edge4: source?.edge4 ?? "N",
-    rotation: source?.rotation === "N" ? "N" : "Y",
-    unitPrice: source?.unitPrice ?? "",
-    ...overrides,
-  });
 }
 
 export default function MelamineOrderTable({ rows, onChangeRows, invoiceMode, currency, catalog }: MelamineOrderTableProps) {

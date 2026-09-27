@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 interface NumberCellProps {
   value: number;
@@ -19,11 +19,13 @@ interface NumberCellProps {
  */
 export default function NumberCell({ value, onCommit, className = "", step, invalid = false, variant = "cell" }: NumberCellProps) {
   const [text, setText] = useState(String(value));
+  const [seen, setSeen] = useState(value);
 
   // Follow outside changes (import, undo) unless the box already shows that number.
-  useEffect(() => {
-    setText((current) => (Number(current) === value && current.trim() !== "" ? current : String(value)));
-  }, [value]);
+  if (seen !== value) {
+    setSeen(value);
+    if (!(Number(text) === value && text.trim() !== "")) setText(String(value));
+  }
 
   const base = variant === "cell" ? "zx-cell-input text-right" : "zx-input";
   return (
