@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "ZINAX Customer Order",
+  "mainBinaryName": "zinax-customer-order",
+  "identifier": "com.zinax.customerorder",
+  "app": {
+    "windows": [
+      {
+        "title": "ZINAX Customer Order",
+        "width": 900,
+        "height": 800,
+        "minWidth": 480,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "theme": "Light"
+      }
+    ]
+  },
+  "bundle": {
+    "shortDescription": "Send a door order directly to your factory",
+    "longDescription": "ZINAX Customer Order lets a factory's customer build a door order (design code, size, quantity, color, direction) and send it straight to the factory online, or save/print it as a file when there is no internet. It is not a CNC/CAM application."
+  }
+}

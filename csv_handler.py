@@ -16,15 +16,23 @@ from data_models import Part, Order
 
 # ── Column aliases (FIROO format) ─────────────────────────────
 COLUMN_ALIASES = {
-    "part_code": ["partcode", "part_code", "code", "کد", "کدقطعه", "name", "part name"],
-    "width":     ["width", "w", "x", "dim x", "dimx", "عرض", "پهنا", "length", "طول"],
-    "height":    ["height", "h", "y", "dim y", "dimy", "ارتفاع", "عرض"],
-    "qty":       ["qty", "quantity", "qyt", "تعداد", "count", "number"],
-    "design":    ["designcode", "design", "design code", "طرح", "دیزاین"],
-    "customer":  ["customer", "client", "مشتری"],
-    "material":  ["material", "mat", "متریال", "جنس"],
-    "thickness": ["thickness", "thick", "ضخامت", "t"],
-    "label":     ["label", "tag", "لیبل", "برچسب"],
+    "part_code":    ["partcode", "part_code", "code", "کد", "کدقطعه", "name", "part name"],
+    "width":        ["width", "w", "x", "dim x", "dimx", "عرض", "پهنا", "length", "طول"],
+    "height":       ["height", "h", "y", "dim y", "dimy", "ارتفاع", "عرض"],
+    "qty":          ["qty", "quantity", "qyt", "تعداد", "count", "number"],
+    "design":       ["designcode", "design", "design code", "طرح", "دیزاین"],
+    "customer":     ["customer", "client", "مشتری", "customer_name"],
+    "material":     ["material", "mat", "متریال", "جنس"],
+    "thickness":    ["thickness", "thick", "ضخامت", "t", "mdf_thickness_mm"],
+    "label":        ["label", "tag", "لیبل", "برچسب"],
+    "colour":       ["pvc_color", "colour", "color", "pvc_colour", "رنگ", "رنگپیویسی"],
+    "product_type": ["product_type", "producttype", "نوع محصول"],
+    "grain":        ["grain_direction", "grain", "direction", "جهت راه راه", "جهت"],
+    "edge_1":       ["edge_1", "edge1"],
+    "edge_2":       ["edge_2", "edge2"],
+    "edge_3":       ["edge_3", "edge3"],
+    "edge_4":       ["edge_4", "edge4"],
+    "rotation_csv": ["rotation", "rot", "چرخش"],
 }
 
 
@@ -137,6 +145,16 @@ def _parse_firoo(reader, headers: list, order: Order, errors: list):
             except (ValueError, TypeError):
                 thickness = 18.0
 
+            colour       = (row.get(col["colour"]       or "", "") or "").strip()
+            product_type = (row.get(col["product_type"] or "", "") or "vacuum_door").strip()
+            grain        = (row.get(col["grain"]        or "", "") or "").strip()
+            edge_1       = (row.get(col["edge_1"]       or "", "") or "N").strip()
+            edge_2       = (row.get(col["edge_2"]       or "", "") or "N").strip()
+            edge_3       = (row.get(col["edge_3"]       or "", "") or "N").strip()
+            edge_4       = (row.get(col["edge_4"]       or "", "") or "N").strip()
+            rot_raw      = (row.get(col["rotation_csv"] or "", "") or "90").strip().lower()
+            allow_rotation = rot_raw not in ("none", "0", "no", "false")
+
             if width <= 0 or height <= 0:
                 errors.append(f"Row {row_num}: invalid dimensions")
                 continue
@@ -147,16 +165,24 @@ def _parse_firoo(reader, headers: list, order: Order, errors: list):
             for i in range(1, qty + 1):
                 code = f"{pc}_{i}" if qty > 1 else pc
                 part = Part(
-                    part_id    = str(uuid.uuid4())[:8],
-                    part_code  = code,
-                    width      = width,
-                    height     = height,
-                    thickness  = thickness,
-                    design_code= design,
-                    customer   = customer,
-                    material   = material,
-                    label      = label,
-                    status     = "pending",
+                    part_id       = str(uuid.uuid4())[:8],
+                    part_code     = code,
+                    width         = width,
+                    height        = height,
+                    thickness     = thickness,
+                    design_code   = design,
+                    customer      = customer,
+                    material      = material,
+                    colour        = colour,
+                    product_type  = product_type,
+                    grain         = grain,
+                    edge_1        = edge_1,
+                    edge_2        = edge_2,
+                    edge_3        = edge_3,
+                    edge_4        = edge_4,
+                    allow_rotation= allow_rotation,
+                    label         = label,
+                    status        = "pending",
                 )
                 order.add_part(part)
                 if not order.customer and customer:
@@ -237,15 +263,23 @@ def get_unique_rows(parts: list) -> list:
         base = p.part_code.rsplit("_", 1)[0] if "_" in p.part_code else p.part_code
         if base not in seen:
             seen[base] = {
-                "part_code":   base,
-                "width":       p.width,
-                "height":      p.height,
-                "qty":         1,
-                "thickness":   p.thickness,
-                "design_code": p.design_code,
-                "material":    p.material,
-                "customer":    p.customer,
-                "label":       p.label,
+                "part_code":    base,
+                "width":        p.width,
+                "height":       p.height,
+                "qty":          1,
+                "thickness":    p.thickness,
+                "design_code":  p.design_code,
+                "material":     p.material,
+                "colour":       getattr(p, "colour", ""),
+                "product_type": getattr(p, "product_type", "vacuum_door"),
+                "grain":        getattr(p, "grain", ""),
+                "edge_1":       getattr(p, "edge_1", "N"),
+                "edge_2":       getattr(p, "edge_2", "N"),
+                "edge_3":       getattr(p, "edge_3", "N"),
+                "edge_4":       getattr(p, "edge_4", "N"),
+                "allow_rotation": getattr(p, "allow_rotation", True),
+                "customer":     p.customer,
+                "label":        p.label,
             }
         else:
             seen[base]["qty"] += 1

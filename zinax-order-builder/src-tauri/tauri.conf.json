@@ -1,0 +1,55 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "ZINAX Order Builder",
+  "version": "0.2.0",
+  "identifier": "com.zinax.orderbuilder",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ZINAX Order Builder",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 760,
+        "resizable": true,
+        "fullscreen": false,
+        "theme": "Light"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "ZINAX (placeholder publisher — replace before a public release)",
+    "copyright": "Copyright (c) 2026 ZINAX. All rights reserved. (placeholder)",
+    "shortDescription": "Order, CSV, PDF and Proforma Invoice builder for MDF/PVC door production",
+    "longDescription": "ZINAX Order Builder is an order-management tool for cabinet, MDF and PVC-membrane door production: it builds Production CSV exports, Order PDFs, optional Proforma Invoice PDFs, and Order Project JSON files. It is not a CNC/CAM application.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "displayLanguageSelector": false
+      }
+    },
+    "android": {
+      "debugApplicationIdSuffix": ".debug"
+    }
+  }
+}

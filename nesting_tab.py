@@ -135,21 +135,35 @@ class NestingWorker(QThread):
 # Sheet Canvas
 # ═══════════════════════════════════════════════════════════════
 class SheetCanvas(QWidget):
+    part_clicked = Signal(object)   # emits the Part that was clicked
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._sheet   = None
         self._labels  = True
         self._selected= False
+        self._part_rects: list = []   # [(QRectF, part), ...]
         self.setMinimumSize(80, 60)
+        self.setCursor(Qt.PointingHandCursor)
 
     def set_sheet(self, sheet, labels=True):
         self._sheet  = sheet
         self._labels = labels
+        self._part_rects = []
         self.update()
 
     def set_selected(self, v):
         self._selected = v
         self.update()
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            pos = ev.position() if hasattr(ev, "position") else ev.localPos()
+            for rect, part in reversed(self._part_rects):
+                if rect.contains(pos):
+                    self.part_clicked.emit(part)
+                    return
+        super().mousePressEvent(ev)
 
     def paintEvent(self, ev):
         p = QPainter(self)
@@ -180,6 +194,7 @@ class SheetCanvas(QWidget):
             p.setPen(QPen(pen_c, 2 if self._selected else 1))
             p.drawRect(QRectF(rx(0), ry(sh), sw*sc, sh*sc))
 
+            self._part_rects = []
             # Parts + optional door design overlay
             for i, part in enumerate(s.parts):
                 col  = PART_COLORS[i % len(PART_COLORS)]
@@ -187,11 +202,14 @@ class SheetCanvas(QWidget):
                 prx = rx(part.x); pry = ry(part.y+ph)
                 prw = pw*sc;       prh = ph*sc
 
+                rect = QRectF(prx, pry, prw, prh)
+                self._part_rects.append((rect, part))
+
                 # Draw part background
                 fill = QColor(col); fill.setAlpha(180)
                 p.setBrush(QBrush(fill))
                 p.setPen(QPen(col.lighter(130), 0.8))
-                p.drawRect(QRectF(prx, pry, prw, prh))
+                p.drawRect(rect)
 
                 # Draw door design layers if available
                 if self._labels:
@@ -437,6 +455,121 @@ class LiveLineGraph(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════════
+# Part Info Popup  — shown when user clicks a part on the canvas
+# ═══════════════════════════════════════════════════════════════
+class PartInfoPopup(QDialog):
+    def __init__(self, part, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Part Info")
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._build(part)
+
+    def _build(self, part):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        card = QFrame()
+        card.setObjectName("card")
+        card.setStyleSheet(f"""
+            #card {{
+                background: {C_PANEL.name()};
+                border: 1px solid {C_ACCENT.name()};
+                border-radius: 8px;
+            }}
+            QLabel#title {{
+                background: {C_ACCENT.name()};
+                color: white;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 6px 12px;
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+            }}
+            QLabel#row_key {{
+                color: {C_DIM.name()};
+                font-size: 11px;
+                padding: 2px 12px 2px 12px;
+            }}
+            QLabel#row_val {{
+                color: {C_TEXT.name()};
+                font-size: 11px;
+                font-weight: 600;
+                padding: 2px 12px 2px 4px;
+            }}
+        """)
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(0, 0, 0, 8)
+        card_lay.setSpacing(0)
+
+        # Title row
+        pc = getattr(part, "part_code", "Part") or "Part"
+        title = QLabel(f"  {pc}")
+        title.setObjectName("title")
+        card_lay.addWidget(title)
+
+        # Build rows
+        rows = []
+        cust = getattr(part, "customer", "") or ""
+        if cust:
+            rows.append(("Customer", cust))
+
+        w = getattr(part, "width",  0); h = getattr(part, "height", 0)
+        rot = getattr(part, "rotated", False)
+        dims = f"{int(w)} × {int(h)} mm"
+        if rot:
+            dims += "  (rotated)"
+        rows.append(("Dimensions", dims))
+
+        mat = getattr(part, "material", "") or ""
+        thick = getattr(part, "thickness", "") or ""
+        if mat or thick:
+            rows.append(("Material", f"{mat}  {thick}mm".strip()))
+
+        col = getattr(part, "colour", "") or ""
+        if col:
+            rows.append(("Colour", col))
+
+        pt = getattr(part, "product_type", "") or ""
+        if pt:
+            rows.append(("Type", pt.replace("_", " ").title()))
+
+        dc = getattr(part, "design_code", "") or ""
+        if dc and dc not in ("cd0", "0", ""):
+            rows.append(("Design", dc))
+
+        grain = getattr(part, "grain", "") or ""
+        if grain:
+            rows.append(("Grain", grain))
+
+        edges = [getattr(part, f"edge_{i}", "N") or "N" for i in range(1, 5)]
+        if any(e != "N" for e in edges):
+            rows.append(("Edges", " / ".join(edges)))
+
+        allow_rot = getattr(part, "allow_rotation", True)
+        rows.append(("Rotation", "Allowed" if allow_rot else "Locked"))
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 4, 0, 0)
+        grid.setHorizontalSpacing(0)
+        grid.setVerticalSpacing(1)
+        for r, (k, v) in enumerate(rows):
+            lk = QLabel(k + ":")
+            lk.setObjectName("row_key")
+            lv = QLabel(str(v))
+            lv.setObjectName("row_val")
+            grid.addWidget(lk, r, 0, Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(lv, r, 1, Qt.AlignLeft  | Qt.AlignVCenter)
+        card_lay.addLayout(grid)
+
+        lay.addWidget(card)
+
+    def mousePressEvent(self, ev):
+        self.close()
+
+
+# ═══════════════════════════════════════════════════════════════
 # Sheet Def Dialog  (used inside nesting tab sheets panel)
 # ═══════════════════════════════════════════════════════════════
 class SheetDefDialog(QDialog):
@@ -470,7 +603,9 @@ class SheetDefDialog(QDialog):
         self._w     = QDoubleSpinBox(); self._w.setRange(100,9999); self._w.setValue(self._d.get("width",2440))
         self._h     = QDoubleSpinBox(); self._h.setRange(100,9999); self._h.setValue(self._d.get("height",1220))
         self._thick = QDoubleSpinBox(); self._thick.setRange(1,100); self._thick.setValue(self._d.get("thickness",18))
-        self._mat   = QLineEdit(self._d.get("material","MDF"))
+        self._mat    = QLineEdit(self._d.get("material","MDF"))
+        self._colour = QLineEdit(self._d.get("colour", ""))
+        self._colour.setPlaceholderText("e.g. White, MEL-W, Oak  (blank = any)")
         self._qty   = QSpinBox(); self._qty.setRange(1,9999); self._qty.setValue(self._d.get("quantity",100))
         self._pri   = QComboBox()
         for k,v in PRIORITY_LABELS.items(): self._pri.addItem(v, k)
@@ -482,6 +617,7 @@ class SheetDefDialog(QDialog):
         form.addRow("Y Dim (mm):", self._h)
         form.addRow("Thickness:", self._thick)
         form.addRow("Material:",  self._mat)
+        form.addRow("Colour:",    self._colour)
         form.addRow("Quantity:",  self._qty)
         form.addRow("Priority:",  self._pri)
         form.addRow("",           self._remn)
@@ -501,7 +637,9 @@ class SheetDefDialog(QDialog):
     def result_data(self):
         return {"name": self._name.text(), "width": self._w.value(),
                 "height": self._h.value(), "thickness": self._thick.value(),
-                "material": self._mat.text(), "quantity": self._qty.value(),
+                "material": self._mat.text(),
+                "colour": self._colour.text().strip(),
+                "quantity": self._qty.value(),
                 "priority": self._pri.currentData(),
                 "is_remnant": self._remn.isChecked()}
 
@@ -517,7 +655,7 @@ class NestingTab(QWidget):
         self._parts:       list  = []
         self._sheet_defs:  list  = [
             {"name":"2440x1220","width":2440,"height":1220,
-             "thickness":18,"material":"MDF","quantity":100,
+             "thickness":18,"material":"MDF","colour":"","quantity":100,
              "priority":3,"is_remnant":False}
         ]
         self._all_results: list  = []
@@ -528,6 +666,7 @@ class NestingTab(QWidget):
         self._run_start         = 0.0
         self._nest_direction     = "bottom_left"
         self._nest_strategy      = "best_efficiency"
+        self._colour_group_filter = None  # None = show all groups
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -1043,15 +1182,15 @@ class NestingTab(QWidget):
         tb.addStretch()
         lay.addLayout(tb)
 
-        self._sheet_table = QTableWidget(0, 5)
+        self._sheet_table = QTableWidget(0, 6)
         self._sheet_table.setHorizontalHeaderLabels(
-            ["Name","X Dim","Y Dim","Qty","Priority"])
+            ["Name","X Dim","Y Dim","Qty","Priority","Colour"])
         self._sheet_table.verticalHeader().hide()
         self._sheet_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._sheet_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         hdr2 = self._sheet_table.horizontalHeader()
         hdr2.setSectionResizeMode(0, QHeaderView.Stretch)
-        for i in range(1,5): hdr2.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        for i in range(1,6): hdr2.setSectionResizeMode(i, QHeaderView.ResizeToContents)
         lay.addWidget(self._sheet_table, 1)
 
         self._btn_create_sheet.clicked.connect(self._add_sheet)
@@ -1076,6 +1215,17 @@ class NestingTab(QWidget):
             f"font-size:11px; font-weight:700; "
             f"border-bottom:1px solid {C_BORDER.name()};")
         lay.addWidget(layout_hdr)
+
+        # Colour-group tab bar (hidden until nesting produces groups)
+        self._colour_tabs_row = QWidget()
+        self._colour_tabs_row.setFixedHeight(30)
+        self._colour_tabs_row.setStyleSheet(
+            f"background:{C_PANEL.name()}; border-bottom:1px solid {C_BORDER.name()};")
+        self._colour_tabs_layout = QHBoxLayout(self._colour_tabs_row)
+        self._colour_tabs_layout.setContentsMargins(6,2,6,2)
+        self._colour_tabs_layout.setSpacing(4)
+        self._colour_tabs_row.hide()
+        lay.addWidget(self._colour_tabs_row)
 
         # Sheet thumbnails scroll area — now fills full height
         scroll = HWheelScrollArea()
@@ -1373,6 +1523,8 @@ class NestingTab(QWidget):
         self._refresh_results_table()
         self._refresh_nest_tree()
 
+        self._rebuild_colour_tabs()
+
         if self._chk_auto_select.isChecked():
             self._results_table.selectRow(0)
             self._select_result(0)
@@ -1538,10 +1690,29 @@ class NestingTab(QWidget):
             self._thumbs_layout.addStretch()
             return
 
+        # Apply colour-group filter if active
+        sheets_to_show = self._sheets
+        if self._colour_group_filter is not None:
+            key = self._colour_group_filter
+            mat_f  = key[0]
+            col_f  = key[1]
+            thick_f = key[2] if len(key) > 2 else None
+            def _sheet_matches(sheet):
+                mat = (getattr(sheet, "material", "MDF") or "MDF").upper()
+                if mat != mat_f:
+                    return False
+                for p in getattr(sheet, "parts", []):
+                    col = (getattr(p, "colour", "") or "").strip()
+                    if col == col_f:
+                        if thick_f is None or abs(float(p.thickness) - thick_f) < 0.01:
+                            return True
+                return False
+            sheets_to_show = [s for s in self._sheets if _sheet_matches(s)]
+
         # Group sheets to determine counts (xN labels)
         seen_sig = {}
         groups_ordered = []
-        for sheet in self._sheets:
+        for sheet in sheets_to_show:
             util = sheet.utilization()
             sig = self._sheet_design_signature(sheet)
             if sig not in seen_sig:
@@ -1562,7 +1733,19 @@ class NestingTab(QWidget):
             canvas.setFixedSize(220, 160)
             canvas.set_sheet(sheet, labels=True)
             canvas.set_selected(i == 0)
-            canvas.mousePressEvent = lambda ev, idx=i: self._on_thumb_click(idx)
+            canvas.part_clicked.connect(self._on_part_clicked)
+            # Thumb-select on blank-area click (no part hit)
+            _orig = canvas.mousePressEvent
+            def _thumb_press(ev, idx=i, c=canvas, orig=_orig):
+                orig(ev)
+                if not c._part_rects:
+                    self._on_thumb_click(idx)
+                else:
+                    pos = ev.position() if hasattr(ev, "position") else ev.localPos()
+                    hit = any(r.contains(pos) for r, _ in c._part_rects)
+                    if not hit:
+                        self._on_thumb_click(idx)
+            canvas.mousePressEvent = _thumb_press
             col_l.addWidget(canvas)
 
             # x5 / x10 / x1 label — BIG like Solid Edge
@@ -1575,6 +1758,14 @@ class NestingTab(QWidget):
             self._thumbs_layout.addWidget(col_w)
 
         self._thumbs_layout.addStretch()
+
+    def _on_part_clicked(self, part):
+        """Show part info popup when user clicks a part on the canvas."""
+        from PySide6.QtGui import QCursor
+        popup = PartInfoPopup(part, parent=self)
+        gp = QCursor.pos()
+        popup.move(gp.x() + 8, gp.y() + 8)
+        popup.exec()
 
     def _on_thumb_click(self, idx):
         self._show_thumb_at(idx)
@@ -1615,6 +1806,80 @@ class NestingTab(QWidget):
             self.layout_applied.emit(self._sheets)
 
     # ══════════════════════════════════════════════════════════
+    # COLOUR GROUP TAB BAR
+    # ══════════════════════════════════════════════════════════
+    def _rebuild_colour_tabs(self):
+        """Rebuild the colour-group filter tabs above the canvas."""
+        # Clear existing tabs
+        while self._colour_tabs_layout.count():
+            item = self._colour_tabs_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not self._sheets:
+            self._colour_tabs_row.hide()
+            return
+
+        # Build group keys for displayed sheets
+        from collections import defaultdict
+        groups = defaultdict(int)
+        for sheet in self._sheets:
+            parts = getattr(sheet, "parts", [])
+            mat   = (getattr(sheet, "material", "MDF") or "MDF").upper()
+            for p in parts:
+                col   = (getattr(p, "colour", "") or "").strip()
+                thick = float(getattr(p, "thickness", 18) or 18)
+                if mat.startswith("MEL"):
+                    key = (mat, col, thick)
+                else:
+                    key = (mat, col)
+                groups[key] += 1
+
+        if len(groups) <= 1:
+            self._colour_tabs_row.hide()
+            self._colour_group_filter = None
+            return
+
+        btn_style = (
+            f"QPushButton{{background:{C_PANEL.name()};color:{C_TEXT.name()};"
+            f"border:1px solid {C_BORDER.name()};border-radius:3px;"
+            f"padding:2px 8px;font-size:10px;}}"
+            f"QPushButton:checked{{background:{C_ACCENT.name()};color:#fff;"
+            f"border:1px solid {C_ACCENT.name()};}}"
+            f"QPushButton:hover{{background:{C_PANEL.name()};border-color:{C_ACCENT.name()};}}"
+        )
+
+        # "All" button
+        btn_all = QPushButton("All")
+        btn_all.setCheckable(True)
+        btn_all.setChecked(self._colour_group_filter is None)
+        btn_all.setStyleSheet(btn_style)
+        btn_all.clicked.connect(lambda: self._set_colour_filter(None))
+        self._colour_tabs_layout.addWidget(btn_all)
+
+        for key, count in sorted(groups.items()):
+            mat = key[0]; col = key[1]
+            if len(key) > 2:
+                thick = key[2]
+                label = f"{col} · {thick:.0f}mm  {count}pcs" if col else f"{mat} {thick:.0f}mm  {count}pcs"
+            else:
+                label = f"{mat} · {col}  {count}pcs" if col else f"{mat}  {count}pcs"
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(self._colour_group_filter == key)
+            btn.setStyleSheet(btn_style)
+            btn.clicked.connect(lambda checked, k=key: self._set_colour_filter(k))
+            self._colour_tabs_layout.addWidget(btn)
+
+        self._colour_tabs_layout.addStretch()
+        self._colour_tabs_row.show()
+
+    def _set_colour_filter(self, key):
+        self._colour_group_filter = key
+        self._rebuild_colour_tabs()
+        self._refresh_thumbs()
+
+    # ══════════════════════════════════════════════════════════
     # SHEET MANAGEMENT
     # ══════════════════════════════════════════════════════════
     def _refresh_sheet_table(self):
@@ -1622,7 +1887,8 @@ class NestingTab(QWidget):
         for row, sd in enumerate(self._sheet_defs):
             name = ("◈ " if sd["is_remnant"] else "") + sd["name"]
             cells = [name, f"{sd['width']:.0f}", f"{sd['height']:.0f}",
-                     str(sd["quantity"]), PRIORITY_LABELS.get(sd["priority"],"Normal")]
+                     str(sd["quantity"]), PRIORITY_LABELS.get(sd["priority"],"Normal"),
+                     sd.get("colour", "")]
             for col, txt in enumerate(cells):
                 item = QTableWidgetItem(txt)
                 item.setTextAlignment(Qt.AlignCenter)
