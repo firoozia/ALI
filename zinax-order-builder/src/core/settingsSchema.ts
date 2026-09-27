@@ -107,6 +107,7 @@ export function mergeSettings(current: AppSettings, incoming: AppSettings): AppS
       pvcColors: upsertByCode(current.catalog.pvcColors, incoming.catalog.pvcColors),
       mdfThickness: upsertByThickness(current.catalog.mdfThickness, incoming.catalog.mdfThickness),
       grainDirections: upsertByCode(current.catalog.grainDirections, incoming.catalog.grainDirections),
+      edgeBands: upsertByCode(current.catalog.edgeBands ?? [], incoming.catalog.edgeBands ?? []),
     },
   };
 }

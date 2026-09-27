@@ -6,6 +6,8 @@
 // UI components must read column/field definitions from here rather than
 // hard-coding their own copy.
 
+import { PRODUCT_VACUUM, isProductType, normalizeRotation, type ProductType } from "./melamine";
+
 // Grain direction is now a company-editable catalog option (see
 // core/catalogSchema.ts), so it is stored as a plain string (the option's
 // code or label) rather than a fixed union.
@@ -26,6 +28,15 @@ export interface OrderRow {
   discount: number | "";
   vat: number | "";
   notes: string;
+  /** vacuum_door (PVC membrane door) or melamine (edge-banded panel). */
+  productType: ProductType;
+  /** Melamine edges, seen from the front: 1 bottom, 2 top, 3 left, 4 right. N | <band> | S | S/<band>. */
+  edge1: string;
+  edge2: string;
+  edge3: string;
+  edge4: string;
+  /** Melamine rotation on the sheet: Y may rotate 90°, N locked. */
+  rotation: string;
 }
 
 export interface OrderHeader {
@@ -108,8 +119,31 @@ export function makeDefaultRow(overrides: Partial<OrderRow> = {}): OrderRow {
     discount: 0,
     vat: 5,
     notes: "",
+    productType: PRODUCT_VACUUM,
+    edge1: "N",
+    edge2: "N",
+    edge3: "N",
+    edge4: "N",
+    rotation: "Y",
     ...overrides,
   };
+}
+
+/**
+ * Fills fields added after a row was saved (old order files, drafts, history):
+ * a missing product type is a vacuum door, missing edges are N, missing rotation is Y.
+ * Text that is present is kept as written, so an unknown code stays visible.
+ */
+export function ensureOrderRow(row: Partial<OrderRow> & { id?: string }): OrderRow {
+  const base = makeDefaultRow({ id: row.id ?? nextRowId() });
+  const merged = { ...base, ...row } as OrderRow;
+  merged.productType = isProductType(row.productType) ? row.productType : PRODUCT_VACUUM;
+  for (const key of ["edge1", "edge2", "edge3", "edge4"] as const) {
+    const value = row[key];
+    merged[key] = typeof value === "string" && value.trim() !== "" ? value : "N";
+  }
+  merged.rotation = normalizeRotation(typeof row.rotation === "string" ? row.rotation : "");
+  return merged;
 }
 
 /** Order number structure: ZX-<year>-<4-digit sequence>. */

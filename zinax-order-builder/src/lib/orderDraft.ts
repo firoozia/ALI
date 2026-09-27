@@ -9,7 +9,7 @@
 // unmounts on every screen switch, silently wiping the whole order. It
 // also persists to localStorage so a draft survives closing the app,
 // until "New Blank Order" is explicitly clicked.
-import { generateOrderNo, nextRowId, type OrderHeader, type OrderRow } from "../core/orderSchema";
+import { ensureOrderRow, generateOrderNo, nextRowId, type OrderHeader, type OrderRow } from "../core/orderSchema";
 import { generateInvoiceNo, type Invoice } from "../core/invoiceSchema";
 import type { CompanyProfile } from "../core/companyProfile";
 import type { OrderRecord } from "../core/orderHistorySchema";
@@ -78,7 +78,7 @@ export function duplicateOrderRecord(record: OrderRecord): OrderDraft {
       orderNo: generateOrderNo(new Date().getFullYear(), nextOrderSequence()),
       orderDate: new Date().toISOString().slice(0, 10),
     },
-    rows: record.rows.map((row) => ({ ...row, id: nextRowId() })),
+    rows: record.rows.map((row) => ensureOrderRow({ ...row, id: nextRowId() })),
     invoice: { ...record.invoice, invoiceNo: nextInvoiceNo() },
     invoiceMode: record.invoiceMode,
   };
@@ -96,7 +96,7 @@ export function loadOrderDraftFromStorage(): OrderDraft | null {
     if (!parsed.header || !Array.isArray(parsed.rows) || !parsed.invoice) return null;
     return {
       header: parsed.header,
-      rows: parsed.rows,
+      rows: parsed.rows.map((row) => ensureOrderRow(row)),
       invoice: parsed.invoice,
       invoiceMode: Boolean(parsed.invoiceMode),
     };

@@ -41,6 +41,12 @@ describe("csvSchema", () => {
       "pvc_color",
       "grain_direction",
       "notes",
+      "product_type",
+      "edge_1",
+      "edge_2",
+      "edge_3",
+      "edge_4",
+      "rotation",
     ]);
   });
 

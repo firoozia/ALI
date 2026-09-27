@@ -4,6 +4,7 @@
 // bank details, tool numbers, or any CNC/machine data here — those belong
 // to core/invoiceSchema.ts and must never leak into the production file.
 import type { OrderHeader, OrderRow } from "./orderSchema";
+import { PRODUCT_MELAMINE, normalizeRotation } from "./melamine";
 
 export interface CsvColumn {
   key: string;
@@ -29,6 +30,14 @@ export const PRODUCTION_CSV_COLUMNS: CsvColumn[] = [
   { key: "pvc_color", header: "pvc_color" },
   { key: "grain_direction", header: "grain_direction" },
   { key: "notes", header: "notes" },
+  // Melamine contract (ZINAX CAM docs/contracts/ORDER_CSV_V2.md). Door rows
+  // write vacuum_door with blank edges and rotation (blank rotation = free).
+  { key: "product_type", header: "product_type" },
+  { key: "edge_1", header: "edge_1" },
+  { key: "edge_2", header: "edge_2" },
+  { key: "edge_3", header: "edge_3" },
+  { key: "edge_4", header: "edge_4" },
+  { key: "rotation", header: "rotation" },
 ];
 
 export type ProductionCsvRow = Record<string, string | number>;
@@ -44,26 +53,36 @@ function parseThicknessMm(mdfThickness: string): number {
  * function from zinax_order_core so FIROO CAM always sees the same shape.
  */
 export function buildProductionCsvRows(header: OrderHeader, rows: OrderRow[]): ProductionCsvRow[] {
-  return rows.map((row, index) => ({
-    order_id: header.orderNo,
-    order_no: header.orderNo,
-    order_date: header.orderDate,
-    customer_name: header.customerName,
-    project_name: header.projectName,
-    phone: header.phone,
-    salesperson: header.salesperson,
-    line_no: index + 1,
-    design_code: row.designCode,
-    design_name: row.designName,
-    width_mm: row.width,
-    height_mm: row.height,
-    quantity: row.qty,
-    mdf_thickness_mm: parseThicknessMm(row.mdfThickness),
-    pvc_code: row.pvcCode,
-    pvc_color: row.pvcColor,
-    grain_direction: row.grain,
-    notes: row.notes,
-  }));
+  return rows.map((row, index) => {
+    const melamine = row.productType === PRODUCT_MELAMINE;
+    const edge = (value: string | undefined) => (melamine ? String(value ?? "").trim() || "N" : "");
+    return {
+      order_id: header.orderNo,
+      order_no: header.orderNo,
+      order_date: header.orderDate,
+      customer_name: header.customerName,
+      project_name: header.projectName,
+      phone: header.phone,
+      salesperson: header.salesperson,
+      line_no: index + 1,
+      design_code: row.designCode,
+      design_name: row.designName,
+      width_mm: row.width,
+      height_mm: row.height,
+      quantity: row.qty,
+      mdf_thickness_mm: parseThicknessMm(row.mdfThickness),
+      pvc_code: row.pvcCode,
+      pvc_color: row.pvcColor,
+      grain_direction: row.grain,
+      notes: row.notes,
+      product_type: melamine ? PRODUCT_MELAMINE : "vacuum_door",
+      edge_1: edge(row.edge1),
+      edge_2: edge(row.edge2),
+      edge_3: edge(row.edge3),
+      edge_4: edge(row.edge4),
+      rotation: melamine ? normalizeRotation(row.rotation) : "",
+    };
+  });
 }
 
 /** Escapes a single CSV field per RFC 4180: quote if it contains a comma,

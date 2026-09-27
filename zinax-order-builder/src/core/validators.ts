@@ -4,6 +4,7 @@ import type { OrderHeader, OrderRow } from "./orderSchema";
 import { ORDER_ROW_COLUMNS } from "./orderSchema";
 import type { Invoice } from "./invoiceSchema";
 import { formatMdfThickness, type Catalog } from "./catalogSchema";
+import { EDGE_KEYS, EDGE_LABELS, PRODUCT_MELAMINE, parseEdge } from "./melamine";
 
 export const REQUIRED_ORDER_ROW_FIELDS: (keyof OrderRow)[] = ORDER_ROW_COLUMNS.filter(
   (col) => col.required
@@ -90,42 +91,86 @@ export function getOrderValidationErrors(header: OrderHeader, rows: OrderRow[], 
     errors.push("At least one door row is required.");
   }
 
-  rows.forEach((row, index) => {
-    const n = index + 1;
+  const seen = { door: 0, melamine: 0 };
+  rows.forEach((row) => {
+    const melamine = row.productType === PRODUCT_MELAMINE;
+    // Rows are numbered within their own tab so a message points at the row the user sees.
+    const n = melamine ? ++seen.melamine : ++seen.door;
+    const label = melamine ? `Melamine row ${n}` : `Row ${n}`;
 
     for (const field of REQUIRED_ORDER_ROW_FIELDS) {
+      // A melamine panel with no design code is a plain panel (cd0 in ZINAX CAM).
+      if (melamine && field === "designCode") continue;
       if (isRowFieldInvalid(row, field)) {
         const column = ORDER_ROW_COLUMNS.find((c) => c.key === field);
-        errors.push(`Row ${n}: ${column?.label ?? field} is required.`);
+        errors.push(`${label}: ${column?.label ?? field} is required.`);
       }
     }
 
+    if (melamine) {
+      errors.push(...melamineRowErrors(row, catalog).map((msg) => `${label}: ${msg}`));
+      return;
+    }
+
     if (row.designCode && !isDesignActive(catalog, row.designCode)) {
-      errors.push(`Row ${n}: Design Code "${row.designCode}" is not an active catalog design.`);
+      errors.push(`${label}: Design Code "${row.designCode}" is not an active catalog design.`);
     }
     if (Number(row.width) <= 0) {
-      errors.push(`Row ${n}: Width mm must be greater than 0.`);
+      errors.push(`${label}: Width mm must be greater than 0.`);
     }
     if (Number(row.height) <= 0) {
-      errors.push(`Row ${n}: Height mm must be greater than 0.`);
+      errors.push(`${label}: Height mm must be greater than 0.`);
     }
     if (Number(row.qty) <= 0) {
-      errors.push(`Row ${n}: Qty must be greater than 0.`);
+      errors.push(`${label}: Qty must be greater than 0.`);
     }
     if (row.mdfThickness && !isMdfThicknessActive(catalog, row.mdfThickness)) {
-      errors.push(`Row ${n}: MDF Thickness "${row.mdfThickness}" is not an active setting.`);
+      errors.push(`${label}: MDF Thickness "${row.mdfThickness}" is not an active setting.`);
     }
     if (!row.pvcCode) {
-      errors.push(`Row ${n}: PVC Code is required.`);
+      errors.push(`${label}: PVC Code is required.`);
     } else if (!isPvcActive(catalog, row.pvcCode)) {
-      errors.push(`Row ${n}: PVC Code "${row.pvcCode}" is not an active catalog color.`);
+      errors.push(`${label}: PVC Code "${row.pvcCode}" is not an active catalog color.`);
     }
     if (row.grain && !isGrainActive(catalog, row.grain)) {
-      errors.push(`Row ${n}: Grain Direction "${row.grain}" is not an active option.`);
+      errors.push(`${label}: Grain Direction "${row.grain}" is not an active option.`);
     }
   });
 
   return errors;
+}
+
+/** Melamine-only checks: design (when given), size, qty, thickness, edge codes, rotation. */
+function melamineRowErrors(row: OrderRow, catalog: Catalog): string[] {
+  const errors: string[] = [];
+  if (row.designCode && !isDesignActive(catalog, row.designCode)) {
+    errors.push(`Design Code "${row.designCode}" is not an active catalog design.`);
+  }
+  if (Number(row.width) <= 0) errors.push("Width mm must be greater than 0.");
+  if (Number(row.height) <= 0) errors.push("Height mm must be greater than 0.");
+  if (Number(row.qty) <= 0) errors.push("Qty must be greater than 0.");
+  if (row.mdfThickness && !isMdfThicknessActive(catalog, row.mdfThickness)) {
+    errors.push(`Thickness "${row.mdfThickness}" is not an active setting.`);
+  }
+  const bands = catalog.edgeBands ?? [];
+  for (const key of EDGE_KEYS) {
+    const parsed = parseEdge(row[key], bands);
+    const where = `${EDGE_LABELS[key].short} (${EDGE_LABELS[key].side})`;
+    if (!parsed.known) {
+      errors.push(`${where} code "${parsed.text}" is not in the edge band list.`);
+    } else if (parsed.band && !bands.some((b) => b.code === parsed.band && b.active)) {
+      errors.push(`${where} band "${parsed.band}" is not active.`);
+    }
+  }
+  if (row.rotation !== "Y" && row.rotation !== "N") {
+    errors.push(`Rotation "${row.rotation}" must be Y (may rotate) or N (locked).`);
+  }
+  return errors;
+}
+
+/** True when a melamine edge cell holds a code that is not in the list (for red highlighting). */
+export function isEdgeInvalid(row: OrderRow, key: (typeof EDGE_KEYS)[number], catalog: Catalog): boolean {
+  return !parseEdge(row[key], catalog.edgeBands ?? []).known;
 }
 
 /**

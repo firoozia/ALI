@@ -1,3 +1,5 @@
+import { makeDefaultEdgeBands, type EdgeBandCatalogItem } from "./melamine";
+
 // Company-editable catalogs — design codes, PVC/membrane colors, MDF
 // thickness options, and grain directions. These are the "each company
 // enters their own codes" lists referenced from the Designs / Catalog
@@ -79,6 +81,8 @@ export function ensureCatalogIds(catalog: Catalog): Catalog {
     designs,
     pvcColors,
     grainDirections: withId(catalog.grainDirections),
+    // Catalogs saved before melamine support have no edge bands: start from the factory list.
+    edgeBands: Array.isArray(catalog.edgeBands) ? withId(catalog.edgeBands) : makeDefaultEdgeBands(),
   };
 }
 
@@ -87,6 +91,8 @@ export interface Catalog {
   pvcColors: PvcCatalogItem[];
   mdfThickness: MdfThicknessOption[];
   grainDirections: GrainDirectionOption[];
+  /** Melamine edge-band codes (P1, P2, …). ZINAX CAM is the master list. */
+  edgeBands: EdgeBandCatalogItem[];
 }
 
 export function formatMdfThickness(option: MdfThicknessOption): string {
@@ -128,6 +134,7 @@ export function makeDefaultCatalog(): Catalog {
     pvcColors: DEFAULT_PVC_COLORS.map((p) => ({ ...p })),
     mdfThickness: DEFAULT_MDF_THICKNESS.map((m) => ({ ...m })),
     grainDirections: DEFAULT_GRAIN_DIRECTIONS.map((g) => ({ ...g })),
+    edgeBands: makeDefaultEdgeBands(),
   };
 }
 
@@ -200,6 +207,7 @@ export function mergeCatalog(current: Catalog, incoming: Catalog): Catalog {
     pvcColors: upsertByCode(current.pvcColors, incoming.pvcColors),
     mdfThickness: upsertByThickness(current.mdfThickness, incoming.mdfThickness),
     grainDirections: upsertByCode(current.grainDirections, incoming.grainDirections),
+    edgeBands: upsertByCode(current.edgeBands ?? [], incoming.edgeBands ?? []),
   };
 }
 

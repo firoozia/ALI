@@ -1,7 +1,7 @@
 // Order project file — save/open an in-progress order as a portable
 // ".zinax_order.json" file. Both editions must agree on this shape so a
 // file saved on Windows can be opened on the Web edition and vice versa.
-import type { OrderHeader, OrderRow } from "./orderSchema";
+import { ensureOrderRow, type OrderHeader, type OrderRow } from "./orderSchema";
 import type { Invoice } from "./invoiceSchema";
 
 export const ORDER_FILE_SCHEMA_VERSION = "1.0";
@@ -82,7 +82,8 @@ export function parseOrderFile(jsonText: string): ParseOrderFileResult {
       schema_version: candidate.schema_version,
       app: candidate.app,
       header: candidate.header,
-      rows: candidate.rows,
+      // Files saved before melamine support get the new row fields filled in.
+      rows: candidate.rows.map((row) => ensureOrderRow(row)),
       invoiceMode: Boolean(candidate.invoiceMode),
       invoice: candidate.invoice,
     },

@@ -29,7 +29,7 @@ describe("catalogSchema", () => {
 
   it("replace discards the current catalog entirely", () => {
     const current = makeDefaultCatalog();
-    const incoming = { designs: [], pvcColors: [], mdfThickness: [], grainDirections: [] };
+    const incoming = { designs: [], pvcColors: [], mdfThickness: [], grainDirections: [], edgeBands: [] };
     expect(replaceCatalog(current, incoming)).toEqual(incoming);
   });
 

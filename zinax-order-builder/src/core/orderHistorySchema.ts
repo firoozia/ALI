@@ -3,7 +3,7 @@
 // "Recent Orders" list with real data. Separate from the single
 // in-progress OrderDraft (lib/orderDraft.ts): this is the running history
 // across every order, keyed by orderNo.
-import type { OrderHeader, OrderRow } from "./orderSchema";
+import { ensureOrderRow, type OrderHeader, type OrderRow } from "./orderSchema";
 import type { Invoice } from "./invoiceSchema";
 
 export type OrderStatus = "Draft" | "Ready for Production" | "Exported" | "Invoiced";
@@ -169,7 +169,7 @@ export function remoteRowToRecord(row: RemoteOrderRow): OrderRecord {
     status: row.status,
     updatedAt: row.updated_at,
     header: row.header,
-    rows: row.rows,
+    rows: (row.rows ?? []).map((r) => ensureOrderRow(r)),
     invoice: row.invoice,
     invoiceMode: row.invoice_mode,
   };

@@ -13,7 +13,7 @@ import Customers from "./pages/Customers";
 import CustomerSubmissions from "./pages/CustomerSubmissions";
 import Designs from "./pages/Designs";
 import PdfTemplates from "./pages/PdfTemplates";
-import type { OrderHeader, OrderRow } from "./core/orderSchema";
+import { ensureOrderRow, type OrderHeader, type OrderRow } from "./core/orderSchema";
 import { mergeCustomerSubmissionIntoOrder } from "./core/customerSubmissionFile";
 import type { CustomerSubmissionRecord } from "./core/publicCatalogSchema";
 import type { Invoice } from "./core/invoiceSchema";
@@ -154,7 +154,7 @@ function FactoryApp() {
   };
 
   const handleOpenOrderFromDashboard = (order: OrderRecord) => {
-    setOrderDraft({ header: order.header, rows: order.rows, invoice: order.invoice, invoiceMode: order.invoiceMode });
+    setOrderDraft({ header: order.header, rows: order.rows.map((row) => ensureOrderRow(row)), invoice: order.invoice, invoiceMode: order.invoiceMode });
     setScreen("new-order");
   };
 
