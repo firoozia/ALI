@@ -90,28 +90,39 @@ class DesignCard(QFrame):
     edit         = Signal(str)
     delete       = Signal(str)
 
-    CARD_W = 160
-    CARD_H = 190
+    BASE_W = 160
+    BASE_H = 190
+    BASE_PREV_H = 110
+    # backward-compat alias
+    CARD_W = BASE_W
+    CARD_H = BASE_H
 
-    def __init__(self, meta: Dict, parent=None):
+    def __init__(self, meta: Dict, scale: float = 1.0, parent=None):
         super().__init__(parent)
         self._meta     = meta
         self._selected = False
         self._design: Optional[DesignData] = None
-        self.setFixedSize(self.CARD_W, self.CARD_H)
+        self._scale    = max(0.5, min(2.0, scale))
+        cw = int(self.BASE_W * self._scale)
+        ch = int(self.BASE_H * self._scale)
+        self.setFixedSize(cw, ch)
         self.setObjectName("design_card")
         self.setCursor(Qt.PointingHandCursor)
         self._build()
         self._load_design()
 
     def _build(self):
+        s   = self._scale
+        cw  = int(self.BASE_W * s)
+        prev_h = int(self.BASE_PREV_H * s)
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4,4,4,4)
         lay.setSpacing(3)
 
         # Preview
         self._preview = QLabel()
-        self._preview.setFixedSize(self.CARD_W-8, 110)
+        self._preview.setFixedSize(cw - 8, prev_h)
         self._preview.setAlignment(Qt.AlignCenter)
         self._preview.setStyleSheet(
             "background:#1a1a1a; border:1px solid #3e3e42;"
@@ -170,7 +181,8 @@ class DesignCard(QFrame):
     def _render_thumbnail(self):
         if not self._design:
             return
-        pw, ph = self.CARD_W - 8, 110
+        pw = int(self.BASE_W * self._scale) - 8
+        ph = int(self.BASE_PREV_H * self._scale)
         pix = QPixmap(pw, ph)
         pix.fill(QColor("#1a1a1a"))
         p   = QPainter(pix)
@@ -273,11 +285,13 @@ class DesignLibraryWidget(QWidget):
         self._cards:        List[DesignCard] = []
         self._selected:     Optional[str]    = None
         self._lang:         str              = "en"
-        self._custom_groups: List[str]       = []   # keys only; display name = key
+        self._custom_groups: List[str]       = []
+        self._card_scale:   float            = 1.0
 
         self._load_custom_groups()
         self._build()
         self._apply_style()
+        self.setFocusPolicy(Qt.StrongFocus)
         self.refresh()
 
     # ── custom groups persistence ─────────────────────────────
@@ -375,13 +389,27 @@ class DesignLibraryWidget(QWidget):
         root.addLayout(main, 1)
 
         # Status bar
-        self._lbl_status = QLabel("  0 designs")
-        self._lbl_status.setFixedHeight(22)
-        self._lbl_status.setStyleSheet(
-            f"background:{C_PANEL.name()};color:{C_DIM.name()};"
-            f"padding:0 8px;font-size:11px;"
+        sbar = QFrame()
+        sbar.setFixedHeight(22)
+        sbar.setStyleSheet(
+            f"background:{C_PANEL.name()};"
             f"border-top:1px solid {C_BORDER.name()};")
-        root.addWidget(self._lbl_status)
+        sbl = QHBoxLayout(sbar)
+        sbl.setContentsMargins(0, 0, 8, 0)
+        sbl.setSpacing(0)
+
+        self._lbl_status = QLabel("  0 designs")
+        self._lbl_status.setStyleSheet(
+            f"color:{C_DIM.name()};padding:0 8px;font-size:11px;")
+        sbl.addWidget(self._lbl_status, 1)
+
+        self._lbl_scale = QLabel("100%")
+        self._lbl_scale.setStyleSheet(
+            f"color:{C_DIM.name()};font-size:10px;")
+        self._lbl_scale.setToolTip("Ctrl++ / Ctrl+- to resize cards  |  Ctrl+0 to reset")
+        sbl.addWidget(self._lbl_scale)
+
+        root.addWidget(sbar)
 
     def _build_toolbar(self) -> QFrame:
         tb = QFrame(); tb.setFixedHeight(50)
@@ -791,18 +819,19 @@ class DesignLibraryWidget(QWidget):
                 item.widget().deleteLater()
         self._cards.clear()
 
-        cols = max(1, (self._scroll.viewport().width() - 16)
-                   // (DesignCard.CARD_W + 8))
+        sc   = getattr(self, "_card_scale", 1.0)
+        cw   = int(DesignCard.BASE_W * sc)
+        ch   = int(DesignCard.BASE_H * sc)
+        cols = max(1, (self._scroll.viewport().width() - 16) // (cw + 8))
         cols = max(2, cols)
 
         for i, meta in enumerate(meta_list):
-            card = DesignCard(meta)
+            card = DesignCard(meta, scale=sc)
             card.clicked.connect(self._on_card_click)
             card.double_click.connect(self._on_card_dblclick)
             card.edit.connect(self._on_card_edit)
             card.delete.connect(self._on_card_delete)
-            self._grid_layout.addWidget(
-                card, i // cols, i % cols)
+            self._grid_layout.addWidget(card, i // cols, i % cols)
             self._cards.append(card)
 
         # Filler spacers
@@ -812,12 +841,43 @@ class DesignLibraryWidget(QWidget):
         if remaining < cols:
             for j in range(remaining):
                 sp = QWidget()
-                sp.setFixedSize(DesignCard.CARD_W, DesignCard.CARD_H)
+                sp.setFixedSize(cw, ch)
                 self._grid_layout.addWidget(sp, r, (total % cols) + j)
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         QTimer.singleShot(0, lambda: self._apply_filter())
+
+    def keyPressEvent(self, ev):
+        ctrl = ev.modifiers() & Qt.ControlModifier
+        if ctrl:
+            if ev.key() in (Qt.Key_Plus, Qt.Key_Equal):
+                self._set_card_scale(self._card_scale + 0.1)
+                return
+            if ev.key() == Qt.Key_Minus:
+                self._set_card_scale(self._card_scale - 0.1)
+                return
+            if ev.key() == Qt.Key_0:
+                self._set_card_scale(1.0)
+                return
+        super().keyPressEvent(ev)
+
+    def wheelEvent(self, ev):
+        if ev.modifiers() & Qt.ControlModifier:
+            delta = ev.angleDelta().y()
+            if delta > 0:
+                self._set_card_scale(self._card_scale + 0.1)
+            elif delta < 0:
+                self._set_card_scale(self._card_scale - 0.1)
+            ev.accept()
+        else:
+            super().wheelEvent(ev)
+
+    def _set_card_scale(self, scale: float):
+        self._card_scale = round(max(0.5, min(2.0, scale)), 1)
+        pct = int(self._card_scale * 100)
+        self._lbl_scale.setText(f"{pct}%")
+        self._apply_filter()
 
     # ══════════════════════════════════════════════════════════
     # CARD EVENTS
