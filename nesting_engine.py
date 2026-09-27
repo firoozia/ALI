@@ -994,7 +994,7 @@ class NestingEngine:
             """Return (col_width, col_height, rotated) for column packing."""
             w0 = float(p.width)  + self.gap
             h0 = float(p.height) + self.gap
-            if self.auto_rotate and h0 < w0:
+            if self.auto_rotate and getattr(p, "allow_rotation", True) and h0 < w0:
                 return h0, w0, True   # rotate: shorter = column width
             return w0, h0, False
 
@@ -1024,7 +1024,7 @@ class NestingEngine:
             # Must fit in sheet dimensions
             if cw > uw + 1e-9 or ch > uh + 1e-9:
                 # Try the other rotation
-                if self.auto_rotate and (ch <= uw + 1e-9) and (cw <= uh + 1e-9):
+                if self.auto_rotate and getattr(p, "allow_rotation", True) and (ch <= uw + 1e-9) and (cw <= uh + 1e-9):
                     cw, ch, rotated = ch, cw, not rotated
                 else:
                     continue
@@ -1048,7 +1048,7 @@ class NestingEngine:
                 # Open a new column — tight-fit: last column needs no trailing gap.
                 if total_x + cw - self.gap > uw + 1e-9:
                     # Try the other rotation for the new column
-                    if self.auto_rotate:
+                    if self.auto_rotate and getattr(p, "allow_rotation", True):
                         cw2, ch2 = ch - 0, cw - 0  # swap (already includes gap)
                         r2 = not rotated
                         if (cw2 <= uw - total_x + 1e-9 and ch2 <= uh + 1e-9):
@@ -1429,7 +1429,7 @@ class NestingEngine:
         def eff_ch(p):
             w0 = float(p.width) + gap
             h0 = float(p.height) + gap
-            return max(w0, h0) if (self.auto_rotate and h0 < w0) else h0
+            return max(w0, h0) if (self.auto_rotate and getattr(p, "allow_rotation", True) and h0 < w0) else h0
 
         # Anchors: tallest first (K before L in MaxRects ordering)
         anchors = sorted([p for p in parts if eff_ch(p) > anchor_thresh],
@@ -1785,8 +1785,9 @@ class NestingEngine:
         for i, p in enumerate(parts):
             pw = float(getattr(p, "width", 0) or 0) + self.gap
             ph = float(getattr(p, "height", 0) or 0) + self.gap
+            can_rotate = self.auto_rotate and getattr(p, "allow_rotation", True)
             if (pw <= uw and ph <= uh or
-                    (self.auto_rotate and ph <= uw and pw <= uh)):
+                    (can_rotate and ph <= uw and pw <= uh)):
                 packer.add_rect(pw, ph, rid=i)
 
         packer.pack()
@@ -1801,7 +1802,11 @@ class NestingEngine:
             p.y        = y + mb
 
             orig_w    = float(getattr(src, "width", 0) or 0) + self.gap
-            p.rotated = abs(float(w) - orig_w) > 0.01
+            rotated   = abs(float(w) - orig_w) > 0.01
+            # Undo rotation if part forbids it (MaxRects packer is global)
+            if rotated and not getattr(src, "allow_rotation", True):
+                rotated = False
+            p.rotated = rotated
             p.status  = "nested"
             sheet.parts.append(p)
             placed.add(rid)
