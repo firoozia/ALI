@@ -48,6 +48,11 @@ export interface CustomerPortalItem {
 }
 
 /** A portal item the factory can import: a door needs a door code; a melamine panel does not. */
+/** Melamine panels and vacuum doors share one items list; the portal shows them in two tables. */
+export function isMelamineItem(item: CustomerPortalItem): boolean {
+  return item.productType === "melamine";
+}
+
 export function isCompletePortalItem(item: CustomerPortalItem): boolean {
   const sized = item.width > 0 && item.height > 0 && item.qty > 0;
   return sized && (item.productType === "melamine" || Boolean(item.designCode));

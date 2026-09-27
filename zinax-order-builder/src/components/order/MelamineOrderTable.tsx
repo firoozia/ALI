@@ -202,9 +202,15 @@ export default function MelamineOrderTable({ rows, onChangeRows, invoiceMode, cu
             <tr className="sticky top-0 z-10">
               <th className="zx-th sticky left-0 z-20 w-12 bg-ink-50">No.</th>
               <th className="zx-th min-w-[120px]">Part name</th>
-              <th className="zx-th min-w-[88px] text-right">Width mm</th>
-              <th className="zx-th min-w-[88px] text-right">Height mm</th>
-              <th className="zx-th min-w-[72px] text-right">Qty</th>
+              <th className="zx-th w-[72px] min-w-[72px] !px-2 text-right">
+                Width
+                <span className="block text-[9px] font-medium normal-case tracking-normal text-ink-400">mm</span>
+              </th>
+              <th className="zx-th w-[72px] min-w-[72px] !px-2 text-right">
+                Height
+                <span className="block text-[9px] font-medium normal-case tracking-normal text-ink-400">mm</span>
+              </th>
+              <th className="zx-th w-[56px] min-w-[56px] !px-2 text-right">Qty</th>
               <th className="zx-th">Thickness</th>
               <th className="zx-th min-w-[100px]">Color code</th>
               <th className="zx-th">Color</th>
@@ -232,9 +238,9 @@ export default function MelamineOrderTable({ rows, onChangeRows, invoiceMode, cu
               <tr key={row.id} className="group hover:bg-navy-50/30">
                 <td className="zx-td sticky left-0 z-10 bg-white text-center font-semibold text-ink-500 group-hover:bg-navy-50/30">{idx + 1}</td>
                 <td className="zx-td p-1">{textInput(row, "designName", "min-w-[120px]")}</td>
-                <td className="zx-td p-1">{numberInput(row, "width", "min-w-[88px]")}</td>
-                <td className="zx-td p-1">{numberInput(row, "height", "min-w-[88px]")}</td>
-                <td className="zx-td p-1">{numberInput(row, "qty", "min-w-[72px]")}</td>
+                <td className="zx-td p-1">{numberInput(row, "width", "min-w-[64px]")}</td>
+                <td className="zx-td p-1">{numberInput(row, "height", "min-w-[64px]")}</td>
+                <td className="zx-td p-1">{numberInput(row, "qty", "min-w-[48px]")}</td>
                 <td className="zx-td p-1">
                   <select value={row.mdfThickness} onChange={(e) => update(row.id, "mdfThickness", e.target.value)} className="zx-cell-input">
                     {catalog.mdfThickness
@@ -323,7 +329,7 @@ export default function MelamineOrderTable({ rows, onChangeRows, invoiceMode, cu
                 <td className="zx-td sticky left-0 bg-ink-50 text-ink-700" colSpan={4}>
                   Total
                 </td>
-                <td className="zx-td text-right tabular-nums text-ink-900">{totalQty}</td>
+                <td className="zx-td !px-2 text-right tabular-nums text-ink-900">{totalQty}</td>
                 <td className="zx-td" colSpan={9}></td>
                 {invoiceMode && <td className="zx-td" colSpan={3}></td>}
                 {invoiceMode && (

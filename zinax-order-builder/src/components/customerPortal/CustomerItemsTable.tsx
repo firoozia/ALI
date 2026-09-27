@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import type { KeyboardEvent } from "react";
 import { Plus, Copy, Trash2 } from "lucide-react";
-import type { CustomerPortalItem, PublicDesign, PublicColor, PublicEdgeBand } from "../../core/publicCatalogSchema";
+import { isMelamineItem, type CustomerPortalItem, type PublicDesign, type PublicColor, type PublicEdgeBand } from "../../core/publicCatalogSchema";
 import { EDGE_KEYS, EDGE_LABELS, edgeOptions, parseEdge, type EdgeBandCatalogItem } from "../../core/melamine";
+import { EdgeLegend } from "../order/MelamineOrderTable";
 
 function makeItem(source?: Partial<CustomerPortalItem>): CustomerPortalItem {
   const item: CustomerPortalItem = {
@@ -32,25 +33,36 @@ function toCatalogBands(bands: PublicEdgeBand[]): EdgeBandCatalogItem[] {
 }
 
 // Same three-field fast-entry hop as the factory app's Door Order Table:
-// Enter in Width/Height jumps to the next field, Enter in Qty starts a new row.
+// Enter in Width/Height jumps to the next field, Enter in Qty moves to the
+// next row of the same table (or starts one).
 type HopField = "width" | "height" | "qty";
 const HOP_ORDER: HopField[] = ["width", "height", "qty"];
 
+/** Which of the portal's two tables this is: vacuum doors or melamine panels. */
+export type PortalItemKind = "door" | "melamine";
+
+// Sized for the values they hold: sizes are up to four digits (2440), Qty up to three (999).
+const SIZE_COL = "w-[72px] min-w-[72px] !px-2";
+const QTY_COL = "w-[56px] min-w-[56px] !px-2";
+
 interface CustomerItemsTableProps {
+  /** Every item in the order; this table shows and edits only the ones of its `kind`. */
   items: CustomerPortalItem[];
   onChangeItems: (items: CustomerPortalItem[]) => void;
+  kind: PortalItemKind;
   designs: PublicDesign[];
   colors: PublicColor[];
-  /** Published edge bands. When there are none, melamine panels are not offered. */
+  /** Published edge bands (melamine table only). */
   edgeBands?: PublicEdgeBand[];
   readOnly?: boolean;
 }
 
-export default function CustomerItemsTable({ items, onChangeItems, designs, colors, edgeBands = [], readOnly = false }: CustomerItemsTableProps) {
+export default function CustomerItemsTable({ items, onChangeItems, kind, designs, colors, edgeBands = [], readOnly = false }: CustomerItemsTableProps) {
+  const melamine = kind === "melamine";
   const bands = toCatalogBands(edgeBands);
   const options = edgeOptions(bands);
-  // A submitted order that already has panels still shows them read-only, even if bands were unpublished since.
-  const melamineEnabled = edgeBands.length > 0 || items.some((it) => it.productType === "melamine");
+  // Indexes into `items` of the rows this table owns, in order.
+  const own = items.flatMap((it, i) => (isMelamineItem(it) === melamine ? [i] : []));
   const inputRefs = useRef(new Map<string, HTMLInputElement>());
   const pendingFocusIndex = useRef<number | null>(null);
 
@@ -75,23 +87,10 @@ export default function CustomerItemsTable({ items, onChangeItems, designs, colo
     onChangeItems(items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   };
 
-  const setType = (idx: number, type: "vacuum_door" | "melamine") => {
-    if (type === "melamine") {
-      update(idx, { productType: "melamine", edge1: "N", edge2: "N", edge3: "N", edge4: "N", rotation: "Y", direction: "" });
-    } else {
-      onChangeItems(
-        items.map((it, i) => {
-          if (i !== idx) return it;
-          const { productType: _p, edge1: _1, edge2: _2, edge3: _3, edge4: _4, rotation: _r, ...door } = it;
-          return door;
-        })
-      );
-    }
-  };
-
-  /** Carries the last row's design/color/direction forward and focuses the new row's Width — same fast repeat-entry as the factory app. */
+  /** Carries this table's last row's design/color/direction (and edges) forward and focuses the new row's Width. */
   const addRow = () => {
-    const newItem = makeItem(items[items.length - 1]);
+    const last = own.length > 0 ? items[own[own.length - 1]] : undefined;
+    const newItem = makeItem(melamine ? { ...last, productType: "melamine" } : last);
     onChangeItems([...items, newItem]);
     pendingFocusIndex.current = items.length;
   };
@@ -110,197 +109,163 @@ export default function CustomerItemsTable({ items, onChangeItems, designs, colo
     const nextIdx = HOP_ORDER.indexOf(field) + 1;
     if (nextIdx < HOP_ORDER.length) {
       focusField(idx, HOP_ORDER[nextIdx]);
-    } else if (idx === items.length - 1) {
-      addRow();
-    } else {
-      focusField(idx + 1, "width");
+      return;
     }
+    const pos = own.indexOf(idx);
+    if (pos === own.length - 1) addRow();
+    else focusField(own[pos + 1], "width");
   };
 
-  const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+  const totalQty = own.reduce((s, i) => s + (Number(items[i].qty) || 0), 0);
   const inputCls = readOnly ? "zx-cell-input opacity-60" : "zx-cell-input";
+  const canAdd = melamine ? edgeBands.length > 0 : designs.length > 0;
+  // No. + code + width + height + qty + color + (direction | 4 edges + rotation) + actions
+  const columnCount = 6 + (melamine ? 5 : 1) + (readOnly ? 0 : 1);
+
+  let hint: string;
+  if (readOnly) hint = "This order can no longer be edited.";
+  else if (!canAdd) hint = melamine ? "This factory hasn't published any edge bands yet." : "This factory hasn't published any design codes yet.";
+  else hint = "Type sizes and press Enter to move Width → Height → Qty, then start the next row.";
+
+  const numberCell = (idx: number, field: HopField) => (
+    <input
+      ref={registerRef(idx, field)}
+      type="number"
+      inputMode="numeric"
+      value={items[idx][field] || ""}
+      onChange={(e) => update(idx, { [field]: Number(e.target.value) || 0 })}
+      onKeyDown={hopKeyDown(idx, field)}
+      disabled={readOnly}
+      className={`${inputCls} text-right tabular-nums`}
+    />
+  );
 
   return (
     <div className="zx-card overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 px-5 py-4">
-        <div>
-          <h3 className="text-sm font-bold text-ink-900">Order Items</h3>
-          <p className="mt-0.5 text-xs text-ink-500">
-            {designs.length === 0
-              ? "This factory hasn't published any design codes yet."
-              : readOnly
-                ? "This order can no longer be edited."
-                : "Type sizes and press Enter to move Width → Height → Qty, then start the next row."}
-          </p>
+        <div className="flex items-center gap-4">
+          {melamine && <EdgeLegend />}
+          <div>
+            <h3 className="text-sm font-bold text-ink-900">{melamine ? "Melamine Panels" : "Vacuum Doors"}</h3>
+            <p className="mt-0.5 text-xs text-ink-500">{hint}</p>
+          </div>
         </div>
         {!readOnly && (
-          <button onClick={addRow} disabled={designs.length === 0 && !melamineEnabled} className="zx-btn-primary !py-1.5">
+          <button onClick={addRow} disabled={!canAdd} className="zx-btn-primary !py-1.5">
             <Plus className="h-4 w-4" />
-            Add Row
+            {melamine ? "Add Panel" : "Add Door"}
           </button>
         )}
       </div>
 
       <div className="max-h-[420px] overflow-auto">
-        <table className={`w-full border-collapse ${melamineEnabled ? "min-w-[1180px]" : "min-w-[680px]"}`}>
+        <table className={`w-full border-collapse ${melamine ? "min-w-[1000px]" : "min-w-[680px]"}`}>
           <thead>
             <tr className="sticky top-0 z-10">
               <th className="zx-th w-10">No.</th>
-              {melamineEnabled && <th className="zx-th min-w-[120px]">Type</th>}
-              <th className="zx-th min-w-[180px]">{melamineEnabled ? "Code" : "Door Code"}</th>
-              <th className="zx-th min-w-[90px] text-right">Width</th>
-              <th className="zx-th min-w-[90px] text-right">Height</th>
-              <th className="zx-th min-w-[72px] text-right">Qty</th>
-              <th className="zx-th min-w-[170px]">Color Code</th>
-              <th className="zx-th min-w-[110px]">Direction</th>
-              {melamineEnabled &&
+              <th className={`zx-th ${melamine ? "min-w-[140px]" : "min-w-[160px]"}`}>{melamine ? "Design" : "Door Code"}</th>
+              <th className={`zx-th text-right ${SIZE_COL}`}>Width</th>
+              <th className={`zx-th text-right ${SIZE_COL}`}>Height</th>
+              <th className={`zx-th text-right ${QTY_COL}`}>Qty</th>
+              <th className={`zx-th ${melamine ? "min-w-[140px]" : "min-w-[160px]"}`}>Color Code</th>
+              {!melamine && <th className="zx-th min-w-[110px]">Direction</th>}
+              {melamine &&
                 EDGE_KEYS.map((k) => (
-                  <th key={k} className="zx-th min-w-[84px]" title={`${EDGE_LABELS[k].side} edge, seen from the front`}>
+                  <th key={k} className="zx-th min-w-[76px]" title={`${EDGE_LABELS[k].side} edge, seen from the front`}>
                     {EDGE_LABELS[k].short} <span className="font-normal text-ink-400">{EDGE_LABELS[k].side}</span>
                   </th>
                 ))}
-              {melamineEnabled && <th className="zx-th min-w-[110px]">Rotation</th>}
+              {melamine && <th className="zx-th min-w-[110px]">Rotation</th>}
               {!readOnly && <th className="zx-th w-20"></th>}
             </tr>
           </thead>
           <tbody>
-            {items.map((item, idx) => (
-              <tr key={idx} className="group hover:bg-navy-50/30">
-                <td className="zx-td text-center font-semibold text-ink-500">{idx + 1}</td>
-                {melamineEnabled && (
+            {own.map((idx, pos) => {
+              const item = items[idx];
+              return (
+                <tr key={idx} className="group hover:bg-navy-50/30">
+                  <td className="zx-td text-center font-semibold text-ink-500">{pos + 1}</td>
                   <td className="zx-td p-1">
                     <select
-                      value={item.productType === "melamine" ? "melamine" : "vacuum_door"}
-                      onChange={(e) => setType(idx, e.target.value as "vacuum_door" | "melamine")}
+                      value={item.designCode}
+                      onChange={(e) => update(idx, { designCode: e.target.value })}
                       className="zx-cell-input"
                       disabled={readOnly}
                     >
-                      <option value="vacuum_door">Door</option>
-                      <option value="melamine">Melamine panel</option>
-                    </select>
-                  </td>
-                )}
-                <td className="zx-td p-1">
-                  <select
-                    value={item.designCode}
-                    onChange={(e) => update(idx, { designCode: e.target.value })}
-                    className="zx-cell-input"
-                    disabled={readOnly}
-                  >
-                    <option value="">{item.productType === "melamine" ? "Plain panel" : "Select..."}</option>
-                    {designs.map((d) => (
-                      <option key={d.code} value={d.code}>
-                        {d.code} — {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="zx-td p-1">
-                  <input
-                    ref={registerRef(idx, "width")}
-                    type="number"
-                    value={item.width || ""}
-                    onChange={(e) => update(idx, { width: Number(e.target.value) || 0 })}
-                    onKeyDown={hopKeyDown(idx, "width")}
-                    disabled={readOnly}
-                    className={`${inputCls} text-right`}
-                  />
-                </td>
-                <td className="zx-td p-1">
-                  <input
-                    ref={registerRef(idx, "height")}
-                    type="number"
-                    value={item.height || ""}
-                    onChange={(e) => update(idx, { height: Number(e.target.value) || 0 })}
-                    onKeyDown={hopKeyDown(idx, "height")}
-                    disabled={readOnly}
-                    className={`${inputCls} text-right`}
-                  />
-                </td>
-                <td className="zx-td p-1">
-                  <input
-                    ref={registerRef(idx, "qty")}
-                    type="number"
-                    value={item.qty || ""}
-                    onChange={(e) => update(idx, { qty: Number(e.target.value) || 0 })}
-                    onKeyDown={hopKeyDown(idx, "qty")}
-                    disabled={readOnly}
-                    className={`${inputCls} text-right`}
-                  />
-                </td>
-                <td className="zx-td p-1">
-                  {colors.length > 0 ? (
-                    <select
-                      value={item.colorCode}
-                      onChange={(e) => update(idx, { colorCode: e.target.value })}
-                      className="zx-cell-input"
-                      disabled={readOnly}
-                    >
-                      <option value="">Select...</option>
-                      {colors.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.code} — {c.color}
+                      <option value="">{melamine ? "Plain panel" : "Select..."}</option>
+                      {designs.map((d) => (
+                        <option key={d.code} value={d.code}>
+                          {d.code} — {d.name}
                         </option>
                       ))}
                     </select>
-                  ) : (
-                    <input
-                      value={item.colorCode}
-                      onChange={(e) => update(idx, { colorCode: e.target.value })}
-                      placeholder="e.g. PVC-101"
-                      disabled={readOnly}
-                      className={inputCls}
-                    />
+                  </td>
+                  <td className="zx-td p-1">{numberCell(idx, "width")}</td>
+                  <td className="zx-td p-1">{numberCell(idx, "height")}</td>
+                  <td className="zx-td p-1">{numberCell(idx, "qty")}</td>
+                  <td className="zx-td p-1">
+                    {colors.length > 0 ? (
+                      <select
+                        value={item.colorCode}
+                        onChange={(e) => update(idx, { colorCode: e.target.value })}
+                        className="zx-cell-input"
+                        disabled={readOnly}
+                      >
+                        <option value="">Select...</option>
+                        {colors.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.code} — {c.color}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        value={item.colorCode}
+                        onChange={(e) => update(idx, { colorCode: e.target.value })}
+                        placeholder="e.g. PVC-101"
+                        disabled={readOnly}
+                        className={inputCls}
+                      />
+                    )}
+                  </td>
+                  {!melamine && (
+                    <td className="zx-td p-1">
+                      <select
+                        value={item.direction}
+                        onChange={(e) => update(idx, { direction: e.target.value })}
+                        className="zx-cell-input"
+                        disabled={readOnly}
+                      >
+                        <option value="">Select...</option>
+                        <option>Vertical</option>
+                        <option>Horizontal</option>
+                      </select>
+                    </td>
                   )}
-                </td>
-                <td className="zx-td p-1">
-                  {item.productType === "melamine" ? (
-                    <span className="px-2 text-ink-400">—</span>
-                  ) : (
-                    <select
-                      value={item.direction}
-                      onChange={(e) => update(idx, { direction: e.target.value })}
-                      className="zx-cell-input"
-                      disabled={readOnly}
-                    >
-                      <option value="">Select...</option>
-                      <option>Vertical</option>
-                      <option>Horizontal</option>
-                    </select>
-                  )}
-                </td>
-                {melamineEnabled &&
-                  EDGE_KEYS.map((k) => {
-                    if (item.productType !== "melamine") {
+                  {melamine &&
+                    EDGE_KEYS.map((k) => {
+                      const value = item[k] || "N";
+                      const known = parseEdge(value, bands).known;
+                      const list = options.includes(value) ? options : [...options, value];
                       return (
-                        <td key={k} className="zx-td p-1 px-2 text-ink-400">
-                          —
+                        <td key={k} className="zx-td p-1">
+                          <select
+                            value={value}
+                            onChange={(e) => update(idx, { [k]: e.target.value })}
+                            className={`zx-cell-input ${known ? "" : "invalid"}`}
+                            disabled={readOnly}
+                          >
+                            {list.map((o) => (
+                              <option key={o} value={o}>
+                                {o === value && !known ? `Unknown: ${o}` : o}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                       );
-                    }
-                    const value = item[k] || "N";
-                    const known = parseEdge(value, bands).known;
-                    const list = options.includes(value) ? options : [...options, value];
-                    return (
-                      <td key={k} className="zx-td p-1">
-                        <select
-                          value={value}
-                          onChange={(e) => update(idx, { [k]: e.target.value })}
-                          className={`zx-cell-input ${known ? "" : "invalid"}`}
-                          disabled={readOnly}
-                        >
-                          {list.map((o) => (
-                            <option key={o} value={o}>
-                              {o === value && !known ? `Unknown: ${o}` : o}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    );
-                  })}
-                {melamineEnabled && (
-                  <td className="zx-td p-1">
-                    {item.productType === "melamine" ? (
+                    })}
+                  {melamine && (
+                    <td className="zx-td p-1">
                       <select
                         value={item.rotation ?? "Y"}
                         onChange={(e) => update(idx, { rotation: e.target.value })}
@@ -310,42 +275,44 @@ export default function CustomerItemsTable({ items, onChangeItems, designs, colo
                         <option value="Y">Y · rotate</option>
                         <option value="N">N · locked</option>
                       </select>
-                    ) : (
-                      <span className="px-2 text-ink-400">—</span>
-                    )}
-                  </td>
-                )}
-                {!readOnly && (
-                  <td className="zx-td">
-                    <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => duplicateRow(idx)} title="Duplicate row" className="zx-btn-ghost !px-1.5 !py-1">
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                      <button onClick={() => deleteRow(idx)} title="Delete row" className="zx-btn-danger !px-1.5 !py-1">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                )}
-              </tr>
-            ))}
+                    </td>
+                  )}
+                  {!readOnly && (
+                    <td className="zx-td">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => duplicateRow(idx)} title="Duplicate row" className="zx-btn-ghost !px-1.5 !py-1">
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                        <button onClick={() => deleteRow(idx)} title="Delete row" className="zx-btn-danger !px-1.5 !py-1">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
 
-            {items.length === 0 && (
+            {own.length === 0 && (
               <tr>
-                <td colSpan={(readOnly ? 7 : 8) + (melamineEnabled ? 6 : 0)} className="px-5 py-10 text-center text-sm text-ink-400">
-                  {readOnly ? "No items." : 'No items yet. Click "Add Row" to start building your order.'}
+                <td colSpan={columnCount} className="px-5 py-8 text-center text-sm text-ink-400">
+                  {readOnly
+                    ? "None."
+                    : melamine
+                      ? 'No melamine panels. Click "Add Panel" if this order has cabinet parts.'
+                      : 'No doors yet. Click "Add Door" to start.'}
                 </td>
               </tr>
             )}
           </tbody>
-          {items.length > 0 && (
+          {own.length > 0 && (
             <tfoot>
               <tr className="bg-ink-50 font-semibold">
-                <td className="zx-td text-ink-700" colSpan={melamineEnabled ? 5 : 4}>
+                <td className="zx-td text-ink-700" colSpan={4}>
                   Total
                 </td>
-                <td className="zx-td text-right text-ink-900 tabular-nums">{totalQty}</td>
-                <td className="zx-td" colSpan={(readOnly ? 2 : 3) + (melamineEnabled ? 5 : 0)}></td>
+                <td className="zx-td !px-2 text-right text-ink-900 tabular-nums">{totalQty}</td>
+                <td className="zx-td" colSpan={columnCount - 5}></td>
               </tr>
             </tfoot>
           )}

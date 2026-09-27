@@ -172,7 +172,7 @@ describe("melamine validation", () => {
 describe("customer portal submissions", () => {
   it("imports a melamine panel from the portal with its edges and rotation", async () => {
     const { mergeCustomerSubmissionIntoOrder } = await import("../customerSubmissionFile");
-    const { isCompletePortalItem } = await import("../publicCatalogSchema");
+    const { isCompletePortalItem, isMelamineItem } = await import("../publicCatalogSchema");
     const panel = {
       designCode: "", width: 560, height: 720, qty: 2, colorCode: "MEL-W", direction: "",
       productType: "melamine" as const, edge1: "P1", edge2: "P1", edge3: "S/P1", edge4: "N", rotation: "N",
@@ -180,6 +180,8 @@ describe("customer portal submissions", () => {
     const door = { designCode: "ZD001", width: 400, height: 800, qty: 1, colorCode: "PVC-101", direction: "Vertical" };
     expect(isCompletePortalItem(panel)).toBe(true);
     expect(isCompletePortalItem({ ...door, designCode: "" })).toBe(false);
+    // The portal splits one items list into a door table and a melamine table.
+    expect([door, panel].map(isMelamineItem)).toEqual([false, true]);
     const { rows } = mergeCustomerSubmissionIntoOrder(header, [], {
       customerName: "C", endCustomerName: "", siteName: "", items: [door, panel],
     });

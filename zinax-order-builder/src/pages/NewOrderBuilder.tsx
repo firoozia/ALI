@@ -298,7 +298,7 @@ export default function NewOrderBuilder({
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-ink-200 bg-white/95 backdrop-blur lg:left-64">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-3 px-3 py-2.5 sm:px-6 sm:py-3">
-          <p className="hidden truncate text-xs text-ink-500 lg:block">
+          <p className="hidden min-w-0 truncate text-xs text-ink-500 lg:block">
             {header.orderNo} · {totals.totalDoors} doors
             {totals.totalPanels > 0 ? ` · ${totals.totalPanels} panels` : ""} · {totals.totalRows} rows · Grand Total {header.currency}{" "}
             {totals.finalTotal.toFixed(2)}

@@ -37,14 +37,30 @@ function applyPvcDefaults(row: OrderRow, catalog: Catalog): OrderRow {
 // columns too narrow to show what was typed/selected — an explicit floor
 // fixes it regardless of editor type.
 const COLUMN_MIN_WIDTH: Partial<Record<keyof OrderRow, string>> = {
-  width: "min-w-[88px]",
-  height: "min-w-[88px]",
-  qty: "min-w-[72px]",
+  // Sized for the values: sizes are up to four digits (2440), Qty up to three (999).
+  width: "w-[72px] min-w-[72px]",
+  height: "w-[72px] min-w-[72px]",
+  qty: "w-[56px] min-w-[56px]",
   pvcCode: "min-w-[110px]",
   unitPrice: "min-w-[96px]",
   discount: "min-w-[80px]",
   vat: "min-w-[72px]",
 };
+// The inputs inside those three cells, which sit inside a td with 4 px padding.
+const INPUT_MIN_WIDTH: Partial<Record<keyof OrderRow, string>> = {
+  width: "min-w-[64px]",
+  height: "min-w-[64px]",
+  qty: "min-w-[48px]",
+};
+
+function SizeHeader({ label }: { label: string }) {
+  return (
+    <>
+      {label}
+      <span className="block text-[9px] font-medium normal-case tracking-normal text-ink-400">mm</span>
+    </>
+  );
+}
 
 // Only these three fields are part of the Enter-to-advance fast-entry flow.
 type HopField = "width" | "height" | "qty";
@@ -161,7 +177,7 @@ function renderEditor(col: OrderRowColumn, row: OrderRow, updateField: UpdateFie
         </select>
       );
     case "number": {
-      const widthClass = COLUMN_MIN_WIDTH[col.key] ?? "";
+      const widthClass = INPUT_MIN_WIDTH[col.key] ?? COLUMN_MIN_WIDTH[col.key] ?? "";
       const hopField = HOP_ORDER.includes(col.key as HopField) ? (col.key as HopField) : null;
       const onKeyDown = hopField
         ? (e: KeyboardEvent<HTMLInputElement>) => {
@@ -306,8 +322,9 @@ export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, curren
             <tr className="sticky top-0 z-10">
               <th className="zx-th sticky left-0 z-20 w-12 bg-ink-50">No.</th>
               {visibleColumns.map((col) => (
-                <th key={col.key} className={`zx-th ${COLUMN_MIN_WIDTH[col.key] ?? ""} ${col.align === "right" ? "text-right" : ""}`}>
-                  {col.label}
+                <th key={col.key} className={`zx-th ${COLUMN_MIN_WIDTH[col.key] ?? ""} ${HOP_ORDER.includes(col.key as HopField) ? "!px-2" : ""} ${col.align === "right" ? "text-right" : ""}`}>
+                  {/* "Width mm" → "Width" over a small "mm", so the header is no wider than a four-digit size. */}
+                  {col.label.endsWith(" mm") ? <SizeHeader label={col.label.slice(0, -3)} /> : col.label}
                 </th>
               ))}
               {invoiceMode && <th className="zx-th w-32 text-right">Line Total ({currency})</th>}
@@ -359,7 +376,7 @@ export default function DoorOrderTable({ rows, onChangeRows, invoiceMode, curren
                 <td className="zx-td sticky left-0 bg-ink-50 text-ink-700" colSpan={5}>
                   Total
                 </td>
-                <td className="zx-td text-right text-ink-900 tabular-nums">{totalQty}</td>
+                <td className="zx-td !px-2 text-right text-ink-900 tabular-nums">{totalQty}</td>
                 <td className="zx-td" colSpan={4}></td>
                 {invoiceMode && <td className="zx-td" colSpan={3}></td>}
                 {invoiceMode && (

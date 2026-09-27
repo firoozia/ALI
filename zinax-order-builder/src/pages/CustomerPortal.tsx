@@ -15,7 +15,7 @@ import type {
   CustomerSubmission,
   CustomerSubmissionRecord,
 } from "../core/publicCatalogSchema";
-import { isCompletePortalItem } from "../core/publicCatalogSchema";
+import { isCompletePortalItem, isMelamineItem } from "../core/publicCatalogSchema";
 import {
   buildCustomerSubmissionFile,
   serializeCustomerSubmissionFile,
@@ -232,7 +232,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
   return (
     <div className="min-h-screen bg-ink-50">
       <div className="border-b border-ink-100 bg-white px-4 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gold-400 text-navy-950 font-bold">
               {tenant?.companyName.slice(0, 2).toUpperCase()}
@@ -265,7 +265,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
         </div>
       </div>
 
-      <div className="mx-auto max-w-5xl px-4 py-6 sm:px-8">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-8">
         {view === "history" ? (
           <>
             <div className="mb-5 grid grid-cols-2 gap-4">
@@ -386,15 +386,29 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
               </div>
             </div>
 
+            {/* Doors and melamine panels are entered in separate tables (their columns differ), but stay one order and one submission. */}
             <div className="mb-5">
-              <CustomerItemsTable items={items} onChangeItems={setItems} designs={designs} colors={colors} edgeBands={edgeBands} readOnly={readOnly} />
+              <CustomerItemsTable kind="door" items={items} onChangeItems={setItems} designs={designs} colors={colors} readOnly={readOnly} />
             </div>
+            {(edgeBands.length > 0 || items.some(isMelamineItem)) && (
+              <div className="mb-5">
+                <CustomerItemsTable
+                  kind="melamine"
+                  items={items}
+                  onChangeItems={setItems}
+                  designs={designs}
+                  colors={colors}
+                  edgeBands={edgeBands}
+                  readOnly={readOnly}
+                />
+              </div>
+            )}
 
             {error && <p className="mb-3 text-sm font-medium text-red-600">{error}</p>}
 
             {!readOnly && validItems.length === 0 && (
               <p className="mb-3 text-sm font-medium text-amber-700">
-                Fill in a Door Code, Width, Height and Qty for at least one row before submitting.
+                Fill in at least one door (code, width, height, qty) or melamine panel (width, height, qty) before submitting.
               </p>
             )}
 
