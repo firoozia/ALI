@@ -773,6 +773,7 @@ class DesignEditorWidget(QWidget):
         self._tabs.addTab(self._tab_toolpaths(), 'Layers / Toolpath')
         self._tabs.addTab(self._tab_validate(), 'Save / Validate')
         self._tabs.addTab(self._tab_simulate(), '▶  Simulate')
+        self._tabs.addTab(self._tab_gcode_export(), '⚙  Export G-code')
         ll.addWidget(self._tabs); split.addWidget(left)
         right = QWidget(); rl = QVBoxLayout(right); rl.setContentsMargins(0, 0, 0, 0)
         bar = QHBoxLayout(); bar.setContentsMargins(8, 4, 8, 4)
@@ -1079,20 +1080,20 @@ class DesignEditorWidget(QWidget):
             self._sim_btn_stop.setEnabled(False)
 
     def _on_tab_changed(self, idx: int):
-        """When the Simulate tab is activated, reload the design into the canvas."""
-        if not hasattr(self, '_sim_canvas'):
-            return
+        """When the Simulate or Export G-code tab is activated, refresh."""
         tab_widget = self.sender()
         if not hasattr(tab_widget, 'tabText'):
             return
-        if '▶' in (tab_widget.tabText(idx) or ''):
+        label = tab_widget.tabText(idx) or ''
+        if '▶' in label and hasattr(self, '_sim_canvas'):
             self._sim_canvas.load_design(self._design)
             self._sim_canvas.set_speed(self._sim_speed.value())
-            # Reset play/pause/stop button states
             self._sim_btn_play.setEnabled(True)
             self._sim_btn_pause.setEnabled(False)
             self._sim_btn_stop.setEnabled(False)
             self._sim_progress_lbl.setText('0%')
+        elif '⚙' in label and hasattr(self, '_gce_preview'):
+            self._gce_refresh_tools()
 
     # ── Event handlers ─────────────────────────────────────────────────────
 
@@ -1443,6 +1444,370 @@ class DesignEditorWidget(QWidget):
             p += '.dxf'
         write_r12_polyline(self._design.generate_geometry(), p)
         QMessageBox.information(self, 'DXF Export', f'DXF generated:\n{p}')
+
+    # ── Export G-code tab ──────────────────────────────────────────────────
+
+    def _tab_gcode_export(self):
+        from PySide6.QtWidgets import (QSplitter, QScrollArea, QGroupBox,
+                                       QFormLayout, QListWidget, QListWidgetItem)
+        from PySide6.QtGui import QFont as _QFont, QColor as _QColor
+
+        w = QWidget(); root = QHBoxLayout(w); root.setContentsMargins(8, 8, 8, 8); root.setSpacing(8)
+
+        # ── LEFT: settings panel ───────────────────────────────────────────
+        left = QWidget(); left.setFixedWidth(260)
+        llay = QVBoxLayout(left); llay.setContentsMargins(0, 0, 0, 0); llay.setSpacing(8)
+
+        # Part size
+        sg = QGroupBox('Part Size'); sg_lay = QFormLayout(sg); sg_lay.setSpacing(4)
+        hw = QHBoxLayout(); hw.setSpacing(4)
+        self._gce_w = QDoubleSpinBox(); self._gce_w.setRange(50, 6000); self._gce_w.setDecimals(1)
+        self._gce_h = QDoubleSpinBox(); self._gce_h.setRange(50, 6000); self._gce_h.setDecimals(1)
+        self._gce_w.setSuffix(' mm'); self._gce_h.setSuffix(' mm')
+        hw.addWidget(self._gce_w); hw.addWidget(QLabel('×')); hw.addWidget(self._gce_h)
+        sg_lay.addRow('W × H:', hw)
+        btn_from_design = QPushButton('Use Design Defaults')
+        btn_from_design.setFixedHeight(26)
+        btn_from_design.clicked.connect(self._gce_use_design_size)
+        sg_lay.addRow('', btn_from_design)
+        llay.addWidget(sg)
+
+        # Post-processor
+        pg = QGroupBox('Post Processor'); pg_lay = QFormLayout(pg); pg_lay.setSpacing(4)
+        self._gce_pp = QComboBox()
+        self._gce_pp.addItem('(loading…)')
+        try:
+            from post_processor_manager import PostProcessorManager
+            for pp in PostProcessorManager().all():
+                self._gce_pp.addItem(f'{pp.name} · .{pp.file_extension}', pp.id)
+            if self._gce_pp.count() > 1:
+                self._gce_pp.removeItem(0)
+        except Exception:
+            self._gce_pp.clear(); self._gce_pp.addItem('gcode_mm (default)', 'gcode_mm')
+        self._gce_pp.currentIndexChanged.connect(lambda _: self._gce_refresh_tools())
+        pg_lay.addRow('Profile:', self._gce_pp)
+
+        self._gce_origin = QComboBox()
+        for lbl, val in [('(0,0) — bottom-left', '(0,0)'), ('(X,Y) — top-right', '(X,Y)'),
+                         ('(0,Y) — top-left', '(0,Y)'), ('(X,0) — bottom-right', '(X,0)')]:
+            self._gce_origin.addItem(lbl, val)
+        pg_lay.addRow('Origin:', self._gce_origin)
+        llay.addWidget(pg)
+
+        # Tool summary
+        tg = QGroupBox('Detected Tools')
+        tg_lay = QVBoxLayout(tg); tg_lay.setContentsMargins(4, 8, 4, 4); tg_lay.setSpacing(4)
+        self._gce_tool_list = QListWidget(); self._gce_tool_list.setFixedHeight(110)
+        self._gce_tool_list.setSelectionMode(QAbstractItemView.NoSelection)
+        tg_lay.addWidget(self._gce_tool_list)
+        self._gce_stats = QLabel('—'); self._gce_stats.setWordWrap(True)
+        tg_lay.addWidget(self._gce_stats)
+        llay.addWidget(tg)
+
+        # Output folder
+        og = QGroupBox('Output'); og_lay = QFormLayout(og); og_lay.setSpacing(4)
+        out_row = QHBoxLayout(); out_row.setSpacing(4)
+        self._gce_folder = QLineEdit(str(Path(config.output_folder)))
+        browse_btn = QPushButton('…'); browse_btn.setFixedWidth(28)
+        browse_btn.clicked.connect(self._gce_browse_folder)
+        out_row.addWidget(self._gce_folder); out_row.addWidget(browse_btn)
+        og_lay.addRow('Folder:', out_row)
+        self._gce_prefix = QLineEdit()
+        self._gce_prefix.textChanged.connect(self._gce_update_filenames)
+        og_lay.addRow('Prefix:', self._gce_prefix)
+        self._gce_filenames = QLabel(''); self._gce_filenames.setWordWrap(True)
+        self._gce_filenames.setStyleSheet('color: #8b949e; font-size: 11px;')
+        og_lay.addRow('', self._gce_filenames)
+        llay.addWidget(og)
+
+        llay.addStretch()
+
+        # Export button
+        self._gce_export_btn = QPushButton('⬇  Export G-code')
+        self._gce_export_btn.setFixedHeight(34)
+        self._gce_export_btn.clicked.connect(self._gce_export)
+        llay.addWidget(self._gce_export_btn)
+
+        root.addWidget(left)
+
+        # ── RIGHT: preview ─────────────────────────────────────────────────
+        right = QWidget(); rlay = QVBoxLayout(right); rlay.setContentsMargins(0, 0, 0, 0); rlay.setSpacing(4)
+
+        hdr = QHBoxLayout()
+        hdr.addWidget(QLabel('G-code Preview'))
+        hdr.addStretch()
+        self._gce_meta_lbl = QLabel('—')
+        self._gce_meta_lbl.setStyleSheet('color: #8b949e; font-size: 11px;')
+        hdr.addWidget(self._gce_meta_lbl)
+        preview_btn = QPushButton('⟳ Generate')
+        preview_btn.setFixedHeight(26); preview_btn.setFixedWidth(90)
+        preview_btn.clicked.connect(self._gce_generate_preview)
+        hdr.addWidget(preview_btn)
+        copy_btn = QPushButton('⎘ Copy')
+        copy_btn.setFixedHeight(26); copy_btn.setFixedWidth(70)
+        copy_btn.clicked.connect(self._gce_copy_preview)
+        hdr.addWidget(copy_btn)
+        rlay.addLayout(hdr)
+
+        # File tabs (one per tool)
+        self._gce_file_tabs = QTabWidget()
+        self._gce_file_tabs.setTabPosition(QTabWidget.North)
+        rlay.addWidget(self._gce_file_tabs, 1)
+
+        root.addWidget(right, 1)
+
+        # Populate initial state once design is available
+        QTimer.singleShot(0, self._gce_init)
+        return w
+
+    def _gce_init(self):
+        self._gce_use_design_size()
+        self._gce_refresh_tools()
+
+    def _gce_use_design_size(self):
+        self._gce_w.setValue(self._design.width)
+        self._gce_h.setValue(self._design.height)
+        self._gce_prefix.setText(self._design.design_code)
+
+    def _gce_browse_folder(self):
+        d = QFileDialog.getExistingDirectory(self, 'Output Folder',
+                                             self._gce_folder.text())
+        if d:
+            self._gce_folder.setText(d)
+
+    _GCE_TOOL_COLORS = ['#ef4444', '#a855f7', '#eab308', '#22c55e',
+                        '#3b82f6', '#f97316', '#06b6d4', '#ec4899']
+
+    def _gce_refresh_tools(self):
+        """Re-build tool list and filename hints from current design."""
+        from design_engines.toolpath_preview import generate_preview_paths
+        try:
+            paths = self._design.generate_toolpath_preview()
+        except Exception:
+            paths = []
+        seen: dict[str, int] = {}
+        for seg in paths:
+            tid = seg.get('tool_id', 'T1')
+            pts = seg.get('points', [])
+            seen[tid] = seen.get(tid, 0) + len(pts)
+
+        self._gce_tool_list.clear()
+        colors = self._GCE_TOOL_COLORS
+        for i, (tid, n) in enumerate(sorted(seen.items())):
+            tool_name = self._design.tools.get(tid, {}).get('name', tid) if hasattr(self._design, 'tools') else tid
+            item = QListWidgetItem(f'  {tid}  {tool_name}  ({n} pts)')
+            from PySide6.QtGui import QColor as _QC
+            item.setForeground(_QC(colors[i % len(colors)]))
+            self._gce_tool_list.addItem(item)
+
+        n_tools = len(seen)
+        total_pts = sum(seen.values())
+        self._gce_stats.setText(f'{n_tools} tool(s) · {total_pts} path points')
+        self._gce_update_filenames()
+
+    def _gce_update_filenames(self):
+        """Update filename hint label."""
+        prefix = self._gce_prefix.text().strip() or self._design.design_code
+        pp_id = self._gce_pp.currentData() or 'nc'
+        try:
+            from post_processor_manager import PostProcessorManager
+            pp = PostProcessorManager().get(pp_id)
+            ext = pp.file_extension if pp else 'nc'
+            atc = pp.has_atc if pp else False
+        except Exception:
+            ext = 'nc'; atc = False
+        try:
+            paths = self._design.generate_toolpath_preview()
+        except Exception:
+            paths = []
+        seen = sorted({seg.get('tool_id', 'T1') for seg in paths})
+        if atc or not seen:
+            names = [f'→ {prefix}.{ext}']
+        else:
+            names = [f'→ {prefix}_{t}.{ext}' for t in seen]
+        self._gce_filenames.setText('\n'.join(names[:6]))
+        self._gce_export_btn.setText(f'⬇  Export {len(names)} File(s)')
+
+    def _gce_generate_preview(self):
+        """Generate G-code and populate the preview tabs."""
+        self._sync_from_ui()
+        w = self._gce_w.value(); h = self._gce_h.value()
+        pp_id = self._gce_pp.currentData() or 'gcode_mm'
+        origin_val = self._gce_origin.currentData() or '(0,0)'
+
+        try:
+            from gcode_generator import GcodeGenerator
+            gen = GcodeGenerator(post_processor_id=pp_id)
+            gen.origin = origin_val
+
+            # Build a fake Part-like object the generator accepts
+            from data_models import Part
+            part = Part()
+            part.part_code  = self._design.design_code
+            part.design_code = self._design.design_code
+            part.width = w; part.height = h
+            part.rotation = 0; part.pos_x = 0; part.pos_y = 0
+
+            tool_groups = gen.generate_part(part, w, h)
+        except Exception as e:
+            tool_groups = {}
+            self._gce_meta_lbl.setText(f'Error: {e}')
+
+        self._gce_file_tabs.clear()
+        colors = self._GCE_TOOL_COLORS
+        total_lines = 0
+        for i, (tid, glines) in enumerate(sorted(tool_groups.items())):
+            text = '\n'.join(glines)
+            total_lines += len(glines)
+            edit = QTextEdit()
+            edit.setReadOnly(True)
+            edit.setFont(QFont('JetBrains Mono,Consolas,Courier New', 10))
+            edit.setStyleSheet('background:#0d1117; color:#e6edf3; border:none;')
+            self._gce_syntax_highlight(edit, glines)
+            color = colors[i % len(colors)]
+            self._gce_file_tabs.addTab(edit, f'{tid}')
+            self._gce_file_tabs.setTabToolTip(i, f'{len(glines)} lines')
+
+        if not tool_groups:
+            placeholder = QTextEdit()
+            placeholder.setReadOnly(True)
+            placeholder.setPlainText('; No toolpaths found for this design.\n'
+                                     '; Assign tools in the Layers / Toolpath tab.')
+            placeholder.setStyleSheet('background:#0d1117; color:#6e7681; border:none;')
+            self._gce_file_tabs.addTab(placeholder, '(empty)')
+
+        pp_id_short = (self._gce_pp.currentText() or '').split('·')[0].strip()
+        self._gce_meta_lbl.setText(f'{len(tool_groups)} file(s) · {total_lines} lines')
+
+    def _gce_syntax_highlight(self, edit: QTextEdit, lines: list):
+        """Insert syntax-colored G-code into a QTextEdit."""
+        from PySide6.QtGui import QTextCharFormat, QTextCursor, QColor as _QC
+
+        C = {
+            'comment':  '#6e7681',
+            'cmd':      '#79c0ff',
+            'param':    '#ffa657',
+            'tool':     '#d2a8ff',
+            'spindle':  '#7ee787',
+            'feedrate': '#e3b341',
+            'default':  '#e6edf3',
+        }
+
+        edit.clear()
+        cursor = edit.textCursor()
+
+        def fmt(color):
+            f = QTextCharFormat()
+            f.setForeground(_QC(color))
+            return f
+
+        import re as _re
+        for line in lines:
+            stripped = line.rstrip()
+            if stripped.startswith(';'):
+                cursor.insertText(stripped, fmt(C['comment']))
+            elif _re.match(r'\s*T\d+\s*M6', stripped):
+                cursor.insertText(stripped, fmt(C['tool']))
+            elif _re.match(r'\s*M3', stripped):
+                cursor.insertText(stripped, fmt(C['spindle']))
+            elif _re.match(r'\s*(G0|G00)\b', stripped):
+                cursor.insertText(stripped, fmt(C['cmd']))
+            elif _re.match(r'\s*(G1|G01|G2|G02|G3|G03)\b', stripped):
+                # feed line — color F value differently
+                m = _re.match(r'(\s*G\d+\s+)(.*?)(F[\d.]+)(.*)', stripped)
+                if m:
+                    cursor.insertText(m.group(1), fmt(C['cmd']))
+                    cursor.insertText(m.group(2), fmt(C['param']))
+                    cursor.insertText(m.group(3), fmt(C['feedrate']))
+                    cursor.insertText(m.group(4), fmt(C['param']))
+                else:
+                    cursor.insertText(stripped, fmt(C['cmd']))
+            elif _re.match(r'\s*(M30|M5|G28|G21|G20|G90|G91|G17)', stripped):
+                cursor.insertText(stripped, fmt(C['spindle']))
+            else:
+                cursor.insertText(stripped, fmt(C['default']))
+            cursor.insertText('\n', fmt(C['default']))
+
+        edit.setTextCursor(cursor)
+
+    def _gce_copy_preview(self):
+        """Copy current tab's G-code to clipboard."""
+        tab = self._gce_file_tabs.currentWidget()
+        if isinstance(tab, QTextEdit):
+            from PySide6.QtWidgets import QApplication as _App
+            _App.clipboard().setText(tab.toPlainText())
+
+    def _gce_export(self):
+        """Export G-code files to output folder."""
+        self._sync_from_ui()
+        w = self._gce_w.value(); h = self._gce_h.value()
+        pp_id = self._gce_pp.currentData() or 'gcode_mm'
+        origin_val = self._gce_origin.currentData() or '(0,0)'
+        folder = Path(self._gce_folder.text().strip() or config.output_folder)
+        prefix = (self._gce_prefix.text().strip() or self._design.design_code)
+
+        try:
+            from gcode_generator import GcodeGenerator
+            from data_models import Part
+            gen = GcodeGenerator(post_processor_id=pp_id)
+            gen.origin = origin_val
+            gen.output_dir = folder
+
+            part = Part()
+            part.part_code   = prefix
+            part.design_code = self._design.design_code
+            part.width = w; part.height = h
+            part.rotation = 0; part.pos_x = 0; part.pos_y = 0
+
+            tool_groups = gen.generate_part(part, w, h)
+            if not tool_groups:
+                QMessageBox.warning(self, 'Export G-code',
+                                    'No toolpaths generated.\n'
+                                    'Assign tools in the Layers / Toolpath tab.')
+                return
+
+            folder.mkdir(parents=True, exist_ok=True)
+            try:
+                from post_processor_manager import PostProcessorManager
+                pp = PostProcessorManager().get(pp_id)
+                ext = pp.file_extension if pp else 'nc'
+                atc = pp.has_atc if pp else False
+            except Exception:
+                ext = 'nc'; atc = False
+
+            saved = []
+            if atc:
+                fp = folder / f'{prefix}.{ext}'
+                with open(fp, 'w', encoding='utf-8') as f:
+                    f.write(gen._render_header())
+                    for tid, glines in sorted(tool_groups.items()):
+                        tool = gen.tools.get(tid)
+                        tnum = int(tid.lstrip('T') or '1')
+                        f.write(f'\n; ─── {tid} ───\n')
+                        f.write(gen._render_toolchange(tool, tnum) if tool else f'T{tnum} M6\n')
+                        f.write('\n'.join(glines) + '\n')
+                    f.write(gen._render_footer())
+                saved.append(fp)
+            else:
+                for tid, glines in sorted(tool_groups.items()):
+                    tool = gen.tools.get(tid)
+                    tnum = int(tid.lstrip('T') or '1')
+                    fp = folder / f'{prefix}_{tid}.{ext}'
+                    with open(fp, 'w', encoding='utf-8') as f:
+                        f.write(gen._render_header(tool) if tool else gen._render_header())
+                        f.write(f'; === {tid} ===\n')
+                        f.write(f'T{tnum} M6\n')
+                        f.write('\n'.join(glines) + '\n')
+                        f.write(gen._render_footer())
+                    saved.append(fp)
+
+            names = '\n'.join(f.name for f in saved)
+            QMessageBox.information(self, 'G-code Exported',
+                                    f'{len(saved)} file(s) saved to:\n{folder}\n\n{names}')
+            # Also refresh preview
+            self._gce_generate_preview()
+        except Exception as e:
+            QMessageBox.critical(self, 'Export Error', str(e))
 
     def _apply_style(self):
         self.setStyleSheet(
