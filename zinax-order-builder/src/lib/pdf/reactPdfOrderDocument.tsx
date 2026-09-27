@@ -3,7 +3,7 @@
 // (totalDoors, totalArea, line totals) is read straight off the model or
 // computed by core/calculations.ts.
 import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
-import type { OrderPdfModel } from "../../core/pdfSchema";
+import { melaminePdfCell, melaminePdfColumns, type OrderPdfModel } from "../../core/pdfSchema";
 import { lineTotal, formatCurrency } from "../../core/calculations";
 
 const styles = StyleSheet.create({
@@ -25,6 +25,7 @@ const styles = StyleSheet.create({
   tableRow: { flexDirection: "row", borderBottomWidth: 0.5, borderBottomColor: "#e2e8f0", paddingVertical: 4, paddingHorizontal: 2 },
   tableRowAlt: { backgroundColor: "#f8fafc" },
   tableCell: { fontSize: 8, paddingHorizontal: 2 },
+  sectionTitle: { fontSize: 9, fontWeight: 700, color: "#0a1a33", marginTop: 12, marginBottom: 4, textTransform: "uppercase" },
   notesBlock: { marginTop: 10, padding: 8, backgroundColor: "#f1f5f9", borderRadius: 4 },
   notesLabel: { fontSize: 7, color: "#94a3b8", textTransform: "uppercase", marginBottom: 2 },
   notesText: { fontSize: 8.5, color: "#334155" },
@@ -99,6 +100,9 @@ export default function ReactPdfOrderDocument({ model, currency }: { model: Orde
           </View>
         </View>
 
+        {model.doorRows.length > 0 || model.melamineRows.length === 0 ? (
+        <>
+        {model.melamineRows.length > 0 ? <Text style={styles.sectionTitle}>Vacuum doors</Text> : null}
         <View style={styles.tableHeaderRow} fixed>
           {columns.map((col) => (
             <Text key={col.key} style={[styles.tableHeaderCell, { flex: col.flex }]}>
@@ -107,7 +111,7 @@ export default function ReactPdfOrderDocument({ model, currency }: { model: Orde
           ))}
         </View>
 
-        {model.rows.map((row, idx) => (
+        {model.doorRows.map((row, idx) => (
           <View key={row.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]} wrap={false}>
             {columns.map((col) => {
               let value: string;
@@ -163,6 +167,31 @@ export default function ReactPdfOrderDocument({ model, currency }: { model: Orde
           </View>
         ))}
 
+        </>
+        ) : null}
+
+        {model.melamineRows.length > 0 ? (
+          <>
+            <Text style={styles.sectionTitle}>Melamine panels — edges seen from the front: E1 bottom, E2 top, E3 left, E4 right</Text>
+            <View style={styles.tableHeaderRow} fixed>
+              {melaminePdfColumns(showPrices).map((col) => (
+                <Text key={col.key} style={[styles.tableHeaderCell, { flex: col.flex }]}>
+                  {col.label}
+                </Text>
+              ))}
+            </View>
+            {model.melamineRows.map((row, idx) => (
+              <View key={row.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]} wrap={false}>
+                {melaminePdfColumns(showPrices).map((col) => (
+                  <Text key={col.key} style={[styles.tableCell, { flex: col.flex }]}>
+                    {melaminePdfCell(row, col.key, idx, currency)}
+                  </Text>
+                ))}
+              </View>
+            ))}
+          </>
+        ) : null}
+
         {model.notes ? (
           <View style={styles.notesBlock}>
             <Text style={styles.notesLabel}>General Notes</Text>
@@ -175,6 +204,12 @@ export default function ReactPdfOrderDocument({ model, currency }: { model: Orde
             <Text style={styles.infoLabel}>Total Doors</Text>
             <Text style={styles.infoValue}>{model.totalDoors}</Text>
           </View>
+          {model.totalPanels > 0 ? (
+            <View style={styles.footerCell}>
+              <Text style={styles.infoLabel}>Melamine Panels</Text>
+              <Text style={styles.infoValue}>{model.totalPanels}</Text>
+            </View>
+          ) : null}
           <View style={styles.footerCell}>
             <Text style={styles.infoLabel}>Total Area</Text>
             <Text style={styles.infoValue}>{model.totalArea.toFixed(2)} m²</Text>

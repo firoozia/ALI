@@ -61,6 +61,19 @@ create table if not exists colors (
   unique (tenant_id, code)
 );
 
+-- The factory's melamine edge-band codes (P1, P2, …) — published so the
+-- public portal offers the same codes as ZINAX CAM and Order Builder.
+create table if not exists edge_bands (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants (id) on delete cascade,
+  code text not null,
+  name text not null default '',
+  thickness_mm numeric not null default 0,
+  active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, code)
+);
+
 -- Orders submitted by an end customer through the public portal, before
 -- the factory has reviewed/accepted them into its real order history.
 -- Deliberately a separate table from `orders`: the public portal writes
@@ -81,6 +94,7 @@ alter table tenants enable row level security;
 alter table orders enable row level security;
 alter table designs enable row level security;
 alter table colors enable row level security;
+alter table edge_bands enable row level security;
 alter table customer_submissions enable row level security;
 
 -- A user can only see/manage the tenant row they own.
@@ -146,6 +160,18 @@ create policy "tenant owner can manage own colors" on colors
 
 -- ...and anyone (the unauthenticated customer portal) can read the active ones.
 create policy "public can read active colors" on colors
+  for select using (active = true);
+
+-- Edge bands: same pattern as colors.
+create policy "tenant owner can manage own edge bands" on edge_bands
+  for all using (
+    tenant_id in (select id from tenants where owner_user_id = auth.uid())
+  )
+  with check (
+    tenant_id in (select id from tenants where owner_user_id = auth.uid())
+  );
+
+create policy "public can read active edge bands" on edge_bands
   for select using (active = true);
 
 -- Customer submissions: anyone can submit an order through the public

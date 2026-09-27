@@ -3,16 +3,19 @@ import { Lock, CheckCircle2, Download, FileText, Printer, ClipboardList, FilePlu
 import { resolveTenantBySlug, submitCustomerOrder, fetchMyCustomerSubmissions } from "../lib/publicPortal";
 import { fetchPublicDesigns } from "../lib/remoteDesigns";
 import { fetchPublicColors } from "../lib/remoteColors";
+import { fetchPublicEdgeBands } from "../lib/remoteEdgeBands";
 import { rememberSubmission, listRememberedSubmissions } from "../lib/customerOrderHistory";
 import { extractErrorMessage } from "../lib/errors";
 import type {
   PublicTenant,
   PublicDesign,
   PublicColor,
+  PublicEdgeBand,
   CustomerPortalItem,
   CustomerSubmission,
   CustomerSubmissionRecord,
 } from "../core/publicCatalogSchema";
+import { isCompletePortalItem } from "../core/publicCatalogSchema";
 import {
   buildCustomerSubmissionFile,
   serializeCustomerSubmissionFile,
@@ -36,6 +39,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
   const [tenant, setTenant] = useState<PublicTenant | null>(null);
   const [designs, setDesigns] = useState<PublicDesign[]>([]);
   const [colors, setColors] = useState<PublicColor[]>([]);
+  const [edgeBands, setEdgeBands] = useState<PublicEdgeBand[]>([]);
   const [catalogError, setCatalogError] = useState(false);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "not-found">("loading");
 
@@ -70,7 +74,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
       }
       setTenant(t);
       let failed = false;
-      const [designList, colorList] = await Promise.all([
+      const [designList, colorList, bandList] = await Promise.all([
         fetchPublicDesigns(t.id).catch(() => {
           failed = true;
           return [];
@@ -79,10 +83,15 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
           failed = true;
           return [];
         }),
+        fetchPublicEdgeBands(t.id).catch(() => {
+          failed = true;
+          return [];
+        }),
       ]);
       setCatalogError(failed);
       setDesigns(designList);
       setColors(colorList);
+      setEdgeBands(bandList);
       setItems(blankItems());
       setLoadState("ready");
     });
@@ -141,7 +150,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
 
   const currentSubmission = (): CustomerSubmission => ({ customerName, endCustomerName, siteName, items });
 
-  const validItems = items.filter((it) => it.designCode && it.width > 0 && it.height > 0 && it.qty > 0);
+  const validItems = items.filter(isCompletePortalItem);
 
   const handleDownloadFile = async () => {
     if (validItems.length === 0) return;
@@ -378,7 +387,7 @@ export default function CustomerPortal({ slug }: CustomerPortalProps) {
             </div>
 
             <div className="mb-5">
-              <CustomerItemsTable items={items} onChangeItems={setItems} designs={designs} colors={colors} readOnly={readOnly} />
+              <CustomerItemsTable items={items} onChangeItems={setItems} designs={designs} colors={colors} edgeBands={edgeBands} readOnly={readOnly} />
             </div>
 
             {error && <p className="mb-3 text-sm font-medium text-red-600">{error}</p>}

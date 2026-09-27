@@ -3,7 +3,7 @@
 // customer-portal submission has no pricing, MDF, or PVC-catalog fields,
 // just what was actually collected on the form.
 import { Document, Page, View, Text, StyleSheet } from "@react-pdf/renderer";
-import type { CustomerSubmission } from "../../core/publicCatalogSchema";
+import type { CustomerPortalItem, CustomerSubmission } from "../../core/publicCatalogSchema";
 
 const styles = StyleSheet.create({
   page: { padding: 32, fontSize: 9.5, fontFamily: "Helvetica", color: "#0f172a" },
@@ -31,13 +31,20 @@ const COLUMNS = [
   { key: "size", label: "Size (mm)", flex: 1.1 },
   { key: "qty", label: "Qty", flex: 0.6 },
   { key: "colorCode", label: "Color Code", flex: 1 },
-  { key: "direction", label: "Direction", flex: 0.9 },
+  { key: "direction", label: "Direction / Edges", flex: 2.2 },
 ];
 
 interface CustomerOrderPdfProps {
   companyName: string;
   submission: CustomerSubmission;
   submittedAt: string;
+}
+
+/** Doors show their direction; melamine panels show E1–E4 (bottom, top, left, right) and rotation. */
+function portalItemDirectionText(item: CustomerPortalItem): string {
+  if (item.productType !== "melamine") return item.direction || "-";
+  const e = (v?: string) => v || "N";
+  return `E1 ${e(item.edge1)} · E2 ${e(item.edge2)} · E3 ${e(item.edge3)} · E4 ${e(item.edge4)} · rot ${item.rotation === "N" ? "N" : "Y"}`;
 }
 
 export default function ReactPdfCustomerOrderDocument({ companyName, submission, submittedAt }: CustomerOrderPdfProps) {
@@ -81,11 +88,11 @@ export default function ReactPdfCustomerOrderDocument({ companyName, submission,
         {submission.items.map((item, idx) => (
           <View key={idx} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]} wrap={false}>
             <Text style={[styles.tableCell, { flex: COLUMNS[0].flex }]}>{idx + 1}</Text>
-            <Text style={[styles.tableCell, { flex: COLUMNS[1].flex }]}>{item.designCode || "-"}</Text>
+            <Text style={[styles.tableCell, { flex: COLUMNS[1].flex }]}>{item.designCode || (item.productType === "melamine" ? "Panel" : "-")}</Text>
             <Text style={[styles.tableCell, { flex: COLUMNS[2].flex }]}>{item.width} × {item.height}</Text>
             <Text style={[styles.tableCell, { flex: COLUMNS[3].flex }]}>{item.qty}</Text>
             <Text style={[styles.tableCell, { flex: COLUMNS[4].flex }]}>{item.colorCode || "-"}</Text>
-            <Text style={[styles.tableCell, { flex: COLUMNS[5].flex }]}>{item.direction || "-"}</Text>
+            <Text style={[styles.tableCell, { flex: COLUMNS[5].flex }]}>{portalItemDirectionText(item)}</Text>
           </View>
         ))}
 

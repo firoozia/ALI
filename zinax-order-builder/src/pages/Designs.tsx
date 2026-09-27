@@ -19,6 +19,7 @@ import { downloadJsonFile, readFileAsText } from "../lib/download";
 import { edgeBandCodeError, parseEdgeBandCodesCsv, type EdgeBandCatalogItem } from "../core/melamine";
 import { publishDesignsToPortal } from "../lib/remoteDesigns";
 import { publishColorsToPortal } from "../lib/remoteColors";
+import { isMissingEdgeBandTable, publishEdgeBandsToPortal } from "../lib/remoteEdgeBands";
 import type { TenantSession } from "../lib/tenantAuth";
 import Toast, { type ToastTone } from "../components/ui/Toast";
 import NumberCell from "../components/ui/NumberCell";
@@ -79,7 +80,14 @@ export default function Designs({ catalog, onChangeCatalog, tenantSession }: Des
     try {
       await publishDesignsToPortal(tenantSession.tenantId, catalog.designs);
       await publishColorsToPortal(tenantSession.tenantId, catalog.pvcColors);
-      flash("Published — your customer portal now shows these design and color codes.");
+      try {
+        await publishEdgeBandsToPortal(tenantSession.tenantId, catalog.edgeBands ?? []);
+      } catch (err) {
+        if (!isMissingEdgeBandTable(err)) throw err;
+        flash("Designs and colors published. Edge bands were not: run the updated supabase/schema.sql once to add the edge_bands table.", "error");
+        return;
+      }
+      flash("Published — your customer portal now shows these design, color, and edge band codes.");
     } catch (err) {
       flash(`Could not publish: ${err instanceof Error ? err.message : "unknown error"}`, "error");
     } finally {

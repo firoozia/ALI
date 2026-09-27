@@ -3,7 +3,7 @@
 // customer_submissions from Supabase) whose customer sent the file some
 // other way (WhatsApp, email, USB), instead of it landing in the database.
 import type { CustomerSubmission } from "./publicCatalogSchema";
-import { makeDefaultRow, type OrderHeader, type OrderRow } from "./orderSchema";
+import { ensureOrderRow, makeDefaultRow, type OrderHeader, type OrderRow } from "./orderSchema";
 
 export const CUSTOMER_SUBMISSION_FILE_SCHEMA_VERSION = "1.0";
 export const CUSTOMER_SUBMISSION_FILE_APP_ID = "ZINAX_CUSTOMER_PORTAL";
@@ -86,14 +86,31 @@ export function mergeCustomerSubmissionIntoOrder(
   submission: CustomerSubmission
 ): { header: OrderHeader; rows: OrderRow[] } {
   const newRows = submission.items.map((item) =>
-    makeDefaultRow({
-      designCode: item.designCode,
-      width: item.width,
-      height: item.height,
-      qty: item.qty,
-      pvcCode: item.colorCode,
-      grain: item.direction,
-    })
+    item.productType === "melamine"
+      ? ensureOrderRow(
+          makeDefaultRow({
+            productType: "melamine",
+            designCode: item.designCode,
+            width: item.width,
+            height: item.height,
+            qty: item.qty,
+            pvcCode: item.colorCode,
+            grain: "None",
+            edge1: item.edge1 ?? "N",
+            edge2: item.edge2 ?? "N",
+            edge3: item.edge3 ?? "N",
+            edge4: item.edge4 ?? "N",
+            rotation: item.rotation ?? "Y",
+          })
+        )
+      : makeDefaultRow({
+          designCode: item.designCode,
+          width: item.width,
+          height: item.height,
+          qty: item.qty,
+          pvcCode: item.colorCode,
+          grain: item.direction,
+        })
   );
   return {
     rows: [...rows, ...newRows],

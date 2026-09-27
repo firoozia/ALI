@@ -3,7 +3,7 @@
 // balance due) are read from model.totals / model.balanceDue — computed
 // exclusively by core/calculations.ts, never recalculated here.
 import { Document, Page, View, Text, Image, StyleSheet } from "@react-pdf/renderer";
-import { INVOICE_LINE_COLUMNS, type InvoicePdfModel } from "../../core/pdfSchema";
+import { INVOICE_LINE_COLUMNS, invoiceItemCode, type InvoicePdfModel } from "../../core/pdfSchema";
 import { discountAmount, vatAmount, lineTotal, formatCurrency, formatNumber } from "../../core/calculations";
 
 const styles = StyleSheet.create({
@@ -144,7 +144,7 @@ export default function ReactPdfInvoiceDocument({ model }: { model: InvoicePdfMo
         {model.rows.map((row, idx) => (
           <View key={row.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]} wrap={false}>
             <Text style={[styles.tableCell, { flex: COLUMN_FLEX.no }]}>{idx + 1}</Text>
-            <Text style={[styles.tableCell, { flex: COLUMN_FLEX.designCode }]}>{row.designCode || "-"}</Text>
+            <Text style={[styles.tableCell, { flex: COLUMN_FLEX.designCode }]}>{invoiceItemCode(row) || "-"}</Text>
             <Text style={[styles.tableCell, { flex: COLUMN_FLEX.pvcCode }]}>{row.pvcCode || "-"}</Text>
             <Text style={[styles.tableCell, { flex: COLUMN_FLEX.size }]}>
               {row.width || "-"} × {row.height || "-"}

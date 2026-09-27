@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
 import Toast, { type ToastTone } from "../components/ui/Toast";
-import { buildOrderPdfModel, type OrderPreviewData } from "../core/pdfSchema";
+import { buildOrderPdfModel, melaminePdfCell, melaminePdfColumns, type OrderPreviewData } from "../core/pdfSchema";
 import { lineTotal, formatCurrency } from "../core/calculations";
 import { exportOrderPdf } from "../lib/pdf/exportOrderPdf";
 
@@ -89,7 +89,11 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
           </div>
 
           {/* Table */}
+          {(model.doorRows.length > 0 || model.melamineRows.length === 0) && (
           <div className="mt-8 overflow-x-auto">
+            {model.melamineRows.length > 0 && (
+              <p className="mb-2 text-2xs font-bold uppercase tracking-wide text-navy-900">Vacuum doors</p>
+            )}
             <table className="w-full min-w-[900px] border-collapse text-sm">
               <thead>
                 <tr className="bg-navy-950 text-white">
@@ -114,7 +118,7 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
                 </tr>
               </thead>
               <tbody>
-                {model.rows.map((row, idx) => (
+                {model.doorRows.map((row, idx) => (
                   <tr key={row.id} className={idx % 2 === 0 ? "bg-white" : "bg-ink-50/60"}>
                     <td className="border-b border-ink-100 px-3 py-2 text-ink-500">{idx + 1}</td>
                     <td className="border-b border-ink-100 px-3 py-2 font-semibold text-navy-800">{row.designCode || "—"}</td>
@@ -142,6 +146,40 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
               </tbody>
             </table>
           </div>
+          )}
+
+          {model.melamineRows.length > 0 && (
+            <div className="mt-8 overflow-x-auto">
+              <p className="mb-2 text-2xs font-bold uppercase tracking-wide text-navy-900">
+                Melamine panels <span className="font-normal normal-case text-ink-500">— edges seen from the front: E1 bottom, E2 top, E3 left, E4 right</span>
+              </p>
+              <table className="w-full min-w-[900px] border-collapse text-sm">
+                <thead>
+                  <tr className="bg-navy-950 text-white">
+                    {melaminePdfColumns(showPrices).map((col) => (
+                      <th key={col.key} className="whitespace-nowrap px-3 py-2.5 text-left text-2xs font-semibold uppercase tracking-wide">
+                        {col.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {model.melamineRows.map((row, idx) => (
+                    <tr key={row.id} className={idx % 2 === 0 ? "bg-white" : "bg-ink-50/60"}>
+                      {melaminePdfColumns(showPrices).map((col) => (
+                        <td
+                          key={col.key}
+                          className={`border-b border-ink-100 px-3 py-2 ${col.key.startsWith("edge") ? "font-semibold text-navy-800" : ""}`}
+                        >
+                          {melaminePdfCell(row, col.key, idx, header.currency)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {model.notes && (
             <div className="mt-6 rounded-lg bg-ink-50 p-3 text-sm text-ink-700">
@@ -153,6 +191,7 @@ export default function OrderPdfPreview({ order, onBack }: OrderPdfPreviewProps)
           {/* Footer */}
           <div className="mt-10 grid grid-cols-2 gap-8 border-t border-ink-200 pt-6 sm:grid-cols-4">
             <InfoField label="Total Doors" value={model.totalDoors} strong />
+            {model.totalPanels > 0 && <InfoField label="Melamine Panels" value={model.totalPanels} strong />}
             <InfoField
               label="Total Area"
               value={`${model.totalArea.toFixed(2)} m²`}

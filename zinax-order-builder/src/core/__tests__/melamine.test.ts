@@ -168,3 +168,51 @@ describe("melamine validation", () => {
     ]);
   });
 });
+
+describe("customer portal submissions", () => {
+  it("imports a melamine panel from the portal with its edges and rotation", async () => {
+    const { mergeCustomerSubmissionIntoOrder } = await import("../customerSubmissionFile");
+    const { isCompletePortalItem } = await import("../publicCatalogSchema");
+    const panel = {
+      designCode: "", width: 560, height: 720, qty: 2, colorCode: "MEL-W", direction: "",
+      productType: "melamine" as const, edge1: "P1", edge2: "P1", edge3: "S/P1", edge4: "N", rotation: "N",
+    };
+    const door = { designCode: "ZD001", width: 400, height: 800, qty: 1, colorCode: "PVC-101", direction: "Vertical" };
+    expect(isCompletePortalItem(panel)).toBe(true);
+    expect(isCompletePortalItem({ ...door, designCode: "" })).toBe(false);
+    const { rows } = mergeCustomerSubmissionIntoOrder(header, [], {
+      customerName: "C", endCustomerName: "", siteName: "", items: [door, panel],
+    });
+    expect(rows.map((r) => r.productType)).toEqual(["vacuum_door", "melamine"]);
+    expect([rows[1].edge1, rows[1].edge3, rows[1].rotation, rows[1].pvcCode]).toEqual(["P1", "S/P1", "N", "MEL-W"]);
+  });
+
+  it("old portal submissions without productType stay doors", async () => {
+    const { mergeCustomerSubmissionIntoOrder } = await import("../customerSubmissionFile");
+    const { rows } = mergeCustomerSubmissionIntoOrder(header, [], {
+      customerName: "C", endCustomerName: "", siteName: "",
+      items: [{ designCode: "ZD001", width: 400, height: 800, qty: 1, colorCode: "PVC-101", direction: "Vertical" }],
+    });
+    expect(rows[0].productType).toBe("vacuum_door");
+    expect(rows[0].grain).toBe("Vertical");
+  });
+});
+
+describe("order PDF model", () => {
+  it("splits door and melamine rows and prints edges and rotation", async () => {
+    const { buildOrderPdfModel, melaminePdfCell, invoiceItemCode } = await import("../pdfSchema");
+    const { computeOrderTotals } = await import("../calculations");
+    const { makeDefaultSettings } = await import("../settingsSchema");
+    const door = makeDefaultRow({ designCode: "ZD001", width: 400, height: 800, qty: 2 });
+    const panel = makeDefaultRow({ productType: "melamine", designName: "Side", width: 560, height: 720, qty: 3, edge1: "P1", edge3: "S/P1", rotation: "N" });
+    const totals = computeOrderTotals([door, panel]);
+    expect([totals.totalDoors, totals.totalPanels]).toEqual([2, 3]);
+    const settings = makeDefaultSettings();
+    const model = buildOrderPdfModel(header, [door, panel], totals, settings.companyProfile, settings.pdfTemplate);
+    expect(model.doorRows).toEqual([door]);
+    expect(model.melamineRows).toEqual([panel]);
+    expect(melaminePdfCell(panel, "edge3", 0, "AED")).toBe("S/P1");
+    expect(melaminePdfCell(panel, "rotation", 0, "AED")).toBe("N (locked)");
+    expect(invoiceItemCode(panel)).toBe("Panel: Side");
+  });
+});

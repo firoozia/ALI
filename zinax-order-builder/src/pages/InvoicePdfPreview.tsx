@@ -3,7 +3,7 @@ import { Hammer } from "lucide-react";
 import PdfActionsBar from "../components/pdf/PdfActionsBar";
 import Toast, { type ToastTone } from "../components/ui/Toast";
 import { discountAmount, vatAmount, lineTotal, formatCurrency, formatNumber } from "../core/calculations";
-import { buildInvoicePdfModel, INVOICE_LINE_COLUMNS, type InvoicePreviewData } from "../core/pdfSchema";
+import { buildInvoicePdfModel, INVOICE_LINE_COLUMNS, invoiceItemCode, type InvoicePreviewData } from "../core/pdfSchema";
 import { exportInvoicePdf } from "../lib/pdf/exportInvoicePdf";
 
 interface InvoicePdfPreviewProps {
@@ -129,7 +129,7 @@ export default function InvoicePdfPreview({ order, onBack }: InvoicePdfPreviewPr
                 {model.rows.map((row, idx) => (
                   <tr key={row.id} className={idx % 2 === 0 ? "bg-white" : "bg-ink-50/60"}>
                     <td className="border-b border-ink-100 px-3 py-2 text-ink-500">{idx + 1}</td>
-                    <td className="border-b border-ink-100 px-3 py-2 font-semibold text-navy-800">{row.designCode || "—"}</td>
+                    <td className="border-b border-ink-100 px-3 py-2 font-semibold text-navy-800">{invoiceItemCode(row) || "—"}</td>
                     <td className="border-b border-ink-100 px-3 py-2">{row.pvcCode || "—"}</td>
                     <td className="border-b border-ink-100 px-3 py-2 tabular-nums">
                       {row.width || "—"} × {row.height || "—"}

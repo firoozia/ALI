@@ -15,6 +15,14 @@ export interface PublicColor {
   active: boolean;
 }
 
+/** A factory's melamine edge-band code, published so portal customers pick the same codes. */
+export interface PublicEdgeBand {
+  code: string;
+  name: string;
+  thicknessMm: number;
+  active: boolean;
+}
+
 export interface PublicTenant {
   id: string;
   slug: string;
@@ -28,6 +36,21 @@ export interface CustomerPortalItem {
   qty: number;
   colorCode: string;
   direction: string;
+  /** Missing on submissions made before melamine support: those are vacuum doors. */
+  productType?: "vacuum_door" | "melamine";
+  /** Melamine edges seen from the front: 1 bottom, 2 top, 3 left, 4 right. N | <band> | S | S/<band>. */
+  edge1?: string;
+  edge2?: string;
+  edge3?: string;
+  edge4?: string;
+  /** Melamine rotation: Y may rotate, N locked. */
+  rotation?: string;
+}
+
+/** A portal item the factory can import: a door needs a door code; a melamine panel does not. */
+export function isCompletePortalItem(item: CustomerPortalItem): boolean {
+  const sized = item.width > 0 && item.height > 0 && item.qty > 0;
+  return sized && (item.productType === "melamine" || Boolean(item.designCode));
 }
 
 export interface CustomerSubmission {
