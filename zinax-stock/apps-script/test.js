@@ -1,0 +1,28 @@
+// Runs Code.gs against a mocked spreadsheet: node apps-script/test.js apps-script/Code.gs
+const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
+// --- minimal SpreadsheetApp mock ---
+function makeSheet(name){ return { name, cells: [], fmt:{}, getLastRow(){ return this.cells.length; }, getLastColumn(){ return Math.max(0,...this.cells.map(r=>r.length)); }, getMaxRows(){return 1000;},
+  getRange(r,c,nr,nc){ const sh=this; nr=nr||1; nc=nc||1; return {
+    setValues(v){ for(let i=0;i<nr;i++){ sh.cells[r-1+i]=sh.cells[r-1+i]||[]; for(let j=0;j<nc;j++) sh.cells[r-1+i][c-1+j]=v[i][j]; } return this; },
+    getValues(){ const out=[]; for(let i=0;i<nr;i++){ const row=[]; for(let j=0;j<nc;j++){ const v=(sh.cells[r-1+i]||[])[c-1+j]; row.push(v===undefined?'':v);} out.push(row);} return out; },
+    getValue(){ return ((sh.cells[r-1]||[])[c-1]) ?? ''; }, setValue(v){ sh.cells[r-1]=sh.cells[r-1]||[]; sh.cells[r-1][c-1]=v; return this; },
+    setFontWeight(){return this;}, setNumberFormat(){return this;} }; },
+  setFrozenRows(){}, clearContents(){ this.cells=[]; } }; }
+const sheets={};
+const ss={ getSheetByName:n=>sheets[n]||null, insertSheet:(n)=>sheets[n]=makeSheet(n), getUrl:()=>'https://docs.google.com/spreadsheets/d/x', getSpreadsheetTimeZone:()=>'Asia/Tehran', getId:()=>'x', getName:()=>'Zinax' };
+const props={ZINAX_TOKEN:'tok'};
+const ctx={ SpreadsheetApp:{getActive:()=>ss}, ScriptApp:{WeekDay:{FRIDAY:'FRIDAY'}}, PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k], setProperty:(k,v)=>props[k]=v})},
+  LockService:{getScriptLock:()=>({waitLock(){},releaseLock(){}})}, Utilities:{formatDate:()=> '2025-10-09 17:00', getUuid:()=> 'u'},
+  ContentService:{MimeType:{JSON:'json'}, createTextOutput:t=>({t, setMimeType(){return this;}})}, Logger:{log(){}}, Date, JSON, Number, String, isNaN, Object, Math };
+vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[2],'utf8'), ctx);
+const post=b=>JSON.parse(ctx.doPost({postData:{contents:JSON.stringify(b)}}).t);
+assert.equal(post({token:'bad',action:'sync'}).ok,false);
+const item={id:'ZX-251009-A0001',category:'PVC',code:'101',size:'0.30*1400',unit:'m',qty:120,remaining:120,status:'IN_STOCK',shipmentId:'s1',pallet:'1',netKg:64,grossKg:null,receivedAt:1000,location:'',device:'A',updatedAt:1000};
+let r=post({token:'tok',action:'sync',since:0,shipments:[{id:'s1',name:'CN-1',source:'f.xlsx',createdAt:1,updatedAt:1}],expected:[{id:'e1',shipmentId:'s1',pallet:'1',lineNo:1,category:'PVC',code:'101',size:'0.30*1400',qty:120,unit:'m',netKg:64,grossKg:67,itemId:'ZX-251009-A0001',updatedAt:1000}],items:[item, {...item,id:'ZX-251009-A0002'}],movements:[{id:'m1',itemId:item.id,type:'IN',qty:120,reference:'Pallet 1',at:1000,device:'A',code:'101',size:'x',unit:'m'}]});
+assert.ok(r.ok, JSON.stringify(r)); assert.equal(r.items.length,2); assert.equal(r.items[0].netKg,64); assert.equal(r.items[0].grossKg,null); assert.equal(r.items[0].shipmentId,'s1'); assert.equal(r.shipments[0].name,'CN-1');
+assert.equal(sheets.Items.cells[1][8],'CN-1');
+// stale update ignored, newer applied; movement dedupe
+r=post({token:'tok',action:'sync',since:r.now,items:[{...item,remaining:50,updatedAt:500},{...item,id:'ZX-251009-A0002',remaining:0,status:'SHIPPED',updatedAt:2000}],movements:[{id:'m1',itemId:item.id,type:'IN',qty:120,at:1000,device:'A',code:'101',size:'x',unit:'m'}]});
+assert.equal(sheets.Items.cells[1][5],120); assert.equal(sheets.Items.cells[2][7],'SHIPPED'); assert.equal(sheets.Movements.cells.length,2);
+assert.deepEqual(sheets.Stock.cells[1].slice(0,6),['PVC','101','0.30*1400','m',1,120]);
+console.log('APPS_SCRIPT_TESTS_OK');

@@ -85,4 +85,6 @@
 
 Requires JDK 17 and the Android SDK (compileSdk 35). CI builds the APK on every push that touches `zinax-stock/`.
 
-The signing key in `app/zinax-debug.keystore` is committed so every build installs as an update. Anyone with this repository can sign an APK with it; keep the repository private.
+The signing key in `app/zinax-debug.keystore` is committed so every build installs as an update. This repository is public, so anyone can sign an APK with that key. That only matters if someone could install a fake update on your phones; for a store release, move the key to a GitHub secret.
+
+Apps Script logic test: `node apps-script/test.js apps-script/Code.gs`
