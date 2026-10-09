@@ -204,11 +204,16 @@ object PackingListParser {
     }
 
     private fun addConsistencyWarnings(units: List<ParsedUnit>, warnings: MutableList<String>) {
-        units.groupBy { it.code }.forEach { (code, list) ->
-            val sizes = list.map { it.size }.distinct()
-            if (sizes.size > 1) warnings.add("Code $code appears with ${sizes.size} sizes: ${sizes.joinToString(", ")}. Labels show the size, so check them.")
+        // The same code in two product families (PVC 101 and edge banding 101) is two different products.
+        val byProduct = units.groupBy { it.category to it.code }
+        val label = { key: Pair<Category, String> ->
+            if (units.map { it.category }.distinct().size > 1) "${key.first.label} ${key.second}" else key.second
         }
-        val split = units.groupBy { it.code }.filter { e -> e.value.map { it.pallet }.distinct().size > 1 }.keys
+        byProduct.forEach { (key, list) ->
+            val sizes = list.map { it.size }.distinct()
+            if (sizes.size > 1) warnings.add("Code ${label(key)} appears with ${sizes.size} sizes: ${sizes.joinToString(", ")}. Labels show the size, so check them.")
+        }
+        val split = byProduct.filter { e -> e.value.map { it.pallet }.distinct().size > 1 }.keys.map(label)
         if (split.isNotEmpty()) warnings.add("Codes on more than one pallet: ${split.joinToString(", ")}. Totals are checked across the whole shipment.")
     }
 }

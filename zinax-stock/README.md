@@ -72,6 +72,8 @@
 | 2 | Edge banding | 101 | 1×22 | 100 | m | 12 |
 | 3 | Rail | R-450 | 450mm | 10 | pcs | 5 |
 
+قالب آماده: [`templates/Zinax-Import-Template.xlsx`](templates/Zinax-Import-Template.xlsx) (برگه Help توضیح ستون‌ها را دارد).
+
 هر ردیف به تعداد `Packs` لیبل می‌سازد که هر کدام `Qty` واحد دارد. ستون‌های `Code` و `Qty` الزامی‌اند.
 
 ## لیبل
