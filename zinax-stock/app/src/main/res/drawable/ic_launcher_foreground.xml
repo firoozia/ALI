@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A label with a barcode, centred in the adaptive icon safe zone. -->
+<!-- A bold Z: white bars, the diagonal split into three yellow barcode bars. Kept inside the 66dp safe zone. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FFFFFF"
-        android:pathData="M30,36h48a4,4 0,0 1,4 4v28a4,4 0,0 1,-4 4h-48a4,4 0,0 1,-4 -4v-28a4,4 0,0 1,4 -4z" />
-    <path android:fillColor="#0D6B8A"
-        android:pathData="M34,44h3v20h-3z M40,44h2v20h-2z M45,44h4v20h-4z M52,44h2v20h-2z M57,44h3v20h-3z M63,44h2v20h-2z M68,44h4v20h-4z M75,44h2v20h-2z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M33,32 L75,32 Q77,32 77,34 L77,41 L31,41 L31,34 Q31,32 33,32 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M31,67 L77,67 L77,74 Q77,76 75,76 L33,76 Q31,76 31,74 Z" />
+    <path android:fillColor="#FFFFD43B"
+        android:pathData="M60,41 L65.1,41 L36.1,67 L31,67 Z" />
+    <path android:fillColor="#FFFFD43B"
+        android:pathData="M66.8,41 L70.54,41 L41.54,67 L37.8,67 Z" />
+    <path android:fillColor="#FFFFD43B"
+        android:pathData="M72.24,41 L77,41 L48,67 L43.24,67 Z" />
 </vector>

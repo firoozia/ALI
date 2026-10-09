@@ -2,12 +2,17 @@ package com.zinax.stock.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -15,11 +20,42 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zinax.stock.Graph
+import com.zinax.stock.ui.theme.LocalStatus
 
 const val NO_LOCATION = "No location"
+
+/** A storage location as a yellow badge, optionally with a package count. */
+@Composable
+fun LocationBadge(name: String, count: Int? = null) {
+    val status = LocalStatus.current
+    val none = name.isBlank() || name == NO_LOCATION
+    Surface(
+        color = if (none) MaterialTheme.colorScheme.surfaceVariant else status.place,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Text(
+            text = (if (none) NO_LOCATION else name) + (count?.let { "  ·  $it" } ?: ""),
+            color = if (none) MaterialTheme.colorScheme.onSurfaceVariant else status.placeText,
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+/** Badges for each location of a group, most packages first. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun LocationBadges(counts: List<Pair<String, Int>>) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        counts.forEach { (name, n) -> LocationBadge(name, n) }
+    }
+}
 
 /** Locations from Settings followed by any other location already used on a package. */
 @Composable

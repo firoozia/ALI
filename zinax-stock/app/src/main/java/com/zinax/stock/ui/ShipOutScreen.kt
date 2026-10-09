@@ -113,7 +113,7 @@ fun ShipOutScreen(onBack: () -> Unit) {
                         },
                     )
                     KeyValue("Left on this ${it.categoryEnum.pack}", Format.qtyUnit(it.remaining, it.unit))
-                    KeyValue("Location", it.location.ifBlank { NO_LOCATION })
+                    LocationBadge(it.location)
                 }
                 if (!inStock) Notice("This label was already shipped out.", status.bad, status.badSoft)
 

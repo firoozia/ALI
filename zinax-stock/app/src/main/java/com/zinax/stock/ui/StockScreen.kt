@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -89,7 +91,7 @@ fun StockScreen(onBack: () -> Unit) {
                 val total = list.sumOf { it.remaining }
                 val byPlace = list.groupBy { it.location.ifBlank { NO_LOCATION } }
                     .entries.sortedByDescending { it.value.size }
-                    .joinToString(" · ") { (p, l) -> "$p: ${l.size}" }
+                    .map { (p, l) -> p to l.size }
                 Panel {
                     Column(Modifier.clickable { open = if (open == key) null else key }) {
                         CodeRow(
@@ -97,7 +99,8 @@ fun StockScreen(onBack: () -> Unit) {
                             title = "${list.size} ${Report.plural(first.categoryEnum.pack, list.size)} · ${Format.qtyUnit(total, first.unit)}",
                             subtitle = listOf(first.categoryEnum.label, Format.size(first.size)).filter { it.isNotBlank() }.joinToString(" · "),
                         )
-                        Text(byPlace, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(6.dp))
+                        LocationBadges(byPlace)
                     }
                     if (open == key) {
                         TextButton(onClick = {
@@ -106,12 +109,12 @@ fun StockScreen(onBack: () -> Unit) {
                         list.sortedBy { it.receivedAt }.forEach { item ->
                             HorizontalDivider()
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text(item.id, style = MonoStyle, fontWeight = FontWeight.Medium)
+                                    LocationBadge(item.location)
                                     Text(
                                         listOfNotNull(
                                             Format.qtyUnit(item.remaining, item.unit) + if (item.remaining < item.qty) " of ${Format.qty(item.qty)}" else "",
-                                            item.location.ifBlank { NO_LOCATION },
                                             item.pallet?.let { "Pallet $it" },
                                             Format.date(item.receivedAt),
                                         ).joinToString(" · "),
