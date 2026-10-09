@@ -120,6 +120,51 @@ function sync_(req) {
   };
 }
 
+// ---------- hand edits in the sheet ----------
+
+/**
+ * Runs when someone edits the sheet by hand. Edits in the Items tab are stamped so the phones
+ * pick them up on their next sync. Remaining 0 marks a package shipped; above 0 puts it back in stock.
+ * A change to Remaining is logged in Movements as ADJUST.
+ */
+function onEdit(e) {
+  const sh = e.range.getSheet();
+  if (sh.getName() !== 'Items') return;
+  const first = Math.max(2, e.range.getRow());
+  const last = e.range.getLastRow();
+  if (last < first) return;
+  const cols = SHEETS.Items;
+  const C = function (name) { return cols.indexOf(name); };
+  const rows = sh.getRange(first, 1, last - first + 1, cols.length).getValues();
+  const now = Date.now();
+  rows.forEach(function (r) {
+    if (!r[0]) return;
+    if (r[C('Remaining')] !== '' && !isNaN(Number(r[C('Remaining')]))) {
+      const left = Number(r[C('Remaining')]);
+      if (left <= 0 && r[C('Status')] === 'IN_STOCK') r[C('Status')] = 'SHIPPED';
+      else if (left > 0 && r[C('Status')] === 'SHIPPED') r[C('Status')] = 'IN_STOCK';
+    }
+    // Never older than what a phone last wrote, even if its clock runs ahead.
+    r[C('UpdatedAt')] = Math.max(now, (Number(r[C('UpdatedAt')]) || 0) + 1);
+    r[C('ServerAt')] = now;
+  });
+  sh.getRange(first, 1, rows.length, cols.length).setValues(rows);
+
+  const remainingCol = C('Remaining') + 1;
+  if (rows.length === 1 && e.range.getNumColumns() === 1 && e.range.getColumn() === remainingCol && rows[0][0]) {
+    const r = rows[0];
+    const delta = (Number(e.value) || 0) - (Number(e.oldValue) || 0);
+    if (delta !== 0) {
+      const mv = sheet_('Movements');
+      mv.getRange(mv.getLastRow() + 1, 1, 1, SHEETS.Movements.length).setValues([[
+        Utilities.getUuid(), r[0], 'ADJUST', delta, r[C('Unit')], r[C('Code')], r[C('Size')],
+        'Edited in sheet', new Date(now), 'SHEET', now,
+      ]]);
+    }
+  }
+  stockSheet_();
+}
+
 // ---------- sheet helpers ----------
 
 function sheet_(name) {

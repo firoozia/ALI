@@ -1,7 +1,7 @@
 // Runs Code.gs against a mocked spreadsheet: node apps-script/test.js apps-script/Code.gs
 const fs = require('fs'); const vm = require('vm'); const assert = require('assert');
 // --- minimal SpreadsheetApp mock ---
-function makeSheet(name){ return { name, cells: [], fmt:{}, getLastRow(){ return this.cells.length; }, getLastColumn(){ return Math.max(0,...this.cells.map(r=>r.length)); }, getMaxRows(){return 1000;},
+function makeSheet(name){ return { name, getName(){ return name; }, cells: [], fmt:{}, getLastRow(){ return this.cells.length; }, getLastColumn(){ return Math.max(0,...this.cells.map(r=>r.length)); }, getMaxRows(){return 1000;},
   getRange(r,c,nr,nc){ const sh=this; nr=nr||1; nc=nc||1; return {
     setValues(v){ for(let i=0;i<nr;i++){ sh.cells[r-1+i]=sh.cells[r-1+i]||[]; for(let j=0;j<nc;j++) sh.cells[r-1+i][c-1+j]=v[i][j]; } return this; },
     getValues(){ const out=[]; for(let i=0;i<nr;i++){ const row=[]; for(let j=0;j<nc;j++){ const v=(sh.cells[r-1+i]||[])[c-1+j]; row.push(v===undefined?'':v);} out.push(row);} return out; },
@@ -25,4 +25,17 @@ assert.equal(sheets.Items.cells[1][8],'CN-1');
 r=post({token:'tok',action:'sync',since:r.now,items:[{...item,remaining:50,updatedAt:500},{...item,id:'ZX-251009-A0002',remaining:0,status:'SHIPPED',updatedAt:2000}],movements:[{id:'m1',itemId:item.id,type:'IN',qty:120,at:1000,device:'A',code:'101',size:'x',unit:'m'}]});
 assert.equal(sheets.Items.cells[1][5],120); assert.equal(sheets.Items.cells[2][7],'SHIPPED'); assert.equal(sheets.Movements.cells.length,2);
 assert.deepEqual(sheets.Stock.cells[1].slice(0,6),['PVC','101','0.30*1400','m',1,120]);
+// hand edit: set Remaining of A0001 (row 2) from 120 to 0
+const items=sheets.Items; const before=items.cells[1][15];
+items.cells[1][5]=0;
+const range={getSheet:()=>items,getRow:()=>2,getLastRow:()=>2,getNumColumns:()=>1,getColumn:()=>6};
+ctx.Utilities.getUuid=()=>'adj1';
+ctx.onEdit({range, value:'0', oldValue:'120'});
+assert.equal(items.cells[1][7],'SHIPPED'); assert.ok(items.cells[1][15]>before); assert.ok(items.cells[1][16]>0);
+assert.equal(sheets.Movements.cells[2][2],'ADJUST'); assert.equal(sheets.Movements.cells[2][3],-120);
+assert.equal(sheets.Stock.cells.length,1); // nothing left in stock
+r=post({token:'tok',action:'sync',since:items.cells[1][16]-1});
+assert.equal(r.items.length,1); assert.equal(r.items[0].status,'SHIPPED'); assert.equal(r.items[0].remaining,0);
+// edits on other tabs are ignored
+ctx.onEdit({range:{getSheet:()=>sheets.Stock,getRow:()=>2,getLastRow:()=>2,getNumColumns:()=>1,getColumn:()=>1}});
 console.log('APPS_SCRIPT_TESTS_OK');
