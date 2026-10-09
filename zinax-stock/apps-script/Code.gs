@@ -230,29 +230,67 @@ function changed_(name, since) {
   return readAll_(name).filter(function (r) { return Number(r[at]) > since; });
 }
 
-/** Summary of what is in stock, rebuilt after each sync that changed items. */
+/** Code sort: by category, then numeric codes as numbers, then text. */
+function byCode_(a, b, catIdx, codeIdx) {
+  if (a[catIdx] !== b[catIdx]) return a[catIdx] < b[catIdx] ? -1 : 1;
+  const na = Number(a[codeIdx]), nb = Number(b[codeIdx]);
+  if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+  return String(a[codeIdx]) < String(b[codeIdx]) ? -1 : String(a[codeIdx]) > String(b[codeIdx]) ? 1 : 0;
+}
+
+/**
+ * Rebuilds the two summary tabs from Items:
+ * Stock, one row per code with where it is kept, and By location, one row per location and code.
+ */
 function stockSheet_() {
   const ss = SpreadsheetApp.getActive();
-  let sh = ss.getSheetByName('Stock');
-  if (!sh) sh = ss.insertSheet('Stock', 0);
+  const NONE = 'No location';
   const groups = {};
+  const places = {};
   readAll_('Items').forEach(function (r) {
     if (r[7] !== 'IN_STOCK') return;
     const key = [r[1], r[2], r[3], r[6]].join('|');
-    if (!groups[key]) groups[key] = [r[1], r[2], r[3], r[6], 0, 0];
-    groups[key][4] += 1;
-    groups[key][5] += Number(r[5]) || 0;
+    if (!groups[key]) groups[key] = { row: [r[1], r[2], r[3], r[6], 0, 0], where: {} };
+    const g = groups[key];
+    const loc = String(r[13] || '').trim() || NONE;
+    g.row[4] += 1;
+    g.row[5] += Number(r[5]) || 0;
+    g.where[loc] = (g.where[loc] || 0) + 1;
+    const pkey = [loc, key].join('|');
+    if (!places[pkey]) places[pkey] = [loc, r[1], r[2], r[3], r[6], 0, 0];
+    places[pkey][5] += 1;
+    places[pkey][6] += Number(r[5]) || 0;
   });
-  const rows = Object.keys(groups).map(function (k) { return groups[k]; }).sort(function (a, b) {
-    if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
-    const na = Number(a[1]), nb = Number(b[1]);
-    if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
-    return String(a[1]) < String(b[1]) ? -1 : String(a[1]) > String(b[1]) ? 1 : 0;
+  const updated = 'Updated ' + Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm');
+
+  const stockRows = Object.keys(groups).map(function (k) {
+    const g = groups[k];
+    const where = Object.keys(g.where)
+      .sort(function (a, b) { return g.where[b] - g.where[a]; })
+      .map(function (loc) { return loc + ': ' + g.where[loc]; })
+      .join(', ');
+    return g.row.concat([where]);
+  }).sort(function (a, b) { return byCode_(a, b, 0, 1); });
+  writeSummary_(ss, 'Stock', 0, ['Category', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Locations'], stockRows, updated);
+
+  const placeRows = Object.keys(places).map(function (k) { return places[k]; }).sort(function (a, b) {
+    if (a[0] !== b[0]) {
+      if (a[0] === NONE) return 1;
+      if (b[0] === NONE) return -1;
+      return a[0] < b[0] ? -1 : 1;
+    }
+    return byCode_(a, b, 1, 2);
   });
+  writeSummary_(ss, 'By location', 1, ['Location', 'Category', 'Code', 'Size', 'Unit', 'Packages', 'Total'], placeRows, updated);
+}
+
+function writeSummary_(ss, name, position, headers, rows, updated) {
+  let sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name, position);
   sh.clearContents();
-  sh.getRange(1, 1, 1, 6).setValues([['Category', 'Code', 'Size', 'Unit', 'Packages', 'Total']]).setFontWeight('bold');
-  sh.getRange(1, 8).setValue('Updated ' + Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm'));
-  if (rows.length) sh.getRange(2, 1, rows.length, 6).setValues(rows);
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+  sh.getRange(1, headers.length + 2).setValue(updated);
+  if (rows.length) sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
   sh.setFrozenRows(1);
 }
 

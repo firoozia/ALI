@@ -24,7 +24,11 @@ assert.equal(sheets.Items.cells[1][8],'CN-1');
 // stale update ignored, newer applied; movement dedupe
 r=post({token:'tok',action:'sync',since:r.now,items:[{...item,remaining:50,updatedAt:500},{...item,id:'ZX-251009-A0002',remaining:0,status:'SHIPPED',updatedAt:2000}],movements:[{id:'m1',itemId:item.id,type:'IN',qty:120,at:1000,device:'A',code:'101',size:'x',unit:'m'}]});
 assert.equal(sheets.Items.cells[1][5],120); assert.equal(sheets.Items.cells[2][7],'SHIPPED'); assert.equal(sheets.Movements.cells.length,2);
-assert.deepEqual(sheets.Stock.cells[1].slice(0,6),['PVC','101','0.30*1400','m',1,120]);
+assert.deepEqual(sheets.Stock.cells[1].slice(0,7),['PVC','101','0.30*1400','m',1,120,'No location: 1']);
+assert.deepEqual(sheets['By location'].cells[1].slice(0,7),['No location','PVC','101','0.30*1400','m',1,120]);
+// locations: put the remaining item in Warehouse 1 from the phone
+r=post({token:'tok',action:'sync',since:0,items:[{...item,id:'ZX-251009-A0001',location:'Warehouse 1',updatedAt:3000}]});
+assert.equal(sheets.Stock.cells[1][6],'Warehouse 1: 1'); assert.equal(sheets['By location'].cells[1][0],'Warehouse 1');
 // hand edit: set Remaining of A0001 (row 2) from 120 to 0
 const items=sheets.Items; const before=items.cells[1][15];
 items.cells[1][5]=0;
