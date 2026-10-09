@@ -86,5 +86,16 @@ class Prefs(context: Context) {
         get() = sp.getInt("reportMinute", 0)
         set(v) = edit { putInt("reportMinute", v.coerceIn(0, 59)) }
 
+    /** Places goods are kept, in the order shown on the location buttons. */
+    var locations: List<String>
+        get() = sp.getString("locations", null)?.split("\n")?.filter { it.isNotBlank() }
+            ?: listOf("Warehouse 1", "Warehouse 2", "Showroom")
+        set(v) = edit { putString("locations", v.map { it.trim() }.filter { it.isNotBlank() }.distinct().joinToString("\n")) }
+
+    /** Location given to labels printed on Receive and Print by hand; empty means none. */
+    var currentLocation: String
+        get() = sp.getString("currentLocation", "") ?: ""
+        set(v) = edit { putString("currentLocation", v.trim()) }
+
     val syncConfigured: Boolean get() = webAppUrl.startsWith("https://") && token.isNotBlank()
 }

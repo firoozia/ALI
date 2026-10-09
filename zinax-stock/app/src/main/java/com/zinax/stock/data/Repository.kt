@@ -48,7 +48,7 @@ class Repository(
     }
 
     /** Creates items for expected units that have no label yet. Returns the new items in list order. */
-    suspend fun labelExpected(unitIds: List<String>): List<Item> = idLock.withLock {
+    suspend fun labelExpected(unitIds: List<String>, location: String = ""): List<Item> = idLock.withLock {
         db.withTransaction {
             val units = dao.expectedByIds(unitIds).filter { it.itemId == null }
                 .sortedBy { unitIds.indexOf(it.id) }
@@ -60,7 +60,7 @@ class Repository(
                     id = ids[i], category = u.category, code = u.code, size = u.size, unit = u.unit,
                     qty = u.qty, remaining = u.qty, status = ItemStatus.IN_STOCK,
                     shipmentId = u.shipmentId, pallet = u.pallet, netKg = u.netKg, grossKg = u.grossKg,
-                    receivedAt = t, location = "", device = prefs.deviceCode, updatedAt = t,
+                    receivedAt = t, location = location.trim(), device = prefs.deviceCode, updatedAt = t,
                 )
             }
             dao.putItems(items)
@@ -72,7 +72,7 @@ class Repository(
 
     suspend fun createManual(
         category: Category, code: String, size: String, qty: Double, unit: String,
-        count: Int, shipmentId: String?, pallet: String?,
+        count: Int, shipmentId: String?, pallet: String?, location: String = "",
     ): List<Item> = idLock.withLock {
         db.withTransaction {
             val t = now()
@@ -81,7 +81,7 @@ class Repository(
                     id = id, category = category.name, code = code.trim(), size = size.trim(), unit = unit.trim(),
                     qty = qty, remaining = qty, status = ItemStatus.IN_STOCK,
                     shipmentId = shipmentId, pallet = pallet, netKg = null, grossKg = null,
-                    receivedAt = t, location = "", device = prefs.deviceCode, updatedAt = t,
+                    receivedAt = t, location = location.trim(), device = prefs.deviceCode, updatedAt = t,
                 )
             }
             dao.putItems(items)
@@ -134,9 +134,16 @@ class Repository(
         return dao.olderInStock(item.code, item.size, cal.timeInMillis, item.id)
     }
 
-    suspend fun setLocation(itemId: String, location: String) {
-        val item = dao.item(itemId) ?: return
-        dao.putItems(listOf(item.copy(location = location.trim(), updatedAt = now(), dirty = true)))
+    suspend fun setLocation(itemId: String, location: String) = setLocations(listOf(itemId), location)
+
+    /** Moves packages to [location]; only packages that change place are touched. */
+    suspend fun setLocations(itemIds: List<String>, location: String) {
+        val t = now()
+        val moved = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }
+            .filter { it.location != location.trim() }
+            .map { it.copy(location = location.trim(), updatedAt = t, dirty = true) }
+        if (moved.isEmpty()) return
+        dao.putItems(moved)
         onChange()
     }
 }

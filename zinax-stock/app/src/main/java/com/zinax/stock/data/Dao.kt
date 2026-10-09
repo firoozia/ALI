@@ -59,6 +59,9 @@ interface StockDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putItems(rows: List<Item>)
 
+    @Query("SELECT DISTINCT location FROM items WHERE location != '' ORDER BY location")
+    fun usedLocations(): Flow<List<String>>
+
     // movements
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putMovements(rows: List<Movement>)

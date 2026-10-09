@@ -38,6 +38,7 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
     var unit by remember { mutableStateOf(Category.PVC.unit) }
     var count by remember { mutableStateOf("1") }
     var palletText by remember { mutableStateOf(pallet.orEmpty()) }
+    var putAway by remember { mutableStateOf(Graph.prefs.currentLocation) }
 
     val qtyValue = Format.number(qty)
     val countValue = count.toIntOrNull() ?: 0
@@ -70,6 +71,7 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
                 )
                 OutlinedTextField(palletText, { palletText = it }, label = { Text("Pallet (optional)") }, singleLine = true, modifier = Modifier.weight(1f))
             }
+            LocationPicker(putAway, { putAway = it; Graph.prefs.currentLocation = it })
             if (valid) {
                 Text(
                     "Prints $countValue ${Report.plural(category.pack, countValue)} of ${code.trim()}, ${Format.qtyUnit(qtyValue!!, unit.trim())} each.",
@@ -82,6 +84,7 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
                     scope.launch {
                         val items = Graph.repo.createManual(
                             category, code, size, qtyValue!!, unit, countValue, shipmentId, palletText.trim().ifEmpty { null },
+                            putAway,
                         )
                         Graph.printQueue.print(items, code.trim())
                         count = "1"

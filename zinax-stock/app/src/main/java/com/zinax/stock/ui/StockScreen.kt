@@ -9,8 +9,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -33,17 +34,28 @@ import com.zinax.stock.core.Report
 import com.zinax.stock.data.Item
 import kotlinx.coroutines.launch
 
+/** What the move dialog is moving: one package, or every package in a code group on screen. */
+private data class MoveTarget(val title: String, val ids: List<String>, val current: String)
+
 @Composable
 fun StockScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val items by Graph.db.dao().inStock().collectAsStateWithLifecycle(emptyList())
     var query by remember { mutableStateOf("") }
+    var place by remember { mutableStateOf<String?>(null) }
     var open by remember { mutableStateOf<String?>(null) }
-    var editing by remember { mutableStateOf<Item?>(null) }
+    var moving by remember { mutableStateOf<MoveTarget?>(null) }
 
-    val groups = remember(items, query) {
+    val places = remember(items) {
+        val used = items.map { it.location.ifBlank { NO_LOCATION } }.distinct()
+        (Graph.prefs.locations.filter { it in used } + used.filter { it !in Graph.prefs.locations }.sortedBy { it == NO_LOCATION })
+    }
+    val shown = remember(items, query, place) {
         items.filter { query.isBlank() || it.code.contains(query.trim(), true) || it.id.contains(query.trim(), true) }
-            .groupBy { "${it.category}|${it.code}|${it.size}|${it.unit}" }
+            .filter { place == null || it.location.ifBlank { NO_LOCATION } == place }
+    }
+    val groups = remember(shown) {
+        shown.groupBy { "${it.category}|${it.code}|${it.size}|${it.unit}" }
             .entries
             .sortedWith(compareBy<Map.Entry<String, List<Item>>>({ it.value.first().categoryEnum.ordinal }, { Report.codeSortKey(it.value.first().code) }, { it.value.first().code }))
     }
@@ -57,9 +69,17 @@ fun StockScreen(onBack: () -> Unit) {
             item {
                 OutlinedTextField(query, { query = it }, label = { Text("Search code or label ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
+            if (places.size > 1 || place != null) item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item { FilterChip(selected = place == null, onClick = { place = null }, label = { Text("All places") }) }
+                    items(places) { p ->
+                        FilterChip(selected = place == p, onClick = { place = if (place == p) null else p }, label = { Text(p) })
+                    }
+                }
+            }
             item {
                 Text(
-                    "${items.size} packages in stock · ${items.map { it.code }.distinct().size} codes",
+                    "${shown.size} packages · ${shown.map { it.code }.distinct().size} codes" + (place?.let { " in $it" } ?: " in stock"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -67,6 +87,9 @@ fun StockScreen(onBack: () -> Unit) {
             items(groups, key = { it.key }) { (key, list) ->
                 val first = list.first()
                 val total = list.sumOf { it.remaining }
+                val byPlace = list.groupBy { it.location.ifBlank { NO_LOCATION } }
+                    .entries.sortedByDescending { it.value.size }
+                    .joinToString(" · ") { (p, l) -> "$p: ${l.size}" }
                 Panel {
                     Column(Modifier.clickable { open = if (open == key) null else key }) {
                         CodeRow(
@@ -74,8 +97,12 @@ fun StockScreen(onBack: () -> Unit) {
                             title = "${list.size} ${Report.plural(first.categoryEnum.pack, list.size)} · ${Format.qtyUnit(total, first.unit)}",
                             subtitle = listOf(first.categoryEnum.label, Format.size(first.size)).filter { it.isNotBlank() }.joinToString(" · "),
                         )
+                        Text(byPlace, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                     }
                     if (open == key) {
+                        TextButton(onClick = {
+                            moving = MoveTarget("Move all ${list.size} of ${first.code}", list.map { it.id }, place.takeIf { it != NO_LOCATION }.orEmpty())
+                        }) { Text("Move all ${list.size} to another place") }
                         list.sortedBy { it.receivedAt }.forEach { item ->
                             HorizontalDivider()
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -84,15 +111,15 @@ fun StockScreen(onBack: () -> Unit) {
                                     Text(
                                         listOfNotNull(
                                             Format.qtyUnit(item.remaining, item.unit) + if (item.remaining < item.qty) " of ${Format.qty(item.qty)}" else "",
+                                            item.location.ifBlank { NO_LOCATION },
                                             item.pallet?.let { "Pallet $it" },
-                                            item.location.takeIf { it.isNotBlank() },
                                             Format.date(item.receivedAt),
                                         ).joinToString(" · "),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                TextButton(onClick = { editing = item }) { Text("Place") }
+                                TextButton(onClick = { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }) { Text("Move") }
                                 TextButton(onClick = { Graph.printQueue.print(listOf(item), item.id) }) { Text("Reprint") }
                             }
                         }
@@ -102,19 +129,15 @@ fun StockScreen(onBack: () -> Unit) {
         }
     }
 
-    editing?.let { item ->
-        var location by remember(item.id) { mutableStateOf(item.location) }
-        AlertDialog(
-            onDismissRequest = { editing = null },
-            title = { Text("Where is ${item.id}?") },
-            text = { OutlinedTextField(location, { location = it }, label = { Text("Shelf or row, e.g. A-04") }, singleLine = true) },
-            confirmButton = {
-                TextButton(onClick = {
-                    editing = null
-                    scope.launch { Graph.repo.setLocation(item.id, location) }
-                }) { Text("Save") }
+    moving?.let { target ->
+        MoveDialog(
+            title = target.title,
+            initial = target.current,
+            onSave = { loc ->
+                moving = null
+                scope.launch { Graph.repo.setLocations(target.ids, loc) }
             },
-            dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } },
+            onDismiss = { moving = null },
         )
     }
 }

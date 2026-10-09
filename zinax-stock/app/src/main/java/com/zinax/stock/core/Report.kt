@@ -88,8 +88,17 @@ object Report {
                     )
                 )
             }
+        val byPlace = ArrayList<List<Any?>>()
+        byPlace.add(listOf("Location", "Category", "Code", "Size", "Unit", "Packages", "Total"))
+        items.groupBy { listOf(it.location.ifBlank { "No location" }, it.category.name, it.code, it.size, it.unit) }
+            .entries
+            .sortedWith(compareBy({ it.key[0] == "No location" }, { it.key[0] }, { it.value.first().category.ordinal }, { codeSortKey(it.key[2]) }, { it.key[2] }))
+            .forEach { (k, list) ->
+                byPlace.add(listOf(k[0], list.first().category.label, k[2], Format.size(k[3]), k[4], list.size, list.sumOf { it.remaining }))
+            }
         return listOf(
             XlsxWriter.SheetData("Stock", stock, listOf(18, 12, 16, 7, 10, 10, 2, 24)),
+            XlsxWriter.SheetData("By location", byPlace, listOf(22, 18, 12, 16, 7, 10, 10)),
             XlsxWriter.SheetData("Items", detail, listOf(18, 18, 12, 16, 10, 8, 7, 8, 12, 12)),
         )
     }

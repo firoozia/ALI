@@ -19,6 +19,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,6 +73,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
 
     var device by remember { mutableStateOf(prefs.deviceCode) }
+    var locations by remember { mutableStateOf(prefs.locations) }
+    var newLocation by remember { mutableStateOf("") }
     var gap by remember { mutableStateOf(prefs.gapMm.toString()) }
     var density by remember { mutableStateOf(prefs.density.toString()) }
     var url by remember { mutableStateOf(prefs.webAppUrl) }
@@ -136,6 +139,38 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
                 Graph.printQueue.print(listOf(sample), "test label")
             }, enabled = selectedAddress != null) { Text("Print test label") }
+
+            Section("Locations")
+            Text(
+                "Places where goods are kept, e.g. Warehouse 1, Warehouse 2 - Floor 1, Showroom. " +
+                    "They appear as buttons on Receive, Print by hand and Stock.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            locations.forEach { loc ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(loc, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        locations = locations - loc
+                        prefs.locations = locations
+                        if (prefs.currentLocation == loc) prefs.currentLocation = ""
+                    }) { Text("Remove") }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    newLocation, { newLocation = it }, label = { Text("New location") }, singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(onClick = {
+                    val name = newLocation.trim()
+                    if (name.isNotEmpty() && name !in locations) {
+                        locations = locations + name
+                        prefs.locations = locations
+                    }
+                    newLocation = ""
+                }, enabled = newLocation.isNotBlank()) { Text("Add") }
+            }
 
             Section("This phone")
             OutlinedTextField(

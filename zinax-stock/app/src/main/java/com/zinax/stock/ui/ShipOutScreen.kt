@@ -48,6 +48,7 @@ fun ShipOutScreen(onBack: () -> Unit) {
     var notFound by remember { mutableStateOf<String?>(null) }
     var qty by remember { mutableStateOf("") }
     var reference by remember { mutableStateOf("") }
+    var moving by remember { mutableStateOf(false) }
 
     fun lookup(raw: String) {
         val id = LabelId.normalize(raw)
@@ -112,7 +113,7 @@ fun ShipOutScreen(onBack: () -> Unit) {
                         },
                     )
                     KeyValue("Left on this ${it.categoryEnum.pack}", Format.qtyUnit(it.remaining, it.unit))
-                    if (it.location.isNotBlank()) KeyValue("Location", it.location)
+                    KeyValue("Location", it.location.ifBlank { NO_LOCATION })
                 }
                 if (!inStock) Notice("This label was already shipped out.", status.bad, status.badSoft)
 
@@ -153,6 +154,7 @@ fun ShipOutScreen(onBack: () -> Unit) {
                         enabled = amount != null && amount > 0 && amount <= it.remaining + 1e-6,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Confirm ship out") }
+                    OutlinedButton(onClick = { moving = true }, modifier = Modifier.fillMaxWidth()) { Text("Move to another place") }
                     OutlinedButton(onClick = { item = null; older = null }, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
                 }
             }
@@ -164,5 +166,22 @@ fun ShipOutScreen(onBack: () -> Unit) {
                 }
             }
         }
+    }
+
+    val current = item
+    if (moving && current != null) {
+        MoveDialog(
+            title = "Move ${current.id}",
+            initial = current.location,
+            onSave = { loc ->
+                moving = false
+                scope.launch {
+                    Graph.repo.setLocation(current.id, loc)
+                    item = dao.item(current.id)
+                    snackbar.showSnackbar("${current.id} moved to ${loc.ifBlank { NO_LOCATION }}")
+                }
+            },
+            onDismiss = { moving = false },
+        )
     }
 }

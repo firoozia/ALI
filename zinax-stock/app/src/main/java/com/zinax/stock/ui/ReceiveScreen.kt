@@ -71,6 +71,7 @@ fun ReceiveScreen(shipmentId: String, nav: NavController, onBack: () -> Unit) {
     var selected by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var countFor by remember { mutableStateOf<Group?>(null) }
+    var putAway by remember { mutableStateOf(Graph.prefs.currentLocation) }
 
     LaunchedEffect(pallets) {
         if (selected == null || selected !in pallets) {
@@ -81,7 +82,7 @@ fun ReceiveScreen(shipmentId: String, nav: NavController, onBack: () -> Unit) {
     fun print(group: Group, count: Int) {
         scope.launch {
             val ids = group.remaining.take(count).map { it.id }
-            val items = Graph.repo.labelExpected(ids)
+            val items = Graph.repo.labelExpected(ids, putAway)
             Graph.printQueue.print(items, "pallet ${group.pallet} · ${group.code}")
         }
     }
@@ -136,6 +137,7 @@ fun ReceiveScreen(shipmentId: String, nav: NavController, onBack: () -> Unit) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    LocationPicker(putAway, { putAway = it; Graph.prefs.currentLocation = it })
                 }
             }
 
