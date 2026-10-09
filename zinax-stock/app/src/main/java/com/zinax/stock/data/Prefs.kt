@@ -77,6 +77,11 @@ class Prefs(context: Context) {
         get() = sp.getInt("reportHour", 17)
         set(v) = edit { putInt("reportHour", v.coerceIn(0, 23)) }
 
+    /** Send the stock report as an Excel file instead of a text message. */
+    var reportAsExcel: Boolean
+        get() = sp.getBoolean("reportAsExcel", true)
+        set(v) = edit { putBoolean("reportAsExcel", v) }
+
     var reportMinute: Int
         get() = sp.getInt("reportMinute", 0)
         set(v) = edit { putInt("reportMinute", v.coerceIn(0, 59)) }

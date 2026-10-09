@@ -2,11 +2,14 @@ package com.zinax.stock
 
 import com.zinax.stock.core.Category
 import com.zinax.stock.core.Format
+import com.zinax.stock.core.ItemRow
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.core.Report
 import com.zinax.stock.core.StockSource
+import com.zinax.stock.core.XlsxWriter
 import com.zinax.stock.importer.CsvReader
 import com.zinax.stock.importer.PackingListParser
+import com.zinax.stock.importer.XlsxReader
 import com.zinax.stock.label.Tspl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -117,6 +120,23 @@ class CoreTest {
         assertEquals(0x00, job[dataStart].toInt() and 0xFF)
         assertEquals(0xFF, job[dataStart + 1].toInt() and 0xFF)
         assertTrue(text.endsWith("PRINT 1,1\r\n"))
+    }
+
+    @Test
+    fun excelReportRoundTrip() {
+        val lines = Report.stockLines(listOf(StockSource(Category.PVC, "101", "0.30*1400", "m", 120.0)))
+        val rows = listOf(ItemRow("ZX-261009-A0001", Category.PVC, "101", "0.30*1400", 120.0, 120.0, "m", "1", "A-04 <top>", 0))
+        val bytes = XlsxWriter.write(Report.stockWorkbook(lines, rows, 0))
+        val sheets = XlsxReader.read(bytes.inputStream())
+        assertEquals(listOf("Stock", "Items"), sheets.map { it.name })
+        assertEquals("Packages", sheets[0].rows[0][4])
+        assertEquals("101", sheets[0].rows[1][1])
+        assertEquals("0.30 × 1400", sheets[0].rows[1][2])
+        assertEquals("120", sheets[0].rows[1][5])
+        assertEquals("Total", sheets[0].rows[2][0])
+        assertEquals("ZX-261009-A0001", sheets[1].rows[1][0])
+        assertEquals("A-04 <top>", sheets[1].rows[1][8])
+        assertEquals("AA", XlsxWriter.columnName(26))
     }
 
     @Test

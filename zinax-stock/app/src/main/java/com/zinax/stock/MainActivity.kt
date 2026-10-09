@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(pendingAction) {
                     if (pendingAction == ReportWorker.ACTION_SHARE_REPORT) {
                         pendingAction = null
-                        Share.toWhatsApp(this@MainActivity, Graph.stockReportText())
+                        Graph.shareStockReport(this@MainActivity)
                     }
                 }
 

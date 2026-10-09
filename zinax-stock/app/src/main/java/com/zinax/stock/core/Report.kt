@@ -68,7 +68,46 @@ object Report {
     }
 
     fun plural(word: String, n: Int) = if (n == 1) word else word + "s"
+
+    /** Workbook sent to WhatsApp: a summary sheet and one row per package. */
+    fun stockWorkbook(lines: List<StockLine>, items: List<ItemRow>, nowMillis: Long): List<XlsxWriter.SheetData> {
+        val stock = ArrayList<List<Any?>>()
+        stock.add(listOf("Category", "Code", "Size", "Unit", "Packages", "Total", "", "Updated ${Format.dateTime(nowMillis)}"))
+        lines.forEach { stock.add(listOf(it.category.label, it.code, Format.size(it.size), it.unit, it.packs, it.total)) }
+        lines.groupBy { it.unit }.forEach { (unit, rows) ->
+            stock.add(listOf("Total", "", "", unit, rows.sumOf { it.packs }, rows.sumOf { it.total }))
+        }
+        val detail = ArrayList<List<Any?>>()
+        detail.add(listOf("ID", "Category", "Code", "Size", "Remaining", "Of", "Unit", "Pallet", "Location", "Received"))
+        items.sortedWith(compareBy<ItemRow>({ it.category.ordinal }, { codeSortKey(it.code) }, { it.code }, { it.receivedAt }))
+            .forEach {
+                detail.add(
+                    listOf(
+                        it.id, it.category.label, it.code, Format.size(it.size), it.remaining, it.qty, it.unit,
+                        it.pallet.orEmpty(), it.location, Format.date(it.receivedAt),
+                    )
+                )
+            }
+        return listOf(
+            XlsxWriter.SheetData("Stock", stock, listOf(18, 12, 16, 7, 10, 10, 2, 24)),
+            XlsxWriter.SheetData("Items", detail, listOf(18, 18, 12, 16, 10, 8, 7, 8, 12, 12)),
+        )
+    }
 }
+
+/** One in-stock package for the Excel report. */
+data class ItemRow(
+    val id: String,
+    val category: Category,
+    val code: String,
+    val size: String,
+    val remaining: Double,
+    val qty: Double,
+    val unit: String,
+    val pallet: String?,
+    val location: String,
+    val receivedAt: Long,
+)
 
 /** The fields of an in-stock item the report needs. */
 data class StockSource(

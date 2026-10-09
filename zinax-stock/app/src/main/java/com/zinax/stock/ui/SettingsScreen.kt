@@ -82,6 +82,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val selectedAddress = remember(tick) { prefs.printerAddress }
     val syncMessage = remember(tick) { prefs.lastSyncMessage }
     var reportOn by remember { mutableStateOf(prefs.reportEnabled) }
+    var reportExcel by remember { mutableStateOf(prefs.reportAsExcel) }
     var invert by remember { mutableStateOf(prefs.invert) }
     var direction by remember { mutableStateOf(prefs.direction) }
     LaunchedEffect(tick) { if (sheet.isBlank()) sheet = prefs.sheetUrl }
@@ -181,13 +182,16 @@ fun SettingsScreen(onBack: () -> Unit) {
                     scope.launch { snackbar.showSnackbar("Reminder set for %02d:%02d".format(prefs.reportHour, prefs.reportMinute)) }
                 }) { Text("Save time") }
             }
+            SwitchRow("Send the reminder report as an Excel file", reportExcel) { reportExcel = it; prefs.reportAsExcel = it }
             Text(
                 "WhatsApp does not allow apps to post to a group by themselves. At this time the phone shows a notification; " +
-                    "tap it and WhatsApp opens with the list ready, then pick the group.",
+                    "tap it, pick WhatsApp (or WhatsApp Business) in the share list, then pick the group.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Button(onClick = { scope.launch { Share.toWhatsApp(context, Graph.stockReportText()) } }) { Text("Send stock list now") }
+            Button(onClick = { scope.launch { Graph.shareStockReport(context) } }) {
+                Text(if (reportExcel) "Send stock Excel now" else "Send stock list now")
+            }
         }
     }
 }

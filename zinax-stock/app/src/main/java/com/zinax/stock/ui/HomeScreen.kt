@@ -100,10 +100,16 @@ fun HomeScreen(nav: NavController) {
                 enabled = sheetUrl.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (sheetUrl.isBlank()) "Google Sheet (set up in Settings)" else "Open Google Sheet ↗") }
-            Button(
-                onClick = { scope.launch { Share.toWhatsApp(context, Graph.stockReportText()) } },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Send stock list to WhatsApp") }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = { scope.launch { Graph.shareStockReport(context, excel = true) } },
+                    modifier = Modifier.weight(1f),
+                ) { Text("Send stock Excel") }
+                OutlinedButton(
+                    onClick = { scope.launch { Graph.shareStockReport(context, excel = false) } },
+                    modifier = Modifier.weight(1f),
+                ) { Text("Send as text") }
+            }
         }
     }
 }

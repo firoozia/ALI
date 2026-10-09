@@ -153,7 +153,7 @@ fun CheckScreen(shipmentId: String, nav: NavController, onBack: () -> Unit) {
             }
             item {
                 Button(
-                    onClick = { Share.toWhatsApp(context, Report.checkText(name, lines, extras, System.currentTimeMillis())) },
+                    onClick = { Share.text(context, Report.checkText(name, lines, extras, System.currentTimeMillis())) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Share report") }
             }
