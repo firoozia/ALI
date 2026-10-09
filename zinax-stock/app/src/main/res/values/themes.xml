@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Zinax" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#0D6B8A</item>
+        <item name="android:navigationBarColor">#F7F9FB</item>
+        <item name="android:windowBackground">@color/zinax_background</item>
+    </style>
+</resources>
