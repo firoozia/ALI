@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: zinax-stock
@@ -29,3 +31,15 @@ jobs:
           name: zinax-stock-apk
           path: zinax-stock/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Name the APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk ZinaxStock.apk
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/claude/zinax-warehouse-barcode-6sv8m6'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: zinax-stock-b${{ github.run_number }}
+          name: Zinax Stock build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: Android APK for Zinax Stock. Download ZinaxStock.apk and install it on the phone.
+          files: zinax-stock/ZinaxStock.apk
