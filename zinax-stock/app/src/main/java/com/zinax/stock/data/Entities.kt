@@ -38,6 +38,8 @@ data class ExpectedUnit(
 object ItemStatus {
     const val IN_STOCK = "IN_STOCK"
     const val SHIPPED = "SHIPPED"
+    /** Entered by mistake and deleted; kept in the sheet as a record, hidden everywhere else. */
+    const val VOID = "VOID"
 }
 
 /** A labelled package in the warehouse. [id] is the text in the QR code. */
@@ -67,7 +69,18 @@ data class Item(
 object MovementType {
     const val IN = "IN"
     const val OUT = "OUT"
+    const val VOID = "VOID"
 }
+
+/** A product the app has seen, offered as a suggestion when typing a code. */
+data class ProductHint(
+    val category: String,
+    val code: String,
+    val size: String,
+    val unit: String,
+    val qty: Double,
+    val lastUsed: Long,
+)
 
 /** Append-only log of stock changes. */
 @Entity(tableName = "movements", indices = [Index("itemId")])

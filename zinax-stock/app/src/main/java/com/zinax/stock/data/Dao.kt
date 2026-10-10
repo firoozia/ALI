@@ -34,6 +34,19 @@ interface StockDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putExpected(rows: List<ExpectedUnit>)
 
+    @Query("SELECT * FROM expected WHERE itemId IN (:itemIds)")
+    suspend fun expectedByItemIds(itemIds: List<String>): List<ExpectedUnit>
+
+    /** Every product seen on a label or a packing list, newest use per product. Deleted labels do not count. */
+    @Query(
+        "SELECT category, code, size, unit, qty, MAX(receivedAt) AS lastUsed FROM items WHERE status != 'VOID' " +
+            "GROUP BY category, code, size, unit " +
+            "UNION ALL " +
+            "SELECT category, code, size, unit, qty, MAX(updatedAt) AS lastUsed FROM expected " +
+            "GROUP BY category, code, size, unit"
+    )
+    fun productHints(): Flow<List<ProductHint>>
+
     // items
     @Query("SELECT * FROM items WHERE status = 'IN_STOCK' ORDER BY code, receivedAt")
     fun inStock(): Flow<List<Item>>

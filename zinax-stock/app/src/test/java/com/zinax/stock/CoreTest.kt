@@ -1,6 +1,7 @@
 package com.zinax.stock
 
 import com.zinax.stock.core.Category
+import com.zinax.stock.core.CodeSuggest
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.ItemRow
 import com.zinax.stock.core.LabelId
@@ -165,6 +166,16 @@ class CoreTest {
         assertEquals("Cut", sheets[1].rows[2][7])
         assertEquals("Whole", sheets[1].rows[1][7])
         assertTrue(OutReport.text(0, emptyList()).contains("Nothing shipped."))
+    }
+
+    @Test
+    fun codeSuggestions() {
+        val codes = listOf("201", "101", "1010", "109", "102", "H-110", "h-220", "305", "110")
+        assertEquals(listOf("101", "102", "109", "110", "1010"), CodeSuggest.filter(codes, "1", { it }))
+        assertEquals(listOf("101", "102", "109", "1010"), CodeSuggest.filter(codes, "10", { it }))
+        assertEquals(listOf("H-110", "h-220"), CodeSuggest.filter(codes, "h", { it }))
+        assertEquals(emptyList<String>(), CodeSuggest.filter(codes, " ", { it }))
+        assertEquals(2, CodeSuggest.filter(codes, "1", { it }, limit = 2).size)
     }
 
     @Test

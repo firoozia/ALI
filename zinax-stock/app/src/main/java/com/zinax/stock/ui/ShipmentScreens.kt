@@ -31,6 +31,7 @@ import com.zinax.stock.Share
 import com.zinax.stock.core.CheckLine
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.Report
+import com.zinax.stock.data.ItemStatus
 import com.zinax.stock.ui.theme.LocalStatus
 
 @Composable
@@ -94,7 +95,7 @@ fun CheckScreen(shipmentId: String, nav: NavController, onBack: () -> Unit) {
     }
     val linked = remember(units) { units.mapNotNull { it.itemId }.toSet() }
     val extras = remember(items, linked) {
-        items.filter { it.id !in linked }.groupBy { Triple(it.code, it.size, it.unit) }
+        items.filter { it.id !in linked && it.status != ItemStatus.VOID }.groupBy { Triple(it.code, it.size, it.unit) }
             .map { (k, list) -> CheckLine(k.first, k.second, k.third, 0, list.size) }
     }
     val expectedTotal = lines.sumOf { it.expected }

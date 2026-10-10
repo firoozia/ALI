@@ -1,5 +1,7 @@
 package com.zinax.stock.ui
 
+import com.zinax.stock.ui.theme.LocalStatus
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -47,6 +49,7 @@ fun StockScreen(onBack: () -> Unit) {
     var place by remember { mutableStateOf<String?>(null) }
     var open by remember { mutableStateOf<String?>(null) }
     var moving by remember { mutableStateOf<MoveTarget?>(null) }
+    var deleting by remember { mutableStateOf<MoveTarget?>(null) }
 
     val places = remember(items) {
         val used = items.map { it.location.ifBlank { NO_LOCATION } }.distinct()
@@ -103,9 +106,14 @@ fun StockScreen(onBack: () -> Unit) {
                         LocationBadges(byPlace)
                     }
                     if (open == key) {
-                        TextButton(onClick = {
-                            moving = MoveTarget("Move all ${list.size} of ${first.code}", list.map { it.id }, place.takeIf { it != NO_LOCATION }.orEmpty())
-                        }) { Text("Move all ${list.size} to another place") }
+                        Row {
+                            TextButton(onClick = {
+                                moving = MoveTarget("Move all ${list.size} of ${first.code}", list.map { it.id }, place.takeIf { it != NO_LOCATION }.orEmpty())
+                            }) { Text("Move all ${list.size}") }
+                            TextButton(onClick = {
+                                deleting = MoveTarget("Delete all ${list.size} of ${first.code}?", list.map { it.id }, "")
+                            }) { Text("Delete all ${list.size}", color = LocalStatus.current.bad) }
+                        }
                         list.sortedBy { it.receivedAt }.forEach { item ->
                             HorizontalDivider()
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -122,8 +130,15 @@ fun StockScreen(onBack: () -> Unit) {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                TextButton(onClick = { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }) { Text("Move") }
-                                TextButton(onClick = { Graph.printQueue.print(listOf(item), item.id) }) { Text("Reprint") }
+                                Column {
+                                    Row {
+                                        TextButton(onClick = { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }) { Text("Move") }
+                                        TextButton(onClick = { Graph.printQueue.print(listOf(item), item.id) }) { Text("Reprint") }
+                                    }
+                                    TextButton(onClick = { deleting = MoveTarget("Delete ${item.id}?", listOf(item.id), "") }) {
+                                        Text("Delete", color = LocalStatus.current.bad)
+                                    }
+                                }
                             }
                         }
                     }
@@ -141,6 +156,27 @@ fun StockScreen(onBack: () -> Unit) {
                 scope.launch { Graph.repo.setLocations(target.ids, loc) }
             },
             onDismiss = { moving = null },
+        )
+    }
+
+    deleting?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text(target.title) },
+            text = {
+                Text(
+                    "Use this only for labels entered by mistake. They leave stock and the Stock tab of the sheet " +
+                        "and stay in the Items tab marked VOID. Throw the printed label away. " +
+                        "If it came from a packing list, it goes back to \"to print\" in Receive."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleting = null
+                    scope.launch { Graph.repo.voidItems(target.ids) }
+                }) { Text("Delete", color = LocalStatus.current.bad) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
         )
     }
 }

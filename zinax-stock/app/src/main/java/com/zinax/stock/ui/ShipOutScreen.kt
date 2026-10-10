@@ -110,13 +110,20 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                             Format.date(it.receivedAt),
                         ).joinToString(" · "),
                         trailing = {
-                            if (inStock) Pill("In stock", status.ok, status.okSoft) else Pill("Shipped", status.bad, status.badSoft)
+                            when {
+                                inStock -> Pill("In stock", status.ok, status.okSoft)
+                                it.status == ItemStatus.VOID -> Pill("Deleted", status.bad, status.badSoft)
+                                else -> Pill("Shipped", status.bad, status.badSoft)
+                            }
                         },
                     )
                     KeyValue("Left on this ${it.categoryEnum.pack}", Format.qtyUnit(it.remaining, it.unit))
                     LocationBadge(it.location)
                 }
-                if (!inStock) Notice("This label was already shipped out.", status.bad, status.badSoft)
+                if (!inStock) Notice(
+                    if (it.status == ItemStatus.VOID) "This label was deleted as a mistake. Do not use it." else "This label was already shipped out.",
+                    status.bad, status.badSoft,
+                )
 
                 older?.let { o ->
                     Notice(

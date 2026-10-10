@@ -134,6 +134,30 @@ class Repository(
         return dao.olderInStock(item.code, item.size, cal.timeInMillis, item.id)
     }
 
+    /**
+     * Deletes labels entered by mistake. They leave stock, reports and the sheet's Stock tab, and stay
+     * in the Items tab marked VOID. A label printed from a packing list goes back to "to print".
+     */
+    suspend fun voidItems(itemIds: List<String>) {
+        db.withTransaction {
+            val t = now()
+            val items = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }.filter { it.status == ItemStatus.IN_STOCK }
+            if (items.isEmpty()) return@withTransaction
+            dao.putItems(items.map { it.copy(status = ItemStatus.VOID, remaining = 0.0, updatedAt = t, dirty = true) })
+            dao.putMovements(
+                items.map {
+                    Movement(
+                        id = uuid(), itemId = it.id, type = MovementType.VOID, qty = it.remaining, reference = "Deleted",
+                        at = t, device = prefs.deviceCode, code = it.code, size = it.size, unit = it.unit,
+                    )
+                }
+            )
+            val units = items.map { it.id }.chunked(500).flatMap { dao.expectedByItemIds(it) }
+            if (units.isNotEmpty()) dao.putExpected(units.map { it.copy(itemId = null, updatedAt = t, dirty = true) })
+        }
+        onChange()
+    }
+
     suspend fun setLocation(itemId: String, location: String) = setLocations(listOf(itemId), location)
 
     /** Moves packages to [location]; only packages that change place are touched. */

@@ -1,5 +1,11 @@
 package com.zinax.stock.ui
 
+import com.zinax.stock.core.CodeSuggest
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +45,13 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
     var count by remember { mutableStateOf("1") }
     var palletText by remember { mutableStateOf(pallet.orEmpty()) }
     var putAway by remember { mutableStateOf(Graph.prefs.currentLocation) }
+    var picked by remember { mutableStateOf(false) }
+    val hints by Graph.db.dao().productHints().collectAsStateWithLifecycle(emptyList())
+    // One suggestion per product, the most recent use first among equal codes.
+    val products = remember(hints) {
+        hints.groupBy { listOf(it.category, it.code, it.size, it.unit) }.map { (_, l) -> l.maxBy { it.lastUsed } }
+    }
+    val suggestions = remember(products, code, picked) { if (picked) emptyList() else CodeSuggest.filter(products, code, { it.code }) }
 
     val qtyValue = Format.number(qty)
     val countValue = count.toIntOrNull() ?: 0
@@ -52,9 +65,36 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
                 }
             }
             OutlinedTextField(
-                code, { code = it }, label = { Text("Item code") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                code, { code = it; picked = false }, label = { Text("Item code") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
             )
+            if (suggestions.isNotEmpty()) {
+                Panel {
+                    Text("Known codes — tap to fill in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    suggestions.forEach { p ->
+                        val cat = Category.fromName(p.category)
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                category = cat
+                                code = p.code
+                                size = p.size
+                                qty = Format.qty(p.qty)
+                                unit = p.unit
+                                picked = true
+                            }.padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(p.code, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                listOf(cat.label, Format.size(p.size), Format.qtyUnit(p.qty, p.unit)).filter { it.isNotBlank() }.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
             OutlinedTextField(size, { size = it }, label = { Text("Size or model (optional), e.g. 0.30*1400") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
