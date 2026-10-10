@@ -306,8 +306,12 @@ function outSheet_() {
   const ss = SpreadsheetApp.getActive();
   const tz = ss.getSpreadsheetTimeZone();
   const groups = {};
-  readAll_('Movements').forEach(function (r) {
-    if (r[2] !== 'OUT') return;
+  const moves = readAll_('Movements');
+  // Ship-outs cancelled in the app have an UNDO row whose Reference is the ship-out's ID.
+  const undone = {};
+  moves.forEach(function (r) { if (r[2] === 'UNDO') undone[String(r[7])] = true; });
+  moves.forEach(function (r) {
+    if (r[2] !== 'OUT' || undone[String(r[0])]) return;
     const day = Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd');
     const key = [day, r[5], r[6], r[4]].join('|');
     if (!groups[key]) groups[key] = { row: [day, String(r[5]), String(r[6]), r[4], 0, 0], items: {}, refs: {}, by: {} };

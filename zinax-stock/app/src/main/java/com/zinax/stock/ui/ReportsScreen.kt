@@ -41,6 +41,7 @@ import com.zinax.stock.core.Activity
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.OutReport
 import com.zinax.stock.core.OutSource
+import com.zinax.stock.ui.theme.LocalStatus
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -65,6 +66,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
     var user by remember { mutableStateOf<String?>(null) }
     var open by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
+    var undoing by remember { mutableStateOf<UndoTarget?>(null) }
 
     fun choose(r: Range) {
         if (r == Range.CUSTOM) { picking = true; return }
@@ -159,11 +161,18 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                Text(
-                                    Format.qtyUnit(o.qty, o.unit) + if (OutReport.isCut(o)) " (cut)" else "",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        Format.qtyUnit(o.qty, o.unit) + if (OutReport.isCut(o)) " (cut)" else "",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    if (activity == Activity.OUT && o.id.isNotEmpty()) {
+                                        TextButton(onClick = { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference) }) {
+                                            Text("Undo", color = LocalStatus.current.bad)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -193,6 +202,23 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                 ) { Text("Sync to include other phones") }
             }
         }
+    }
+
+    undoing?.let { target ->
+        UndoDialog(
+            target = target,
+            onConfirm = {
+                undoing = null
+                scope.launch {
+                    try {
+                        Graph.repo.undoShipOut(target.movementId)
+                    } catch (_: Exception) {
+                    }
+                    all = Graph.activityFor(activity, from, to)
+                }
+            },
+            onDismiss = { undoing = null },
+        )
     }
 
     if (picking) {

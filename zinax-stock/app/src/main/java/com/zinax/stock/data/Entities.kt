@@ -71,6 +71,8 @@ object MovementType {
     const val OUT = "OUT"
     const val VOID = "VOID"
     const val MOVE = "MOVE"
+    /** Cancels a ship-out made by mistake; [Movement.reference] holds the cancelled movement's ID. */
+    const val UNDO = "UNDO"
 }
 
 /** A product the app has seen, offered as a suggestion when typing a code. */

@@ -49,4 +49,8 @@ r=post({token:'tok',action:'sync',since:Date.now()+1000,movementsSince:0});
 assert.ok(r.movements.some(m=>m.id==='o1' && m.qty===30 && m.at===Date.UTC(2026,9,10,9) && m.device==='B' && m.user==='Reza'));
 assert.equal(sheets.Movements.cells[0][11],'User');
 assert.equal(post({token:'tok',action:'sync',since:Date.now()+1000}).movements.length,0);
+// undo the 30 m ship-out: Out by day drops it, the log keeps both rows
+post({token:'tok',action:'sync',since:0,movements:[{id:'u1',itemId:'ZX-251009-A0002',type:'UNDO',qty:30,unit:'m',code:'101',size:'0.30*1400',reference:'o1',at:Date.UTC(2026,9,10,12),device:'A',user:'Ali'}]});
+assert.equal(sheets['Out by day'].cells[1][5],90); assert.equal(sheets['Out by day'].cells[1][6],'');
+assert.ok(sheets.Movements.cells.some(r=>r[0]==='o1') && sheets.Movements.cells.some(r=>r[0]==='u1' && r[11]==='Ali'));
 console.log('APPS_SCRIPT_TESTS_OK');

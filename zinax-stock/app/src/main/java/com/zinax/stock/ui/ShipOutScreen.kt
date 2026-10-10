@@ -1,5 +1,7 @@
 package com.zinax.stock.ui
 
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -42,6 +44,8 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
     val dao = Graph.db.dao()
     val startedAt = remember { System.currentTimeMillis() }
     val shippedNow by dao.shippedSince(startedAt).collectAsStateWithLifecycle(emptyList())
+    val undone by dao.undoneIds().collectAsStateWithLifecycle(emptyList())
+    var undoing by remember { mutableStateOf<UndoTarget?>(null) }
 
     var input by remember { mutableStateOf("") }
     var item by remember { mutableStateOf<Item?>(null) }
@@ -124,6 +128,9 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                     if (it.status == ItemStatus.VOID) "This label was deleted as a mistake. Do not use it." else "This label was already shipped out.",
                     status.bad, status.badSoft,
                 )
+                if (it.status != ItemStatus.VOID) PastShipOuts(it.id, undone) { m ->
+                    undoing = UndoTarget(m.id, m.itemId, m.code, m.qty, m.unit, m.reference)
+                }
 
                 older?.let { o ->
                     Notice(
@@ -167,10 +174,23 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                 }
             }
 
-            if (shippedNow.isNotEmpty()) {
+            val session = shippedNow.filter { it.id !in undone }
+            if (session.isNotEmpty()) {
                 Text("Shipped this session", style = MaterialTheme.typography.labelLarge)
-                shippedNow.forEach { m ->
-                    KeyValue("${m.itemId} · ${m.code}", Format.qtyUnit(m.qty, m.unit))
+                session.forEach { m ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${m.itemId} · ${m.code}", style = MonoStyle)
+                            Text(
+                                Format.qtyUnit(m.qty, m.unit) + (if (m.reference.isNotBlank()) " · ${m.reference}" else ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = { undoing = UndoTarget(m.id, m.itemId, m.code, m.qty, m.unit, m.reference) }) {
+                            Text("Undo", color = status.bad)
+                        }
+                    }
                 }
             }
         }
@@ -191,5 +211,46 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
             },
             onDismiss = { moving = false },
         )
+    }
+
+    undoing?.let { target ->
+        UndoDialog(
+            target = target,
+            onConfirm = {
+                undoing = null
+                scope.launch {
+                    try {
+                        Graph.repo.undoShipOut(target.movementId)
+                        item = dao.item(target.itemId)
+                        snackbar.showSnackbar("Undone: ${Format.qtyUnit(target.qty, target.unit)} of ${target.code} is back in stock")
+                    } catch (e: Exception) {
+                        snackbar.showSnackbar(e.message ?: "Could not undo")
+                    }
+                }
+            },
+            onDismiss = { undoing = null },
+        )
+    }
+}
+
+/** Earlier ship-outs of one label that are still in effect, each with Undo. */
+@Composable
+private fun PastShipOuts(itemId: String, undone: List<String>, onUndo: (com.zinax.stock.data.Movement) -> Unit) {
+    val outs by Graph.db.dao().shipOutsOf(itemId).collectAsStateWithLifecycle(emptyList())
+    val live = outs.filter { it.id !in undone }
+    if (live.isEmpty()) return
+    Panel {
+        Text("Earlier ship-outs of this label", style = MaterialTheme.typography.labelLarge)
+        live.forEach { m ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${Format.dateTime(m.at)} · ${Format.qtyUnit(m.qty, m.unit)}" +
+                        (if (m.reference.isNotBlank()) " · ${m.reference}" else "") + (if (m.user.isNotBlank()) " · ${m.user}" else ""),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { onUndo(m) }) { Text("Undo", color = LocalStatus.current.bad) }
+            }
+        }
     }
 }

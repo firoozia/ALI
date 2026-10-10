@@ -89,6 +89,20 @@ interface StockDao {
     @Query("SELECT * FROM movements WHERE type = :type AND at >= :from AND at < :to ORDER BY at")
     suspend fun movementsBetweenNow(type: String, from: Long, to: Long): List<Movement>
 
+    @Query("SELECT * FROM movements WHERE id = :id")
+    suspend fun movement(id: String): Movement?
+
+    /** Ship-outs of one package, newest first. */
+    @Query("SELECT * FROM movements WHERE itemId = :itemId AND type = 'OUT' ORDER BY at DESC")
+    fun shipOutsOf(itemId: String): Flow<List<Movement>>
+
+    /** IDs of ship-outs that were undone. */
+    @Query("SELECT reference FROM movements WHERE type = 'UNDO'")
+    fun undoneIds(): Flow<List<String>>
+
+    @Query("SELECT reference FROM movements WHERE type = 'UNDO'")
+    suspend fun undoneIdsNow(): List<String>
+
     /** Movements pulled from the sheet; a movement never changes, so a known ID is skipped. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun putMovementsIfAbsent(rows: List<Movement>)

@@ -16,6 +16,7 @@ import com.zinax.stock.core.Report
 import com.zinax.stock.core.StockSource
 import com.zinax.stock.core.XlsxWriter
 import com.zinax.stock.data.AppDatabase
+import com.zinax.stock.data.ItemStatus
 import com.zinax.stock.data.Prefs
 import com.zinax.stock.data.Repository
 import com.zinax.stock.printer.BluetoothPrinter
@@ -59,12 +60,16 @@ object Graph {
 
     /** Movements of one kind in [from, to), with each package's family and full amount. */
     suspend fun activityFor(activity: Activity, from: Long, to: Long): List<OutSource> {
-        val moves = db.dao().movementsBetweenNow(activity.type, from, to)
+        val undone = if (activity == Activity.OUT) db.dao().undoneIdsNow().toHashSet() else emptySet()
+        val moves = db.dao().movementsBetweenNow(activity.type, from, to).filter { it.id !in undone }
         val items = moves.map { it.itemId }.distinct().chunked(500).flatMap { db.dao().itemsByIds(it) }.associateBy { it.id }
-        return moves.map { m ->
-            val item = items[m.itemId]
-            OutSource(m.itemId, item?.categoryEnum, m.code, m.size, m.unit, m.qty, item?.qty, m.reference, m.at, m.device, m.user, m.type)
-        }
+        return moves
+            // A label deleted as a mistake was never really received.
+            .filter { activity != Activity.IN || items[it.itemId]?.status != ItemStatus.VOID }
+            .map { m ->
+                val item = items[m.itemId]
+                OutSource(m.itemId, item?.categoryEnum, m.code, m.size, m.unit, m.qty, item?.qty, m.reference, m.at, m.device, m.user, m.type, m.id)
+            }
     }
 
     /** Ship-outs of the day starting at [dayStart]. */

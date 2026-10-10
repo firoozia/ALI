@@ -27,6 +27,8 @@ data class OutSource(
     val device: String,
     val user: String = "",
     val type: String = Activity.OUT.type,
+    /** ID of the movement, so a ship-out can be undone from the report. */
+    val id: String = "",
 )
 
 /** Changes of one code and size in the report period. */

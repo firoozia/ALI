@@ -124,6 +124,32 @@ class Repository(
         return result
     }
 
+    /**
+     * Cancels a ship-out made by mistake: the amount goes back on the package and the package is in stock again.
+     * The ship-out stays in the log with an UNDO row naming who cancelled it.
+     */
+    suspend fun undoShipOut(movementId: String) {
+        db.withTransaction {
+            val m = dao.movement(movementId) ?: error("Ship-out not found")
+            check(m.type == MovementType.OUT) { "Only ship-outs can be undone" }
+            check(movementId !in dao.undoneIdsNow()) { "This ship-out was already undone" }
+            val item = dao.item(m.itemId) ?: error("Label ${m.itemId} not found")
+            check(item.status != ItemStatus.VOID) { "${item.id} was deleted" }
+            val t = now()
+            val back = minOf(item.qty, item.remaining + m.qty)
+            dao.putItems(listOf(item.copy(remaining = back, status = ItemStatus.IN_STOCK, updatedAt = t, dirty = true)))
+            dao.putMovements(
+                listOf(
+                    Movement(
+                        id = uuid(), itemId = item.id, type = MovementType.UNDO, qty = m.qty, reference = m.id,
+                        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                    )
+                )
+            )
+        }
+        onChange()
+    }
+
     /** Oldest in-stock package of the same code and size received on an earlier day. */
     suspend fun olderThan(item: Item): Item? {
         val cal = java.util.Calendar.getInstance().apply {
