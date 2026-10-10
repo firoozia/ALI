@@ -48,6 +48,7 @@ fun HomeScreen(nav: NavController) {
     val pending by Graph.db.dao().pendingItemCount().collectAsStateWithLifecycle(0)
     val status = LocalStatus.current
     val printer = remember(tick) { prefs.printerName }
+    val userName = remember(tick) { prefs.userName }
     val sheetUrl = remember(tick) { prefs.sheetUrl }
     val syncMessage = remember(tick) { prefs.lastSyncMessage }
     val reminder = remember(tick) { if (prefs.reportEnabled) "Daily %02d:%02d".format(prefs.reportHour, prefs.reportMinute) else "Off" }
@@ -72,6 +73,10 @@ fun HomeScreen(nav: NavController) {
                 else Pill("No printer selected", status.warn, status.warnSoft)
                 if (pending > 0) Pill("$pending to sync", status.warn, status.warnSoft)
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (userName.isNotBlank()) Pill("User: $userName", status.ok, status.okSoft)
+                else Pill("No user name · set it in Settings", status.warn, status.warnSoft)
+            }
 
             val latest = shipments.firstOrNull()
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -95,7 +100,7 @@ fun HomeScreen(nav: NavController) {
 
             OutlinedButton(onClick = { nav.navigate(Routes.IMPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Import packing list") }
             OutlinedButton(onClick = { nav.navigate(Routes.manual()) }, modifier = Modifier.fillMaxWidth()) { Text("Print labels by hand") }
-            OutlinedButton(onClick = { nav.navigate(Routes.OUT_REPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Ship-out report (daily)") }
+            OutlinedButton(onClick = { nav.navigate(Routes.OUT_REPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Reports: out, in, deleted, moved") }
             OutlinedButton(
                 onClick = { Share.openUrl(context, sheetUrl) },
                 enabled = sheetUrl.isNotBlank(),

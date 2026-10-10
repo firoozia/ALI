@@ -121,7 +121,7 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 id = it.getString("id"), itemId = it.optString("itemId"), type = it.optString("type"),
                 qty = it.optDouble("qty", 0.0), reference = it.optString("reference"), at = it.optLong("at"),
                 device = it.optString("device"), code = it.optString("code"), size = it.optString("size"),
-                unit = it.optString("unit"), dirty = false,
+                unit = it.optString("unit"), dirty = false, user = it.optString("user"),
             )
         }
         rows.chunked(500).forEach { dao.putMovementsIfAbsent(it) }
@@ -150,7 +150,7 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
 
     private fun Movement.toJson() = JSONObject()
         .put("id", id).put("itemId", itemId).put("type", type).put("qty", qty).put("reference", reference)
-        .put("at", at).put("device", device).put("code", code).put("size", size).put("unit", unit)
+        .put("at", at).put("device", device).put("code", code).put("size", size).put("unit", unit).put("user", user)
 
     // ---------- HTTP ----------
 

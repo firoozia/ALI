@@ -19,7 +19,7 @@ import com.zinax.stock.ui.CheckScreen
 import com.zinax.stock.ui.HomeScreen
 import com.zinax.stock.ui.ImportScreen
 import com.zinax.stock.ui.ManualScreen
-import com.zinax.stock.ui.OutReportScreen
+import com.zinax.stock.ui.ReportsScreen
 import com.zinax.stock.ui.PrintDialog
 import com.zinax.stock.ui.ReceiveScreen
 import com.zinax.stock.ui.SettingsScreen
@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
                     composable(Routes.SHIP_OUT) { ShipOutScreen(onBack = back, onReport = { nav.navigate(Routes.OUT_REPORT) }) }
                     composable(Routes.STOCK) { StockScreen(onBack = back) }
                     composable(Routes.SETTINGS) { SettingsScreen(onBack = back) }
-                    composable(Routes.OUT_REPORT) { OutReportScreen(onBack = back) }
+                    composable(Routes.OUT_REPORT) { ReportsScreen(onBack = back) }
                 }
 
                 PrintDialog()

@@ -70,6 +70,7 @@ object MovementType {
     const val IN = "IN"
     const val OUT = "OUT"
     const val VOID = "VOID"
+    const val MOVE = "MOVE"
 }
 
 /** A product the app has seen, offered as a suggestion when typing a code. */
@@ -83,7 +84,7 @@ data class ProductHint(
 )
 
 /** Append-only log of stock changes. */
-@Entity(tableName = "movements", indices = [Index("itemId")])
+@Entity(tableName = "movements", indices = [Index("itemId"), Index("at")])
 data class Movement(
     @PrimaryKey val id: String,
     val itemId: String,
@@ -96,4 +97,6 @@ data class Movement(
     val size: String,
     val unit: String,
     val dirty: Boolean = true,
+    /** Name of the person who did it, from Settings on that phone. */
+    val user: String = "",
 )

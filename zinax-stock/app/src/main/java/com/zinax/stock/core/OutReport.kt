@@ -4,7 +4,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** One ship-out, with what the package held when it was labelled. */
+/** Kinds of stock change a report can show. */
+enum class Activity(val type: String, val title: String, val verb: String) {
+    OUT("OUT", "Ship-outs", "shipped"),
+    IN("IN", "Received", "received"),
+    VOID("VOID", "Deleted", "deleted"),
+    MOVE("MOVE", "Moved", "moved"),
+}
+
+/** One stock change, with what the package held when it was labelled. */
 data class OutSource(
     val itemId: String,
     val category: Category?,
@@ -17,9 +25,11 @@ data class OutSource(
     val reference: String,
     val at: Long,
     val device: String,
+    val user: String = "",
+    val type: String = Activity.OUT.type,
 )
 
-/** Ship-outs of one code and size on the report day. */
+/** Changes of one code and size in the report period. */
 data class OutLine(
     val category: Category?,
     val code: String,
@@ -31,12 +41,15 @@ data class OutLine(
     val cuts: Int,
     val total: Double,
     val references: List<String>,
+    val users: List<String>,
 )
 
 object OutReport {
     private const val EPS = 1e-6
 
-    fun isCut(o: OutSource) = o.packQty != null && o.qty < o.packQty - EPS
+    fun isCut(o: OutSource) = o.type == Activity.OUT.type && o.packQty != null && o.qty < o.packQty - EPS
+
+    fun who(o: OutSource) = o.user.ifBlank { "phone ${o.device}" }
 
     fun lines(outs: List<OutSource>): List<OutLine> =
         outs.groupBy { listOf(it.code, it.size, it.unit) }
@@ -48,6 +61,7 @@ object OutReport {
                     cuts = list.count { isCut(it) },
                     total = list.sumOf { it.qty },
                     references = list.map { it.reference.trim() }.filter { it.isNotEmpty() }.distinct(),
+                    users = list.map { who(it) }.distinct(),
                 )
             }
             .sortedWith(compareBy<OutLine>({ it.category?.ordinal ?: Int.MAX_VALUE }, { Report.codeSortKey(it.code) }, { it.code }, { it.size }))
@@ -60,11 +74,17 @@ object OutReport {
         append(", ${Format.qtyUnit(l.total, l.unit)}")
     }
 
-    fun text(dayStart: Long, outs: List<OutSource>): String = buildString {
-        append("*Zinax ship-outs* · ${Format.date(dayStart)}\n")
+    /** "2026-10-10" for one day, "2026-10-01 → 2026-10-10" for a range; [to] is the exclusive end. */
+    fun period(from: Long, to: Long): String {
+        val last = Format.addDays(to, -1)
+        return if (Format.date(from) == Format.date(last)) Format.date(from) else "${Format.date(from)} → ${Format.date(last)}"
+    }
+
+    fun text(activity: Activity, period: String, outs: List<OutSource>): String = buildString {
+        append("*Zinax ${activity.title.lowercase()}* · $period\n")
         val lines = lines(outs)
         if (lines.isEmpty()) {
-            append("\nNothing shipped.")
+            append("\nNothing ${activity.verb}.")
             return@buildString
         }
         lines.groupBy { it.category }.forEach { (category, rows) ->
@@ -72,7 +92,8 @@ object OutReport {
             rows.forEach { l ->
                 val size = if (l.size.isBlank()) "" else " (${Format.size(l.size)})"
                 append("${l.code}$size: ${lineSummary(l)}")
-                if (l.references.isNotEmpty()) append(" → ${l.references.joinToString(", ")}")
+                if (activity == Activity.OUT && l.references.isNotEmpty()) append(" → ${l.references.joinToString(", ")}")
+                append(" · by ${l.users.joinToString(", ")}")
                 append("\n")
             }
         }
@@ -81,35 +102,41 @@ object OutReport {
         append(" · ${outs.map { it.itemId }.distinct().size} packages\n")
     }
 
-    private fun time(ms: Long) = SimpleDateFormat("HH:mm", Locale.US).format(Date(ms))
+    private fun dateTime(ms: Long) = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(ms))
 
     fun summarySheet(name: String, outs: List<OutSource>): XlsxWriter.SheetData {
         val rows = ArrayList<List<Any?>>()
-        rows.add(listOf("Category", "Code", "Size", "Unit", "Packages", "Cuts", "Total", "Customer / invoice"))
+        rows.add(listOf("Category", "Code", "Size", "Unit", "Packages", "Cuts", "Total", "Customer / note", "By"))
         val lines = lines(outs)
         lines.forEach {
-            rows.add(listOf(it.category?.label.orEmpty(), it.code, Format.size(it.size), it.unit, it.packs, it.cuts, it.total, it.references.joinToString(", ")))
+            rows.add(
+                listOf(
+                    it.category?.label.orEmpty(), it.code, Format.size(it.size), it.unit, it.packs, it.cuts, it.total,
+                    it.references.joinToString(", "), it.users.joinToString(", "),
+                )
+            )
         }
         lines.groupBy { it.unit }.forEach { (u, r) ->
-            rows.add(listOf("Total", "", "", u, r.sumOf { it.packs }, r.sumOf { it.cuts }, r.sumOf { it.total }, ""))
+            rows.add(listOf("Total", "", "", u, r.sumOf { it.packs }, r.sumOf { it.cuts }, r.sumOf { it.total }, "", ""))
         }
-        return XlsxWriter.SheetData(name, rows, listOf(18, 12, 16, 7, 10, 7, 10, 28))
+        return XlsxWriter.SheetData(name, rows, listOf(18, 12, 16, 7, 10, 7, 10, 28, 16))
     }
 
-    fun workbook(dayStart: Long, outs: List<OutSource>): List<XlsxWriter.SheetData> {
+    fun workbook(activity: Activity, period: String, outs: List<OutSource>): List<XlsxWriter.SheetData> {
         val detail = ArrayList<List<Any?>>()
-        detail.add(listOf("Time", "ID", "Category", "Code", "Size", "Qty", "Unit", "Whole / cut", "Customer / invoice", "Phone"))
+        detail.add(listOf("Date", "ID", "Category", "Code", "Size", "Qty", "Unit", "Whole / cut", "Customer / note", "User", "Phone"))
         outs.sortedBy { it.at }.forEach {
             detail.add(
                 listOf(
-                    time(it.at), it.itemId, it.category?.label.orEmpty(), it.code, Format.size(it.size), it.qty, it.unit,
-                    if (isCut(it)) "Cut" else "Whole", it.reference, it.device,
+                    dateTime(it.at), it.itemId, it.category?.label.orEmpty(), it.code, Format.size(it.size), it.qty, it.unit,
+                    if (activity != Activity.OUT) "" else if (isCut(it)) "Cut" else "Whole",
+                    it.reference, it.user, it.device,
                 )
             )
         }
         return listOf(
-            summarySheet("Out ${Format.date(dayStart)}", outs),
-            XlsxWriter.SheetData("Details", detail, listOf(8, 18, 18, 12, 16, 8, 7, 11, 24, 7)),
+            summarySheet("${activity.title} $period".take(31), outs),
+            XlsxWriter.SheetData("Details", detail, listOf(17, 18, 18, 12, 16, 8, 7, 11, 24, 14, 7)),
         )
     }
 }

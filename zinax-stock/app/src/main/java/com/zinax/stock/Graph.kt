@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.zinax.stock.core.Activity
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.ItemRow
 import com.zinax.stock.core.OutReport
@@ -56,15 +57,18 @@ object Graph {
         return Report.stockText(lines, System.currentTimeMillis())
     }
 
-    /** Ship-outs of the day starting at [dayStart], with each package's family and full amount. */
-    suspend fun outsFor(dayStart: Long): List<OutSource> {
-        val moves = db.dao().shippedBetweenNow(dayStart, Format.addDays(dayStart, 1))
+    /** Movements of one kind in [from, to), with each package's family and full amount. */
+    suspend fun activityFor(activity: Activity, from: Long, to: Long): List<OutSource> {
+        val moves = db.dao().movementsBetweenNow(activity.type, from, to)
         val items = moves.map { it.itemId }.distinct().chunked(500).flatMap { db.dao().itemsByIds(it) }.associateBy { it.id }
         return moves.map { m ->
             val item = items[m.itemId]
-            OutSource(m.itemId, item?.categoryEnum, m.code, m.size, m.unit, m.qty, item?.qty, m.reference, m.at, m.device)
+            OutSource(m.itemId, item?.categoryEnum, m.code, m.size, m.unit, m.qty, item?.qty, m.reference, m.at, m.device, m.user, m.type)
         }
     }
+
+    /** Ship-outs of the day starting at [dayStart]. */
+    suspend fun outsFor(dayStart: Long): List<OutSource> = activityFor(Activity.OUT, dayStart, Format.addDays(dayStart, 1))
 
     private fun reportFile(name: String, sheets: List<XlsxWriter.SheetData>): File {
         val dir = File(app.cacheDir, "reports").apply { mkdirs() }
@@ -91,20 +95,21 @@ object Graph {
             Share.file(context, stockReportFile(), XLSX_MIME, "Zinax stock ${Format.dateTime(System.currentTimeMillis())}")
         } else {
             val today = Format.dayStart(System.currentTimeMillis())
-            Share.text(context, stockReportText() + "\n\n" + OutReport.text(today, outsFor(today)))
+            Share.text(context, stockReportText() + "\n\n" + OutReport.text(Activity.OUT, Format.date(today), outsFor(today)))
         }
     }
 
-    /** Sends the ship-out report of one day as text or Excel. */
-    suspend fun shareOutReport(context: Context, dayStart: Long, excel: Boolean) {
-        val outs = outsFor(dayStart)
+    /** Sends a report of [outs] (already filtered on screen) as text or Excel. */
+    suspend fun shareActivityReport(context: Context, activity: Activity, from: Long, to: Long, outs: List<OutSource>, excel: Boolean) {
+        val period = OutReport.period(from, to)
         if (excel) {
             val file = withContext(Dispatchers.IO) {
-                reportFile("Zinax-Out-${Format.date(dayStart)}.xlsx", OutReport.workbook(dayStart, outs))
+                val name = "Zinax-${activity.title.replace(" ", "")}-${period.replace(" → ", "_to_")}.xlsx"
+                reportFile(name, OutReport.workbook(activity, period, outs))
             }
-            Share.file(context, file, XLSX_MIME, "Zinax ship-outs ${Format.date(dayStart)}")
+            Share.file(context, file, XLSX_MIME, "Zinax ${activity.title.lowercase()} $period")
         } else {
-            Share.text(context, OutReport.text(dayStart, outs))
+            Share.text(context, OutReport.text(activity, period, outs))
         }
     }
 

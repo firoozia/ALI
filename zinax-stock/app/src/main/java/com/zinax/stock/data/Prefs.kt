@@ -21,6 +21,11 @@ class Prefs(context: Context) {
         get() = sp.getString("deviceCode", "A") ?: "A"
         set(v) = edit { putString("deviceCode", LabelId.cleanDeviceCode(v)) }
 
+    /** Person using this phone; recorded on every receive, ship-out, move and delete. */
+    var userName: String
+        get() = sp.getString("userName", "") ?: ""
+        set(v) = edit { putString("userName", v.trim()) }
+
     var printerAddress: String?
         get() = sp.getString("printerAddress", null)
         set(v) = edit { putString("printerAddress", v) }

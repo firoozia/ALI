@@ -38,6 +38,29 @@ object Format {
         add(java.util.Calendar.DAY_OF_MONTH, days)
     }.timeInMillis
 
+    /** First day of the month containing the day starting at [dayStart]. */
+    fun monthStart(dayStart: Long): Long = java.util.Calendar.getInstance().apply {
+        timeInMillis = dayStart
+        set(java.util.Calendar.DAY_OF_MONTH, 1)
+    }.timeInMillis
+
+    /** Date pickers work in UTC midnights; these convert to and from local day starts. */
+    fun utcDateToLocalDay(utcMillis: Long): Long {
+        val utc = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply { timeInMillis = utcMillis }
+        return java.util.Calendar.getInstance().apply {
+            clear()
+            set(utc.get(java.util.Calendar.YEAR), utc.get(java.util.Calendar.MONTH), utc.get(java.util.Calendar.DAY_OF_MONTH))
+        }.timeInMillis
+    }
+
+    fun localDayToUtcDate(dayStart: Long): Long {
+        val local = java.util.Calendar.getInstance().apply { timeInMillis = dayStart }
+        return java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(local.get(java.util.Calendar.YEAR), local.get(java.util.Calendar.MONTH), local.get(java.util.Calendar.DAY_OF_MONTH))
+        }.timeInMillis
+    }
+
     fun date(millis: Long): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(millis))
 

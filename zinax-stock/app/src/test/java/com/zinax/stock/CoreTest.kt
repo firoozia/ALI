@@ -1,5 +1,6 @@
 package com.zinax.stock
 
+import com.zinax.stock.core.Activity
 import com.zinax.stock.core.Category
 import com.zinax.stock.core.CodeSuggest
 import com.zinax.stock.core.Format
@@ -147,10 +148,10 @@ class CoreTest {
     @Test
     fun outReport() {
         val outs = listOf(
-            OutSource("ZX-1", Category.PVC, "101", "0.30*1400", "m", 120.0, 120.0, "INV-1", 1000, "A"),
-            OutSource("ZX-2", Category.PVC, "101", "0.30*1400", "m", 30.0, 120.0, "Ali", 2000, "B"),
-            OutSource("ZX-2", Category.PVC, "101", "0.30*1400", "m", 20.0, 120.0, "INV-1", 3000, "B"),
-            OutSource("ZX-9", Category.HINGE, "H-110", "", "pcs", 200.0, 200.0, "", 4000, "A"),
+            OutSource("ZX-1", Category.PVC, "101", "0.30*1400", "m", 120.0, 120.0, "INV-1", 1000, "A", "Ali"),
+            OutSource("ZX-2", Category.PVC, "101", "0.30*1400", "m", 30.0, 120.0, "Ali", 2000, "B", "Reza"),
+            OutSource("ZX-2", Category.PVC, "101", "0.30*1400", "m", 20.0, 120.0, "INV-1", 3000, "B", ""),
+            OutSource("ZX-9", Category.HINGE, "H-110", "", "pcs", 200.0, 200.0, "", 4000, "A", "Ali"),
         )
         val lines = OutReport.lines(outs)
         assertEquals(2, lines.size)
@@ -158,14 +159,27 @@ class CoreTest {
         assertEquals(2, lines[0].cuts)
         assertEquals(170.0, lines[0].total, 0.0)
         assertEquals(listOf("INV-1", "Ali"), lines[0].references)
-        val text = OutReport.text(0, outs)
-        assertTrue(text, text.contains("101 (0.30 × 1400): 2 rolls (2 cut), 170 m → INV-1, Ali"))
-        assertTrue(text, text.contains("H-110: 1 carton, 200 pcs"))
-        val sheets = XlsxReader.read(XlsxWriter.write(OutReport.workbook(0, outs)).inputStream())
+        assertEquals(listOf("Ali", "Reza", "phone B"), lines[0].users)
+        val text = OutReport.text(Activity.OUT, "2026-10-10", outs)
+        assertTrue(text, text.contains("101 (0.30 × 1400): 2 rolls (2 cut), 170 m → INV-1, Ali · by Ali, Reza, phone B"))
+        assertTrue(text, text.contains("H-110: 1 carton, 200 pcs · by Ali"))
+        val sheets = XlsxReader.read(XlsxWriter.write(OutReport.workbook(Activity.OUT, "2026-10-10", outs)).inputStream())
         assertEquals("Details", sheets[1].name)
         assertEquals("Cut", sheets[1].rows[2][7])
         assertEquals("Whole", sheets[1].rows[1][7])
-        assertTrue(OutReport.text(0, emptyList()).contains("Nothing shipped."))
+        assertEquals("Reza", sheets[1].rows[2][9])
+        assertTrue(OutReport.text(Activity.VOID, "x", emptyList()).contains("Nothing deleted."))
+        // a delete of a part-used roll is not a "cut"
+        assertEquals(0, OutReport.lines(listOf(outs[1].copy(type = "VOID"))).first().cuts)
+    }
+
+    @Test
+    fun dateRanges() {
+        val day = Format.dayStart(System.currentTimeMillis())
+        assertEquals(Format.date(day), OutReport.period(day, Format.addDays(day, 1)))
+        assertEquals("${Format.date(Format.addDays(day, -6))} → ${Format.date(day)}", OutReport.period(Format.addDays(day, -6), Format.addDays(day, 1)))
+        assertEquals(day, Format.utcDateToLocalDay(Format.localDayToUtcDate(day)))
+        assertTrue(Format.date(Format.monthStart(day)).endsWith("-01"))
     }
 
     @Test

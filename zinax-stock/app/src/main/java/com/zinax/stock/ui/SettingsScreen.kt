@@ -73,6 +73,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
 
     var device by remember { mutableStateOf(prefs.deviceCode) }
+    var userName by remember { mutableStateOf(prefs.userName) }
     var locations by remember { mutableStateOf(prefs.locations) }
     var newLocation by remember { mutableStateOf("") }
     var gap by remember { mutableStateOf(prefs.gapMm.toString()) }
@@ -173,6 +174,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             Section("This phone")
+            OutlinedTextField(
+                userName, { userName = it; prefs.userName = it },
+                label = { Text("User name (shown in reports as who did it)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
             OutlinedTextField(
                 device, { v -> device = LabelId.cleanDeviceCode(v); prefs.deviceCode = device },
                 label = { Text("Device letter in label IDs (A, B, C… one per phone)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),

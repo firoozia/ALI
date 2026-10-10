@@ -20,7 +20,7 @@ const BACKUP_FOLDER = 'Zinax Stock Backups';
 const SHEETS = {
   Items: ['ID', 'Category', 'Code', 'Size', 'Qty', 'Remaining', 'Unit', 'Status', 'Shipment', 'Pallet', 'NetKg', 'GrossKg',
           'ReceivedAt', 'Location', 'Device', 'UpdatedAt', 'ServerAt', 'ShipmentId'],
-  Movements: ['ID', 'ItemID', 'Type', 'Qty', 'Unit', 'Code', 'Size', 'Reference', 'At', 'Device', 'ServerAt'],
+  Movements: ['ID', 'ItemID', 'Type', 'Qty', 'Unit', 'Code', 'Size', 'Reference', 'At', 'Device', 'ServerAt', 'User'],
   Shipments: ['ID', 'Name', 'Source', 'CreatedAt', 'UpdatedAt', 'ServerAt'],
   Expected: ['ID', 'ShipmentID', 'Pallet', 'Line', 'Category', 'Code', 'Size', 'Qty', 'Unit', 'NetKg', 'GrossKg', 'ItemID',
              'UpdatedAt', 'ServerAt'],
@@ -96,7 +96,7 @@ function sync_(req) {
   }, 15);
 
   appendNew_('Movements', req.movements || [], function (m) {
-    return [m.id, m.itemId, m.type, m.qty, m.unit, m.code, m.size, m.reference || '', date_(m.at), m.device, now];
+    return [m.id, m.itemId, m.type, m.qty, m.unit, m.code, m.size, m.reference || '', date_(m.at), m.device, now, m.user || ''];
   });
 
   if ((req.items || []).length) stockSheet_();
@@ -122,7 +122,7 @@ function sync_(req) {
     }),
     movements: changed_('Movements', movementsSince).map(function (r) {
       return { id: r[0], itemId: r[1], type: r[2], qty: Number(r[3]), unit: r[4], code: String(r[5]), size: String(r[6]),
-               reference: String(r[7]), at: ms_(r[8]), device: String(r[9]) };
+               reference: String(r[7]), at: ms_(r[8]), device: String(r[9]), user: String(r[11] || '') };
     }),
   };
 }
@@ -310,21 +310,22 @@ function outSheet_() {
     if (r[2] !== 'OUT') return;
     const day = Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd');
     const key = [day, r[5], r[6], r[4]].join('|');
-    if (!groups[key]) groups[key] = { row: [day, String(r[5]), String(r[6]), r[4], 0, 0], items: {}, refs: {} };
+    if (!groups[key]) groups[key] = { row: [day, String(r[5]), String(r[6]), r[4], 0, 0], items: {}, refs: {}, by: {} };
     const g = groups[key];
     g.items[r[1]] = true;
     g.row[5] += Number(r[3]) || 0;
     if (String(r[7]).trim()) g.refs[String(r[7]).trim()] = true;
+    g.by[String(r[11] || '').trim() || ('phone ' + r[9])] = true;
   });
   const rows = Object.keys(groups).map(function (k) {
     const g = groups[k];
     g.row[4] = Object.keys(g.items).length;
-    return g.row.concat([Object.keys(g.refs).join(', ')]);
+    return g.row.concat([Object.keys(g.refs).join(', '), Object.keys(g.by).join(', ')]);
   }).sort(function (a, b) {
     if (a[0] !== b[0]) return a[0] < b[0] ? 1 : -1;
     return byCode_(a, b, 3, 1);
   });
-  writeSummary_(ss, 'Out by day', 2, ['Date', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Customer / invoice'], rows,
+  writeSummary_(ss, 'Out by day', 2, ['Date', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Customer / invoice', 'By'], rows,
     'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
 }
 

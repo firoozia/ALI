@@ -92,7 +92,7 @@ class Repository(
 
     private fun inMovement(item: Item, t: Long) = Movement(
         id = uuid(), itemId = item.id, type = MovementType.IN, qty = item.qty, reference = item.pallet?.let { "Pallet $it" } ?: "Manual",
-        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit,
+        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
     )
 
     /** Ships [qty] out of [itemId]. A package is marked shipped when nothing is left. */
@@ -114,7 +114,7 @@ class Repository(
                 listOf(
                     Movement(
                         id = uuid(), itemId = item.id, type = MovementType.OUT, qty = qty, reference = reference.trim(),
-                        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit,
+                        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
                     )
                 )
             )
@@ -148,7 +148,7 @@ class Repository(
                 items.map {
                     Movement(
                         id = uuid(), itemId = it.id, type = MovementType.VOID, qty = it.remaining, reference = "Deleted",
-                        at = t, device = prefs.deviceCode, code = it.code, size = it.size, unit = it.unit,
+                        at = t, device = prefs.deviceCode, code = it.code, size = it.size, unit = it.unit, user = prefs.userName,
                     )
                 }
             )
@@ -160,14 +160,24 @@ class Repository(
 
     suspend fun setLocation(itemId: String, location: String) = setLocations(listOf(itemId), location)
 
-    /** Moves packages to [location]; only packages that change place are touched. */
+    /** Moves packages to [location]; only packages that change place are touched. Each move is logged. */
     suspend fun setLocations(itemIds: List<String>, location: String) {
         val t = now()
-        val moved = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }
-            .filter { it.location != location.trim() }
-            .map { it.copy(location = location.trim(), updatedAt = t, dirty = true) }
-        if (moved.isEmpty()) return
-        dao.putItems(moved)
+        val target = location.trim()
+        val before = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }.filter { it.location != target }
+        if (before.isEmpty()) return
+        db.withTransaction {
+            dao.putItems(before.map { it.copy(location = target, updatedAt = t, dirty = true) })
+            dao.putMovements(
+                before.map {
+                    Movement(
+                        id = uuid(), itemId = it.id, type = MovementType.MOVE, qty = it.remaining,
+                        reference = "${it.location.ifBlank { "No location" }} → ${target.ifBlank { "No location" }}",
+                        at = t, device = prefs.deviceCode, code = it.code, size = it.size, unit = it.unit, user = prefs.userName,
+                    )
+                }
+            )
+        }
         onChange()
     }
 }
