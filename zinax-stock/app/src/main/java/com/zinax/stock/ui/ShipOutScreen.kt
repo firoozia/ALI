@@ -43,7 +43,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     val dao = Graph.db.dao()
     val startedAt = remember { System.currentTimeMillis() }
-    val shippedNow by dao.shippedSince(startedAt).collectAsStateWithLifecycle(emptyList())
+    val shippedNow by dao.takenSince(startedAt).collectAsStateWithLifecycle(emptyList())
     val undone by dao.undoneIds().collectAsStateWithLifecycle(emptyList())
     var undoing by remember { mutableStateOf<UndoTarget?>(null) }
 
@@ -52,7 +52,8 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
     var older by remember { mutableStateOf<Item?>(null) }
     var notFound by remember { mutableStateOf<String?>(null) }
     var qty by remember { mutableStateOf("") }
-    var reference by remember { mutableStateOf("") }
+    var customer by remember { mutableStateOf("") }
+    var invoice by remember { mutableStateOf("") }
     var moving by remember { mutableStateOf(false) }
 
     fun lookup(raw: String) {
@@ -129,7 +130,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                     status.bad, status.badSoft,
                 )
                 if (it.status != ItemStatus.VOID) PastShipOuts(it.id, undone) { m ->
-                    undoing = UndoTarget(m.id, m.itemId, m.code, m.qty, m.unit, m.reference)
+                    undoing = UndoTarget.of(m)
                 }
 
                 older?.let { o ->
@@ -142,25 +143,29 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                 }
 
                 if (inStock) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            qty, { qty = it }, label = { Text("${it.unit} to ship") }, singleLine = true, modifier = Modifier.weight(1f),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        )
-                        OutlinedTextField(reference, { reference = it }, label = { Text("Customer / invoice") }, singleLine = true, modifier = Modifier.weight(1f))
-                    }
+                    OutlinedTextField(
+                        qty, { qty = it }, label = { Text("${it.unit} to ship") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                    CustomerField(customer, { v -> customer = v })
+                    OutlinedTextField(
+                        invoice, { v -> invoice = v }, label = { Text("Invoice no. (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                    )
                     val amount = Format.number(qty)
                     Button(
                         onClick = {
                             scope.launch {
                                 try {
-                                    val updated = Graph.repo.shipOut(it.id, amount!!, reference)
+                                    val updated = Graph.repo.shipOut(it.id, amount!!, customer, invoice)
                                     snackbar.showSnackbar(
                                         "Shipped ${Format.qtyUnit(amount, it.unit)} of ${it.code}" +
                                             if (updated.status == ItemStatus.IN_STOCK) ", ${Format.qtyUnit(updated.remaining, it.unit)} left" else ""
                                     )
                                     item = null
                                     older = null
+                                    customer = ""
+                                    invoice = ""
                                 } catch (e: Exception) {
                                     snackbar.showSnackbar(e.message ?: "Could not ship out")
                                 }
@@ -176,18 +181,18 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
 
             val session = shippedNow.filter { it.id !in undone }
             if (session.isNotEmpty()) {
-                Text("Shipped this session", style = MaterialTheme.typography.labelLarge)
+                Text("Shipped and cut this session", style = MaterialTheme.typography.labelLarge)
                 session.forEach { m ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("${m.itemId} · ${m.code}", style = MonoStyle)
                             Text(
-                                Format.qtyUnit(m.qty, m.unit) + (if (m.reference.isNotBlank()) " · ${m.reference}" else ""),
+                                kindOf(m) + " " + Format.qtyUnit(m.qty, m.unit) + (if (m.reference.isNotBlank()) " · ${m.reference}" else ""),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        TextButton(onClick = { undoing = UndoTarget(m.id, m.itemId, m.code, m.qty, m.unit, m.reference) }) {
+                        TextButton(onClick = { undoing = UndoTarget.of(m) }) {
                             Text("Undo", color = status.bad)
                         }
                     }
@@ -222,7 +227,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                     try {
                         Graph.repo.undoShipOut(target.movementId)
                         item = dao.item(target.itemId)
-                        snackbar.showSnackbar("Undone: ${Format.qtyUnit(target.qty, target.unit)} of ${target.code} is back in stock")
+                        snackbar.showSnackbar("Undone ${target.noun}: ${Format.qtyUnit(target.qty, target.unit)} of ${target.code} is back in stock")
                     } catch (e: Exception) {
                         snackbar.showSnackbar(e.message ?: "Could not undo")
                     }
@@ -233,18 +238,25 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
     }
 }
 
-/** Earlier ship-outs of one label that are still in effect, each with Undo. */
+/** "Shipped", "Cut" or "Written off". */
+private fun kindOf(m: com.zinax.stock.data.Movement): String = when (m.type) {
+    com.zinax.stock.data.MovementType.CUT -> "Cut"
+    com.zinax.stock.data.MovementType.WASTE -> "Written off"
+    else -> "Shipped"
+}
+
+/** Earlier ship-outs, cuts and write-offs of one label that are still in effect, each with Undo. */
 @Composable
 private fun PastShipOuts(itemId: String, undone: List<String>, onUndo: (com.zinax.stock.data.Movement) -> Unit) {
-    val outs by Graph.db.dao().shipOutsOf(itemId).collectAsStateWithLifecycle(emptyList())
+    val outs by Graph.db.dao().takenFrom(itemId).collectAsStateWithLifecycle(emptyList())
     val live = outs.filter { it.id !in undone }
     if (live.isEmpty()) return
     Panel {
-        Text("Earlier ship-outs of this label", style = MaterialTheme.typography.labelLarge)
+        Text("Taken from this label", style = MaterialTheme.typography.labelLarge)
         live.forEach { m ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${Format.dateTime(m.at)} · ${Format.qtyUnit(m.qty, m.unit)}" +
+                    "${Format.dateTime(m.at)} · ${kindOf(m)} ${Format.qtyUnit(m.qty, m.unit)}" +
                         (if (m.reference.isNotBlank()) " · ${m.reference}" else "") + (if (m.user.isNotBlank()) " · ${m.user}" else ""),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f),

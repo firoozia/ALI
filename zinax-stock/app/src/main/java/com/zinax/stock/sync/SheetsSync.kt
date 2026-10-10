@@ -3,6 +3,7 @@ package com.zinax.stock.sync
 import androidx.room.withTransaction
 import com.zinax.stock.core.Format
 import com.zinax.stock.data.AppDatabase
+import com.zinax.stock.data.Customer
 import com.zinax.stock.data.ExpectedUnit
 import com.zinax.stock.data.Item
 import com.zinax.stock.data.Movement
@@ -34,6 +35,7 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
             val expected = dao.dirtyExpected()
             val items = dao.dirtyItems()
             val movements = dao.dirtyMovements()
+            val customers = dao.dirtyCustomers()
             val pushedAt = System.currentTimeMillis()
 
             val body = JSONObject()
@@ -46,6 +48,7 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 .put("expected", JSONArray(expected.map { it.toJson() }))
                 .put("items", JSONArray(items.map { it.toJson() }))
                 .put("movements", JSONArray(movements.map { it.toJson() }))
+                .put("customers", JSONArray(customers.map { it.toJson() }))
 
             val response = JSONObject(post(prefs.webAppUrl, body.toString()))
             if (!response.optBoolean("ok")) throw IOException(response.optString("error", "The sheet refused the sync."))
@@ -55,15 +58,17 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 expected.map { it.id }.chunked(500).forEach { dao.cleanExpected(it, pushedAt) }
                 items.map { it.id }.chunked(500).forEach { dao.cleanItems(it, pushedAt) }
                 movements.map { it.id }.chunked(500).forEach { dao.cleanMovements(it) }
+                customers.map { it.id }.chunked(500).forEach { dao.cleanCustomers(it, pushedAt) }
                 mergeShipments(response.optJSONArray("shipments"))
                 mergeExpected(response.optJSONArray("expected"))
                 mergeItems(response.optJSONArray("items"))
                 mergeMovements(response.optJSONArray("movements"))
+                mergeCustomers(response.optJSONArray("customers"))
             }
             if (response.has("movements")) prefs.movementsBackfilled = true
             prefs.lastServerSync = response.optLong("now", prefs.lastServerSync)
             response.optString("sheetUrl").takeIf { it.startsWith("https://") }?.let { prefs.sheetUrl = it }
-            val pushed = shipments.size + expected.size + items.size + movements.size
+            val pushed = shipments.size + expected.size + items.size + movements.size + customers.size
             val msg = "Synced ${Format.dateTime(System.currentTimeMillis())} · sent $pushed change(s)"
             prefs.lastSyncMessage = msg
             msg
@@ -122,15 +127,32 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 qty = it.optDouble("qty", 0.0), reference = it.optString("reference"), at = it.optLong("at"),
                 device = it.optString("device"), code = it.optString("code"), size = it.optString("size"),
                 unit = it.optString("unit"), dirty = false, user = it.optString("user"),
+                customer = it.optString("customer"), invoice = it.optString("invoice"),
             )
         }
         rows.chunked(500).forEach { dao.putMovementsIfAbsent(it) }
+    }
+
+    private suspend fun mergeCustomers(arr: JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        val rows = (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+            Customer(
+                id = it.getString("id"), name = it.optString("name"), createdAt = it.optLong("createdAt"),
+                createdBy = it.optString("createdBy"), updatedAt = it.optLong("updatedAt"),
+                hidden = it.optBoolean("hidden", false), dirty = false,
+            )
+        }.filter { remote -> dao.customer(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
+        if (rows.isNotEmpty()) dao.putCustomers(rows)
     }
 
     // ---------- JSON ----------
 
     private fun JSONObject.optNullableDouble(key: String): Double? =
         if (!has(key) || isNull(key) || optString(key).isEmpty()) null else optDouble(key).takeIf { !it.isNaN() }
+
+    private fun Customer.toJson() = JSONObject()
+        .put("id", id).put("name", name).put("createdAt", createdAt).put("createdBy", createdBy)
+        .put("updatedAt", updatedAt).put("hidden", hidden)
 
     private fun Shipment.toJson() = JSONObject()
         .put("id", id).put("name", name).put("source", source).put("createdAt", createdAt).put("updatedAt", updatedAt)
@@ -151,6 +173,7 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
     private fun Movement.toJson() = JSONObject()
         .put("id", id).put("itemId", itemId).put("type", type).put("qty", qty).put("reference", reference)
         .put("at", at).put("device", device).put("code", code).put("size", size).put("unit", unit).put("user", user)
+        .put("customer", customer).put("invoice", invoice)
 
     // ---------- HTTP ----------
 

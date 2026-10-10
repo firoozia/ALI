@@ -20,18 +20,22 @@ const BACKUP_FOLDER = 'Zinax Stock Backups';
 const SHEETS = {
   Items: ['ID', 'Category', 'Code', 'Size', 'Qty', 'Remaining', 'Unit', 'Status', 'Shipment', 'Pallet', 'NetKg', 'GrossKg',
           'ReceivedAt', 'Location', 'Device', 'UpdatedAt', 'ServerAt', 'ShipmentId'],
-  Movements: ['ID', 'ItemID', 'Type', 'Qty', 'Unit', 'Code', 'Size', 'Reference', 'At', 'Device', 'ServerAt', 'User'],
+  Movements: ['ID', 'ItemID', 'Type', 'Qty', 'Unit', 'Code', 'Size', 'Reference', 'At', 'Device', 'ServerAt', 'User',
+              'Customer', 'Invoice'],
   Shipments: ['ID', 'Name', 'Source', 'CreatedAt', 'UpdatedAt', 'ServerAt'],
   Expected: ['ID', 'ShipmentID', 'Pallet', 'Line', 'Category', 'Code', 'Size', 'Qty', 'Unit', 'NetKg', 'GrossKg', 'ItemID',
              'UpdatedAt', 'ServerAt'],
+  // Customer library shared by the phones. Add a name on a new row, fix a name, or put TRUE in Hidden to stop suggesting it.
+  Customers: ['ID', 'Name', 'CreatedAt', 'By', 'Hidden', 'UpdatedAt', 'ServerAt'],
 };
 
 // Columns kept as plain text so codes like "0101" or sizes like "0.30*1400" are not turned into numbers.
 const TEXT_COLUMNS = {
   Items: ['Code', 'Size', 'Pallet'],
-  Movements: ['Code', 'Size'],
+  Movements: ['Code', 'Size', 'Invoice'],
   Expected: ['Pallet', 'Code', 'Size'],
   Shipments: [],
+  Customers: ['Name'],
 };
 
 function setup() {
@@ -39,6 +43,7 @@ function setup() {
   Object.keys(SHEETS).forEach(function (name) { sheet_(name); });
   stockSheet_();
   outSheet_();
+  cutsSheet_();
   const props = PropertiesService.getScriptProperties();
   let token = props.getProperty('ZINAX_TOKEN');
   if (!token) {
@@ -96,11 +101,16 @@ function sync_(req) {
   }, 15);
 
   appendNew_('Movements', req.movements || [], function (m) {
-    return [m.id, m.itemId, m.type, m.qty, m.unit, m.code, m.size, m.reference || '', date_(m.at), m.device, now, m.user || ''];
+    return [m.id, m.itemId, m.type, m.qty, m.unit, m.code, m.size, m.reference || '', date_(m.at), m.device, now, m.user || '',
+            m.customer || '', m.invoice || ''];
   });
 
+  upsert_('Customers', req.customers || [], function (c) {
+    return [c.id, c.name, date_(c.createdAt), c.createdBy || '', c.hidden ? true : false, c.updatedAt, now];
+  }, 5);
+
   if ((req.items || []).length) stockSheet_();
-  if ((req.movements || []).length) outSheet_();
+  if ((req.movements || []).length) { outSheet_(); cutsSheet_(); }
   const movementsSince = req.movementsSince === undefined ? since : Number(req.movementsSince) || 0;
 
   return {
@@ -122,7 +132,12 @@ function sync_(req) {
     }),
     movements: changed_('Movements', movementsSince).map(function (r) {
       return { id: r[0], itemId: r[1], type: r[2], qty: Number(r[3]), unit: r[4], code: String(r[5]), size: String(r[6]),
-               reference: String(r[7]), at: ms_(r[8]), device: String(r[9]), user: String(r[11] || '') };
+               reference: String(r[7]), at: ms_(r[8]), device: String(r[9]), user: String(r[11] || ''),
+               customer: String(r[12] || ''), invoice: String(r[13] || '') };
+    }),
+    customers: changed_('Customers', since).filter(function (r) { return String(r[1]).trim(); }).map(function (r) {
+      return { id: String(r[0]), name: String(r[1]).trim(), createdAt: ms_(r[2]), createdBy: String(r[3] || ''),
+               hidden: yes_(r[4]), updatedAt: Number(r[5]) || 0 };
     }),
   };
 }
@@ -136,6 +151,7 @@ function sync_(req) {
  */
 function onEdit(e) {
   const sh = e.range.getSheet();
+  if (sh.getName() === 'Customers') return customersEdited_(e);
   if (sh.getName() !== 'Items') return;
   const first = Math.max(2, e.range.getRow());
   const last = e.range.getLastRow();
@@ -165,11 +181,37 @@ function onEdit(e) {
       const mv = sheet_('Movements');
       mv.getRange(mv.getLastRow() + 1, 1, 1, SHEETS.Movements.length).setValues([[
         Utilities.getUuid(), r[0], 'ADJUST', delta, r[C('Unit')], r[C('Code')], r[C('Size')],
-        'Edited in sheet', new Date(now), 'SHEET', now,
+        'Edited in sheet', new Date(now), 'SHEET', now, '', '', '',
       ]]);
     }
   }
   stockSheet_();
+}
+
+/**
+ * Edits in the Customers tab: a name typed on a new row gets an ID; every edited row is stamped
+ * so the phones take the change on their next sync.
+ */
+function customersEdited_(e) {
+  const sh = e.range.getSheet();
+  const first = Math.max(2, e.range.getRow());
+  const last = e.range.getLastRow();
+  if (last < first) return;
+  const width = SHEETS.Customers.length;
+  const rows = sh.getRange(first, 1, last - first + 1, width).getValues();
+  const now = Date.now();
+  rows.forEach(function (r) {
+    if (!String(r[1]).trim()) return;
+    if (!r[0]) {
+      r[0] = Utilities.getUuid();
+      r[2] = new Date(now);
+      r[3] = r[3] || 'SHEET';
+    }
+    r[4] = yes_(r[4]);
+    r[5] = Math.max(now, (Number(r[5]) || 0) + 1);
+    r[6] = now;
+  });
+  sh.getRange(first, 1, rows.length, width).setValues(rows);
 }
 
 // ---------- sheet helpers ----------
@@ -301,17 +343,22 @@ function writeSummary_(ss, name, position, headers, rows, updated) {
   sh.setFrozenRows(1);
 }
 
-/** Out by day: what left the warehouse each day, per code. Newest day first. */
+/** IDs of ship-outs, cuts and write-offs cancelled in the app: each has an UNDO row whose Reference is its ID. */
+function undone_(moves) {
+  const undone = {};
+  moves.forEach(function (r) { if (r[2] === 'UNDO') undone[String(r[7])] = true; });
+  return undone;
+}
+
+/** Out by day: what left the warehouse each day (shipped and cut), per code. Newest day first. */
 function outSheet_() {
   const ss = SpreadsheetApp.getActive();
   const tz = ss.getSpreadsheetTimeZone();
   const groups = {};
   const moves = readAll_('Movements');
-  // Ship-outs cancelled in the app have an UNDO row whose Reference is the ship-out's ID.
-  const undone = {};
-  moves.forEach(function (r) { if (r[2] === 'UNDO') undone[String(r[7])] = true; });
+  const undone = undone_(moves);
   moves.forEach(function (r) {
-    if (r[2] !== 'OUT' || undone[String(r[0])]) return;
+    if ((r[2] !== 'OUT' && r[2] !== 'CUT') || undone[String(r[0])]) return;
     const day = Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd');
     const key = [day, r[5], r[6], r[4]].join('|');
     if (!groups[key]) groups[key] = { row: [day, String(r[5]), String(r[6]), r[4], 0, 0], items: {}, refs: {}, by: {} };
@@ -330,6 +377,23 @@ function outSheet_() {
     return byCode_(a, b, 3, 1);
   });
   writeSummary_(ss, 'Out by day', 2, ['Date', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Customer / invoice', 'By'], rows,
+    'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
+}
+
+/** Cuts: every cut for a customer and every short end written off, newest first. */
+function cutsSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  const tz = ss.getSpreadsheetTimeZone();
+  const moves = readAll_('Movements');
+  const undone = undone_(moves);
+  const rows = moves.filter(function (r) {
+    return (r[2] === 'CUT' || r[2] === 'WASTE') && !undone[String(r[0])];
+  }).sort(function (a, b) { return ms_(b[8]) - ms_(a[8]); }).map(function (r) {
+    return [Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd HH:mm'), r[2] === 'CUT' ? 'Cut' : 'Waste',
+            String(r[12] || ''), String(r[13] || ''), String(r[5]), String(r[6]), Number(r[3]) || 0, r[4], r[1],
+            String(r[11] || '').trim() || ('phone ' + r[9])];
+  });
+  writeSummary_(ss, 'Cuts', 3, ['Date', 'Type', 'Customer', 'Invoice', 'Code', 'Size', 'Length', 'Unit', 'Roll', 'By'], rows,
     'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
 }
 
@@ -358,4 +422,5 @@ function json_(obj) {
 function date_(ms) { return ms ? new Date(Number(ms)) : ''; }
 function ms_(v) { return v instanceof Date ? v.getTime() : Number(v) || 0; }
 function num_(v) { return v === '' || v === null || isNaN(Number(v)) ? null : Number(v); }
+function yes_(v) { return v === true || /^(true|yes|y|1|x)$/i.test(String(v).trim()); }
 function blank_(v) { return v === null || v === undefined ? '' : v; }

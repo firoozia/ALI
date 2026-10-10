@@ -50,7 +50,7 @@ import java.util.Locale
 private enum class Range(val label: String) { TODAY("Today"), YESTERDAY("Yesterday"), WEEK("Last 7 days"), MONTH("This month"), CUSTOM("Pick dates…") }
 
 /**
- * Reports of what was shipped out, received, deleted or moved, for a date range,
+ * Reports of what was shipped out, cut, written off, received, deleted or moved, for a date range,
  * with who did it. [start] picks the first tab.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +87,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
     val users = remember(all) { all.map { OutReport.who(it) }.distinct().sorted() }
     val shown = remember(all, user) { if (user == null) all else all.filter { OutReport.who(it) == user } }
     val lines = remember(shown) { OutReport.lines(shown) }
+    val customers = remember(shown, activity) { if (activity == Activity.CUT) OutReport.customerLines(shown) else emptyList() }
     val stamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.US) }
 
     ScreenScaffold("Reports", onBack) { padding ->
@@ -135,6 +136,30 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                     )
                 }
             }
+            if (customers.isNotEmpty()) item {
+                Panel {
+                    Text("By customer", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    customers.forEachIndexed { i, c ->
+                        if (i > 0) HorizontalDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(c.customer, fontWeight = FontWeight.Medium)
+                                Text(
+                                    listOfNotNull(
+                                        "${c.cuts} ${if (c.cuts == 1) "cut" else "cuts"}",
+                                        c.codes.joinToString(", "),
+                                        c.invoices.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Inv "),
+                                        c.users.joinToString(", ").takeIf { it.isNotBlank() }?.let { "by $it" },
+                                    ).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(c.totalText, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
             items(lines, key = { "${it.code}|${it.size}|${it.unit}" }) { l ->
                 val key = "${l.code}|${l.size}|${l.unit}"
                 Panel {
@@ -144,7 +169,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                             title = OutReport.lineSummary(l),
                             subtitle = listOfNotNull(l.category?.label, Format.size(l.size).takeIf { it.isNotBlank() }).joinToString(" · "),
                         )
-                        if (activity == Activity.OUT && l.references.isNotEmpty()) {
+                        if ((activity == Activity.OUT || activity == Activity.CUT) && l.references.isNotEmpty()) {
                             Text("To: ${l.references.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("By: ${l.users.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -167,8 +192,8 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.SemiBold,
                                     )
-                                    if (activity == Activity.OUT && o.id.isNotEmpty()) {
-                                        TextButton(onClick = { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference) }) {
+                                    if (activity in OutReport.undoable && o.id.isNotEmpty()) {
+                                        TextButton(onClick = { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference, o.type) }) {
                                             Text("Undo", color = LocalStatus.current.bad)
                                         }
                                     }

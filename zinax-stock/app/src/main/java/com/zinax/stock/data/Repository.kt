@@ -2,6 +2,9 @@ package com.zinax.stock.data
 
 import androidx.room.withTransaction
 import com.zinax.stock.core.Category
+import com.zinax.stock.core.CustomerNames
+import com.zinax.stock.core.CutPlan
+import com.zinax.stock.core.Format
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.importer.ParsedUnit
 import kotlinx.coroutines.sync.Mutex
@@ -96,7 +99,9 @@ class Repository(
     )
 
     /** Ships [qty] out of [itemId]. A package is marked shipped when nothing is left. */
-    suspend fun shipOut(itemId: String, qty: Double, reference: String): Item {
+    suspend fun shipOut(itemId: String, qty: Double, customer: String, invoice: String = ""): Item {
+        val who = CustomerNames.clean(customer)
+        val reference = listOf(who, invoice.trim()).filter { it.isNotEmpty() }.joinToString(" · ")
         val result = db.withTransaction {
             val item = dao.item(itemId) ?: error("Unknown label $itemId")
             check(item.status == ItemStatus.IN_STOCK) { "$itemId was already shipped" }
@@ -113,15 +118,104 @@ class Repository(
             dao.putMovements(
                 listOf(
                     Movement(
-                        id = uuid(), itemId = item.id, type = MovementType.OUT, qty = qty, reference = reference.trim(),
+                        id = uuid(), itemId = item.id, type = MovementType.OUT, qty = qty, reference = reference,
                         at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                        customer = who, invoice = invoice.trim(),
                     )
                 )
             )
+            if (who.isNotEmpty()) addCustomerIn(who, t)
             updated
         }
         onChange()
         return result
+    }
+
+    /** What to do with a short end left by a cut. */
+    enum class EndChoice { KEEP, WASTE, GIVE_ALL }
+
+    /** The result of a cut, with what the customer label needs. */
+    data class CutResult(val roll: Item, val length: Double, val customer: String, val invoice: String, val cutNo: Int, val at: Long, val wasted: Double)
+
+    /**
+     * Cuts [length] metres (or the package's unit) from [itemId] for [customer].
+     * [end] decides what happens to a short end; GIVE_ALL gives the customer the whole remainder.
+     */
+    suspend fun cut(itemId: String, length: Double, customer: String, invoice: String, end: EndChoice = EndChoice.KEEP): CutResult {
+        val who = CustomerNames.clean(customer)
+        val result = db.withTransaction {
+            val item = dao.item(itemId) ?: error("Unknown label $itemId")
+            check(item.status == ItemStatus.IN_STOCK) { "$itemId is not in stock" }
+            require(length > 0) { "Enter a length above zero" }
+            require(length <= item.remaining + 1e-6) { "Only ${Format.qtyUnit(item.remaining, item.unit)} left on $itemId" }
+            val t = now()
+            val taken = if (end == EndChoice.GIVE_ALL) item.remaining else length
+            var left = CutPlan.left(item.remaining, taken)
+            val moves = ArrayList<Movement>()
+            moves.add(
+                Movement(
+                    id = uuid(), itemId = item.id, type = MovementType.CUT, qty = taken,
+                    reference = listOf(who, invoice.trim()).filter { it.isNotEmpty() }.joinToString(" · "),
+                    at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                    customer = who, invoice = invoice.trim(),
+                )
+            )
+            var wasted = 0.0
+            if (end == EndChoice.WASTE && left > 0) {
+                wasted = left
+                moves.add(
+                    Movement(
+                        id = uuid(), itemId = item.id, type = MovementType.WASTE, qty = left, reference = "Short end",
+                        at = t + 1, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                    )
+                )
+                left = 0.0
+            }
+            val updated = item.copy(
+                remaining = left,
+                status = if (left == 0.0) ItemStatus.SHIPPED else ItemStatus.IN_STOCK,
+                updatedAt = t, dirty = true,
+            )
+            dao.putItems(listOf(updated))
+            dao.putMovements(moves)
+            if (who.isNotEmpty()) addCustomerIn(who, t)
+            CutResult(updated, taken, who, invoice.trim(), dao.cutCount(item.id), t, wasted)
+        }
+        onChange()
+        return result
+    }
+
+    // ---------- customers ----------
+
+    /** Adds [name] to the library unless it is there already; a hidden match is shown again. */
+    private suspend fun addCustomerIn(name: String, t: Long) {
+        val key = CustomerNames.key(name)
+        val match = dao.allCustomers().firstOrNull { CustomerNames.key(it.name) == key }
+        when {
+            match == null -> dao.putCustomers(listOf(Customer(uuid(), name, t, prefs.userName, t)))
+            match.hidden -> dao.putCustomers(listOf(match.copy(hidden = false, updatedAt = t, dirty = true)))
+        }
+    }
+
+    suspend fun addCustomer(name: String) {
+        val clean = CustomerNames.clean(name)
+        if (clean.isEmpty()) return
+        db.withTransaction { addCustomerIn(clean, now()) }
+        onChange()
+    }
+
+    suspend fun renameCustomer(id: String, name: String) {
+        val clean = CustomerNames.clean(name)
+        val c = dao.customer(id) ?: return
+        if (clean.isEmpty() || clean == c.name) return
+        dao.putCustomers(listOf(c.copy(name = clean, updatedAt = now(), dirty = true)))
+        onChange()
+    }
+
+    suspend fun hideCustomer(id: String) {
+        val c = dao.customer(id) ?: return
+        dao.putCustomers(listOf(c.copy(hidden = true, updatedAt = now(), dirty = true)))
+        onChange()
     }
 
     /**
@@ -131,8 +225,8 @@ class Repository(
     suspend fun undoShipOut(movementId: String) {
         db.withTransaction {
             val m = dao.movement(movementId) ?: error("Ship-out not found")
-            check(m.type == MovementType.OUT) { "Only ship-outs can be undone" }
-            check(movementId !in dao.undoneIdsNow()) { "This ship-out was already undone" }
+            check(m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE)) { "Only ship-outs, cuts and waste can be undone" }
+            check(movementId !in dao.undoneIdsNow()) { "This was already undone" }
             val item = dao.item(m.itemId) ?: error("Label ${m.itemId} not found")
             check(item.status != ItemStatus.VOID) { "${item.id} was deleted" }
             val t = now()

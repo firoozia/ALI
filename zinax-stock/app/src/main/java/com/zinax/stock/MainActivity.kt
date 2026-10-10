@@ -16,6 +16,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.zinax.stock.sync.ReportWorker
 import com.zinax.stock.ui.CheckScreen
+import com.zinax.stock.ui.CustomersScreen
+import com.zinax.stock.ui.CutScreen
 import com.zinax.stock.ui.HomeScreen
 import com.zinax.stock.ui.ImportScreen
 import com.zinax.stock.ui.ManualScreen
@@ -39,6 +41,10 @@ object Routes {
     const val STOCK = "stock"
     const val SETTINGS = "settings"
     const val OUT_REPORT = "outreport"
+    const val CUT = "cut?item={item}"
+    const val CUSTOMERS = "customers"
+
+    fun cut(itemId: String? = null) = "cut?item=${android.net.Uri.encode(itemId.orEmpty())}"
 
     fun receive(id: String) = "receive/$id"
     fun check(id: String) = "check/$id"
@@ -91,8 +97,12 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable(Routes.SHIP_OUT) { ShipOutScreen(onBack = back, onReport = { nav.navigate(Routes.OUT_REPORT) }) }
-                    composable(Routes.STOCK) { StockScreen(onBack = back) }
-                    composable(Routes.SETTINGS) { SettingsScreen(onBack = back) }
+                    composable(Routes.STOCK) { StockScreen(onBack = back, onCut = { id -> nav.navigate(Routes.cut(id)) }) }
+                    composable(Routes.SETTINGS) { SettingsScreen(onBack = back, onCustomers = { nav.navigate(Routes.CUSTOMERS) }) }
+                    composable(Routes.CUT, listOf(navArgument("item") { type = NavType.StringType; defaultValue = "" })) {
+                        CutScreen(startItem = it.arguments?.getString("item").orEmpty().ifEmpty { null }, onBack = back)
+                    }
+                    composable(Routes.CUSTOMERS) { CustomersScreen(onBack = back) }
                     composable(Routes.OUT_REPORT) { ReportsScreen(onBack = back) }
                 }
 

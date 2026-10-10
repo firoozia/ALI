@@ -107,5 +107,15 @@ class Prefs(context: Context) {
         get() = sp.getString("currentLocation", "") ?: ""
         set(v) = edit { putString("currentLocation", v.trim()) }
 
+    /** A cut leaving less than this many metres asks what to do with the end. */
+    var shortEndMetres: Float
+        get() = sp.getFloat("shortEndMetres", 3f)
+        set(v) = edit { putFloat("shortEndMetres", v.coerceAtLeast(0f)) }
+
+    /** Cut lengths typed in centimetres instead of metres. */
+    var cutInCm: Boolean
+        get() = sp.getBoolean("cutInCm", false)
+        set(v) = edit { putBoolean("cutInCm", v) }
+
     val syncConfigured: Boolean get() = webAppUrl.startsWith("https://") && token.isNotBlank()
 }

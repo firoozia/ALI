@@ -53,4 +53,35 @@ assert.equal(post({token:'tok',action:'sync',since:Date.now()+1000}).movements.l
 post({token:'tok',action:'sync',since:0,movements:[{id:'u1',itemId:'ZX-251009-A0002',type:'UNDO',qty:30,unit:'m',code:'101',size:'0.30*1400',reference:'o1',at:Date.UTC(2026,9,10,12),device:'A',user:'Ali'}]});
 assert.equal(sheets['Out by day'].cells[1][5],90); assert.equal(sheets['Out by day'].cells[1][6],'');
 assert.ok(sheets.Movements.cells.some(r=>r[0]==='o1') && sheets.Movements.cells.some(r=>r[0]==='u1' && r[11]==='Ali'));
+// cuts: a CUT with customer and invoice, a WASTE, then undo the WASTE
+post({token:'tok',action:'sync',since:0,movements:[
+  {id:'c1',itemId:'ZX-251009-A0001',type:'CUT',qty:12.5,unit:'m',code:'101',size:'0.30*1400',reference:'Bahar · F-12',at:Date.UTC(2026,9,11,9),device:'A',user:'Sara',customer:'Bahar',invoice:'F-12'},
+  {id:'w1',itemId:'ZX-251009-A0001',type:'WASTE',qty:1.5,unit:'m',code:'101',size:'0.30*1400',reference:'Short end',at:Date.UTC(2026,9,11,10),device:'A',user:'Sara'}]});
+let cuts=sheets.Cuts.cells; assert.equal(cuts[0][2],'Customer'); assert.equal(cuts.length,3);
+assert.equal(cuts[1][1],'Waste'); assert.equal(cuts[2][1],'Cut'); assert.equal(cuts[2][2],'Bahar'); assert.equal(cuts[2][3],'F-12'); assert.equal(cuts[2][6],12.5); assert.equal(cuts[2][9],'Sara');
+// the mock dates every row the same day, so the cut joins the 90 m ship-out of 101
+assert.ok(sheets['Out by day'].cells.some(r=>r[5]===102.5 && String(r[6]).includes('Bahar · F-12')));
+assert.equal(sheets.Movements.cells[0][12],'Customer'); assert.ok(sheets.Movements.cells.some(r=>r[0]==='c1' && r[12]==='Bahar' && r[13]==='F-12'));
+r=post({token:'tok',action:'sync',since:Date.now()+1000,movementsSince:0});
+assert.ok(r.movements.some(m=>m.id==='c1' && m.customer==='Bahar' && m.invoice==='F-12'));
+post({token:'tok',action:'sync',since:0,movements:[{id:'u2',itemId:'ZX-251009-A0001',type:'UNDO',qty:1.5,unit:'m',code:'101',size:'0.30*1400',reference:'w1',at:Date.UTC(2026,9,11,11),device:'A',user:'Sara'}]});
+assert.equal(sheets.Cuts.cells.length,2); assert.equal(sheets.Cuts.cells[1][1],'Cut');
+// customers: phone pushes two, a stale rename is ignored, a newer one applies
+r=post({token:'tok',action:'sync',since:0,customers:[{id:'k1',name:'Bahar',createdAt:1000,createdBy:'Sara',updatedAt:1000,hidden:false},{id:'k2',name:'Ali Rezaei',createdAt:1000,createdBy:'Sara',updatedAt:1000,hidden:false}]});
+assert.equal(r.customers.length,2); assert.equal(sheets.Customers.cells[0][1],'Name');
+post({token:'tok',action:'sync',since:0,customers:[{id:'k1',name:'Old',createdAt:1000,createdBy:'Sara',updatedAt:500,hidden:false}]});
+assert.equal(sheets.Customers.cells[1][1],'Bahar');
+post({token:'tok',action:'sync',since:0,customers:[{id:'k2',name:'Ali Rezaei',createdAt:1000,createdBy:'Sara',updatedAt:2000,hidden:true}]});
+assert.equal(sheets.Customers.cells[2][4],true);
+// hand edit: a new name typed on row 4 gets an ID; renaming row 2 is stamped newer
+const cs=sheets.Customers; cs.cells[3]=['','Mehdi Trading','','','','',''];
+ctx.Utilities.getUuid=()=>'k3';
+ctx.onEdit({range:{getSheet:()=>cs,getRow:()=>4,getLastRow:()=>4,getNumColumns:()=>1,getColumn:()=>2}});
+assert.equal(cs.cells[3][0],'k3'); assert.equal(cs.cells[3][3],'SHEET'); assert.equal(cs.cells[3][4],false); assert.ok(cs.cells[3][5]>0);
+cs.cells[1][1]='Bahar Design'; cs.cells[1][4]='yes';
+ctx.onEdit({range:{getSheet:()=>cs,getRow:()=>2,getLastRow:()=>2,getNumColumns:()=>1,getColumn:()=>2}});
+assert.ok(cs.cells[1][5]>1000); assert.equal(cs.cells[1][4],true);
+r=post({token:'tok',action:'sync',since:cs.cells[1][6]-1});
+assert.ok(r.customers.some(c=>c.id==='k1' && c.name==='Bahar Design' && c.hidden===true));
+assert.ok(r.customers.some(c=>c.id==='k3' && c.name==='Mehdi Trading' && c.hidden===false && c.createdBy==='SHEET'));
 console.log('APPS_SCRIPT_TESTS_OK');

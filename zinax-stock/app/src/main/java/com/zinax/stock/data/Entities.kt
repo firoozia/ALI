@@ -71,9 +71,26 @@ object MovementType {
     const val OUT = "OUT"
     const val VOID = "VOID"
     const val MOVE = "MOVE"
-    /** Cancels a ship-out made by mistake; [Movement.reference] holds the cancelled movement's ID. */
+    /** Metres cut from a roll for a customer. */
+    const val CUT = "CUT"
+    /** A short end written off after a cut. */
+    const val WASTE = "WASTE"
+    /** Cancels a ship-out, cut or waste made by mistake; [Movement.reference] holds the cancelled movement's ID. */
     const val UNDO = "UNDO"
 }
+
+/** A customer in the shared library, offered while typing names. */
+@Entity(tableName = "customers")
+data class Customer(
+    @PrimaryKey val id: String,
+    val name: String,
+    val createdAt: Long,
+    val createdBy: String,
+    val updatedAt: Long,
+    /** Removed from suggestions; kept so old reports still show the name. */
+    val hidden: Boolean = false,
+    val dirty: Boolean = true,
+)
 
 /** A product the app has seen, offered as a suggestion when typing a code. */
 data class ProductHint(
@@ -101,4 +118,6 @@ data class Movement(
     val dirty: Boolean = true,
     /** Name of the person who did it, from Settings on that phone. */
     val user: String = "",
+    val customer: String = "",
+    val invoice: String = "",
 )

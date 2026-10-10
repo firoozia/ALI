@@ -16,15 +16,19 @@ data class StatusColors(
     val bad: Color, val badSoft: Color,
     /** Storage location badges: dark text on yellow. */
     val place: Color, val placeText: Color,
+    /** Open (cut) rolls: dark text on orange. */
+    val open: Color, val openText: Color,
 )
 
 private val LightStatus = StatusColors(
     Color(0xFF1D7A46), Color(0xFFDFF1E6), Color(0xFFA15C00), Color(0xFFFBECD0), Color(0xFFB3261E), Color(0xFFF8DEDB),
     Color(0xFFFFD43B), Color(0xFF2B2100),
+    Color(0xFFFF922B), Color(0xFF2B1300),
 )
 private val DarkStatus = StatusColors(
     Color(0xFF5BC489), Color(0xFF17382A), Color(0xFFE8B04F), Color(0xFF3D2F10), Color(0xFFF0857D), Color(0xFF42201D),
     Color(0xFFFFCF33), Color(0xFF231B00),
+    Color(0xFFFFA94D), Color(0xFF2B1300),
 )
 
 val LocalStatus = staticCompositionLocalOf { LightStatus }

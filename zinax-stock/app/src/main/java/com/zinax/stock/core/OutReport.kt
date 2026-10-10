@@ -7,6 +7,8 @@ import java.util.Locale
 /** Kinds of stock change a report can show. */
 enum class Activity(val type: String, val title: String, val verb: String) {
     OUT("OUT", "Ship-outs", "shipped"),
+    CUT("CUT", "Cuts", "cut"),
+    WASTE("WASTE", "Waste", "written off"),
     IN("IN", "Received", "received"),
     VOID("VOID", "Deleted", "deleted"),
     MOVE("MOVE", "Moved", "moved"),
@@ -29,7 +31,22 @@ data class OutSource(
     val type: String = Activity.OUT.type,
     /** ID of the movement, so a ship-out can be undone from the report. */
     val id: String = "",
+    val customer: String = "",
+    val invoice: String = "",
 )
+
+/** Cuts for one customer in the report period. */
+data class CustomerLine(
+    val customer: String,
+    val cuts: Int,
+    /** Total per unit, e.g. {"m": 35.5}. */
+    val totals: Map<String, Double>,
+    val invoices: List<String>,
+    val codes: List<String>,
+    val users: List<String>,
+) {
+    val totalText: String get() = totals.entries.joinToString(", ") { (u, q) -> Format.qtyUnit(q, u) }
+}
 
 /** Changes of one code and size in the report period. */
 data class OutLine(
@@ -48,6 +65,23 @@ data class OutLine(
 
 object OutReport {
     private const val EPS = 1e-6
+
+    /** Activities that take goods out and can be undone. */
+    val undoable = setOf(Activity.OUT, Activity.CUT, Activity.WASTE)
+
+    fun customerLines(outs: List<OutSource>): List<CustomerLine> =
+        outs.groupBy { CustomerNames.key(it.customer) }
+            .map { (_, list) ->
+                CustomerLine(
+                    customer = list.first().customer.ifBlank { "No customer" },
+                    cuts = list.size,
+                    totals = list.groupBy { it.unit }.mapValues { e -> e.value.sumOf { it.qty } },
+                    invoices = list.map { it.invoice.trim() }.filter { it.isNotEmpty() }.distinct(),
+                    codes = list.map { it.code }.distinct().sortedBy { Report.codeSortKey(it) },
+                    users = list.map { who(it) }.distinct(),
+                )
+            }
+            .sortedWith(compareBy({ it.customer == "No customer" }, { CustomerNames.key(it.customer) }))
 
     fun isCut(o: OutSource) = o.type == Activity.OUT.type && o.packQty != null && o.qty < o.packQty - EPS
 
@@ -94,8 +128,16 @@ object OutReport {
             rows.forEach { l ->
                 val size = if (l.size.isBlank()) "" else " (${Format.size(l.size)})"
                 append("${l.code}$size: ${lineSummary(l)}")
-                if (activity == Activity.OUT && l.references.isNotEmpty()) append(" → ${l.references.joinToString(", ")}")
+                if ((activity == Activity.OUT || activity == Activity.CUT) && l.references.isNotEmpty()) append(" → ${l.references.joinToString(", ")}")
                 append(" · by ${l.users.joinToString(", ")}")
+                append("\n")
+            }
+        }
+        if (activity == Activity.CUT) {
+            append("\n*By customer*\n")
+            customerLines(outs).forEach { c ->
+                append("${c.customer}: ${c.cuts} cut${if (c.cuts == 1) "" else "s"}, ${c.totalText} · ${c.codes.joinToString(", ")}")
+                if (c.invoices.isNotEmpty()) append(" · ${c.invoices.joinToString(", ")}")
                 append("\n")
             }
         }
@@ -124,6 +166,15 @@ object OutReport {
         return XlsxWriter.SheetData(name, rows, listOf(18, 12, 16, 7, 10, 7, 10, 28, 16))
     }
 
+    fun customerSheet(outs: List<OutSource>): XlsxWriter.SheetData {
+        val rows = ArrayList<List<Any?>>()
+        rows.add(listOf("Customer", "Cuts", "Total", "Colours", "Invoices", "By"))
+        customerLines(outs).forEach {
+            rows.add(listOf(it.customer, it.cuts, it.totalText, it.codes.joinToString(", "), it.invoices.joinToString(", "), it.users.joinToString(", ")))
+        }
+        return XlsxWriter.SheetData("By customer", rows, listOf(30, 7, 14, 20, 20, 16))
+    }
+
     fun workbook(activity: Activity, period: String, outs: List<OutSource>): List<XlsxWriter.SheetData> {
         val detail = ArrayList<List<Any?>>()
         detail.add(listOf("Date", "ID", "Category", "Code", "Size", "Qty", "Unit", "Whole / cut", "Customer / note", "User", "Phone"))
@@ -136,9 +187,11 @@ object OutReport {
                 )
             )
         }
-        return listOf(
+        val sheets = arrayListOf(
             summarySheet("${activity.title} $period".take(31), outs),
             XlsxWriter.SheetData("Details", detail, listOf(17, 18, 18, 12, 16, 8, 7, 11, 24, 14, 7)),
         )
+        if (activity == Activity.CUT) sheets.add(1, customerSheet(outs))
+        return sheets
     }
 }

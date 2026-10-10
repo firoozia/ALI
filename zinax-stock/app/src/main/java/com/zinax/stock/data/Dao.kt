@@ -96,6 +96,39 @@ interface StockDao {
     @Query("SELECT * FROM movements WHERE itemId = :itemId AND type = 'OUT' ORDER BY at DESC")
     fun shipOutsOf(itemId: String): Flow<List<Movement>>
 
+    @Query("SELECT COUNT(*) FROM movements WHERE itemId = :itemId AND type = 'CUT'")
+    suspend fun cutCount(itemId: String): Int
+
+    /** Ship-outs and cuts of one package that can still be undone, newest first. */
+    @Query("SELECT * FROM movements WHERE itemId = :itemId AND type IN ('OUT', 'CUT', 'WASTE') ORDER BY at DESC")
+    fun takenFrom(itemId: String): Flow<List<Movement>>
+
+    @Query("SELECT * FROM movements WHERE type IN ('OUT', 'CUT', 'WASTE') AND at >= :since ORDER BY at DESC")
+    fun takenSince(since: Long): Flow<List<Movement>>
+
+    /** In-stock packages of one code, for cutting. */
+    @Query("SELECT * FROM items WHERE status = 'IN_STOCK' AND code = :code ORDER BY receivedAt")
+    fun inStockOfCode(code: String): Flow<List<Item>>
+
+    // customers
+    @Query("SELECT * FROM customers WHERE hidden = 0 ORDER BY name COLLATE NOCASE")
+    fun customers(): Flow<List<Customer>>
+
+    @Query("SELECT * FROM customers")
+    suspend fun allCustomers(): List<Customer>
+
+    @Query("SELECT * FROM customers WHERE id = :id")
+    suspend fun customer(id: String): Customer?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putCustomers(rows: List<Customer>)
+
+    @Query("SELECT * FROM customers WHERE dirty = 1")
+    suspend fun dirtyCustomers(): List<Customer>
+
+    @Query("UPDATE customers SET dirty = 0 WHERE id IN (:ids) AND updatedAt <= :upTo")
+    suspend fun cleanCustomers(ids: List<String>, upTo: Long)
+
     /** IDs of ship-outs that were undone. */
     @Query("SELECT reference FROM movements WHERE type = 'UNDO'")
     fun undoneIds(): Flow<List<String>>

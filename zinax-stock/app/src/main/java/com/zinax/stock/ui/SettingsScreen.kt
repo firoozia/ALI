@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +40,7 @@ import com.zinax.stock.Graph
 import com.zinax.stock.Share
 import com.zinax.stock.core.Category
 import com.zinax.stock.core.LabelId
+import com.zinax.stock.core.Lengths
 import com.zinax.stock.data.Item
 import com.zinax.stock.data.ItemStatus
 import com.zinax.stock.printer.PairedPrinter
@@ -46,7 +48,7 @@ import com.zinax.stock.sync.ReportWorker
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -89,6 +91,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var reportExcel by remember { mutableStateOf(prefs.reportAsExcel) }
     var invert by remember { mutableStateOf(prefs.invert) }
     var direction by remember { mutableStateOf(prefs.direction) }
+    var endCm by remember { mutableStateOf(prefs.cutInCm) }
+    var shortEnd by remember { mutableStateOf(Lengths.show(prefs.shortEndMetres.toDouble(), endCm)) }
     LaunchedEffect(tick) { if (sheet.isBlank()) sheet = prefs.sheetUrl }
 
     ScreenScaffold("Settings", onBack, snackbar) { padding ->
@@ -172,6 +176,33 @@ fun SettingsScreen(onBack: () -> Unit) {
                     newLocation = ""
                 }, enabled = newLocation.isNotBlank()) { Text("Add") }
             }
+
+            Section("Cutting")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    shortEnd,
+                    { v ->
+                        shortEnd = v
+                        val m = if (v.trim() == "0") 0.0 else Lengths.parse(v, endCm)
+                        m?.let { prefs.shortEndMetres = it.toFloat() }
+                    },
+                    label = { Text("Short end below") }, singleLine = true, modifier = Modifier.weight(1f),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                FilterChip(selected = !endCm, onClick = {
+                    if (endCm) { endCm = false; shortEnd = Lengths.show(prefs.shortEndMetres.toDouble(), false) }
+                }, label = { Text("m") })
+                FilterChip(selected = endCm, onClick = {
+                    if (!endCm) { endCm = true; shortEnd = Lengths.show(prefs.shortEndMetres.toDouble(), true) }
+                }, label = { Text("cm") })
+            }
+            Text(
+                "When a cut would leave less than this on the roll, the app asks: give the whole roll, " +
+                    "write the end off as waste, or keep it. Set 0 to never ask.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onCustomers, modifier = Modifier.fillMaxWidth()) { Text("Customers library") }
 
             Section("This phone")
             OutlinedTextField(

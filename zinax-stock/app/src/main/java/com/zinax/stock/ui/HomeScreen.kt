@@ -86,10 +86,17 @@ fun HomeScreen(nav: NavController) {
                 Tile("Ship out", "Scan or type a label", modifier = Modifier.weight(1f)) { nav.navigate(Routes.SHIP_OUT) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Tile("Stock", "${stock.size} packages · ${stock.map { it.code }.distinct().size} codes", modifier = Modifier.weight(1f)) {
-                    nav.navigate(Routes.STOCK)
-                }
+                Tile("✂ Cut", "Metres for a customer", modifier = Modifier.weight(1f)) { nav.navigate(Routes.cut()) }
+                val open = stock.count { it.isOpen }
+                Tile(
+                    "Stock",
+                    "${stock.size} packages · ${stock.map { it.code }.distinct().size} codes" + if (open > 0) " · $open open" else "",
+                    modifier = Modifier.weight(1f),
+                ) { nav.navigate(Routes.STOCK) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Tile("Shipments", latest?.name ?: "None yet", modifier = Modifier.weight(1f)) { nav.navigate(Routes.SHIPMENTS) }
+                Tile("Reports", "Out, cuts, waste, in, deleted, moved", modifier = Modifier.weight(1f)) { nav.navigate(Routes.OUT_REPORT) }
             }
 
             Panel {
@@ -100,7 +107,6 @@ fun HomeScreen(nav: NavController) {
 
             OutlinedButton(onClick = { nav.navigate(Routes.IMPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Import packing list") }
             OutlinedButton(onClick = { nav.navigate(Routes.manual()) }, modifier = Modifier.fillMaxWidth()) { Text("Print labels by hand") }
-            OutlinedButton(onClick = { nav.navigate(Routes.OUT_REPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Reports: out, in, deleted, moved") }
             OutlinedButton(
                 onClick = { Share.openUrl(context, sheetUrl) },
                 enabled = sheetUrl.isNotBlank(),

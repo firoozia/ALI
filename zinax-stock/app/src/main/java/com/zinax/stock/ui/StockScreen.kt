@@ -36,17 +36,19 @@ import com.zinax.stock.Graph
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.Report
 import com.zinax.stock.data.Item
+import com.zinax.stock.printer.LabelSpec
 import kotlinx.coroutines.launch
 
 /** What the move dialog is moving: one package, or every package in a code group on screen. */
 private data class MoveTarget(val title: String, val ids: List<String>, val current: String)
 
 @Composable
-fun StockScreen(onBack: () -> Unit) {
+fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val items by Graph.db.dao().inStock().collectAsStateWithLifecycle(emptyList())
     var query by remember { mutableStateOf("") }
     var place by remember { mutableStateOf<String?>(null) }
+    var openOnly by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf<String?>(null) }
     var moving by remember { mutableStateOf<MoveTarget?>(null) }
     var deleting by remember { mutableStateOf<MoveTarget?>(null) }
@@ -55,8 +57,10 @@ fun StockScreen(onBack: () -> Unit) {
         val used = items.map { it.location.ifBlank { NO_LOCATION } }.distinct()
         (Graph.prefs.locations.filter { it in used } + used.filter { it !in Graph.prefs.locations }.sortedBy { it == NO_LOCATION })
     }
-    val shown = remember(items, query, place) {
-        items.filter { query.isBlank() || it.code.contains(query.trim(), true) || it.id.contains(query.trim(), true) }
+    val openCount = remember(items) { items.count { it.isOpen } }
+    val shown = remember(items, query, place, openOnly) {
+        items.filter { !openOnly || it.isOpen }
+            .filter { query.isBlank() || it.code.contains(query.trim(), true) || it.id.contains(query.trim(), true) }
             .filter { place == null || it.location.ifBlank { NO_LOCATION } == place }
     }
     val groups = remember(shown) {
@@ -74,8 +78,11 @@ fun StockScreen(onBack: () -> Unit) {
             item {
                 OutlinedTextField(query, { query = it }, label = { Text("Search code or label ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
-            if (places.size > 1 || place != null) item {
+            if (places.size > 1 || place != null || openCount > 0) item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (openCount > 0 || openOnly) item {
+                        FilterChip(selected = openOnly, onClick = { openOnly = !openOnly }, label = { Text("Open rolls ($openCount)") })
+                    }
                     item { FilterChip(selected = place == null, onClick = { place = null }, label = { Text("All places") }) }
                     items(places) { p ->
                         FilterChip(selected = place == p, onClick = { place = if (place == p) null else p }, label = { Text(p) })
@@ -84,7 +91,8 @@ fun StockScreen(onBack: () -> Unit) {
             }
             item {
                 Text(
-                    "${shown.size} packages · ${shown.map { it.code }.distinct().size} codes" + (place?.let { " in $it" } ?: " in stock"),
+                    "${shown.size} packages · ${shown.map { it.code }.distinct().size} codes" + (place?.let { " in $it" } ?: " in stock") +
+                        if (openOnly) " · open rolls only" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -92,6 +100,8 @@ fun StockScreen(onBack: () -> Unit) {
             items(groups, key = { it.key }) { (key, list) ->
                 val first = list.first()
                 val total = list.sumOf { it.remaining }
+                val opened = list.count { it.isOpen }
+                val pack = Report.plural(first.categoryEnum.pack, list.size)
                 val byPlace = list.groupBy { it.location.ifBlank { NO_LOCATION } }
                     .entries.sortedByDescending { it.value.size }
                     .map { (p, l) -> p to l.size }
@@ -99,7 +109,8 @@ fun StockScreen(onBack: () -> Unit) {
                     Column(Modifier.clickable { open = if (open == key) null else key }) {
                         CodeRow(
                             code = first.code,
-                            title = "${list.size} ${Report.plural(first.categoryEnum.pack, list.size)} · ${Format.qtyUnit(total, first.unit)}",
+                            title = (if (opened > 0) "${list.size - opened} full · $opened open" else "${list.size} $pack") +
+                                " · ${Format.qtyUnit(total, first.unit)}",
                             subtitle = listOf(first.categoryEnum.label, Format.size(first.size)).filter { it.isNotBlank() }.joinToString(" · "),
                         )
                         Spacer(Modifier.height(6.dp))
@@ -119,7 +130,10 @@ fun StockScreen(onBack: () -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text(item.id, style = MonoStyle, fontWeight = FontWeight.Medium)
-                                    LocationBadge(item.location)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        if (item.isOpen) OpenBadge(true)
+                                        LocationBadge(item.location)
+                                    }
                                     Text(
                                         listOfNotNull(
                                             Format.qtyUnit(item.remaining, item.unit) + if (item.remaining < item.qty) " of ${Format.qty(item.qty)}" else "",
@@ -135,8 +149,16 @@ fun StockScreen(onBack: () -> Unit) {
                                         TextButton(onClick = { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }) { Text("Move") }
                                         TextButton(onClick = { Graph.printQueue.print(listOf(item), item.id) }) { Text("Reprint") }
                                     }
-                                    TextButton(onClick = { deleting = MoveTarget("Delete ${item.id}?", listOf(item.id), "") }) {
-                                        Text("Delete", color = LocalStatus.current.bad)
+                                    Row {
+                                        TextButton(onClick = { onCut(item.id) }) { Text("✂ Cut") }
+                                        TextButton(onClick = { deleting = MoveTarget("Delete ${item.id}?", listOf(item.id), "") }) {
+                                            Text("Delete", color = LocalStatus.current.bad)
+                                        }
+                                    }
+                                    if (item.isOpen) {
+                                        TextButton(onClick = { Graph.printQueue.printLabels(listOf(LabelSpec.Remainder(item)), "remainder ${item.id}") }) {
+                                            Text("Remainder label")
+                                        }
                                     }
                                 }
                             }

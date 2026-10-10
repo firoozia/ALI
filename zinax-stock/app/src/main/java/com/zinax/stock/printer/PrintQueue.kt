@@ -11,12 +11,32 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** What one printed label shows. */
+sealed interface LabelSpec {
+    /** The roll or package label: code, size, quantity, QR. */
+    data class Roll(val item: Item) : LabelSpec
+    /** Stuck over a cut roll's label: OPEN, metres left, same QR. */
+    data class Remainder(val item: Item) : LabelSpec
+    /** For the customer's cut piece: name across the top, no QR. */
+    data class CustomerCut(
+        val customer: String,
+        val code: String,
+        val size: String,
+        val length: Double,
+        val unit: String,
+        val invoice: String,
+        val at: Long,
+        /** e.g. "A0003-C3": roll number and cut number. */
+        val ref: String,
+    ) : LabelSpec
+}
+
 sealed interface PrintState {
     data object Idle : PrintState
     data class Running(val title: String, val sent: Int, val total: Int) : PrintState
     /** All jobs left the phone. The user confirms whether every label came out. */
-    data class Done(val title: String, val items: List<Item>) : PrintState
-    data class Failed(val title: String, val items: List<Item>, val sent: Int, val message: String) : PrintState
+    data class Done(val title: String, val items: List<LabelSpec>) : PrintState
+    data class Failed(val title: String, val items: List<LabelSpec>, val sent: Int, val message: String) : PrintState
 }
 
 /** One print run at a time, shown by the dialog in MainActivity. */
@@ -29,7 +49,10 @@ class PrintQueue(
     val state: StateFlow<PrintState> = _state
     private var job: Job? = null
 
-    fun print(items: List<Item>, title: String) {
+    /** Prints the roll labels of [items]. */
+    fun print(items: List<Item>, title: String) = printLabels(items.map { LabelSpec.Roll(it) }, title)
+
+    fun printLabels(items: List<LabelSpec>, title: String) {
         if (items.isEmpty()) return
         if (_state.value is PrintState.Running) return
         val address = prefs.printerAddress
@@ -63,7 +86,7 @@ class PrintQueue(
             else -> return
         }
         _state.value = PrintState.Idle
-        print(items.drop((fromNumber - 1).coerceIn(0, items.size - 1)), title)
+        printLabels(items.drop((fromNumber - 1).coerceIn(0, items.size - 1)), title)
     }
 
     fun dismiss() {

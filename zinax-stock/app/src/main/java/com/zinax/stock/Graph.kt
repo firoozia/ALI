@@ -60,7 +60,7 @@ object Graph {
 
     /** Movements of one kind in [from, to), with each package's family and full amount. */
     suspend fun activityFor(activity: Activity, from: Long, to: Long): List<OutSource> {
-        val undone = if (activity == Activity.OUT) db.dao().undoneIdsNow().toHashSet() else emptySet()
+        val undone = if (activity in OutReport.undoable) db.dao().undoneIdsNow().toHashSet() else emptySet()
         val moves = db.dao().movementsBetweenNow(activity.type, from, to).filter { it.id !in undone }
         val items = moves.map { it.itemId }.distinct().chunked(500).flatMap { db.dao().itemsByIds(it) }.associateBy { it.id }
         return moves
@@ -68,7 +68,10 @@ object Graph {
             .filter { activity != Activity.IN || items[it.itemId]?.status != ItemStatus.VOID }
             .map { m ->
                 val item = items[m.itemId]
-                OutSource(m.itemId, item?.categoryEnum, m.code, m.size, m.unit, m.qty, item?.qty, m.reference, m.at, m.device, m.user, m.type, m.id)
+                OutSource(
+                    m.itemId, item?.categoryEnum, m.code, m.size, m.unit, m.qty, item?.qty, m.reference, m.at, m.device,
+                    m.user, m.type, m.id, m.customer, m.invoice,
+                )
             }
     }
 
@@ -89,9 +92,15 @@ object Graph {
         val rows = items.map {
             ItemRow(it.id, it.categoryEnum, it.code, it.size, it.remaining, it.qty, it.unit, it.pallet, it.location, it.receivedAt)
         }
-        val today = outsFor(Format.dayStart(now))
+        val day = Format.dayStart(now)
+        val today = outsFor(day)
+        val cuts = activityFor(Activity.CUT, day, Format.addDays(day, 1))
         val stamp = Format.dateTime(now).replace(" ", "_").replace(":", "")
-        reportFile("Zinax-Stock-$stamp.xlsx", Report.stockWorkbook(lines, rows, now) + OutReport.summarySheet("Shipped today", today))
+        reportFile(
+            "Zinax-Stock-$stamp.xlsx",
+            Report.stockWorkbook(lines, rows, now) + OutReport.summarySheet("Shipped today", today) +
+                OutReport.summarySheet("Cuts today", cuts),
+        )
     }
 
     /** Sends the stock report, with today's ship-outs, as text or Excel; Settings decides unless [excel] is given. */
@@ -100,7 +109,12 @@ object Graph {
             Share.file(context, stockReportFile(), XLSX_MIME, "Zinax stock ${Format.dateTime(System.currentTimeMillis())}")
         } else {
             val today = Format.dayStart(System.currentTimeMillis())
-            Share.text(context, stockReportText() + "\n\n" + OutReport.text(Activity.OUT, Format.date(today), outsFor(today)))
+            val cuts = activityFor(Activity.CUT, today, Format.addDays(today, 1))
+            Share.text(
+                context,
+                stockReportText() + "\n\n" + OutReport.text(Activity.OUT, Format.date(today), outsFor(today)) +
+                    "\n" + OutReport.text(Activity.CUT, Format.date(today), cuts),
+            )
         }
     }
 
