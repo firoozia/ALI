@@ -69,6 +69,16 @@ interface StockDao {
     @Query("SELECT * FROM movements WHERE type = 'OUT' AND at >= :since ORDER BY at DESC")
     fun shippedSince(since: Long): Flow<List<Movement>>
 
+    @Query("SELECT * FROM movements WHERE type = 'OUT' AND at >= :from AND at < :to ORDER BY at")
+    fun shippedBetween(from: Long, to: Long): Flow<List<Movement>>
+
+    @Query("SELECT * FROM movements WHERE type = 'OUT' AND at >= :from AND at < :to ORDER BY at")
+    suspend fun shippedBetweenNow(from: Long, to: Long): List<Movement>
+
+    /** Movements pulled from the sheet; a movement never changes, so a known ID is skipped. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun putMovementsIfAbsent(rows: List<Movement>)
+
     // sync
     @Query("SELECT * FROM shipments WHERE dirty = 1")
     suspend fun dirtyShipments(): List<Shipment>

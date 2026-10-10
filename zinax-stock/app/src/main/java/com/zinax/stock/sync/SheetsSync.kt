@@ -41,6 +41,7 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 .put("token", prefs.token)
                 .put("device", prefs.deviceCode)
                 .put("since", prefs.lastServerSync)
+                .put("movementsSince", if (prefs.movementsBackfilled) prefs.lastServerSync else 0L)
                 .put("shipments", JSONArray(shipments.map { it.toJson() }))
                 .put("expected", JSONArray(expected.map { it.toJson() }))
                 .put("items", JSONArray(items.map { it.toJson() }))
@@ -57,7 +58,9 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 mergeShipments(response.optJSONArray("shipments"))
                 mergeExpected(response.optJSONArray("expected"))
                 mergeItems(response.optJSONArray("items"))
+                mergeMovements(response.optJSONArray("movements"))
             }
+            if (response.has("movements")) prefs.movementsBackfilled = true
             prefs.lastServerSync = response.optLong("now", prefs.lastServerSync)
             response.optString("sheetUrl").takeIf { it.startsWith("https://") }?.let { prefs.sheetUrl = it }
             val pushed = shipments.size + expected.size + items.size + movements.size
@@ -109,6 +112,19 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
             )
         }.filter { remote -> dao.item(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
         if (rows.isNotEmpty()) dao.putItems(rows)
+    }
+
+    private suspend fun mergeMovements(arr: JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        val rows = (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+            Movement(
+                id = it.getString("id"), itemId = it.optString("itemId"), type = it.optString("type"),
+                qty = it.optDouble("qty", 0.0), reference = it.optString("reference"), at = it.optLong("at"),
+                device = it.optString("device"), code = it.optString("code"), size = it.optString("size"),
+                unit = it.optString("unit"), dirty = false,
+            )
+        }
+        rows.chunked(500).forEach { dao.putMovementsIfAbsent(it) }
     }
 
     // ---------- JSON ----------

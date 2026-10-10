@@ -95,6 +95,7 @@ fun HomeScreen(nav: NavController) {
 
             OutlinedButton(onClick = { nav.navigate(Routes.IMPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Import packing list") }
             OutlinedButton(onClick = { nav.navigate(Routes.manual()) }, modifier = Modifier.fillMaxWidth()) { Text("Print labels by hand") }
+            OutlinedButton(onClick = { nav.navigate(Routes.OUT_REPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Ship-out report (daily)") }
             OutlinedButton(
                 onClick = { Share.openUrl(context, sheetUrl) },
                 enabled = sheetUrl.isNotBlank(),

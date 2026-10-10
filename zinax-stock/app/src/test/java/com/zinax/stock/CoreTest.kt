@@ -4,6 +4,8 @@ import com.zinax.stock.core.Category
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.ItemRow
 import com.zinax.stock.core.LabelId
+import com.zinax.stock.core.OutReport
+import com.zinax.stock.core.OutSource
 import com.zinax.stock.core.Report
 import com.zinax.stock.core.StockSource
 import com.zinax.stock.core.XlsxWriter
@@ -139,6 +141,30 @@ class CoreTest {
         assertEquals("ZX-261009-A0001", sheets[2].rows[1][0])
         assertEquals("A-04 <top>", sheets[2].rows[1][8])
         assertEquals("AA", XlsxWriter.columnName(26))
+    }
+
+    @Test
+    fun outReport() {
+        val outs = listOf(
+            OutSource("ZX-1", Category.PVC, "101", "0.30*1400", "m", 120.0, 120.0, "INV-1", 1000, "A"),
+            OutSource("ZX-2", Category.PVC, "101", "0.30*1400", "m", 30.0, 120.0, "Ali", 2000, "B"),
+            OutSource("ZX-2", Category.PVC, "101", "0.30*1400", "m", 20.0, 120.0, "INV-1", 3000, "B"),
+            OutSource("ZX-9", Category.HINGE, "H-110", "", "pcs", 200.0, 200.0, "", 4000, "A"),
+        )
+        val lines = OutReport.lines(outs)
+        assertEquals(2, lines.size)
+        assertEquals(2, lines[0].packs)
+        assertEquals(2, lines[0].cuts)
+        assertEquals(170.0, lines[0].total, 0.0)
+        assertEquals(listOf("INV-1", "Ali"), lines[0].references)
+        val text = OutReport.text(0, outs)
+        assertTrue(text, text.contains("101 (0.30 × 1400): 2 rolls (2 cut), 170 m → INV-1, Ali"))
+        assertTrue(text, text.contains("H-110: 1 carton, 200 pcs"))
+        val sheets = XlsxReader.read(XlsxWriter.write(OutReport.workbook(0, outs)).inputStream())
+        assertEquals("Details", sheets[1].name)
+        assertEquals("Cut", sheets[1].rows[2][7])
+        assertEquals("Whole", sheets[1].rows[1][7])
+        assertTrue(OutReport.text(0, emptyList()).contains("Nothing shipped."))
     }
 
     @Test

@@ -42,4 +42,10 @@ r=post({token:'tok',action:'sync',since:items.cells[1][16]-1});
 assert.equal(r.items.length,1); assert.equal(r.items[0].status,'SHIPPED'); assert.equal(r.items[0].remaining,0);
 // edits on other tabs are ignored
 ctx.onEdit({range:{getSheet:()=>sheets.Stock,getRow:()=>2,getLastRow:()=>2,getNumColumns:()=>1,getColumn:()=>1}});
+// ship-outs: an OUT from phone B shows in Out by day and is returned to phone A on a full pull
+r=post({token:'tok',action:'sync',since:0,movements:[{id:'o1',itemId:'ZX-251009-A0002',type:'OUT',qty:30,unit:'m',code:'101',size:'0.30*1400',reference:'INV-7',at:Date.UTC(2026,9,10,9),device:'B'},{id:'o2',itemId:'ZX-251009-A0002',type:'OUT',qty:90,unit:'m',code:'101',size:'0.30*1400',reference:'',at:Date.UTC(2026,9,10,11),device:'B'}]});
+const out=sheets['Out by day'].cells; assert.equal(out[1][4],1); assert.equal(out[1][5],120); assert.equal(out[1][6],'INV-7');
+r=post({token:'tok',action:'sync',since:Date.now()+1000,movementsSince:0});
+assert.ok(r.movements.some(m=>m.id==='o1' && m.qty===30 && m.at===Date.UTC(2026,9,10,9) && m.device==='B'));
+assert.equal(post({token:'tok',action:'sync',since:Date.now()+1000}).movements.length,0);
 console.log('APPS_SCRIPT_TESTS_OK');

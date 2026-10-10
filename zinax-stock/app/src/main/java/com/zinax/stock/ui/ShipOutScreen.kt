@@ -11,6 +11,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +35,7 @@ import com.zinax.stock.ui.theme.LocalStatus
 import kotlinx.coroutines.launch
 
 @Composable
-fun ShipOutScreen(onBack: () -> Unit) {
+fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
     val scope = rememberCoroutineScope()
     val status = LocalStatus.current
     val snackbar = remember { SnackbarHostState() }
@@ -67,7 +68,7 @@ fun ShipOutScreen(onBack: () -> Unit) {
         result.contents?.let { lookup(it) }
     }
 
-    ScreenScaffold("Ship out", onBack, snackbar) { padding ->
+    ScreenScaffold("Ship out", onBack, snackbar, actions = { TextButton(onClick = onReport) { Text("Report") } }) { padding ->
         FormBody(padding) {
             Button(
                 onClick = {

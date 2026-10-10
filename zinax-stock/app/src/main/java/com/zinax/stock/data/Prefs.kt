@@ -65,6 +65,11 @@ class Prefs(context: Context) {
         get() = sp.getLong("lastServerSync", 0)
         set(v) = edit { putLong("lastServerSync", v) }
 
+    /** False until this phone has pulled the full movement history once (ship-outs from other phones). */
+    var movementsBackfilled: Boolean
+        get() = sp.getBoolean("movementsBackfilled", false)
+        set(v) = edit { putBoolean("movementsBackfilled", v) }
+
     var lastSyncMessage: String
         get() = sp.getString("lastSyncMessage", "Not synced yet") ?: ""
         set(v) = edit { putString("lastSyncMessage", v) }

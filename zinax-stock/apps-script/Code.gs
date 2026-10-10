@@ -38,6 +38,7 @@ function setup() {
   const ss = SpreadsheetApp.getActive();
   Object.keys(SHEETS).forEach(function (name) { sheet_(name); });
   stockSheet_();
+  outSheet_();
   const props = PropertiesService.getScriptProperties();
   let token = props.getProperty('ZINAX_TOKEN');
   if (!token) {
@@ -99,6 +100,8 @@ function sync_(req) {
   });
 
   if ((req.items || []).length) stockSheet_();
+  if ((req.movements || []).length) outSheet_();
+  const movementsSince = req.movementsSince === undefined ? since : Number(req.movementsSince) || 0;
 
   return {
     ok: true,
@@ -116,6 +119,10 @@ function sync_(req) {
       return { id: r[0], category: r[1], code: String(r[2]), size: String(r[3]), qty: Number(r[4]), remaining: Number(r[5]),
                unit: r[6], status: r[7], pallet: String(r[9]), netKg: num_(r[10]), grossKg: num_(r[11]),
                receivedAt: ms_(r[12]), location: String(r[13]), device: r[14], updatedAt: Number(r[15]), shipmentId: r[17] };
+    }),
+    movements: changed_('Movements', movementsSince).map(function (r) {
+      return { id: r[0], itemId: r[1], type: r[2], qty: Number(r[3]), unit: r[4], code: String(r[5]), size: String(r[6]),
+               reference: String(r[7]), at: ms_(r[8]), device: String(r[9]) };
     }),
   };
 }
@@ -292,6 +299,33 @@ function writeSummary_(ss, name, position, headers, rows, updated) {
   sh.getRange(1, headers.length + 2).setValue(updated);
   if (rows.length) sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
   sh.setFrozenRows(1);
+}
+
+/** Out by day: what left the warehouse each day, per code. Newest day first. */
+function outSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  const tz = ss.getSpreadsheetTimeZone();
+  const groups = {};
+  readAll_('Movements').forEach(function (r) {
+    if (r[2] !== 'OUT') return;
+    const day = Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd');
+    const key = [day, r[5], r[6], r[4]].join('|');
+    if (!groups[key]) groups[key] = { row: [day, String(r[5]), String(r[6]), r[4], 0, 0], items: {}, refs: {} };
+    const g = groups[key];
+    g.items[r[1]] = true;
+    g.row[5] += Number(r[3]) || 0;
+    if (String(r[7]).trim()) g.refs[String(r[7]).trim()] = true;
+  });
+  const rows = Object.keys(groups).map(function (k) {
+    const g = groups[k];
+    g.row[4] = Object.keys(g.items).length;
+    return g.row.concat([Object.keys(g.refs).join(', ')]);
+  }).sort(function (a, b) {
+    if (a[0] !== b[0]) return a[0] < b[0] ? 1 : -1;
+    return byCode_(a, b, 3, 1);
+  });
+  writeSummary_(ss, 'Out by day', 2, ['Date', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Customer / invoice'], rows,
+    'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
 }
 
 // ---------- weekly backup ----------

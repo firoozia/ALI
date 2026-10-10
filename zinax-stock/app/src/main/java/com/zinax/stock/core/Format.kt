@@ -23,6 +23,21 @@ object Format {
     fun size(raw: String): String =
         raw.trim().replace(Regex("\\s*[*xX×]\\s*"), " × ")
 
+    /** Local midnight at the start of the day containing [millis]. */
+    fun dayStart(millis: Long): Long = java.util.Calendar.getInstance().apply {
+        timeInMillis = millis
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    /** Start of the day [days] after the day starting at [dayStart]; safe across daylight-saving changes. */
+    fun addDays(dayStart: Long, days: Int): Long = java.util.Calendar.getInstance().apply {
+        timeInMillis = dayStart
+        add(java.util.Calendar.DAY_OF_MONTH, days)
+    }.timeInMillis
+
     fun date(millis: Long): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(millis))
 
