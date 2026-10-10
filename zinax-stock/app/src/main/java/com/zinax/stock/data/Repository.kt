@@ -76,13 +76,15 @@ class Repository(
     suspend fun createManual(
         category: Category, code: String, size: String, qty: Double, unit: String,
         count: Int, shipmentId: String?, pallet: String?, location: String = "",
+        /** For a roll already cut before it was labelled: what is left on it. [qty] is then its original length. */
+        remaining: Double? = null,
     ): List<Item> = idLock.withLock {
         db.withTransaction {
             val t = now()
             val items = nextIds(count).map { id ->
                 Item(
                     id = id, category = category.name, code = code.trim(), size = size.trim(), unit = unit.trim(),
-                    qty = qty, remaining = qty, status = ItemStatus.IN_STOCK,
+                    qty = qty, remaining = remaining?.coerceAtMost(qty) ?: qty, status = ItemStatus.IN_STOCK,
                     shipmentId = shipmentId, pallet = pallet, netKg = null, grossKg = null,
                     receivedAt = t, location = location.trim(), device = prefs.deviceCode, updatedAt = t,
                 )
@@ -94,7 +96,7 @@ class Repository(
     }.also { onChange() }
 
     private fun inMovement(item: Item, t: Long) = Movement(
-        id = uuid(), itemId = item.id, type = MovementType.IN, qty = item.qty, reference = item.pallet?.let { "Pallet $it" } ?: "Manual",
+        id = uuid(), itemId = item.id, type = MovementType.IN, qty = item.remaining, reference = item.pallet?.let { "Pallet $it" } ?: "Manual",
         at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
     )
 

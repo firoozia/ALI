@@ -7,12 +7,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -31,6 +33,7 @@ import com.zinax.stock.Graph
 import com.zinax.stock.core.Category
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.Report
+import com.zinax.stock.printer.LabelSpec
 import kotlinx.coroutines.launch
 
 /** Print labels without a packing list, or for a package that was not on it. */
@@ -46,6 +49,8 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
     var palletText by remember { mutableStateOf(pallet.orEmpty()) }
     var putAway by remember { mutableStateOf(Graph.prefs.currentLocation) }
     var picked by remember { mutableStateOf(false) }
+    var alreadyCut by remember { mutableStateOf(false) }
+    var original by remember { mutableStateOf("") }
     val hints by Graph.db.dao().productHints().collectAsStateWithLifecycle(emptyList())
     // One suggestion per product, the most recent use first among equal codes.
     val products = remember(hints) {
@@ -55,7 +60,10 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
 
     val qtyValue = Format.number(qty)
     val countValue = count.toIntOrNull() ?: 0
-    val valid = code.isNotBlank() && qtyValue != null && qtyValue > 0 && countValue in 1..500 && unit.isNotBlank()
+    val originalValue = Format.number(original)
+    // An open roll must have had more on it than is left now.
+    val openOk = !alreadyCut || (originalValue != null && qtyValue != null && originalValue > qtyValue + 1e-6)
+    val valid = code.isNotBlank() && qtyValue != null && qtyValue > 0 && countValue in 1..500 && unit.isNotBlank() && openOk
 
     ScreenScaffold(if (shipmentId != null) "Add item to shipment" else "Print by hand", onBack) { padding ->
         FormBody(padding) {
@@ -79,6 +87,7 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
                                 code = p.code
                                 size = p.size
                                 qty = Format.qty(p.qty)
+                                original = Format.qty(p.qty)
                                 unit = p.unit
                                 picked = true
                             }.padding(vertical = 6.dp),
@@ -98,10 +107,42 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
             OutlinedTextField(size, { size = it }, label = { Text("Size or model (optional), e.g. 0.30*1400") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
-                    qty, { qty = it }, label = { Text("Qty per ${category.pack}") }, singleLine = true, modifier = Modifier.weight(1f),
+                    qty, { qty = it }, label = { Text(if (alreadyCut) "Left now" else "Qty per ${category.pack}") }, singleLine = true,
+                    modifier = Modifier.weight(1f),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
                 OutlinedTextField(unit, { unit = it }, label = { Text("Unit") }, singleLine = true, modifier = Modifier.weight(0.6f))
+            }
+            Row(
+                Modifier.fillMaxWidth().clickable { alreadyCut = !alreadyCut },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(checked = alreadyCut, onCheckedChange = { alreadyCut = it })
+                Column {
+                    Text("Already cut (open roll)")
+                    Text(
+                        "For a roll that was cut before it got a label. It shows as OPEN and is offered first in Cut.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (alreadyCut) {
+                OutlinedTextField(
+                    original, { original = it }, label = { Text("Original length of the full ${category.pack} (${unit.trim()})") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = original.isNotBlank() && !openOk,
+                    supportingText = {
+                        Text(
+                            when {
+                                original.isBlank() -> "Needed so the label can say how much is left of how much, e.g. 120"
+                                !openOk -> "Must be more than what is left now"
+                                else -> ""
+                            }
+                        )
+                    },
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -114,7 +155,8 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
             LocationPicker(putAway, { putAway = it; Graph.prefs.currentLocation = it })
             if (valid) {
                 Text(
-                    "Prints $countValue ${Report.plural(category.pack, countValue)} of ${code.trim()}, ${Format.qtyUnit(qtyValue!!, unit.trim())} each.",
+                    "Prints $countValue ${Report.plural(category.pack, countValue)} of ${code.trim()}, ${Format.qtyUnit(qtyValue!!, unit.trim())} each" +
+                        if (alreadyCut) ", as OPEN rolls (left of ${Format.qtyUnit(originalValue!!, unit.trim())})." else ".",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -122,11 +164,19 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
             Button(
                 onClick = {
                     scope.launch {
-                        val items = Graph.repo.createManual(
-                            category, code, size, qtyValue!!, unit, countValue, shipmentId, palletText.trim().ifEmpty { null },
-                            putAway,
-                        )
-                        Graph.printQueue.print(items, code.trim())
+                        val items = if (alreadyCut) {
+                            Graph.repo.createManual(
+                                category, code, size, originalValue!!, unit, countValue, shipmentId, palletText.trim().ifEmpty { null },
+                                putAway, remaining = qtyValue!!,
+                            )
+                        } else {
+                            Graph.repo.createManual(
+                                category, code, size, qtyValue!!, unit, countValue, shipmentId, palletText.trim().ifEmpty { null },
+                                putAway,
+                            )
+                        }
+                        if (alreadyCut) Graph.printQueue.printLabels(items.map { LabelSpec.Remainder(it) }, "${code.trim()} open")
+                        else Graph.printQueue.print(items, code.trim())
                         count = "1"
                     }
                 },
