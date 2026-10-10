@@ -47,8 +47,17 @@ class BluetoothPrinter(private val context: Context) {
         val a = adapter ?: throw IOException("This phone has no Bluetooth.")
         if (!a.isEnabled) throw IOException("Turn on Bluetooth and try again.")
         val device = a.getRemoteDevice(address)
-        a.cancelDiscovery()
-        val socket = connect(device)
+        // The app never scans, so stopping a scan is only a courtesy. On Android 12+ it needs the
+        // scan permission, which the app does not ask for.
+        try {
+            a.cancelDiscovery()
+        } catch (_: SecurityException) {
+        }
+        val socket = try {
+            connect(device)
+        } catch (_: SecurityException) {
+            throw IOException("Allow Nearby devices (Bluetooth) for Zinax Stock in Android settings.")
+        }
         try {
             val out = socket.outputStream
             jobs.forEachIndexed { i, job ->
