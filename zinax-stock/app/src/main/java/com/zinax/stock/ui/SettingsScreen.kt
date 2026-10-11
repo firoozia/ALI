@@ -41,6 +41,7 @@ import com.zinax.stock.Share
 import com.zinax.stock.core.Category
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.core.Lengths
+import com.zinax.stock.label.Tspl
 import com.zinax.stock.data.Item
 import com.zinax.stock.data.ItemStatus
 import com.zinax.stock.printer.PairedPrinter
@@ -83,6 +84,7 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
     var newLocation by remember { mutableStateOf("") }
     var gap by remember { mutableStateOf(prefs.gapMm.toString()) }
     var density by remember { mutableStateOf(prefs.density.toString()) }
+    var speed by remember { mutableStateOf(prefs.speed) }
     var url by remember { mutableStateOf(prefs.webAppUrl) }
     var token by remember { mutableStateOf(prefs.token) }
     var sheet by remember { mutableStateOf(prefs.sheetUrl) }
@@ -136,6 +138,18 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Speed", modifier = Modifier.padding(end = 4.dp))
+                (Tspl.MIN_SPEED..Tspl.MAX_SPEED).forEach { v ->
+                    FilterChip(selected = speed == v, onClick = { speed = v; prefs.speed = v }, label = { Text("$v") })
+                }
+            }
+            Text(
+                "If barcodes print faint or patchy: Darkness 10–12 and Speed 2–3, then Print test label. " +
+                    "Clean the print head with alcohol if a white line runs through every label.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             LabelSizeSection()
             SwitchRow("Rotate label 180°", direction == 0) { direction = if (it) 0 else 1; prefs.direction = direction }
             SwitchRow("Invert (if labels print as negatives)", invert) { invert = it; prefs.invert = it }

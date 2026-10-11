@@ -26,6 +26,10 @@ object Tspl {
     const val MAX_HEIGHT_MM = 200
     const val MIN_MM = 20
 
+    /** XP-420B print speeds, inches per second. */
+    const val MIN_SPEED = 2
+    const val MAX_SPEED = 5
+
     /** Common label rolls, width × height in mm. */
     val PRESETS = listOf(58 to 39, 50 to 30, 40 to 30, 60 to 40, 70 to 50, 100 to 50, 100 to 70)
 

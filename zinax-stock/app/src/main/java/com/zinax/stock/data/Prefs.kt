@@ -79,6 +79,11 @@ class Prefs(context: Context) {
         get() = sp.getInt("density", 8)
         set(v) = edit { putInt("density", v) }
 
+    /** Print speed in inches per second; slower prints darker and cleaner. */
+    var speed: Int
+        get() = sp.getInt("speed", 4)
+        set(v) = edit { putInt("speed", v.coerceIn(Tspl.MIN_SPEED, Tspl.MAX_SPEED)) }
+
     /** Label size on the printer's roll, in millimetres. */
     var labelWidthMm: Int
         get() = sp.getInt("labelWidthMm", 58)
@@ -91,7 +96,7 @@ class Prefs(context: Context) {
     val tspl: Tspl.Setup
         get() = Tspl.Setup(
             widthMm = labelWidthMm, heightMm = labelHeightMm,
-            gapMm = gapMm.toDouble(), direction = direction, density = density, invert = invert,
+            gapMm = gapMm.toDouble(), direction = direction, density = density, speed = speed, invert = invert,
         )
 
     var webAppUrl: String

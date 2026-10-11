@@ -35,8 +35,11 @@ object LabelRenderer {
         return Page(bmp, c, k, bmp.width / k, bmp.height / k)
     }
 
-    /** QR side in design units: 200 on the base label, smaller if the page is short. */
-    private fun qrSide(p: Page) = minOf(200f, p.h - 2 * MARGIN - 40f)
+    /** White space kept around the QR so cameras find its edges: about two QR modules. */
+    private const val QR_QUIET = 20f
+
+    /** QR side in design units: 196 on the base label, smaller if the page is short. */
+    private fun qrSide(p: Page) = minOf(196f, p.h - 2 * QR_QUIET - 40f)
 
     fun render(item: Item, setup: Tspl.Setup): Bitmap {
         val p = page(setup)
@@ -45,11 +48,11 @@ object LabelRenderer {
         val h = p.h
 
         val qrSize = qrSide(p)
-        val qrLeft = w - MARGIN - qrSize
-        drawQr(p, item.id, qrLeft, MARGIN.toFloat(), qrSize)
+        val qrLeft = w - QR_QUIET - qrSize
+        drawQr(p, item.id, qrLeft, QR_QUIET, qrSize)
 
         val condensed = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        val textWidth = qrLeft - MARGIN - 12f
+        val textWidth = qrLeft - MARGIN - QR_QUIET
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; typeface = condensed }
 
         // Code
@@ -204,9 +207,9 @@ object LabelRenderer {
         val w = p.w
         val h = p.h
         val qrSize = qrSide(p)
-        val qrLeft = w - MARGIN - qrSize
-        drawQr(p, item.id, qrLeft, MARGIN.toFloat(), qrSize)
-        val textWidth = qrLeft - MARGIN - 12f
+        val qrLeft = w - QR_QUIET - qrSize
+        drawQr(p, item.id, qrLeft, QR_QUIET, qrSize)
+        val textWidth = qrLeft - MARGIN - QR_QUIET
 
         val tag = condensed().apply { textSize = 40f }
         val tagW = tag.measureText("OPEN") + 16f

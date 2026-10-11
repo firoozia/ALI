@@ -288,13 +288,30 @@ class SheetsSync(
             hops++
         }
         if (code !in 200..299) {
-            val err = conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(200).orEmpty()
+            try { conn.errorStream?.close() } catch (_: IOException) {}
             conn.disconnect()
-            throw IOException("HTTP $code $err".trim())
+            throw IOException(httpError(code))
         }
         val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         conn.disconnect()
-        if (!text.trimStart().startsWith("{")) throw IOException("The web app did not return data. Check the URL and that it is deployed for \"Anyone\".")
+        if (!text.trimStart().startsWith("{")) {
+            throw IOException(
+                if (text.contains("accounts.google.com") || text.contains("ServiceLogin")) {
+                    "The web app asks for a Google sign-in. In Apps Script set the deployment's \"Who has access\" to Anyone."
+                } else {
+                    "The web app did not return data. Check the Web app URL in Settings and deploy a new version of the script."
+                }
+            )
+        }
         text
+    }
+
+    /** A short reason for a failed request, instead of Google's error page. */
+    private fun httpError(code: Int): String = when (code) {
+        404 -> "Web app not found (404). In Apps Script open Deploy → Manage deployments, copy the Web app URL of the active deployment and paste it in Settings → Google Sheet."
+        401, 403 -> "No access to the web app ($code). The deployment must run as Me with \"Who has access\" set to Anyone."
+        429 -> "Google is busy (429). The app tries again by itself in a minute."
+        in 500..599 -> "Google had a problem ($code). The app tries again by itself in a minute."
+        else -> "The web app answered with error $code."
     }
 }
