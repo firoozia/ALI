@@ -115,6 +115,9 @@ fun HomeScreen(nav: NavController) {
                 Text(syncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
+            OutlinedButton(onClick = { nav.navigate(Routes.MOVE_SCAN) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Move rolls by scan (e.g. to Showroom)")
+            }
             val pendingCount = if (isAdmin) waiting.size else myWaiting
             if (isAdmin || myWaiting > 0) {
                 val label = if (isAdmin) "Requests · $pendingCount waiting for approval" else "My requests · $pendingCount waiting"

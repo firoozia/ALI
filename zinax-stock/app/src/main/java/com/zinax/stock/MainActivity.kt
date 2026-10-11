@@ -28,6 +28,7 @@ import androidx.navigation.navArgument
 import com.zinax.stock.sync.ReportWorker
 import com.zinax.stock.sync.RequestNotifier
 import com.zinax.stock.ui.LockScreen
+import com.zinax.stock.ui.MoveScanScreen
 import com.zinax.stock.ui.RequestsScreen
 import com.zinax.stock.ui.UsersScreen
 import com.zinax.stock.ui.CheckScreen
@@ -59,6 +60,7 @@ object Routes {
     const val CUT = "cut?item={item}"
     const val CUSTOMERS = "customers"
     const val USERS = "users"
+    const val MOVE_SCAN = "movescan"
     const val REQUESTS = "requests?open={open}&act={act}"
 
     fun requests(open: String? = null, act: String? = null) = "requests?open=${open.orEmpty()}&act=${act.orEmpty()}"
@@ -165,13 +167,16 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     composable(Routes.SHIP_OUT) { ShipOutScreen(onBack = back, onReport = { nav.navigate(Routes.OUT_REPORT) }) }
-                    composable(Routes.STOCK) { StockScreen(onBack = back, onCut = { id -> nav.navigate(Routes.cut(id)) }) }
+                    composable(Routes.STOCK) {
+                        StockScreen(onBack = back, onCut = { id -> nav.navigate(Routes.cut(id)) }, onMoveScan = { nav.navigate(Routes.MOVE_SCAN) })
+                    }
                     composable(Routes.SETTINGS) { SettingsScreen(onBack = back, onCustomers = { nav.navigate(Routes.CUSTOMERS) }, onUsers = { nav.navigate(Routes.USERS) }) }
                     composable(Routes.CUT, listOf(navArgument("item") { type = NavType.StringType; defaultValue = "" })) {
                         CutScreen(startItem = it.arguments?.getString("item").orEmpty().ifEmpty { null }, onBack = back)
                     }
                     composable(Routes.CUSTOMERS) { CustomersScreen(onBack = back) }
                     composable(Routes.USERS) { UsersScreen(onBack = back) }
+                    composable(Routes.MOVE_SCAN) { MoveScanScreen(onBack = back) }
                     composable(
                         Routes.REQUESTS,
                         listOf(

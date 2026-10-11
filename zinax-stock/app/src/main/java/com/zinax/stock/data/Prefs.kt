@@ -46,6 +46,11 @@ class Prefs(context: Context) {
         get() = sp.getString("lastRev", "") ?: ""
         set(v) = edit { putString("lastRev", v) }
 
+    /** The place last chosen in Move by scan. */
+    var moveTarget: String
+        get() = sp.getString("moveTarget", "") ?: ""
+        set(v) = edit { putString("moveTarget", v) }
+
     var askedNotifications: Boolean
         get() = sp.getBoolean("askedNotifications", false)
         set(v) = edit { putBoolean("askedNotifications", v) }
