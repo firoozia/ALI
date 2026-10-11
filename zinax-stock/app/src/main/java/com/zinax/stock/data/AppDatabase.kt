@@ -8,8 +8,9 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [Shipment::class, ExpectedUnit::class, Item::class, Movement::class, Customer::class, AppUser::class, ChangeRequest::class],
-    version = 5,
+    entities = [Shipment::class, ExpectedUnit::class, Item::class, Movement::class, Customer::class, AppUser::class, ChangeRequest::class,
+        GroupRow::class, Product::class],
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -62,9 +63,25 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 2.2.0: groups an admin can add or rename, and the product catalog. */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS product_groups (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `unit` TEXT NOT NULL, " +
+                        "`pack` TEXT NOT NULL, `sort` INTEGER NOT NULL, `hidden` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, " +
+                        "`dirty` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `products` (`id` TEXT NOT NULL, `groupId` TEXT NOT NULL, `code` TEXT NOT NULL, " +
+                        "`size` TEXT NOT NULL, `unit` TEXT NOT NULL, `packQty` REAL NOT NULL, `note` TEXT NOT NULL, " +
+                        "`hidden` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `dirty` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "zinax.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

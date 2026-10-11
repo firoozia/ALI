@@ -120,4 +120,19 @@ assert.ok(r.requests.some(x=>x.id==='q2' && x.kind==='EDIT' && x.payload==='{"ca
 post({token:'tok',action:'sync',since:0,movements:[{id:'e1',itemId:'ZX-251009-A0002',type:'EDIT',qty:90,unit:'m',code:'101',size:'0.30*1400',reference:'Category PVC film → Edge banding',at:Date.UTC(2026,9,12,9),device:'A',user:'Ali'}]});
 assert.ok(sheets.Movements.cells.some(r=>r[0]==='e1' && r[2]==='EDIT'));
 assert.ok(!sheets['Out by day'].cells.some(r=>r[5]===90 && r[0]!=='Date' && String(r[7]).includes('Ali') && r[6]==='Category PVC film → Edge banding'));
+// groups and products: pushed from a phone, Stock shows group names, rows typed in the sheet get IDs
+r=post({token:'tok',action:'sync',since:0,groups:[{id:'PVC',name:'PVC film',unit:'m',pack:'roll',order:0,hidden:false,updatedAt:1},{id:'G_MDF',name:'MDF board',unit:'pcs',pack:'sheet',order:7,hidden:false,updatedAt:5000}],
+  products:[{id:'P1',groupId:'PVC',code:'101',size:'0.30*1400',unit:'m',packQty:120,note:'White gloss',hidden:false,updatedAt:5000}],
+  items:[{...item,id:'ZX-251009-A0009',category:'G_MDF',code:'M-18',size:'18mm',unit:'pcs',qty:10,remaining:10,location:'',updatedAt:9000}]});
+assert.equal(r.groups.length,2); assert.ok(r.products.some(p=>p.id==='P1' && p.note==='White gloss' && p.packQty===120));
+assert.ok(sheets.Stock.cells.some(r=>r[0]==='MDF board' && r[1]==='M-18'));
+const gs=sheets.Groups; gs.cells.push(['','Handle','','','','','','']);
+ctx.onEdit({range:{getSheet:()=>gs,getRow:()=>gs.cells.length,getLastRow:()=>gs.cells.length,getNumColumns:()=>1,getColumn:()=>2}});
+const g=gs.cells[gs.cells.length-1]; assert.equal(g[0],'G_HANDLE'); assert.equal(g[2],'pcs'); assert.equal(g[3],'pack'); assert.equal(g[5],false);
+const ps=sheets.Products; ctx.Utilities.getUuid=()=>'abcdef12-3456-7890-abcd-ef1234567890'; ps.cells.push(['','G_HANDLE','H-1','128mm','pcs',50,'Black','','','']);
+ctx.onEdit({range:{getSheet:()=>ps,getRow:()=>ps.cells.length,getLastRow:()=>ps.cells.length,getNumColumns:()=>1,getColumn:()=>3}});
+const pr=ps.cells[ps.cells.length-1]; assert.ok(String(pr[0]).startsWith('P_')); assert.ok(pr[8]>0);
+r=post({token:'tok',action:'sync',since:Math.min(pr[9],g[7])-1});
+assert.ok(r.products.some(p=>p.code==='H-1' && p.groupId==='G_HANDLE' && p.note==='Black'));
+assert.ok(r.groups.some(x=>x.id==='G_HANDLE' && x.name==='Handle'));
 console.log('APPS_SCRIPT_TESTS_OK');

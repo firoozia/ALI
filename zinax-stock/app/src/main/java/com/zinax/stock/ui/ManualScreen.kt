@@ -30,6 +30,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.zinax.stock.Graph
+import com.zinax.stock.data.ProductHint
 import com.zinax.stock.core.Category
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.Report
@@ -52,9 +53,16 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
     var alreadyCut by remember { mutableStateOf(false) }
     var original by remember { mutableStateOf("") }
     val hints by Graph.db.dao().productHints().collectAsStateWithLifecycle(emptyList())
-    // One suggestion per product, the most recent use first among equal codes.
-    val products = remember(hints) {
-        hints.groupBy { listOf(it.category, it.code, it.size, it.unit) }.map { (_, l) -> l.maxBy { it.lastUsed } }
+    val catalog by Graph.db.dao().products().collectAsStateWithLifecycle(emptyList())
+    // Catalog products first, then anything labelled before that is not in the catalog; one per product.
+    val notes = remember(catalog) { catalog.filter { !it.hidden }.associate { listOf(it.groupId, it.code, it.size, it.unit) to it.note } }
+    val products = remember(hints, catalog) {
+        val removed = catalog.filter { it.hidden }.map { listOf(it.groupId, it.code, it.size, it.unit) }.toSet()
+        val fromCatalog = catalog.filter { !it.hidden }.map { ProductHint(it.groupId, it.code, it.size, it.unit, it.packQty, Long.MAX_VALUE) }
+        val known = fromCatalog.map { listOf(it.category, it.code, it.size, it.unit) }.toSet()
+        fromCatalog + hints.groupBy { listOf(it.category, it.code, it.size, it.unit) }
+            .filterKeys { it !in known && it !in removed }
+            .map { (_, l) -> l.maxBy { it.lastUsed } }
     }
     val suggestions = remember(products, code, picked) { if (picked) emptyList() else CodeSuggest.filter(products, code, { it.code }) }
 
@@ -86,8 +94,10 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
                                 category = cat
                                 code = p.code
                                 size = p.size
-                                qty = Format.qty(p.qty)
-                                original = Format.qty(p.qty)
+                                if (p.qty > 0) {
+                                    qty = Format.qty(p.qty)
+                                    original = Format.qty(p.qty)
+                                }
                                 unit = p.unit
                                 picked = true
                             }.padding(vertical = 6.dp),
@@ -96,7 +106,10 @@ fun ManualScreen(shipmentId: String?, pallet: String?, onBack: () -> Unit) {
                         ) {
                             Text(p.code, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                listOf(cat.label, Format.size(p.size), Format.qtyUnit(p.qty, p.unit)).filter { it.isNotBlank() }.joinToString(" · "),
+                                listOf(
+                                    cat.label, Format.size(p.size), if (p.qty > 0) Format.qtyUnit(p.qty, p.unit) else p.unit,
+                                    notes[listOf(p.category, p.code, p.size, p.unit)].orEmpty(),
+                                ).filter { it.isNotBlank() }.joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

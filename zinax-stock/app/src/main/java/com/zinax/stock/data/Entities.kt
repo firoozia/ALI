@@ -159,6 +159,41 @@ data class ChangeRequest(
     val targets: List<String> get() = target.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 }
 
+/** A product group (PVC film, Edge banding…, or one an admin added). Shared through the Groups tab. */
+@Entity(tableName = "product_groups")
+data class GroupRow(
+    /** Stored on labels: a built-in name like "PVC", or "G_…" for added groups. */
+    @PrimaryKey val id: String,
+    val name: String,
+    val unit: String,
+    /** What one package is called: roll, gallon, bag, carton… */
+    val pack: String,
+    val sort: Int,
+    val hidden: Boolean = false,
+    val updatedAt: Long,
+    val dirty: Boolean = true,
+)
+
+/** A product in the catalog: group, code, size, unit, usual quantity per package and a note. Shared through the Products tab. */
+@Entity(tableName = "products")
+data class Product(
+    @PrimaryKey val id: String,
+    val groupId: String,
+    val code: String,
+    val size: String,
+    val unit: String,
+    /** Usual quantity in one package, 0 when not set. */
+    val packQty: Double,
+    /** Colour name or description, shown in the app only. */
+    val note: String,
+    val hidden: Boolean = false,
+    val updatedAt: Long,
+    val dirty: Boolean = true,
+)
+
+/** Group, code, size, unit and package quantity of a label, for building the first catalog. */
+data class ItemProduct(val category: String, val code: String, val size: String, val unit: String, val qty: Double)
+
 /** A product the app has seen, offered as a suggestion when typing a code. */
 data class ProductHint(
     val category: String,

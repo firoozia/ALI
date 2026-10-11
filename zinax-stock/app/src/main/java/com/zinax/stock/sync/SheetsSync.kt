@@ -6,6 +6,8 @@ import com.zinax.stock.data.AppDatabase
 import com.zinax.stock.data.AppUser
 import com.zinax.stock.data.ChangeRequest
 import com.zinax.stock.data.Customer
+import com.zinax.stock.data.GroupRow
+import com.zinax.stock.data.Product
 import com.zinax.stock.data.RequestStatus
 import com.zinax.stock.data.ExpectedUnit
 import com.zinax.stock.data.Item
@@ -46,6 +48,8 @@ class SheetsSync(
             val customers = dao.dirtyCustomers()
             val users = dao.dirtyUsers()
             val requests = dao.dirtyRequests()
+            val groups = dao.dirtyGroups()
+            val products = dao.dirtyProducts()
             val pushedAt = System.currentTimeMillis()
 
             val body = JSONObject()
@@ -61,6 +65,8 @@ class SheetsSync(
                 .put("customers", JSONArray(customers.map { it.toJson() }))
                 .put("users", JSONArray(users.map { it.toJson() }))
                 .put("requests", JSONArray(requests.map { it.toJson() }))
+                .put("groups", JSONArray(groups.map { it.toJson() }))
+                .put("products", JSONArray(products.map { it.toJson() }))
 
             val response = JSONObject(post(prefs.webAppUrl, body.toString()))
             if (!response.optBoolean("ok")) throw IOException(response.optString("error", "The sheet refused the sync."))
@@ -73,6 +79,8 @@ class SheetsSync(
                 customers.map { it.id }.chunked(500).forEach { dao.cleanCustomers(it, pushedAt) }
                 users.map { it.id }.chunked(500).forEach { dao.cleanUsers(it, pushedAt) }
                 requests.map { it.id }.chunked(500).forEach { dao.cleanRequests(it, pushedAt) }
+                groups.map { it.id }.chunked(500).forEach { dao.cleanGroups(it, pushedAt) }
+                products.map { it.id }.chunked(500).forEach { dao.cleanProducts(it, pushedAt) }
                 mergeShipments(response.optJSONArray("shipments"))
                 mergeExpected(response.optJSONArray("expected"))
                 mergeItems(response.optJSONArray("items"))
@@ -80,12 +88,14 @@ class SheetsSync(
                 mergeCustomers(response.optJSONArray("customers"))
                 mergeUsers(response.optJSONArray("users"))
                 mergeRequests(response.optJSONArray("requests"))
+                mergeGroups(response.optJSONArray("groups"))
+                mergeProducts(response.optJSONArray("products"))
             }
             response.optString("rev").takeIf { it.isNotEmpty() }?.let { prefs.lastRev = it }
             if (response.has("movements")) prefs.movementsBackfilled = true
             prefs.lastServerSync = response.optLong("now", prefs.lastServerSync)
             response.optString("sheetUrl").takeIf { it.startsWith("https://") }?.let { prefs.sheetUrl = it }
-            val pushed = shipments.size + expected.size + items.size + movements.size + customers.size + users.size + requests.size
+            val pushed = shipments.size + expected.size + items.size + movements.size + customers.size + users.size + requests.size + groups.size + products.size
             val msg = "Synced ${Format.dateTime(System.currentTimeMillis())} · sent $pushed change(s)"
             prefs.lastSyncMessage = msg
             try { afterSync() } catch (_: Exception) {}
@@ -122,6 +132,29 @@ class SheetsSync(
     }
 
     // ---------- merge ----------
+
+    private suspend fun mergeGroups(arr: JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        val rows = (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+            GroupRow(
+                id = it.getString("id"), name = it.optString("name"), unit = it.optString("unit"), pack = it.optString("pack"),
+                sort = it.optInt("order"), hidden = it.optBoolean("hidden", false), updatedAt = it.optLong("updatedAt"), dirty = false,
+            )
+        }.filter { remote -> dao.group(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
+        if (rows.isNotEmpty()) dao.putGroups(rows)
+    }
+
+    private suspend fun mergeProducts(arr: JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        val rows = (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+            Product(
+                id = it.getString("id"), groupId = it.optString("groupId"), code = it.optString("code"), size = it.optString("size"),
+                unit = it.optString("unit"), packQty = it.optDouble("packQty", 0.0).takeIf { q -> !q.isNaN() } ?: 0.0,
+                note = it.optString("note"), hidden = it.optBoolean("hidden", false), updatedAt = it.optLong("updatedAt"), dirty = false,
+            )
+        }.filter { remote -> dao.product(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
+        if (rows.isNotEmpty()) dao.putProducts(rows)
+    }
 
     private suspend fun mergeUsers(arr: JSONArray?) {
         if (arr == null || arr.length() == 0) return
@@ -226,6 +259,14 @@ class SheetsSync(
 
     private fun JSONObject.optNullableDouble(key: String): Double? =
         if (!has(key) || isNull(key) || optString(key).isEmpty()) null else optDouble(key).takeIf { !it.isNaN() }
+
+    private fun GroupRow.toJson() = JSONObject()
+        .put("id", id).put("name", name).put("unit", unit).put("pack", pack).put("order", sort).put("hidden", hidden)
+        .put("updatedAt", updatedAt)
+
+    private fun Product.toJson() = JSONObject()
+        .put("id", id).put("groupId", groupId).put("code", code).put("size", size).put("unit", unit).put("packQty", packQty)
+        .put("note", note).put("hidden", hidden).put("updatedAt", updatedAt)
 
     private fun AppUser.toJson() = JSONObject()
         .put("id", id).put("name", name).put("role", role).put("canReceive", canReceive).put("active", active)

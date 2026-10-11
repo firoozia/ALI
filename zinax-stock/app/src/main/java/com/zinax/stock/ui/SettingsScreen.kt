@@ -57,7 +57,7 @@ import com.zinax.stock.sync.ReportWorker
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> Unit, onCatalog: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -280,6 +280,7 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
 
                 Section("Users and security")
                 OutlinedButton(onClick = onUsers, modifier = Modifier.fillMaxWidth()) { Text("Users") }
+                OutlinedButton(onClick = onCatalog, modifier = Modifier.fillMaxWidth()) { Text("Products & groups") }
                 SwitchRow("Lock when leaving the app", lockOnLeave) { lockOnLeave = it; prefs.lockOnLeave = it }
                 OutlinedTextField(
                     lockMinutes,

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.zinax.stock.core.Activity
+import com.zinax.stock.core.Category
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.ItemRow
 import com.zinax.stock.core.OutReport
@@ -29,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -42,6 +44,8 @@ object Graph {
     lateinit var printQueue: PrintQueue
     lateinit var sync: SheetsSync
     lateinit var session: Session
+    /** Ticks when groups change, so screens showing group names redraw. */
+    val groupsVersion = kotlinx.coroutines.flow.MutableStateFlow(0)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     fun init(app: Application) {
@@ -55,6 +59,17 @@ object Graph {
         sync = SheetsSync(db, prefs) {
             session.refresh()
             RequestNotifier.check(app)
+            repo.seedCatalog()
+        }
+        scope.launch {
+            try { repo.seedCatalog() } catch (_: Exception) {}
+        }
+        // Group names and added groups, for labels, lists and reports everywhere.
+        scope.launch {
+            db.dao().groups().collect { rows ->
+                Category.update(rows.map { Category.Row(it.id, it.name, it.unit, it.pack, it.sort, it.hidden) })
+                groupsVersion.value++
+            }
         }
     }
 

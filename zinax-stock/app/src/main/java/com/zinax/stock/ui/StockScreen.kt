@@ -63,10 +63,18 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
         val used = items.map { it.location.ifBlank { NO_LOCATION } }.distinct()
         (Graph.prefs.locations.filter { it in used } + used.filter { it !in Graph.prefs.locations }.sortedBy { it == NO_LOCATION })
     }
+    val catalog by Graph.db.dao().products().collectAsStateWithLifecycle(emptyList())
+    // Colour or description from the catalog, shown under the code and searchable.
+    val notes = remember(catalog) {
+        catalog.filter { !it.hidden && it.note.isNotBlank() }.associate { "${it.groupId}|${it.code}|${it.size}|${it.unit}" to it.note }
+    }
     val openCount = remember(items) { items.count { it.isOpen } }
-    val shown = remember(items, query, place, openOnly) {
+    val shown = remember(items, query, place, openOnly, notes) {
         items.filter { !openOnly || it.isOpen }
-            .filter { query.isBlank() || it.code.contains(query.trim(), true) || it.id.contains(query.trim(), true) }
+            .filter {
+                query.isBlank() || it.code.contains(query.trim(), true) || it.id.contains(query.trim(), true) ||
+                    notes["${it.category}|${it.code}|${it.size}|${it.unit}"]?.contains(query.trim(), true) == true
+            }
             .filter { place == null || it.location.ifBlank { NO_LOCATION } == place }
     }
     val groups = remember(shown) {
@@ -82,7 +90,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                OutlinedTextField(query, { query = it }, label = { Text("Search code or label ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(query, { query = it }, label = { Text("Search code, label ID or colour") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
             if (places.size > 1 || place != null || openCount > 0) item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -117,7 +125,8 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                             code = first.code,
                             title = (if (opened > 0) "${list.size - opened} full · $opened open" else "${list.size} $pack") +
                                 " · ${Format.qtyUnit(total, first.unit)}",
-                            subtitle = listOf(first.categoryEnum.label, Format.size(first.size)).filter { it.isNotBlank() }.joinToString(" · "),
+                            subtitle = listOf(first.categoryEnum.label, Format.size(first.size), notes[key].orEmpty())
+                                .filter { it.isNotBlank() }.joinToString(" · "),
                         )
                         Spacer(Modifier.height(6.dp))
                         LocationBadges(byPlace)

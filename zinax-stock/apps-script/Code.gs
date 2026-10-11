@@ -30,6 +30,10 @@ const SHEETS = {
   Customers: ['ID', 'Name', 'CreatedAt', 'By', 'Hidden', 'UpdatedAt', 'ServerAt'],
   // People who sign in to the app. Role ADMIN or USER; Active FALSE stops someone signing in. PINs are stored hashed.
   Users: ['ID', 'Name', 'Role', 'CanReceive', 'Active', 'PinHash', 'Salt', 'UpdatedAt', 'ServerAt'],
+  // Product groups. ID is stored on labels; Name, Unit and Pack can be changed here. Add a group by typing a Name on a new row.
+  Groups: ['ID', 'Name', 'Unit', 'Pack', 'Order', 'Hidden', 'UpdatedAt', 'ServerAt'],
+  // Product catalog. Group is a group ID from the Groups tab. Add a product by typing a Group and Code on a new row.
+  Products: ['ID', 'Group', 'Code', 'Size', 'Unit', 'PackQty', 'Note', 'Hidden', 'UpdatedAt', 'ServerAt'],
   // Undo and delete asked by users, and the admin's answer.
   Requests: ['ID', 'Kind', 'Target', 'Summary', 'Reason', 'RequestedBy', 'Device', 'RequestedAt', 'Status', 'DecidedBy',
              'DecidedAt', 'Note', 'UpdatedAt', 'ServerAt', 'Payload'],
@@ -44,6 +48,8 @@ const TEXT_COLUMNS = {
   Customers: ['Name'],
   Users: ['Name', 'PinHash', 'Salt'],
   Requests: ['Target'],
+  Groups: ['Name'],
+  Products: ['Code', 'Size', 'Note'],
 };
 
 function setup() {
@@ -143,7 +149,14 @@ function sync_(req) {
             r.status || 'PENDING', r.decidedBy || '', date_(r.decidedAt), r.note || '', r.updatedAt, now, r.payload || ''];
   }, 12, function (old) { return old[8] && old[8] !== 'PENDING'; });
 
-  const pushed = ['shipments', 'expected', 'items', 'movements', 'customers', 'users', 'requests']
+  upsert_('Groups', req.groups || [], function (g) {
+    return [g.id, g.name, g.unit, g.pack, Number(g.order) || 0, g.hidden ? true : false, g.updatedAt, now];
+  }, 6);
+  upsert_('Products', req.products || [], function (p) {
+    return [p.id, p.groupId, p.code, p.size || '', p.unit, Number(p.packQty) || '', p.note || '', p.hidden ? true : false, p.updatedAt, now];
+  }, 8);
+
+  const pushed = ['shipments', 'expected', 'items', 'movements', 'customers', 'users', 'requests', 'groups', 'products']
     .some(function (k) { return (req[k] || []).length; });
   if (pushed) bump_();
 
@@ -174,6 +187,14 @@ function sync_(req) {
                customer: String(r[12] || ''), invoice: String(r[13] || '') };
     }),
     rev: PropertiesService.getScriptProperties().getProperty('ZINAX_REV') || '0',
+    groups: changed_('Groups', since).filter(function (r) { return String(r[0]).trim(); }).map(function (r) {
+      return { id: String(r[0]), name: String(r[1]), unit: String(r[2]), pack: String(r[3]), order: Number(r[4]) || 0,
+               hidden: yes_(r[5]), updatedAt: Number(r[6]) || 0 };
+    }),
+    products: changed_('Products', since).filter(function (r) { return String(r[0]).trim() && String(r[2]).trim(); }).map(function (r) {
+      return { id: String(r[0]), groupId: String(r[1]), code: String(r[2]), size: String(r[3]), unit: String(r[4]),
+               packQty: Number(r[5]) || 0, note: String(r[6] || ''), hidden: yes_(r[7]), updatedAt: Number(r[8]) || 0 };
+    }),
     users: changed_('Users', since).filter(function (r) { return String(r[1]).trim(); }).map(function (r) {
       return { id: String(r[0]), name: String(r[1]).trim(), role: String(r[2]).trim().toUpperCase() === 'ADMIN' ? 'ADMIN' : 'USER',
                canReceive: yes_(r[3]), active: r[4] === '' ? true : yes_(r[4]), pinHash: String(r[5] || ''),
@@ -203,6 +224,8 @@ function onEdit(e) {
   const sh = e.range.getSheet();
   if (sh.getName() === 'Customers') return customersEdited_(e);
   if (sh.getName() === 'Users') return usersEdited_(e);
+  if (sh.getName() === 'Groups') return catalogEdited_(e, 'Groups');
+  if (sh.getName() === 'Products') return catalogEdited_(e, 'Products');
   if (sh.getName() !== 'Items') return;
   const first = Math.max(2, e.range.getRow());
   const last = e.range.getLastRow();
@@ -289,6 +312,39 @@ function usersEdited_(e) {
   });
   sh.getRange(first, 1, rows.length, width).setValues(rows);
   bump_();
+}
+
+/**
+ * Edits in the Groups and Products tabs: a new row gets an ID, Hidden becomes TRUE/FALSE, and every
+ * edited row is stamped so the phones take the change on their next sync.
+ */
+function catalogEdited_(e, name) {
+  const sh = e.range.getSheet();
+  const first = Math.max(2, e.range.getRow());
+  const last = e.range.getLastRow();
+  if (last < first) return;
+  const cols = SHEETS[name];
+  const C = function (n) { return cols.indexOf(n); };
+  const rows = sh.getRange(first, 1, last - first + 1, cols.length).getValues();
+  const now = Date.now();
+  rows.forEach(function (r) {
+    if (name === 'Groups') {
+      if (!String(r[C('Name')]).trim()) return;
+      if (!r[0]) r[0] = 'G_' + String(r[C('Name')]).trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24);
+      if (!String(r[C('Unit')]).trim()) r[C('Unit')] = 'pcs';
+      if (!String(r[C('Pack')]).trim()) r[C('Pack')] = 'pack';
+    } else {
+      if (!String(r[C('Code')]).trim()) return;
+      if (!r[0]) r[0] = 'P_' + Utilities.getUuid().replace(/-/g, '').slice(0, 20);
+      if (!String(r[C('Group')]).trim()) r[C('Group')] = 'OTHER';
+    }
+    r[C('Hidden')] = yes_(r[C('Hidden')]);
+    r[C('UpdatedAt')] = Math.max(now, (Number(r[C('UpdatedAt')]) || 0) + 1);
+    r[C('ServerAt')] = now;
+  });
+  sh.getRange(first, 1, rows.length, cols.length).setValues(rows);
+  bump_();
+  if (name === 'Groups') stockSheet_();
 }
 
 /** Tells open apps (through `poll`) that something changed and they should sync. */
@@ -392,17 +448,21 @@ function stockSheet_() {
   const NONE = 'No location';
   const groups = {};
   const places = {};
+  // Show group names instead of IDs when the Groups tab has them.
+  const groupName = {};
+  if (ss.getSheetByName('Groups')) readAll_('Groups').forEach(function (g) { if (g[0]) groupName[String(g[0])] = String(g[1] || g[0]); });
   readAll_('Items').forEach(function (r) {
     if (r[7] !== 'IN_STOCK') return;
-    const key = [r[1], r[2], r[3], r[6]].join('|');
-    if (!groups[key]) groups[key] = { row: [r[1], r[2], r[3], r[6], 0, 0], where: {} };
+    const cat = groupName[String(r[1])] || r[1];
+    const key = [cat, r[2], r[3], r[6]].join('|');
+    if (!groups[key]) groups[key] = { row: [cat, r[2], r[3], r[6], 0, 0], where: {} };
     const g = groups[key];
     const loc = String(r[13] || '').trim() || NONE;
     g.row[4] += 1;
     g.row[5] += Number(r[5]) || 0;
     g.where[loc] = (g.where[loc] || 0) + 1;
     const pkey = [loc, key].join('|');
-    if (!places[pkey]) places[pkey] = [loc, r[1], r[2], r[3], r[6], 0, 0];
+    if (!places[pkey]) places[pkey] = [loc, cat, r[2], r[3], r[6], 0, 0];
     places[pkey][5] += 1;
     places[pkey][6] += Number(r[5]) || 0;
   });

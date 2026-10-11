@@ -8,6 +8,7 @@ import com.zinax.stock.core.Format
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.core.Pin
 import com.zinax.stock.importer.ParsedUnit
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
@@ -329,6 +330,109 @@ class Repository(
         }
         onChange()
         return result
+    }
+
+    // ---------- groups and products ----------
+
+    /** Same ID on every phone for the same product, so phones that fill the catalog at once do not make duplicates. */
+    private fun productId(groupId: String, code: String, size: String, unit: String): String =
+        "P_" + UUID.nameUUIDFromBytes("$groupId|$code|$size|$unit".lowercase().toByteArray()).toString().replace("-", "").take(20)
+
+    /** Adds the built-in groups, and once per phone a product for every code, size and unit already labelled. */
+    suspend fun seedCatalog() {
+        if (dao.allGroups().isEmpty()) {
+            dao.putGroups(Category.builtIns.map { GroupRow(it.name, it.label, it.unit, it.pack, it.ordinal, false, 1L) })
+        }
+        if (!prefs.catalogSeeded) {
+            val known = dao.allProducts().map { it.id }.toSet()
+            val labelled = dao.itemProducts()
+            // A new phone has no labels until its first sync; fill the catalog then.
+            if (labelled.isEmpty()) return
+            val rows = labelled
+                .filter { it.code.isNotBlank() }
+                .groupBy { listOf(it.category, it.code.trim(), it.size.trim(), it.unit.trim()) }
+                .map { (k, list) ->
+                    val qty = list.groupingBy { it.qty }.eachCount().maxByOrNull { it.value }?.key ?: 0.0
+                    Product(productId(k[0], k[1], k[2], k[3]), k[0], k[1], k[2], k[3], qty, "", false, 1L)
+                }
+                .filter { it.id !in known }
+            if (rows.isNotEmpty()) dao.putProducts(rows)
+            prefs.catalogSeeded = true
+            if (rows.isNotEmpty()) onChange()
+        }
+    }
+
+    private fun sameProduct(a: Product, b: Product) =
+        a.code.trim().equals(b.code.trim(), ignoreCase = true) && a.size.trim().equals(b.size.trim(), ignoreCase = true) &&
+            a.groupId == b.groupId
+
+    /**
+     * Saves a new or changed product. When group, code, size or unit changed and [applyToStock] is set, the
+     * labels in stock that had the old values are corrected too; those labels are returned for reprinting.
+     */
+    suspend fun saveProduct(p: Product, applyToStock: Boolean): List<Item> {
+        val clean = p.copy(code = p.code.trim(), size = p.size.trim(), unit = p.unit.trim(), note = p.note.trim())
+        require(clean.code.isNotEmpty()) { "Enter a code" }
+        require(clean.unit.isNotEmpty()) { "Enter a unit" }
+        val all = dao.allProducts()
+        require(all.none { it.id != clean.id && !it.hidden && sameProduct(it, clean) }) {
+            "${clean.code} ${Format.size(clean.size)} is already in ${Category.fromName(clean.groupId).label}"
+        }
+        val old = all.firstOrNull { it.id == clean.id }
+        val id = clean.id.ifBlank { productId(clean.groupId, clean.code, clean.size, clean.unit) + uuid().take(4) }
+        dao.putProducts(listOf(clean.copy(id = id, updatedAt = now(), dirty = true)))
+        var corrected = emptyList<Item>()
+        if (old != null && applyToStock) {
+            val edit = ItemEdit(
+                clean.groupId.takeIf { it != old.groupId }, clean.code.takeIf { it != old.code },
+                clean.size.takeIf { it != old.size }, clean.unit.takeIf { it != old.unit },
+            )
+            val ids = stockOf(old).map { it.id }
+            if (ids.isNotEmpty() && (edit.category != null || edit.code != null || edit.size != null || edit.unit != null)) {
+                corrected = editItems(ids, edit)
+            }
+        }
+        onChange()
+        return corrected
+    }
+
+    /** In-stock labels of [p]: same group, code, size and unit. */
+    suspend fun stockOf(p: Product): List<Item> =
+        dao.inStockOfCode(p.code).first().filter { it.category == p.groupId && it.size == p.size && it.unit == p.unit }
+
+    suspend fun hideProduct(id: String, hidden: Boolean = true) {
+        val p = dao.product(id) ?: return
+        dao.putProducts(listOf(p.copy(hidden = hidden, updatedAt = now(), dirty = true)))
+        onChange()
+    }
+
+    /** Adds a group, or saves a changed one. Returns its ID. */
+    suspend fun saveGroup(id: String?, name: String, unit: String, pack: String): String {
+        val label = name.trim()
+        require(label.isNotEmpty()) { "Enter a name" }
+        require(unit.isNotBlank()) { "Enter a unit" }
+        val all = dao.allGroups()
+        require(all.none { it.id != id && !it.hidden && it.name.trim().equals(label, ignoreCase = true) }) { "There is already a group called $label" }
+        val t = now()
+        val existing = all.firstOrNull { it.id == id }
+        val row = if (existing != null) {
+            existing.copy(name = label, unit = unit.trim(), pack = pack.trim().ifEmpty { "pack" }, hidden = false, updatedAt = t, dirty = true)
+        } else {
+            var newId = Category.newId(label)
+            var n = 2
+            while (all.any { it.id == newId }) newId = Category.newId(label) + "_" + n++
+            GroupRow(newId, label, unit.trim(), pack.trim().ifEmpty { "pack" }, (all.maxOfOrNull { it.sort } ?: 0) + 1, false, t)
+        }
+        dao.putGroups(listOf(row))
+        onChange()
+        return row.id
+    }
+
+    suspend fun hideGroup(id: String, hidden: Boolean = true) {
+        require(id != Category.OTHER.name) { "Other cannot be removed" }
+        val g = dao.group(id) ?: return
+        dao.putGroups(listOf(g.copy(hidden = hidden, updatedAt = now(), dirty = true)))
+        onChange()
     }
 
     // ---------- users ----------

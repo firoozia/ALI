@@ -66,6 +66,11 @@ class Prefs(context: Context) {
         get() = sp.getString("appTheme", "teal") ?: "teal"
         set(v) = edit { putString("appTheme", v) }
 
+    /** The product catalog was filled once from the labels on this phone. */
+    var catalogSeeded: Boolean
+        get() = sp.getBoolean("catalogSeeded", false)
+        set(v) = edit { putBoolean("catalogSeeded", v) }
+
     var askedNotifications: Boolean
         get() = sp.getBoolean("askedNotifications", false)
         set(v) = edit { putBoolean("askedNotifications", v) }

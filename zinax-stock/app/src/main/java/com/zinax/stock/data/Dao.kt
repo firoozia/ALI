@@ -110,6 +110,46 @@ interface StockDao {
     @Query("SELECT * FROM items WHERE status = 'IN_STOCK' AND code = :code ORDER BY receivedAt")
     fun inStockOfCode(code: String): Flow<List<Item>>
 
+    // groups and products
+    @Query("SELECT * FROM product_groups ORDER BY sort, name COLLATE NOCASE")
+    fun groups(): Flow<List<GroupRow>>
+
+    @Query("SELECT * FROM product_groups")
+    suspend fun allGroups(): List<GroupRow>
+
+    @Query("SELECT * FROM product_groups WHERE id = :id")
+    suspend fun group(id: String): GroupRow?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putGroups(rows: List<GroupRow>)
+
+    @Query("SELECT * FROM product_groups WHERE dirty = 1")
+    suspend fun dirtyGroups(): List<GroupRow>
+
+    @Query("UPDATE product_groups SET dirty = 0 WHERE id IN (:ids) AND updatedAt <= :upTo")
+    suspend fun cleanGroups(ids: List<String>, upTo: Long)
+
+    @Query("SELECT * FROM products ORDER BY code COLLATE NOCASE, size")
+    fun products(): Flow<List<Product>>
+
+    @Query("SELECT * FROM products")
+    suspend fun allProducts(): List<Product>
+
+    @Query("SELECT * FROM products WHERE id = :id")
+    suspend fun product(id: String): Product?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putProducts(rows: List<Product>)
+
+    @Query("SELECT * FROM products WHERE dirty = 1")
+    suspend fun dirtyProducts(): List<Product>
+
+    @Query("UPDATE products SET dirty = 0 WHERE id IN (:ids) AND updatedAt <= :upTo")
+    suspend fun cleanProducts(ids: List<String>, upTo: Long)
+
+    @Query("SELECT category, code, size, unit, qty FROM items UNION ALL SELECT category, code, size, unit, qty FROM expected")
+    suspend fun itemProducts(): List<ItemProduct>
+
     // users
     @Query("SELECT * FROM users ORDER BY name COLLATE NOCASE")
     fun users(): Flow<List<AppUser>>

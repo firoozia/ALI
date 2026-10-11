@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -120,6 +121,22 @@ fun ImportScreen(onBack: () -> Unit, onSaved: (String) -> Unit) {
                     if (r.sizes.isNotEmpty()) KeyValue("Sizes", r.sizes.joinToString(" · ") { Format.size(it) })
                 }
                 r.warnings.forEach { Notice(it, status.warn, status.warnSoft) }
+                // Codes not in the product catalog are often typing mistakes in the packing list.
+                val catalog by Graph.db.dao().products().collectAsStateWithLifecycle(emptyList())
+                val unknown = remember(r, catalog) {
+                    if (catalog.isEmpty()) emptyList()
+                    else {
+                        val known = catalog.filter { !it.hidden }.map { it.code.trim().lowercase() }.toSet()
+                        r.units.map { it.code.trim() }.distinct().filter { it.lowercase() !in known }
+                    }
+                }
+                if (unknown.isNotEmpty()) {
+                    Notice(
+                        "Not in the product catalog: " + unknown.take(12).joinToString(", ") + (if (unknown.size > 12) " and ${unknown.size - 12} more" else "") +
+                            ". Check for typing mistakes, or add them in Settings → Products & groups. You can still save.",
+                        status.warn, status.warnSoft, "New codes",
+                    )
+                }
                 Button(
                     onClick = {
                         busy = true
