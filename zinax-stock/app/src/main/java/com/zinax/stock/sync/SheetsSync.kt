@@ -144,6 +144,7 @@ class SheetsSync(
                 device = it.optString("device"), requestedAt = it.optLong("requestedAt"),
                 status = it.optString("status").ifEmpty { RequestStatus.PENDING }, decidedBy = it.optString("decidedBy"),
                 decidedAt = it.optLong("decidedAt"), note = it.optString("note"), updatedAt = it.optLong("updatedAt"), dirty = false,
+                payload = it.optString("payload"),
             )
             val local = dao.request(remote.id)
             when {
@@ -233,7 +234,7 @@ class SheetsSync(
     private fun ChangeRequest.toJson() = JSONObject()
         .put("id", id).put("kind", kind).put("target", target).put("summary", summary).put("reason", reason)
         .put("requestedBy", requestedBy).put("device", device).put("requestedAt", requestedAt).put("status", status)
-        .put("decidedBy", decidedBy).put("decidedAt", decidedAt).put("note", note).put("updatedAt", updatedAt)
+        .put("decidedBy", decidedBy).put("decidedAt", decidedAt).put("note", note).put("updatedAt", updatedAt).put("payload", payload)
 
     private fun Customer.toJson() = JSONObject()
         .put("id", id).put("name", name).put("createdAt", createdAt).put("createdBy", createdBy)

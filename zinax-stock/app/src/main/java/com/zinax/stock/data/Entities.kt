@@ -75,6 +75,8 @@ object MovementType {
     const val CUT = "CUT"
     /** A short end written off after a cut. */
     const val WASTE = "WASTE"
+    /** Category, code, size or unit corrected by an admin; [Movement.reference] says what changed. */
+    const val EDIT = "EDIT"
     /** Cancels a ship-out, cut or waste made by mistake; [Movement.reference] holds the cancelled movement's ID. */
     const val UNDO = "UNDO"
 }
@@ -121,6 +123,8 @@ object RequestKind {
     const val UNDO = "UNDO"
     /** Delete labels entered by mistake; the target is the item IDs, comma separated. */
     const val DELETE = "DELETE"
+    /** Correct category, code, size or unit; the target is the item IDs, the new values are in [ChangeRequest.payload]. */
+    const val EDIT = "EDIT"
 }
 
 object RequestStatus {
@@ -149,6 +153,8 @@ data class ChangeRequest(
     val dirty: Boolean = true,
     /** This phone only: the status a notification was last shown (or not needed) for. */
     val notified: String = "",
+    /** Extra data for the request, e.g. the new values of an edit as JSON. */
+    val payload: String = "",
 ) {
     val targets: List<String> get() = target.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 }

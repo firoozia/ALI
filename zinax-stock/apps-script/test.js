@@ -112,4 +112,12 @@ post({token:'tok',action:'sync',since:0,requests:[{...rq,status:'REJECTED',decid
 post({token:'tok',action:'sync',since:0,requests:[{...rq,updatedAt:8000}]});
 const q=sheets.Requests.cells[1]; assert.equal(q[8],'APPROVED'); assert.equal(q[9],'Ali');
 r=post({token:'tok',action:'sync',since:0}); assert.ok(r.requests.some(x=>x.id==='q1' && x.status==='APPROVED' && x.decidedAt===6000));
+// an edit request keeps its new values
+r=post({token:'tok',action:'sync',since:0,requests:[{...rq,id:'q2',kind:'EDIT',target:'ZX-251009-A0002',payload:'{"category":"EDGE_BANDING"}',updatedAt:9000}]});
+assert.equal(sheets.Requests.cells[0][14],'Payload');
+assert.ok(r.requests.some(x=>x.id==='q2' && x.kind==='EDIT' && x.payload==='{"category":"EDGE_BANDING"}'));
+// an EDIT movement is logged but does not count as out
+post({token:'tok',action:'sync',since:0,movements:[{id:'e1',itemId:'ZX-251009-A0002',type:'EDIT',qty:90,unit:'m',code:'101',size:'0.30*1400',reference:'Category PVC film → Edge banding',at:Date.UTC(2026,9,12,9),device:'A',user:'Ali'}]});
+assert.ok(sheets.Movements.cells.some(r=>r[0]==='e1' && r[2]==='EDIT'));
+assert.ok(!sheets['Out by day'].cells.some(r=>r[5]===90 && r[0]!=='Date' && String(r[7]).includes('Ali') && r[6]==='Category PVC film → Edge banding'));
 console.log('APPS_SCRIPT_TESTS_OK');

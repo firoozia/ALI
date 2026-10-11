@@ -304,6 +304,33 @@ class Repository(
         onChange()
     }
 
+    /**
+     * Corrects category, code, size or unit of in-stock labels. Each label that changes gets an EDIT
+     * movement saying what changed and who did it. Returns the labels after the change.
+     */
+    suspend fun editItems(itemIds: List<String>, edit: ItemEdit, by: String = prefs.userName): List<Item> {
+        val result = db.withTransaction {
+            val t = now()
+            val items = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }.filter { it.status == ItemStatus.IN_STOCK }
+            val changed = items.mapNotNull { item -> edit.against(item)?.let { item to it } }
+            if (changed.isEmpty()) return@withTransaction emptyList()
+            val updated = changed.map { (item, e) -> e.applyTo(item).copy(updatedAt = t, dirty = true) }
+            dao.putItems(updated)
+            dao.putMovements(
+                changed.zip(updated).map { (pair, after) ->
+                    Movement(
+                        id = uuid(), itemId = after.id, type = MovementType.EDIT, qty = after.remaining,
+                        reference = pair.second.describe(pair.first), at = t, device = prefs.deviceCode,
+                        code = after.code, size = after.size, unit = after.unit, user = by,
+                    )
+                }
+            )
+            updated
+        }
+        onChange()
+        return result
+    }
+
     // ---------- users ----------
 
     private fun sameName(a: String, b: String) = CustomerNames.key(a) == CustomerNames.key(b)
@@ -352,12 +379,12 @@ class Repository(
         check(targets.none { it in waiting }) { "Already waiting for an admin" }
     }
 
-    private suspend fun newRequest(kind: String, target: String, summary: String, reason: String): ChangeRequest {
+    private suspend fun newRequest(kind: String, target: String, summary: String, reason: String, payload: String = ""): ChangeRequest {
         val t = now()
         val r = ChangeRequest(
             id = uuid(), kind = kind, target = target, summary = summary, reason = reason.trim(),
             requestedBy = prefs.userName, device = prefs.deviceCode, requestedAt = t, updatedAt = t,
-            notified = RequestStatus.PENDING,
+            notified = RequestStatus.PENDING, payload = payload,
         )
         dao.putRequests(listOf(r))
         onChange()
@@ -394,6 +421,16 @@ class Repository(
         return newRequest(RequestKind.DELETE, items.joinToString(",") { it.id }, summary, reason)
     }
 
+    /** Asks an admin to correct category, code, size or unit of labels. */
+    suspend fun requestEdit(itemIds: List<String>, edit: ItemEdit, reason: String): ChangeRequest {
+        val items = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }.filter { it.status == ItemStatus.IN_STOCK }
+        val first = items.firstOrNull { edit.against(it) != null } ?: error("Nothing would change")
+        checkNotWaiting(items.map { it.id })
+        val what = edit.against(first)!!.describe(first)
+        val summary = (if (items.size == 1) "Edit ${first.id}" else "Edit ${items.size} labels of ${first.code}") + ": $what"
+        return newRequest(RequestKind.EDIT, items.joinToString(",") { it.id }, summary, reason, edit.toJson())
+    }
+
     /** Carries out the request as [admin] and marks it approved. Throws, leaving it waiting, if it cannot be done. */
     suspend fun approveRequest(id: String, admin: String) {
         val r = dao.request(id) ?: error("Request not found")
@@ -406,6 +443,10 @@ class Repository(
                 }
             }
             RequestKind.DELETE -> voidItems(r.targets, admin)
+            RequestKind.EDIT -> {
+                check(r.payload.isNotBlank()) { "The new values did not reach this phone. Update the Apps Script to 2.1.0 and sync." }
+                editItems(r.targets, ItemEdit.fromJson(r.payload), admin)
+            }
             else -> error("Unknown request")
         }
         decide(r, RequestStatus.APPROVED, admin, "")

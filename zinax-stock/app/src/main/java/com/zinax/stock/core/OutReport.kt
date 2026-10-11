@@ -12,6 +12,7 @@ enum class Activity(val type: String, val title: String, val verb: String) {
     IN("IN", "Received", "received"),
     VOID("VOID", "Deleted", "deleted"),
     MOVE("MOVE", "Moved", "moved"),
+    EDIT("EDIT", "Edited", "edited"),
 }
 
 /** One stock change, with what the package held when it was labelled. */

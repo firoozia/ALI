@@ -32,7 +32,7 @@ const SHEETS = {
   Users: ['ID', 'Name', 'Role', 'CanReceive', 'Active', 'PinHash', 'Salt', 'UpdatedAt', 'ServerAt'],
   // Undo and delete asked by users, and the admin's answer.
   Requests: ['ID', 'Kind', 'Target', 'Summary', 'Reason', 'RequestedBy', 'Device', 'RequestedAt', 'Status', 'DecidedBy',
-             'DecidedAt', 'Note', 'UpdatedAt', 'ServerAt'],
+             'DecidedAt', 'Note', 'UpdatedAt', 'ServerAt', 'Payload'],
 };
 
 // Columns kept as plain text so codes like "0101" or sizes like "0.30*1400" are not turned into numbers.
@@ -140,7 +140,7 @@ function sync_(req) {
   // A decision is final: once approved or rejected, a later write from another phone does not change it.
   upsert_('Requests', req.requests || [], function (r) {
     return [r.id, r.kind, r.target, r.summary || '', r.reason || '', r.requestedBy || '', r.device || '', date_(r.requestedAt),
-            r.status || 'PENDING', r.decidedBy || '', date_(r.decidedAt), r.note || '', r.updatedAt, now];
+            r.status || 'PENDING', r.decidedBy || '', date_(r.decidedAt), r.note || '', r.updatedAt, now, r.payload || ''];
   }, 12, function (old) { return old[8] && old[8] !== 'PENDING'; });
 
   const pushed = ['shipments', 'expected', 'items', 'movements', 'customers', 'users', 'requests']
@@ -182,7 +182,8 @@ function sync_(req) {
     requests: changed_('Requests', since).map(function (r) {
       return { id: String(r[0]), kind: String(r[1]), target: String(r[2]), summary: String(r[3]), reason: String(r[4]),
                requestedBy: String(r[5]), device: String(r[6]), requestedAt: ms_(r[7]), status: String(r[8] || 'PENDING'),
-               decidedBy: String(r[9] || ''), decidedAt: ms_(r[10]), note: String(r[11] || ''), updatedAt: Number(r[12]) || 0 };
+               decidedBy: String(r[9] || ''), decidedAt: ms_(r[10]), note: String(r[11] || ''), updatedAt: Number(r[12]) || 0,
+               payload: String(r[14] || '') };
     }),
     customers: changed_('Customers', since).filter(function (r) { return String(r[1]).trim(); }).map(function (r) {
       return { id: String(r[0]), name: String(r[1]).trim(), createdAt: ms_(r[2]), createdBy: String(r[3] || ''),

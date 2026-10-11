@@ -36,6 +36,7 @@ import com.zinax.stock.Graph
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.Report
 import com.zinax.stock.data.Item
+import com.zinax.stock.data.ItemEdit
 import com.zinax.stock.printer.LabelSpec
 import kotlinx.coroutines.launch
 
@@ -52,6 +53,9 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
     var open by remember { mutableStateOf<String?>(null) }
     var moving by remember { mutableStateOf<MoveTarget?>(null) }
     var deleting by remember { mutableStateOf<MoveTarget?>(null) }
+    var editing by remember { mutableStateOf<List<Item>?>(null) }
+    var editPlan by remember { mutableStateOf<Pair<List<Item>, ItemEdit>?>(null) }
+    var reprint by remember { mutableStateOf<List<Item>?>(null) }
     val waiting = rememberWaiting()
     val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
@@ -123,6 +127,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                             TextButton(onClick = {
                                 moving = MoveTarget("Move all ${list.size} of ${first.code}", list.map { it.id }, place.takeIf { it != NO_LOCATION }.orEmpty())
                             }) { Text("Move all ${list.size}") }
+                            TextButton(onClick = { editing = list }) { Text("Edit") }
                             TextButton(onClick = {
                                 deleting = MoveTarget("Delete all ${list.size} of ${first.code}?", list.map { it.id }, "")
                             }) { Text("Delete all ${list.size}", color = LocalStatus.current.bad) }
@@ -161,9 +166,12 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                                             }
                                         }
                                     }
-                                    if (item.isOpen) {
-                                        TextButton(onClick = { Graph.printQueue.printLabels(listOf(LabelSpec.Remainder(item)), "remainder ${item.id}") }) {
-                                            Text("Remainder label")
+                                    Row {
+                                        TextButton(onClick = { editing = listOf(item) }, enabled = item.id !in waiting) { Text("Edit") }
+                                        if (item.isOpen) {
+                                            TextButton(onClick = { Graph.printQueue.printLabels(listOf(LabelSpec.Remainder(item)), "remainder ${item.id}") }) {
+                                                Text("Remainder")
+                                            }
                                         }
                                     }
                                 }
@@ -184,6 +192,52 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                 scope.launch { Graph.repo.setLocations(target.ids, loc) }
             },
             onDismiss = { moving = null },
+        )
+    }
+
+    editing?.let { list ->
+        EditItemsDialog(list, onSave = { e -> editing = null; editPlan = list to e }, onDismiss = { editing = null })
+    }
+
+    editPlan?.let { (list, e) ->
+        val first = list.first()
+        ApprovalDialog(
+            title = if (list.size == 1) "Save changes to ${first.id}?" else "Save changes to ${list.size} labels?",
+            body = (e.against(first)?.describe(first) ?: "") + ".",
+            confirmLabel = "Save",
+            onConfirm = {
+                editPlan = null
+                scope.launch {
+                    try {
+                        val updated = Graph.repo.editItems(list.map { it.id }, e)
+                        snackbar.showSnackbar("Saved ${updated.size} label(s)")
+                        if (e.changesLabel && updated.isNotEmpty()) reprint = updated
+                    } catch (ex: Exception) {
+                        snackbar.showSnackbar(ex.message ?: "Could not save")
+                    }
+                }
+            },
+            request = { reason -> Graph.repo.requestEdit(list.map { it.id }, e, reason) },
+            onDone = { msg -> editPlan = null; scope.launch { snackbar.showSnackbar(msg) } },
+            onDismiss = { editPlan = null },
+        )
+    }
+
+    reprint?.let { list ->
+        AlertDialog(
+            onDismissRequest = { reprint = null },
+            title = { Text("Print new labels?") },
+            text = { Text("The code, size or unit on ${list.size} printed label(s) is now different. Print new labels and stick them over the old ones.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    reprint = null
+                    Graph.printQueue.printLabels(
+                        list.map { if (it.isOpen) LabelSpec.Remainder(it) else LabelSpec.Roll(it) },
+                        "corrected ${list.first().code}",
+                    )
+                }) { Text("Print ${list.size}") }
+            },
+            dismissButton = { TextButton(onClick = { reprint = null }) { Text("Later") } },
         )
     }
 
