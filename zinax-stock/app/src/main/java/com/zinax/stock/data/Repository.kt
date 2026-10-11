@@ -7,6 +7,7 @@ import com.zinax.stock.core.CutPlan
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.core.Pin
+import com.zinax.stock.core.Units
 import com.zinax.stock.importer.ParsedUnit
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -31,7 +32,7 @@ class Repository(
         val rows = units.map {
             ExpectedUnit(
                 id = uuid(), shipmentId = shipment.id, pallet = it.pallet, lineNo = it.lineNo,
-                category = it.category.name, code = it.code, size = it.size, qty = it.qty, unit = it.unit,
+                category = it.category.name, code = it.code, size = it.size, qty = it.qty, unit = Units.normalize(it.unit),
                 netKg = it.netKg, grossKg = it.grossKg, itemId = null, updatedAt = t,
             )
         }
@@ -85,7 +86,7 @@ class Repository(
             val t = now()
             val items = nextIds(count).map { id ->
                 Item(
-                    id = id, category = category.name, code = code.trim(), size = size.trim(), unit = unit.trim(),
+                    id = id, category = category.name, code = code.trim(), size = size.trim(), unit = Units.normalize(unit),
                     qty = qty, remaining = remaining?.coerceAtMost(qty) ?: qty, status = ItemStatus.IN_STOCK,
                     shipmentId = shipmentId, pallet = pallet, netKg = null, grossKg = null,
                     receivedAt = t, location = location.trim(), device = prefs.deviceCode, updatedAt = t,
@@ -309,7 +310,8 @@ class Repository(
      * Corrects category, code, size or unit of in-stock labels. Each label that changes gets an EDIT
      * movement saying what changed and who did it. Returns the labels after the change.
      */
-    suspend fun editItems(itemIds: List<String>, edit: ItemEdit, by: String = prefs.userName): List<Item> {
+    suspend fun editItems(itemIds: List<String>, rawEdit: ItemEdit, by: String = prefs.userName): List<Item> {
+        val edit = rawEdit.copy(unit = rawEdit.unit?.let { Units.normalize(it) })
         val result = db.withTransaction {
             val t = now()
             val items = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }.filter { it.status == ItemStatus.IN_STOCK }
@@ -371,7 +373,7 @@ class Repository(
      * labels in stock that had the old values are corrected too; those labels are returned for reprinting.
      */
     suspend fun saveProduct(p: Product, applyToStock: Boolean): SaveResult {
-        val clean = p.copy(code = p.code.trim(), size = p.size.trim(), unit = p.unit.trim(), note = p.note.trim())
+        val clean = p.copy(code = p.code.trim(), size = p.size.trim(), unit = Units.normalize(p.unit), note = p.note.trim())
         require(clean.code.isNotEmpty()) { "Enter a code" }
         require(clean.unit.isNotEmpty()) { "Enter a unit" }
         val all = dao.allProducts()
@@ -398,11 +400,13 @@ class Repository(
         val id = clean.id.ifBlank { productId(clean.groupId, clean.code, clean.size, clean.unit) + uuid().take(4) }
         dao.putProducts(listOf(clean.copy(id = id, updatedAt = t, dirty = true)))
         var corrected = emptyList<Item>()
-        if (old != null && applyToStock) {
-            val edit = ItemEdit(
+        // Only the unit spelling tidied ("M" → "m"): the labels follow even without the checkbox.
+        val tidyOnly = old != null && old.unit != clean.unit && Units.normalize(old.unit) == clean.unit
+        if (old != null && (applyToStock || tidyOnly)) {
+            val edit = if (applyToStock) ItemEdit(
                 clean.groupId.takeIf { it != old.groupId }, clean.code.takeIf { it != old.code },
                 clean.size.takeIf { it != old.size }, clean.unit.takeIf { it != old.unit },
-            )
+            ) else ItemEdit(unit = clean.unit)
             val ids = stockOf(old).map { it.id }
             if (ids.isNotEmpty() && (edit.category != null || edit.code != null || edit.size != null || edit.unit != null)) {
                 corrected = editItems(ids, edit)
@@ -414,6 +418,71 @@ class Repository(
 
     /** Labels corrected by a product save, and whether the product was merged into one already there. */
     data class SaveResult(val corrected: List<Item>, val merged: Boolean)
+
+    /** One kind of unit spelling to tidy, e.g. "M" → "m", with how many labels, products and pallet lines use it. */
+    data class UnitFix(val from: String, val to: String, val labels: Int, val products: Int, val lines: Int)
+
+    /** Unit spellings in stock, in the catalog and on pallets still to receive that differ from the usual one. */
+    suspend fun unitFixes(): List<UnitFix> {
+        val items = dao.inStock().first()
+        val products = dao.allProducts().filter { !it.hidden }
+        val lines = dao.allExpected().first().filter { it.itemId == null }
+        val spellings = (items.map { it.unit } + products.map { it.unit } + lines.map { it.unit }).distinct()
+        return spellings.filter { Units.normalize(it) != it }.map { u ->
+            UnitFix(u, Units.normalize(u), items.count { it.unit == u }, products.count { it.unit == u }, lines.count { it.unit == u })
+        }.sortedByDescending { it.labels + it.products + it.lines }
+    }
+
+    /**
+     * Rewrites every unit spelling from [unitFixes] to the usual one: labels in stock (logged as edits, no new
+     * labels needed), catalog products (merging ones that become the same) and pallet lines still to receive.
+     */
+    suspend fun tidyUnits(): Int {
+        val fixes = unitFixes()
+        if (fixes.isEmpty()) return 0
+        var changed = 0
+        val items = dao.inStock().first()
+        for (f in fixes) {
+            val ids = items.filter { it.unit == f.from }.map { it.id }
+            if (ids.isNotEmpty()) changed += editItems(ids, ItemEdit(unit = f.to)).size
+        }
+        val t = now()
+        val untidyLines = dao.allExpected().first().filter { it.itemId == null && Units.normalize(it.unit) != it.unit }
+        db.withTransaction {
+            val products = dao.allProducts()
+            val keep = HashMap<String, Product>()
+            val out = ArrayList<Product>()
+            // Visible products first, so a merge keeps the one people see.
+            products.sortedBy { it.hidden }.forEach { p ->
+                val unit = Units.normalize(p.unit)
+                val key = listOf(p.groupId, p.code.trim().lowercase(), p.size.trim().lowercase(), unit).joinToString("|")
+                val first = keep[key]
+                when {
+                    p.hidden -> if (unit != p.unit) out += p.copy(unit = unit, updatedAt = t, dirty = true)
+                    first == null -> {
+                        keep[key] = p
+                        if (unit != p.unit) out += p.copy(unit = unit, updatedAt = t, dirty = true)
+                    }
+                    else -> {
+                        // Same product twice once the unit is tidied: keep the first, carry over a note, drop this one.
+                        if (first.note.isBlank() && p.note.isNotBlank()) {
+                            val merged = first.copy(unit = unit, note = p.note, updatedAt = t, dirty = true)
+                            keep[key] = merged
+                            out.removeAll { it.id == first.id }
+                            out += merged
+                        }
+                        out += p.copy(unit = unit, hidden = true, updatedAt = t, dirty = true)
+                    }
+                }
+            }
+            if (out.isNotEmpty()) dao.putProducts(out)
+            changed += out.size
+            if (untidyLines.isNotEmpty()) dao.putExpected(untidyLines.map { it.copy(unit = Units.normalize(it.unit), updatedAt = t, dirty = true) })
+            changed += untidyLines.size
+        }
+        onChange()
+        return changed
+    }
 
     /** In-stock labels of [p]: same group, code, size and unit. */
     suspend fun stockOf(p: Product): List<Item> =

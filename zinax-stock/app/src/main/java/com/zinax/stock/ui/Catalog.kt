@@ -76,6 +76,10 @@ fun CatalogScreen(onBack: () -> Unit) {
     var editingGroup by remember { mutableStateOf<GroupRow?>(null) }
     var groupError by remember { mutableStateOf<String?>(null) }
     var reprint by remember { mutableStateOf<List<Item>?>(null) }
+    var fixes by remember { mutableStateOf<List<com.zinax.stock.data.Repository.UnitFix>>(emptyList()) }
+    var confirmTidy by remember { mutableStateOf(false) }
+    var tidying by remember { mutableStateOf(false) }
+    LaunchedEffect(stock, products) { fixes = try { Graph.repo.unitFixes() } catch (_: Exception) { emptyList() } }
 
     val held = remember(stock) {
         stock.groupBy { keyOf(it.category, it.code, it.size, it.unit) }.mapValues { (_, l) -> Held(l.size, l.sumOf { it.remaining }) }
@@ -101,6 +105,28 @@ fun CatalogScreen(onBack: () -> Unit) {
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (fixes.isNotEmpty()) item {
+                    Panel(container = LocalStatus.current.warnSoft, border = LocalStatus.current.warn) {
+                        Text("Units written in different ways", fontWeight = FontWeight.SemiBold, color = LocalStatus.current.warn)
+                        fixes.forEach { f ->
+                            Text(
+                                "“${f.from}” → “${f.to}”: " + listOfNotNull(
+                                    "${f.labels} label(s) in stock".takeIf { f.labels > 0 },
+                                    "${f.products} product(s)".takeIf { f.products > 0 },
+                                    "${f.lines} line(s) to receive".takeIf { f.lines > 0 },
+                                ).joinToString(", "),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text(
+                            "The same product with different spellings shows as separate rows in Stock and reports.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        androidx.compose.material3.Button(onClick = { confirmTidy = true }, enabled = !tidying) {
+                            Text(if (tidying) "Tidying…" else "Tidy units")
+                        }
+                    }
+                }
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (tab == 0) {
@@ -242,6 +268,37 @@ fun CatalogScreen(onBack: () -> Unit) {
                 }
             },
             onDismiss = { editingGroup = null; groupError = null },
+        )
+    }
+
+    if (confirmTidy) {
+        AlertDialog(
+            onDismissRequest = { confirmTidy = false },
+            title = { Text("Tidy units?") },
+            text = {
+                Text(
+                    fixes.joinToString("\n") { "“${it.from}” → “${it.to}”" } +
+                        "\n\nLabels in stock are corrected and logged under Reports → Edited. Products that become the same " +
+                        "are joined. Printed labels can stay; the QR still works. Past ship-outs and cuts keep their spelling."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmTidy = false
+                    tidying = true
+                    scope.launch {
+                        try {
+                            val n = Graph.repo.tidyUnits()
+                            snackbar.showSnackbar("Units tidied: $n change(s)")
+                            fixes = Graph.repo.unitFixes()
+                        } catch (e: Exception) {
+                            snackbar.showSnackbar(e.message ?: "Could not tidy units")
+                        }
+                        tidying = false
+                    }
+                }) { Text("Tidy units") }
+            },
+            dismissButton = { TextButton(onClick = { confirmTidy = false }) { Text("Cancel") } },
         )
     }
 
