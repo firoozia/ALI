@@ -13,8 +13,8 @@ android {
         applicationId = "com.zinax.stock"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "2.2.3"
+        versionCode = 27
+        versionName = "2.2.4"
     }
 
     signingConfigs {
@@ -66,6 +66,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.biometric:biometric:1.1.0")
+    // Biometric brings an old fragment library whose FragmentActivity rejects the request codes the
+    // result APIs use ("Can only use lower 16 bits for requestCode"); newer fragment removed that check.
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
