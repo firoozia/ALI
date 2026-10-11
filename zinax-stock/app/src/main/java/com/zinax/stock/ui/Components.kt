@@ -48,12 +48,13 @@ fun ScreenScaffold(
     onBack: (() -> Unit)?,
     snackbar: SnackbarHostState? = null,
     actions: @Composable () -> Unit = {},
+    titleContent: (@Composable () -> Unit)? = null,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { if (titleContent != null) titleContent() else Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     if (onBack != null) IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
