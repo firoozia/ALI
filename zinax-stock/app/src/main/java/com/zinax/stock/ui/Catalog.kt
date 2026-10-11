@@ -72,7 +72,9 @@ fun CatalogScreen(onBack: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var showRemoved by remember { mutableStateOf(false) }
     var editingProduct by remember { mutableStateOf<Product?>(null) }
+    var productError by remember { mutableStateOf<String?>(null) }
     var editingGroup by remember { mutableStateOf<GroupRow?>(null) }
+    var groupError by remember { mutableStateOf<String?>(null) }
     var reprint by remember { mutableStateOf<List<Item>?>(null) }
 
     val held = remember(stock) {
@@ -179,18 +181,24 @@ fun CatalogScreen(onBack: () -> Unit) {
     editingProduct?.let { p ->
         ProductDialog(
             product = p,
+            error = productError,
             onSave = { saved, apply ->
+                productError = null
                 scope.launch {
                     try {
-                        val corrected = Graph.repo.saveProduct(saved, apply)
+                        val result = Graph.repo.saveProduct(saved, apply)
+                        val corrected = result.corrected
                         editingProduct = null
                         snackbar.showSnackbar(
-                            "Saved ${saved.code}" + if (corrected.isNotEmpty()) " and corrected ${corrected.size} label(s)" else ""
+                            (if (result.merged) "${saved.code} joined the same product already in ${Category.fromName(saved.groupId).label}"
+                            else "Saved ${saved.code}") +
+                                if (corrected.isNotEmpty()) " · ${corrected.size} label(s) moved" else ""
                         )
                         val labelChanged = corrected.isNotEmpty() && (saved.code != p.code || saved.size != p.size || saved.unit != p.unit)
                         if (labelChanged) reprint = corrected
                     } catch (e: Exception) {
-                        snackbar.showSnackbar(e.message ?: "Could not save")
+                        // Shown inside the dialog, where it can be seen.
+                        productError = e.message ?: "Could not save"
                     }
                 }
             },
@@ -201,7 +209,7 @@ fun CatalogScreen(onBack: () -> Unit) {
                     snackbar.showSnackbar(if (removed) "${p.code} removed from the catalog. Labels in stock stay." else "${p.code} is back")
                 }
             },
-            onDismiss = { editingProduct = null },
+            onDismiss = { editingProduct = null; productError = null },
         )
     }
 
@@ -209,14 +217,16 @@ fun CatalogScreen(onBack: () -> Unit) {
         GroupDialog(
             group = g,
             inStock = heldByGroup[g.id] ?: 0,
+            error = groupError,
             onSave = { name, unit, pack ->
+                groupError = null
                 scope.launch {
                     try {
                         Graph.repo.saveGroup(g.id.ifBlank { null }, name, unit, pack)
                         editingGroup = null
                         snackbar.showSnackbar("Saved $name")
                     } catch (e: Exception) {
-                        snackbar.showSnackbar(e.message ?: "Could not save")
+                        groupError = e.message ?: "Could not save"
                     }
                 }
             },
@@ -231,7 +241,7 @@ fun CatalogScreen(onBack: () -> Unit) {
                     }
                 }
             },
-            onDismiss = { editingGroup = null },
+            onDismiss = { editingGroup = null; groupError = null },
         )
     }
 
@@ -253,7 +263,9 @@ fun CatalogScreen(onBack: () -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ProductDialog(product: Product, onSave: (Product, Boolean) -> Unit, onRemove: (Boolean) -> Unit, onDismiss: () -> Unit) {
+private fun ProductDialog(
+    product: Product, error: String?, onSave: (Product, Boolean) -> Unit, onRemove: (Boolean) -> Unit, onDismiss: () -> Unit,
+) {
     val isNew = product.id.isBlank()
     var group by remember { mutableStateOf(product.groupId) }
     var code by remember { mutableStateOf(product.code) }
@@ -301,6 +313,7 @@ private fun ProductDialog(product: Product, onSave: (Product, Boolean) -> Unit, 
                         Text("Also correct the $inStock label(s) of this product in stock (logged under Reports → Edited)", style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                error?.let { Text(it, color = LocalStatus.current.bad, fontWeight = FontWeight.SemiBold) }
                 if (!isNew) {
                     TextButton(onClick = { onRemove(!product.hidden) }) {
                         Text(if (product.hidden) "Bring back to the catalog" else "Remove from the catalog", color = LocalStatus.current.bad)
@@ -330,7 +343,9 @@ private fun ProductDialog(product: Product, onSave: (Product, Boolean) -> Unit, 
 }
 
 @Composable
-private fun GroupDialog(group: GroupRow, inStock: Int, onSave: (String, String, String) -> Unit, onRemove: (Boolean) -> Unit, onDismiss: () -> Unit) {
+private fun GroupDialog(
+    group: GroupRow, inStock: Int, error: String?, onSave: (String, String, String) -> Unit, onRemove: (Boolean) -> Unit, onDismiss: () -> Unit,
+) {
     val isNew = group.id.isBlank()
     var name by remember { mutableStateOf(group.name) }
     var unit by remember { mutableStateOf(group.unit) }
@@ -349,6 +364,7 @@ private fun GroupDialog(group: GroupRow, inStock: Int, onSave: (String, String, 
                     "Unit: m, kg, pcs… Package: roll, gallon, bag, carton, sheet…",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                error?.let { Text(it, color = LocalStatus.current.bad, fontWeight = FontWeight.SemiBold) }
                 if (!isNew && group.id != Category.OTHER.name) {
                     TextButton(onClick = { onRemove(!group.hidden) }) {
                         Text(if (group.hidden) "Bring back" else "Remove group", color = LocalStatus.current.bad)

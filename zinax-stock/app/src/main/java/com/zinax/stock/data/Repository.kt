@@ -370,17 +370,33 @@ class Repository(
      * Saves a new or changed product. When group, code, size or unit changed and [applyToStock] is set, the
      * labels in stock that had the old values are corrected too; those labels are returned for reprinting.
      */
-    suspend fun saveProduct(p: Product, applyToStock: Boolean): List<Item> {
+    suspend fun saveProduct(p: Product, applyToStock: Boolean): SaveResult {
         val clean = p.copy(code = p.code.trim(), size = p.size.trim(), unit = p.unit.trim(), note = p.note.trim())
         require(clean.code.isNotEmpty()) { "Enter a code" }
         require(clean.unit.isNotEmpty()) { "Enter a unit" }
         val all = dao.allProducts()
-        require(all.none { it.id != clean.id && !it.hidden && sameProduct(it, clean) }) {
-            "${clean.code} ${Format.size(clean.size)} is already in ${Category.fromName(clean.groupId).label}"
-        }
         val old = all.firstOrNull { it.id == clean.id }
+        val twin = all.firstOrNull { it.id != clean.id && !it.hidden && sameProduct(it, clean) }
+        val t = now()
+        if (twin != null) {
+            require(old != null) { "${clean.code} ${Format.size(clean.size)} is already in ${Category.fromName(clean.groupId).label}" }
+            // Moving onto a product that is already there: keep that one, drop this one, and move the labels.
+            val keep = if (twin.note.isBlank() && clean.note.isNotBlank()) twin.copy(note = clean.note, updatedAt = t, dirty = true) else twin
+            dao.putProducts(listOfNotNull(keep.takeIf { it !== twin }, old.copy(hidden = true, updatedAt = t, dirty = true)))
+            var moved = emptyList<Item>()
+            if (applyToStock) {
+                val edit = ItemEdit(
+                    twin.groupId.takeIf { it != old.groupId }, twin.code.takeIf { it != old.code },
+                    twin.size.takeIf { it != old.size }, clean.unit.takeIf { it != old.unit },
+                )
+                val ids = stockOf(old).map { it.id }
+                if (ids.isNotEmpty()) moved = editItems(ids, edit)
+            }
+            onChange()
+            return SaveResult(moved, merged = true)
+        }
         val id = clean.id.ifBlank { productId(clean.groupId, clean.code, clean.size, clean.unit) + uuid().take(4) }
-        dao.putProducts(listOf(clean.copy(id = id, updatedAt = now(), dirty = true)))
+        dao.putProducts(listOf(clean.copy(id = id, updatedAt = t, dirty = true)))
         var corrected = emptyList<Item>()
         if (old != null && applyToStock) {
             val edit = ItemEdit(
@@ -393,8 +409,11 @@ class Repository(
             }
         }
         onChange()
-        return corrected
+        return SaveResult(corrected, merged = false)
     }
+
+    /** Labels corrected by a product save, and whether the product was merged into one already there. */
+    data class SaveResult(val corrected: List<Item>, val merged: Boolean)
 
     /** In-stock labels of [p]: same group, code, size and unit. */
     suspend fun stockOf(p: Product): List<Item> =
