@@ -98,7 +98,7 @@ fun CutScreen(startItem: String?, onBack: () -> Unit) {
             }
         }
     }
-    val scan = {
+    val scan: () -> Unit = {
         Graph.session.leaving()
         try {
             scanner.launch(
