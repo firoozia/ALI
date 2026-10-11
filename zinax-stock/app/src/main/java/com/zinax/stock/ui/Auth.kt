@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -60,7 +63,8 @@ fun LockScreen() {
     ) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(
-                Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 32.dp),
+                Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("Zinax Stock", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -70,6 +74,8 @@ fun LockScreen() {
                     active.isEmpty() -> FirstSetup()
                     else -> Unlock(active)
                 }
+                // Room to scroll the last button clear of the phone's navigation buttons.
+                Spacer(Modifier.height(96.dp))
             }
         }
     }
