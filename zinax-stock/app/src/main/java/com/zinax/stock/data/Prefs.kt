@@ -36,7 +36,7 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("phoneUserIsAdmin", false)
         set(v) = edit { putBoolean("phoneUserIsAdmin", v) }
 
-    /** Lock after this many minutes without a touch; 0 locks only when leaving the app. */
+    /** Lock after this many minutes without a touch; 0 never locks for being idle. */
     var lockMinutes: Int
         get() = sp.getInt("lockMinutes", 10)
         set(v) = edit { putInt("lockMinutes", v.coerceIn(0, 240)) }
@@ -50,6 +50,16 @@ class Prefs(context: Context) {
     var moveTarget: String
         get() = sp.getString("moveTarget", "") ?: ""
         set(v) = edit { putString("moveTarget", v) }
+
+    /** Lock whenever the app leaves the screen. */
+    var lockOnLeave: Boolean
+        get() = sp.getBoolean("lockOnLeave", true)
+        set(v) = edit { putBoolean("lockOnLeave", v) }
+
+    /** The user who may unlock this phone with a fingerprint or face; empty when off. */
+    var biometricUserId: String
+        get() = sp.getString("biometricUserId", "") ?: ""
+        set(v) = edit { putString("biometricUserId", v) }
 
     var askedNotifications: Boolean
         get() = sp.getBoolean("askedNotifications", false)

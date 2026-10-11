@@ -5,7 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -76,7 +76,7 @@ object Routes {
 /** A notification button waiting to be handled once someone has signed in. */
 private data class OpenRequest(val id: String, val action: String)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private var pendingAction by mutableStateOf<String?>(null)
     private var openRequest by mutableStateOf<OpenRequest?>(null)
 
@@ -216,9 +216,9 @@ class MainActivity : ComponentActivity() {
         Graph.session.expectingExternal = false
     }
 
-    /** Leaving the app locks it, unless the app itself opened the camera, share sheet or file picker. */
+    /** Leaving the app locks it (if set), unless the app itself opened the camera, share sheet or file picker. */
     override fun onStop() {
         super.onStop()
-        if (!isChangingConfigurations && !Graph.session.expectingExternal) Graph.session.lock()
+        if (!isChangingConfigurations && !Graph.session.expectingExternal && Graph.prefs.lockOnLeave) Graph.session.lock()
     }
 }

@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zinax.stock.Biometric
 import com.zinax.stock.Graph
 import com.zinax.stock.core.Pin
 import com.zinax.stock.data.AppUser
@@ -143,7 +145,22 @@ private fun Unlock(users: List<AppUser>) {
         }
     }
 
+    val context = LocalContext.current
+    // The one person allowed to unlock this phone with a fingerprint or face, if set.
+    val bioUser = users.firstOrNull { it.id == Graph.prefs.biometricUserId }
+    val bioReady = bioUser != null && Biometric.available(context)
+    fun askBiometric() {
+        val u = bioUser ?: return
+        Biometric.ask(context, "Unlock Zinax Stock", "Sign in as ${u.name}", onOk = { Graph.session.login(u) })
+    }
+    LaunchedEffect(bioReady) { if (bioReady) askBiometric() }
+
     Text("Locked. Pick your name and enter your PIN.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (bioReady) {
+        OutlinedButton(onClick = { askBiometric() }, modifier = Modifier.fillMaxWidth()) {
+            Text("Fingerprint or face · ${bioUser?.name}")
+        }
+    }
     UserPicker(users, user) { picked = it.id; pin = ""; error = null }
     PinField(pin, { pin = it; error = null }, "PIN for ${user.name}", onDone = { submit() })
     error?.let { Text(if (blocked) "$it (${(waitUntil - now) / 1000 + 1} s)" else it, color = status.bad) }

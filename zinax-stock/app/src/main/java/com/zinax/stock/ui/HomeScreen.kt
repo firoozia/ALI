@@ -1,6 +1,9 @@
 package com.zinax.stock.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -83,10 +86,19 @@ fun HomeScreen(nav: NavController) {
             IconButton(onClick = { nav.navigate(Routes.SETTINGS) }) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
         },
     ) { padding ->
+        // Fit the phone: the tiles share whatever height the buttons leave. On a short screen (or with large
+        // system fonts) the tiles keep a minimum size and the page scrolls instead.
+        val fontScale = LocalDensity.current.fontScale
+        val buttonRows = if (canReceive) 4 else 3
+        val needed = ((36 + 44 + buttonRows * 52 + 3 * 84 + 24) * fontScale.coerceAtLeast(1f)).dp
+        BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
+        val fits = maxHeight >= needed
         Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+            (if (fits) Modifier.fillMaxSize() else Modifier.fillMaxSize().verticalScroll(rememberScrollState()))
+                .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            val rowMod = if (fits) Modifier.weight(1f) else Modifier
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 me?.let { Pill("${it.name} · ${if (it.isAdmin) "Admin" else "User"}", status.ok, status.okSoft) }
                 if (printer != null) Pill("Printer: $printer", status.ok, status.okSoft)
@@ -95,27 +107,27 @@ fun HomeScreen(nav: NavController) {
             }
 
             val latest = shipments.firstOrNull()
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tile("Receive", if (canReceive) "Open a pallet, print labels" else "Admin only", primary = canReceive, modifier = Modifier.weight(1f)) {
+            Row(rowMod, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Tile("Receive", if (canReceive) "Open a pallet, print labels" else "Admin only", primary = canReceive, modifier = Modifier.weight(1f), fill = fits) {
                     if (!canReceive) adminOnly()
                     else if (latest != null) nav.navigate(Routes.receive(latest.id)) else nav.navigate(Routes.IMPORT)
                 }
-                Tile("Ship out", "Scan or type a label", modifier = Modifier.weight(1f)) { nav.navigate(Routes.SHIP_OUT) }
+                Tile("Ship out", "Scan or type a label", modifier = Modifier.weight(1f), fill = fits) { nav.navigate(Routes.SHIP_OUT) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tile("✂ Cut", "Metres for a customer", modifier = Modifier.weight(1f)) { nav.navigate(Routes.cut()) }
+            Row(rowMod, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Tile("✂ Cut", "Metres for a customer", modifier = Modifier.weight(1f), fill = fits) { nav.navigate(Routes.cut()) }
                 val open = stock.count { it.isOpen }
                 Tile(
                     "Stock",
                     "${stock.size} packages · ${stock.map { it.code }.distinct().size} codes" + if (open > 0) " · $open open" else "",
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f), fill = fits,
                 ) { nav.navigate(Routes.STOCK) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tile("Shipments", if (canReceive) latest?.name ?: "None yet" else "Admin only", modifier = Modifier.weight(1f)) {
+            Row(rowMod, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Tile("Shipments", if (canReceive) latest?.name ?: "None yet" else "Admin only", modifier = Modifier.weight(1f), fill = fits) {
                     if (canReceive) nav.navigate(Routes.SHIPMENTS) else adminOnly()
                 }
-                Tile("Reports", "Out, cuts, waste, in, moved", modifier = Modifier.weight(1f)) { nav.navigate(Routes.OUT_REPORT) }
+                Tile("Reports", "Out, cuts, waste, in, moved", modifier = Modifier.weight(1f), fill = fits) { nav.navigate(Routes.OUT_REPORT) }
             }
 
             Column {
@@ -159,6 +171,7 @@ fun HomeScreen(nav: NavController) {
                 Modifier.fillMaxWidth(), enabled = sheetUrl.isNotBlank(),
             ) { Share.openUrl(context, sheetUrl) }
         }
+        }
     }
 }
 
@@ -174,17 +187,25 @@ private fun HalfButton(text: String, modifier: Modifier, primary: Boolean = fals
 }
 
 @Composable
-private fun Tile(title: String, subtitle: String, modifier: Modifier = Modifier, primary: Boolean = false, onClick: () -> Unit) {
+private fun Tile(title: String, subtitle: String, modifier: Modifier = Modifier, primary: Boolean = false, fill: Boolean = false, onClick: () -> Unit) {
     val bg = if (primary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
     val fg = if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     Surface(
-        modifier = modifier.heightIn(min = 76.dp).clickable(onClick = onClick),
+        modifier = (if (fill) modifier.fillMaxHeight() else modifier.heightIn(min = 76.dp)).clickable(onClick = onClick),
         shape = RoundedCornerShape(10.dp),
         color = bg,
         border = if (primary) null else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title.uppercase(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = fg, maxLines = 1)
+        // Large system fonts: a smaller title so names like SHIPMENTS stay on one line.
+        val big = LocalDensity.current.fontScale <= 1.15f
+        Column(
+            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = if (fill) Arrangement.SpaceBetween else Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                title.uppercase(), style = if (big) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
             Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, color = if (primary) fg.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

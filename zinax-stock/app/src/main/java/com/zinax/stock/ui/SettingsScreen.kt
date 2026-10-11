@@ -36,6 +36,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zinax.stock.Biometric
 import com.zinax.stock.Graph
 import com.zinax.stock.Share
 import com.zinax.stock.core.Category
@@ -80,6 +81,7 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
     val admin = me?.isAdmin == true
     var changingPin by remember { mutableStateOf(false) }
     var lockMinutes by remember { mutableStateOf(prefs.lockMinutes.toString()) }
+    var lockOnLeave by remember { mutableStateOf(prefs.lockOnLeave) }
     var locations by remember { mutableStateOf(prefs.locations) }
     var newLocation by remember { mutableStateOf("") }
     var gap by remember { mutableStateOf(prefs.gapMm.toString()) }
@@ -226,6 +228,26 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
                     OutlinedButton(onClick = { changingPin = true }) { Text("Change my PIN") }
                     OutlinedButton(onClick = { Graph.session.lock() }) { Text("Lock / switch user") }
                 }
+                if (Biometric.available(context)) {
+                    var bio by remember { mutableStateOf(prefs.biometricUserId == u.id) }
+                    SwitchRow("Unlock with fingerprint or face as ${u.name}", bio) { on ->
+                        if (on) {
+                            Biometric.ask(context, "Use fingerprint or face", "To unlock as ${u.name} on this phone", onOk = {
+                                prefs.biometricUserId = u.id
+                                bio = true
+                            })
+                        } else {
+                            prefs.biometricUserId = ""
+                            bio = false
+                        }
+                    }
+                    Text(
+                        "Anyone whose fingerprint or face is saved in this phone can then open the app as ${u.name}. " +
+                            "Only one person per phone; others use their PIN.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (changingPin) NewPinDialog(u, "Change my PIN", askCurrent = true, onDone = {
                     changingPin = false
                     scope.launch { snackbar.showSnackbar("PIN changed") }
@@ -240,14 +262,15 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
 
                 Section("Users and security")
                 OutlinedButton(onClick = onUsers, modifier = Modifier.fillMaxWidth()) { Text("Users") }
+                SwitchRow("Lock when leaving the app", lockOnLeave) { lockOnLeave = it; prefs.lockOnLeave = it }
                 OutlinedTextField(
                     lockMinutes,
                     { v -> lockMinutes = v.filter { it.isDigit() }.take(3); lockMinutes.toIntOrNull()?.let { prefs.lockMinutes = it } },
-                    label = { Text("Lock after minutes without use (0 = only when leaving the app)") }, singleLine = true,
+                    label = { Text("Lock after minutes without use (0 = never)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
                 Text(
-                    "The app also locks whenever it leaves the screen. This setting is for this phone.",
+                    "For this phone. With both off the app stays open until someone taps the lock on Home.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
