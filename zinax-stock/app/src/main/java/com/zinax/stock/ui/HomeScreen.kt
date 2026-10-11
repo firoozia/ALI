@@ -11,7 +11,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.CompositionLocalProvider
 import com.zinax.stock.R
 import com.zinax.stock.ui.theme.Zinax
 import androidx.compose.ui.platform.LocalDensity
@@ -110,13 +112,15 @@ fun HomeScreen(nav: NavController) {
             }
         },
     ) { padding ->
-        // Fit the phone: the cards share whatever height the rest leaves. On a short screen (or with large
-        // system fonts) the cards keep a minimum size and the page scrolls instead.
-        val fontScale = LocalDensity.current.fontScale
+        // Fit the phone: the whole page is drawn smaller (down to 70 %) until it fits the screen height, and
+        // on a tall screen the cards grow to fill the space. Only a very short screen scrolls.
+        val density = LocalDensity.current
         val buttonRows = if (canReceive) 4 else 3
-        val needed = ((40 + 52 + buttonRows * 62 + 3 * 128 + 40) * fontScale.coerceAtLeast(1f)).dp
+        val needed = ((36 + 3 * 140 + 46 + buttonRows * 54 + 12 * (4 + buttonRows) + 12) * density.fontScale.coerceAtLeast(1f)).dp
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
-        val fits = maxHeight >= needed
+        val scale = (maxHeight / needed).coerceIn(0.7f, 1f)
+        val fits = maxHeight >= needed * scale
+        CompositionLocalProvider(LocalDensity provides Density(density.density * scale, density.fontScale)) {
         Column(
             (if (fits) Modifier.fillMaxSize() else Modifier.fillMaxSize().verticalScroll(rememberScrollState()))
                 .padding(horizontal = 16.dp, vertical = 6.dp),
@@ -210,6 +214,7 @@ fun HomeScreen(nav: NavController) {
             ) { Share.openUrl(context, sheetUrl) }
         }
         }
+        }
     }
 }
 
@@ -241,7 +246,7 @@ private fun PillButton(icon: Int, text: String, modifier: Modifier, primary: Boo
     Surface(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 52.dp).alpha(if (enabled) 1f else 0.5f),
+        modifier = modifier.heightIn(min = 50.dp).alpha(if (enabled) 1f else 0.5f),
         shape = RoundedCornerShape(30.dp),
         color = bg,
         border = if (primary) null else BorderStroke(1.dp, scheme.outline),
