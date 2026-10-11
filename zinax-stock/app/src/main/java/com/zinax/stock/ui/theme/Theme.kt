@@ -7,6 +7,15 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.zinax.stock.Graph
 import androidx.compose.ui.graphics.Color
 
 @Immutable
@@ -66,10 +75,172 @@ private val Dark = darkColorScheme(
     outline = Color(0xFF2A3C50), outlineVariant = Color(0xFF213244),
 )
 
+/** Theme 2, Emerald Green Gradient. */
+object Emerald {
+    val Primary = Color(0xFF078F54)
+    val Deep = Color(0xFF006B45)
+    val Dark = Color(0xFF075C48)
+    val Bright = Color(0xFF20B957)
+    val Secondary = Color(0xFF159B67)
+    val Mint = Color(0xFFE8F8EE)
+    val PaleMint = Color(0xFFF2FBF5)
+    val Background = Color(0xFFF7FBF8)
+    val Border = Color(0xFFBFE9D8)
+    val Divider = Color(0xFFDCEFE5)
+    val Heading = Color(0xFF073D36)
+    val Body = Color(0xFF52657A)
+    val TextSecondary = Color(0xFF6A7B8D)
+    val Success = Color(0xFF21C65A)
+    val Chevron = Color(0xFF08724E)
+}
+
+private val EmeraldLight = lightColorScheme(
+    primary = Emerald.Primary, onPrimary = Color.White,
+    primaryContainer = Emerald.Mint, onPrimaryContainer = Emerald.Dark,
+    secondary = Emerald.Secondary, onSecondary = Color.White,
+    background = Emerald.Background, onBackground = Emerald.Heading,
+    surface = Color.White, onSurface = Emerald.Heading,
+    surfaceVariant = Emerald.Mint, onSurfaceVariant = Emerald.Body,
+    outline = Emerald.Border, outlineVariant = Emerald.Divider,
+)
+
+private val EmeraldDark = darkColorScheme(
+    primary = Color(0xFF3FCB84), onPrimary = Color(0xFF00321F),
+    primaryContainer = Color(0xFF0F3B2B), onPrimaryContainer = Color(0xFFC8F0DA),
+    secondary = Color(0xFF5BC79A), onSecondary = Color(0xFF00321F),
+    background = Color(0xFF0A1511), onBackground = Color(0xFFE3F2EA),
+    surface = Color(0xFF12211A), onSurface = Color(0xFFE3F2EA),
+    surfaceVariant = Color(0xFF173126), onSurfaceVariant = Color(0xFFA3BBAF),
+    outline = Color(0xFF24443A), outlineVariant = Color(0xFF1C352C),
+)
+
+private val EmeraldLightStatus = LightStatus.copy(ok = Emerald.Dark, okSoft = Emerald.PaleMint)
+
+/** Which look the app uses; chosen per phone in Settings → Appearance. */
+enum class AppTheme(val id: String, val title: String) {
+    TEAL("teal", "Theme 1 · Teal"),
+    EMERALD("emerald", "Theme 2 · Emerald");
+
+    companion object {
+        fun of(id: String): AppTheme = entries.firstOrNull { it.id == id } ?: TEAL
+    }
+}
+
+/** Styling the Home dashboard needs beyond the Material colours: gradients, card and button details. */
+@Immutable
+data class Look(
+    /** Green header behind the title, or null for the plain top bar. */
+    val header: Brush?,
+    val primaryCard: Brush,
+    /** Send Excel: a gradient, or null for the solid primary colour. */
+    val primaryButton: Brush?,
+    val cardBorder: Color,
+    /** Square behind card icons, or null for a bare icon. */
+    val iconBox: Color?,
+    val icon: Color,
+    val chevron: Color,
+    val heading: Color,
+    val body: Color,
+    /** Panel behind the sync status, or null for plain text. */
+    val syncPanel: Color?,
+    val syncBorder: Color,
+    val syncText: Color,
+    val success: Color,
+    val buttonBorder: Color,
+    val buttonText: Color,
+    val buttonIcon: Color,
+    val sheetButton: Color,
+    /** Google Sheets icon in its own green, or the outline icon in the button colour. */
+    val sheetBrandIcon: Boolean,
+    val badge: Color,
+    val badgeText: Color,
+    val badgeIcon: Color,
+    val shadow: Color,
+    val cardRadius: Dp,
+    val cardElevation: Dp,
+)
+
+private fun tealLook(dark: Boolean) = Look(
+    header = null,
+    primaryCard = Brush.linearGradient(listOf(Zinax.Teal, Zinax.DarkTeal)),
+    primaryButton = null,
+    cardBorder = if (dark) Color(0xFF2A3C50) else Zinax.Border,
+    iconBox = null,
+    icon = if (dark) Color(0xFF3DB5C2) else Zinax.Teal,
+    chevron = if (dark) Color(0xFF9DAEC2) else Zinax.TextSecondary,
+    heading = if (dark) Color(0xFFE6EDF4) else Zinax.Navy,
+    body = if (dark) Color(0xFF9DAEC2) else Zinax.TextSecondary,
+    syncPanel = null,
+    syncBorder = Color.Transparent,
+    syncText = if (dark) Color(0xFF9DAEC2) else Zinax.TextSecondary,
+    success = Zinax.Success,
+    buttonBorder = if (dark) Color(0xFF2A3C50) else Zinax.Border,
+    buttonText = if (dark) Color(0xFF3DB5C2) else Zinax.DarkTeal,
+    buttonIcon = if (dark) Color(0xFF3DB5C2) else Zinax.Teal,
+    sheetButton = if (dark) Color(0xFF12202F) else Color.White,
+    sheetBrandIcon = false,
+    badge = if (dark) Color(0xFF17382A) else Zinax.Mint,
+    badgeText = if (dark) Color(0xFF5BC489) else Color(0xFF137A3E),
+    badgeIcon = if (dark) Color(0xFF5BC489) else Color(0xFF137A3E),
+    shadow = Color.Black,
+    cardRadius = 20.dp,
+    cardElevation = 2.dp,
+)
+
+private fun emeraldLook(dark: Boolean) = Look(
+    header = Brush.linearGradient(
+        0f to Color(0xFF25C45A), 0.48f to Emerald.Primary, 1f to Color(0xFF005B42),
+        start = Offset(0f, 0f), end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
+    ),
+    primaryCard = Brush.linearGradient(
+        0f to Color(0xFF20C85A), 0.58f to Emerald.Primary, 1f to Emerald.Deep,
+        start = Offset(0f, 0f), end = Offset(Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY),
+    ),
+    primaryButton = Brush.linearGradient(listOf(Color(0xFF20C85A), Emerald.Primary, Emerald.Deep)),
+    cardBorder = if (dark) Color(0xFF24443A) else Emerald.Border,
+    iconBox = if (dark) Color(0xFF173A2D) else Emerald.Mint,
+    icon = if (dark) Color(0xFF4FD08F) else Emerald.Deep,
+    chevron = if (dark) Color(0xFF4FD08F) else Emerald.Chevron,
+    heading = if (dark) Color(0xFFE3F2EA) else Emerald.Heading,
+    body = if (dark) Color(0xFFA9BDB3) else Emerald.Body,
+    syncPanel = if (dark) Color(0xFF12211A) else Emerald.PaleMint,
+    syncBorder = if (dark) Color(0xFF24443A) else Emerald.Divider,
+    syncText = if (dark) Color(0xFFA9BDB3) else Emerald.TextSecondary,
+    success = Emerald.Success,
+    buttonBorder = if (dark) Color(0xFF24443A) else Emerald.Border,
+    buttonText = if (dark) Color(0xFFBFEBD3) else Emerald.Dark,
+    buttonIcon = if (dark) Color(0xFF4FD08F) else Emerald.Primary,
+    sheetButton = if (dark) Color(0xFF102019) else Emerald.PaleMint,
+    sheetBrandIcon = true,
+    badge = Emerald.PaleMint,
+    badgeText = Emerald.Dark,
+    badgeIcon = Emerald.Primary,
+    shadow = Emerald.Deep,
+    cardRadius = 22.dp,
+    cardElevation = 4.dp,
+)
+
+val LocalLook = staticCompositionLocalOf { tealLook(false) }
+
 @Composable
 fun ZinaxTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    androidx.compose.runtime.CompositionLocalProvider(LocalStatus provides if (dark) DarkStatus else LightStatus) {
-        MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)
+    val tick by Graph.prefs.changes.collectAsState()
+    val theme = remember(tick) { AppTheme.of(Graph.prefs.appTheme) }
+    val emerald = theme == AppTheme.EMERALD
+    val scheme = when {
+        emerald && dark -> EmeraldDark
+        emerald -> EmeraldLight
+        dark -> Dark
+        else -> Light
+    }
+    val status = when {
+        dark -> DarkStatus
+        emerald -> EmeraldLightStatus
+        else -> LightStatus
+    }
+    val look = remember(emerald, dark) { if (emerald) emeraldLook(dark) else tealLook(dark) }
+    CompositionLocalProvider(LocalStatus provides status, LocalLook provides look) {
+        MaterialTheme(colorScheme = scheme, content = content)
     }
 }

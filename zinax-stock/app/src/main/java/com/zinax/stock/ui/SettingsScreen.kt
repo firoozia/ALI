@@ -43,6 +43,13 @@ import com.zinax.stock.core.Category
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.core.Lengths
 import com.zinax.stock.label.Tspl
+import com.zinax.stock.ui.theme.AppTheme
+import com.zinax.stock.ui.theme.Emerald
+import com.zinax.stock.ui.theme.Zinax
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
 import com.zinax.stock.data.Item
 import com.zinax.stock.data.ItemStatus
 import com.zinax.stock.printer.PairedPrinter
@@ -104,6 +111,17 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
 
     ScreenScaffold("Settings", onBack, snackbar) { padding ->
         FormBody(padding) {
+            Section("Appearance")
+            val currentTheme = remember(tick) { AppTheme.of(prefs.appTheme) }
+            AppTheme.entries.forEach { t ->
+                ThemeOption(t, selected = t == currentTheme) { prefs.appTheme = t.id }
+            }
+            Text(
+                "Changes only colours and styling on this phone. Stock, users and settings stay the same.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
             Section("Printer")
             btMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             paired.forEach { p ->
@@ -335,6 +353,33 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             )
             Button(onClick = { scope.launch { Graph.shareStockReport(context) } }) {
                 Text(if (reportExcel) "Send stock Excel now" else "Send stock list now")
+            }
+        }
+    }
+}
+
+/** One theme choice with three colour dots. */
+@Composable
+private fun ThemeOption(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
+    val dots = when (theme) {
+        AppTheme.TEAL -> listOf(Zinax.Teal, Zinax.Navy, Zinax.Background)
+        AppTheme.EMERALD -> listOf(Emerald.Primary, Emerald.Heading, Emerald.Background)
+    }
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = scheme.surface,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) scheme.primary else scheme.outline),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = selected, onClick = onClick)
+            Text(theme.title, modifier = Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                dots.forEach { c ->
+                    Surface(color = c, shape = RoundedCornerShape(4.dp), border = BorderStroke(1.dp, scheme.outline), modifier = Modifier.size(16.dp)) {}
+                }
             }
         }
     }

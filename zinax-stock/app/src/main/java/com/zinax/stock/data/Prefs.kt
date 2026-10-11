@@ -61,6 +61,11 @@ class Prefs(context: Context) {
         get() = sp.getString("biometricUserId", "") ?: ""
         set(v) = edit { putString("biometricUserId", v) }
 
+    /** Look of the app on this phone: "teal" (Theme 1) or "emerald" (Theme 2). */
+    var appTheme: String
+        get() = sp.getString("appTheme", "teal") ?: "teal"
+        set(v) = edit { putString("appTheme", v) }
+
     var askedNotifications: Boolean
         get() = sp.getBoolean("askedNotifications", false)
         set(v) = edit { putBoolean("askedNotifications", v) }

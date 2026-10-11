@@ -22,6 +22,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -49,11 +52,14 @@ fun ScreenScaffold(
     snackbar: SnackbarHostState? = null,
     actions: @Composable () -> Unit = {},
     titleContent: (@Composable () -> Unit)? = null,
+    /** False when the screen draws its own header up to the top edge (Theme 2 Home). */
+    showTopBar: Boolean = true,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     Scaffold(
+        contentWindowInsets = if (showTopBar) ScaffoldDefaults.contentWindowInsets else WindowInsets.navigationBars,
         topBar = {
-            TopAppBar(
+            if (showTopBar) TopAppBar(
                 title = { if (titleContent != null) titleContent() else Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     if (onBack != null) IconButton(onClick = onBack) {
