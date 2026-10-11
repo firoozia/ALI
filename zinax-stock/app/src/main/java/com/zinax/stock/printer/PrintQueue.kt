@@ -85,6 +85,21 @@ class PrintQueue(
         if (_state.value is PrintState.Running) job?.cancel()
     }
 
+    /**
+     * Sends the calibration command. The printer feeds a few labels while it measures, then stops at the
+     * start of a label. Returns a message for the person.
+     */
+    suspend fun calibrate(): String {
+        if (_state.value is PrintState.Running) return "Wait until printing has finished."
+        val address = prefs.printerAddress ?: return "No printer selected. Pick the XP-420B first."
+        return try {
+            printer.send(address, listOf(com.zinax.stock.label.Tspl.calibrateJob(prefs.tspl))) {}
+            "Calibrating: the printer feeds a few labels and stops at the start of one. Then print a test label."
+        } catch (e: Exception) {
+            e.message ?: "Could not reach the printer."
+        }
+    }
+
     /** Reprint starting at label [fromNumber] (1-based) of the last run. */
     fun reprintFrom(fromNumber: Int) {
         val s = _state.value

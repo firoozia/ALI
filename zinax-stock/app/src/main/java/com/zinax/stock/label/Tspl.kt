@@ -36,6 +36,20 @@ object Tspl {
     fun widthDots(s: Setup) = s.widthMm * DOTS_PER_MM
     fun heightDots(s: Setup) = s.heightMm * DOTS_PER_MM
 
+    /**
+     * Makes the printer measure the label length and the gap itself (GAPDETECT), then feed to the start of
+     * the next label. Fixes blank labels being skipped after a new roll or a wrong size in Settings.
+     */
+    fun calibrateJob(s: Setup): ByteArray {
+        val gap = String.format(Locale.US, "%.1f", s.gapMm)
+        return buildString {
+            append("SIZE ${s.widthMm} mm,${s.heightMm} mm\r\n")
+            append("GAP $gap mm,0 mm\r\n")
+            append("GAPDETECT\r\n")
+            append("HOME\r\n")
+        }.toByteArray(Charsets.US_ASCII)
+    }
+
     /** [black] is row-major, true where a dot should be printed. */
     fun job(black: BooleanArray, width: Int, height: Int, s: Setup, copies: Int = 1): ByteArray {
         require(black.size == width * height) { "bitmap size mismatch" }

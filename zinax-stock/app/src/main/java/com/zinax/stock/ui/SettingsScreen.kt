@@ -173,9 +173,25 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             LabelSizeSection()
             SwitchRow("Rotate label 180°", direction == 0) { direction = if (it) 0 else 1; prefs.direction = direction }
             SwitchRow("Invert (if labels print as negatives)", invert) { invert = it; prefs.invert = it }
-            Button(onClick = {
-                Graph.printQueue.print(listOf(sampleItem()), "test label")
-            }, enabled = selectedAddress != null) { Text("Print test label") }
+            var calibrating by remember { mutableStateOf(false) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    Graph.printQueue.print(listOf(sampleItem()), "test label")
+                }, enabled = selectedAddress != null) { Text("Print test label") }
+                OutlinedButton(onClick = {
+                    calibrating = true
+                    scope.launch {
+                        snackbar.showSnackbar(Graph.printQueue.calibrate())
+                        calibrating = false
+                    }
+                }, enabled = selectedAddress != null && !calibrating) { Text(if (calibrating) "Calibrating…" else "Calibrate printer") }
+            }
+            Text(
+                "Blank labels skipped between prints? Set the label size and gap to the real roll (measure with a ruler), " +
+                    "then Calibrate printer. Calibrate again after every new roll.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             if (admin) {
             Section("Locations")
