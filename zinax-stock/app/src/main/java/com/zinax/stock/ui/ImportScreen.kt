@@ -99,6 +99,7 @@ fun ImportScreen(onBack: () -> Unit, onSaved: (String) -> Unit) {
                 }
             }
             OutlinedButton(onClick = {
+                Graph.session.leaving()
                 picker.launch(arrayOf(
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     "text/csv", "text/comma-separated-values", "text/plain", "application/octet-stream",

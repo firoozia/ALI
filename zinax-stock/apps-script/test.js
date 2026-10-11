@@ -84,4 +84,32 @@ assert.ok(cs.cells[1][5]>1000); assert.equal(cs.cells[1][4],true);
 r=post({token:'tok',action:'sync',since:cs.cells[1][6]-1});
 assert.ok(r.customers.some(c=>c.id==='k1' && c.name==='Bahar Design' && c.hidden===true));
 assert.ok(r.customers.some(c=>c.id==='k3' && c.name==='Mehdi Trading' && c.hidden===false && c.createdBy==='SHEET'));
+// admin code and quick poll
+assert.equal(post({token:'tok',action:'verifyAdmin',code:'x'}).ok,false);
+ctx.Utilities.getUuid=()=>'abcd1234-ffff';
+const code = ctx.adminCode_(); assert.equal(code,'ABCD1234');
+assert.equal(post({token:'tok',action:'verifyAdmin',code:' abcd1234 '}).ok,true);
+assert.equal(post({token:'tok',action:'verifyAdmin',code:'nope'}).error,'Wrong admin code');
+const rev0 = post({token:'tok',action:'poll'}).rev; assert.ok(rev0);
+assert.equal(post({token:'bad',action:'poll'}).ok,false);
+// users: pushed from a phone, returned to others; hand edit of Role in the sheet
+r=post({token:'tok',action:'sync',since:0,users:[{id:'u1',name:'Ali',role:'ADMIN',canReceive:true,active:true,pinHash:'h1',salt:'s1',updatedAt:1000},
+  {id:'u2',name:'Reza',role:'USER',canReceive:false,active:true,pinHash:'h2',salt:'s2',updatedAt:1000}]});
+assert.equal(r.users.length,2); assert.equal(sheets.Users.cells[0][5],'PinHash');
+assert.ok(r.users.some(u=>u.id==='u2' && u.role==='USER' && u.pinHash==='h2' && u.active===true && u.canReceive===false));
+const us=sheets.Users; us.cells[2][2]='admin'; us.cells[2][3]='yes';
+ctx.onEdit({range:{getSheet:()=>us,getRow:()=>3,getLastRow:()=>3,getNumColumns:()=>1,getColumn:()=>3}});
+assert.equal(us.cells[2][2],'ADMIN'); assert.equal(us.cells[2][3],true); assert.ok(us.cells[2][7]>1000);
+r=post({token:'tok',action:'sync',since:us.cells[2][8]-1});
+assert.ok(r.users.some(u=>u.id==='u2' && u.role==='ADMIN' && u.canReceive===true));
+// requests: user asks, first decision wins, a late different decision is ignored
+const rq={id:'q1',kind:'UNDO',target:'c1',summary:'Undo cut 12.5 m of 101',reason:'wrong length',requestedBy:'Reza',device:'B',requestedAt:5000,status:'PENDING',decidedBy:'',decidedAt:0,note:'',updatedAt:5000};
+r=post({token:'tok',action:'sync',since:0,requests:[rq]});
+assert.ok(r.requests.some(q=>q.id==='q1' && q.status==='PENDING' && q.target==='c1' && q.reason==='wrong length'));
+assert.notEqual(r.rev, rev0);
+post({token:'tok',action:'sync',since:0,requests:[{...rq,status:'APPROVED',decidedBy:'Ali',decidedAt:6000,updatedAt:6000}]});
+post({token:'tok',action:'sync',since:0,requests:[{...rq,status:'REJECTED',decidedBy:'Sara',decidedAt:7000,updatedAt:7000}]});
+post({token:'tok',action:'sync',since:0,requests:[{...rq,updatedAt:8000}]});
+const q=sheets.Requests.cells[1]; assert.equal(q[8],'APPROVED'); assert.equal(q[9],'Ali');
+r=post({token:'tok',action:'sync',since:0}); assert.ok(r.requests.some(x=>x.id==='q1' && x.status==='APPROVED' && x.decidedAt===6000));
 console.log('APPS_SCRIPT_TESTS_OK');

@@ -48,7 +48,7 @@ import com.zinax.stock.sync.ReportWorker
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -75,7 +75,10 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit) {
     }
 
     var device by remember { mutableStateOf(prefs.deviceCode) }
-    var userName by remember { mutableStateOf(prefs.userName) }
+    val me by Graph.session.user.collectAsStateWithLifecycle()
+    val admin = me?.isAdmin == true
+    var changingPin by remember { mutableStateOf(false) }
+    var lockMinutes by remember { mutableStateOf(prefs.lockMinutes.toString()) }
     var locations by remember { mutableStateOf(prefs.locations) }
     var newLocation by remember { mutableStateOf("") }
     var gap by remember { mutableStateOf(prefs.gapMm.toString()) }
@@ -133,18 +136,14 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
             }
+            LabelSizeSection()
             SwitchRow("Rotate label 180°", direction == 0) { direction = if (it) 0 else 1; prefs.direction = direction }
             SwitchRow("Invert (if labels print as negatives)", invert) { invert = it; prefs.invert = it }
             Button(onClick = {
-                val t = System.currentTimeMillis()
-                val sample = Item(
-                    id = LabelId.make(LabelId.datePart(t), prefs.deviceCode, 0), category = Category.PVC.name, code = "101",
-                    size = "0.30*1400", unit = "m", qty = 120.0, remaining = 120.0, status = ItemStatus.IN_STOCK, shipmentId = null,
-                    pallet = null, netKg = null, grossKg = null, receivedAt = t, location = "", device = prefs.deviceCode, updatedAt = t,
-                )
-                Graph.printQueue.print(listOf(sample), "test label")
+                Graph.printQueue.print(listOf(sampleItem()), "test label")
             }, enabled = selectedAddress != null) { Text("Print test label") }
 
+            if (admin) {
             Section("Locations")
             Text(
                 "Places where goods are kept, e.g. Warehouse 1, Warehouse 2 - Floor 1, Showroom. " +
@@ -204,17 +203,43 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit) {
             )
             OutlinedButton(onClick = onCustomers, modifier = Modifier.fillMaxWidth()) { Text("Customers library") }
 
-            Section("This phone")
-            OutlinedTextField(
-                userName, { userName = it; prefs.userName = it },
-                label = { Text("User name (shown in reports as who did it)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                device, { v -> device = LabelId.cleanDeviceCode(v); prefs.deviceCode = device },
-                label = { Text("Device letter in label IDs (A, B, C… one per phone)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-            )
+            }
 
+            Section("This phone")
+            me?.let { u ->
+                Text("Signed in as ${u.name} · ${if (u.isAdmin) "Admin" else if (u.canReceive) "User, can receive" else "User"}")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { changingPin = true }) { Text("Change my PIN") }
+                    OutlinedButton(onClick = { Graph.session.lock() }) { Text("Lock / switch user") }
+                }
+                if (changingPin) NewPinDialog(u, "Change my PIN", askCurrent = true, onDone = {
+                    changingPin = false
+                    scope.launch { snackbar.showSnackbar("PIN changed") }
+                }) { changingPin = false }
+            }
+            if (admin) {
+                OutlinedTextField(
+                    device, { v -> device = LabelId.cleanDeviceCode(v); prefs.deviceCode = device },
+                    label = { Text("Device letter in label IDs (A, B, C… one per phone)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                )
+
+                Section("Users and security")
+                OutlinedButton(onClick = onUsers, modifier = Modifier.fillMaxWidth()) { Text("Users") }
+                OutlinedTextField(
+                    lockMinutes,
+                    { v -> lockMinutes = v.filter { it.isDigit() }.take(3); lockMinutes.toIntOrNull()?.let { prefs.lockMinutes = it } },
+                    label = { Text("Lock after minutes without use (0 = only when leaving the app)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                Text(
+                    "The app also locks whenever it leaves the screen. This setting is for this phone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (admin) {
             Section("Google Sheet")
             OutlinedTextField(url, { url = it; prefs.webAppUrl = it }, label = { Text("Web app URL (…/exec)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(token, { token = it; prefs.token = it }, label = { Text("Token") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -228,6 +253,17 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit) {
                     }
                 }) { Text("Sync now") }
                 OutlinedButton(onClick = { Share.openUrl(context, prefs.sheetUrl) }, enabled = sheet.isNotBlank()) { Text("Open sheet") }
+            }
+
+            } else {
+                Section("Google Sheet")
+                Text(syncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = {
+                    scope.launch {
+                        val msg = try { Graph.sync.sync() } catch (e: Exception) { e.message ?: "Sync failed" }
+                        snackbar.showSnackbar(msg)
+                    }
+                }) { Text("Sync now") }
             }
 
             Section("WhatsApp report")

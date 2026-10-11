@@ -26,6 +26,30 @@ class Prefs(context: Context) {
         get() = sp.getString("userName", "") ?: ""
         set(v) = edit { putString("userName", v.trim()) }
 
+    /** The user who last signed in here; the lock screen offers them first. */
+    var lastUserId: String
+        get() = sp.getString("lastUserId", "") ?: ""
+        set(v) = edit { putString("lastUserId", v) }
+
+    /** Whether that user is an admin, so this phone shows approval notifications while the app is closed. */
+    var phoneUserIsAdmin: Boolean
+        get() = sp.getBoolean("phoneUserIsAdmin", false)
+        set(v) = edit { putBoolean("phoneUserIsAdmin", v) }
+
+    /** Lock after this many minutes without a touch; 0 locks only when leaving the app. */
+    var lockMinutes: Int
+        get() = sp.getInt("lockMinutes", 10)
+        set(v) = edit { putInt("lockMinutes", v.coerceIn(0, 240)) }
+
+    /** Change number from the sheet at the last sync; a different number on a quick check means a sync is due. */
+    var lastRev: String
+        get() = sp.getString("lastRev", "") ?: ""
+        set(v) = edit { putString("lastRev", v) }
+
+    var askedNotifications: Boolean
+        get() = sp.getBoolean("askedNotifications", false)
+        set(v) = edit { putBoolean("askedNotifications", v) }
+
     var printerAddress: String?
         get() = sp.getString("printerAddress", null)
         set(v) = edit { putString("printerAddress", v) }
@@ -50,8 +74,20 @@ class Prefs(context: Context) {
         get() = sp.getInt("density", 8)
         set(v) = edit { putInt("density", v) }
 
+    /** Label size on the printer's roll, in millimetres. */
+    var labelWidthMm: Int
+        get() = sp.getInt("labelWidthMm", 58)
+        set(v) = edit { putInt("labelWidthMm", v.coerceIn(Tspl.MIN_MM, Tspl.MAX_WIDTH_MM)) }
+
+    var labelHeightMm: Int
+        get() = sp.getInt("labelHeightMm", 39)
+        set(v) = edit { putInt("labelHeightMm", v.coerceIn(Tspl.MIN_MM, Tspl.MAX_HEIGHT_MM)) }
+
     val tspl: Tspl.Setup
-        get() = Tspl.Setup(gapMm = gapMm.toDouble(), direction = direction, density = density, invert = invert)
+        get() = Tspl.Setup(
+            widthMm = labelWidthMm, heightMm = labelHeightMm,
+            gapMm = gapMm.toDouble(), direction = direction, density = density, invert = invert,
+        )
 
     var webAppUrl: String
         get() = sp.getString("webAppUrl", "") ?: ""

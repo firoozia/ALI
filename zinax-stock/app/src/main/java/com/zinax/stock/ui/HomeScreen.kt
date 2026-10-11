@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -19,6 +20,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -48,7 +50,12 @@ fun HomeScreen(nav: NavController) {
     val pending by Graph.db.dao().pendingItemCount().collectAsStateWithLifecycle(0)
     val status = LocalStatus.current
     val printer = remember(tick) { prefs.printerName }
-    val userName = remember(tick) { prefs.userName }
+    val me by Graph.session.user.collectAsStateWithLifecycle()
+    val canReceive = me?.mayReceive == true
+    val isAdmin = me?.isAdmin == true
+    val waiting by Graph.db.dao().pendingRequests().collectAsStateWithLifecycle(emptyList())
+    val myWaiting = waiting.count { it.requestedBy == me?.name }
+    val adminOnly: () -> Unit = { scope.launch { snackbar.showSnackbar("Only admins, or users allowed to receive, can do this") } }
     val sheetUrl = remember(tick) { prefs.sheetUrl }
     val syncMessage = remember(tick) { prefs.lastSyncMessage }
     val reminder = remember(tick) { if (prefs.reportEnabled) "Daily %02d:%02d".format(prefs.reportHour, prefs.reportMinute) else "Off" }
@@ -64,6 +71,7 @@ fun HomeScreen(nav: NavController) {
                     snackbar.showSnackbar(msg)
                 }
             }) { Icon(Icons.Filled.Refresh, contentDescription = "Sync now") }
+            IconButton(onClick = { Graph.session.lock() }) { Icon(Icons.Filled.Lock, contentDescription = "Lock") }
             IconButton(onClick = { nav.navigate(Routes.SETTINGS) }) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
         },
     ) { padding ->
@@ -74,14 +82,14 @@ fun HomeScreen(nav: NavController) {
                 if (pending > 0) Pill("$pending to sync", status.warn, status.warnSoft)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (userName.isNotBlank()) Pill("User: $userName", status.ok, status.okSoft)
-                else Pill("No user name · set it in Settings", status.warn, status.warnSoft)
+                me?.let { Pill("${it.name} · ${if (it.isAdmin) "Admin" else "User"}", status.ok, status.okSoft) }
             }
 
             val latest = shipments.firstOrNull()
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Tile("Receive", "Open a pallet, print labels", primary = true, modifier = Modifier.weight(1f)) {
-                    if (latest != null) nav.navigate(Routes.receive(latest.id)) else nav.navigate(Routes.IMPORT)
+                Tile("Receive", if (canReceive) "Open a pallet, print labels" else "Admin only", primary = canReceive, modifier = Modifier.weight(1f)) {
+                    if (!canReceive) adminOnly()
+                    else if (latest != null) nav.navigate(Routes.receive(latest.id)) else nav.navigate(Routes.IMPORT)
                 }
                 Tile("Ship out", "Scan or type a label", modifier = Modifier.weight(1f)) { nav.navigate(Routes.SHIP_OUT) }
             }
@@ -95,7 +103,9 @@ fun HomeScreen(nav: NavController) {
                 ) { nav.navigate(Routes.STOCK) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Tile("Shipments", latest?.name ?: "None yet", modifier = Modifier.weight(1f)) { nav.navigate(Routes.SHIPMENTS) }
+                Tile("Shipments", if (canReceive) latest?.name ?: "None yet" else "Admin only", modifier = Modifier.weight(1f)) {
+                    if (canReceive) nav.navigate(Routes.SHIPMENTS) else adminOnly()
+                }
                 Tile("Reports", "Out, cuts, waste, in, deleted, moved", modifier = Modifier.weight(1f)) { nav.navigate(Routes.OUT_REPORT) }
             }
 
@@ -105,8 +115,21 @@ fun HomeScreen(nav: NavController) {
                 Text(syncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            OutlinedButton(onClick = { nav.navigate(Routes.IMPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Import packing list") }
-            OutlinedButton(onClick = { nav.navigate(Routes.manual()) }, modifier = Modifier.fillMaxWidth()) { Text("Print labels by hand") }
+            val pendingCount = if (isAdmin) waiting.size else myWaiting
+            if (isAdmin || myWaiting > 0) {
+                val label = if (isAdmin) "Requests · $pendingCount waiting for approval" else "My requests · $pendingCount waiting"
+                if (pendingCount > 0) {
+                    Button(onClick = { nav.navigate(Routes.requests()) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
+                } else {
+                    OutlinedButton(onClick = { nav.navigate(Routes.requests()) }, modifier = Modifier.fillMaxWidth()) { Text("Requests") }
+                }
+            } else {
+                TextButton(onClick = { nav.navigate(Routes.requests()) }) { Text("My requests") }
+            }
+            if (canReceive) {
+                OutlinedButton(onClick = { nav.navigate(Routes.IMPORT) }, modifier = Modifier.fillMaxWidth()) { Text("Import packing list") }
+                OutlinedButton(onClick = { nav.navigate(Routes.manual()) }, modifier = Modifier.fillMaxWidth()) { Text("Print labels by hand") }
+            }
             OutlinedButton(
                 onClick = { Share.openUrl(context, sheetUrl) },
                 enabled = sheetUrl.isNotBlank(),

@@ -37,10 +37,11 @@ fun PrintDialog() {
         is PrintState.Running -> AlertDialog(
             onDismissRequest = {},
             confirmButton = {},
+            dismissButton = { TextButton(onClick = { queue.cancel() }) { Text("Cancel", color = status.bad) } },
             title = { Text("Printing ${s.title}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Label ${s.sent} of ${s.total} sent to the printer")
+                    Text(if (s.sent == 0) "Connecting to the printer…" else "Label ${s.sent} of ${s.total} sent to the printer")
                     LinearProgressIndicator(progress = { if (s.total == 0) 0f else s.sent / s.total.toFloat() }, modifier = Modifier.fillMaxWidth())
                 }
             },

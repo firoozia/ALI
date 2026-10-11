@@ -1,9 +1,7 @@
 package com.zinax.stock.ui
 
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import com.zinax.stock.Graph
 import com.zinax.stock.core.Format
 import com.zinax.stock.data.Movement
 
@@ -20,21 +18,38 @@ data class UndoTarget(
     }
 }
 
-/** Confirmation before cancelling a ship-out, cut or write-off made by mistake. */
+/**
+ * Confirmation before cancelling a ship-out, cut or write-off made by mistake. Admins undo at once;
+ * users send the undo to an admin. [onDone] gets a line for the snackbar.
+ */
 @Composable
-fun UndoDialog(target: UndoTarget, onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Undo this ${target.noun}?") },
-        text = {
-            Text(
-                "${Format.qtyUnit(target.qty, target.unit)} of ${target.code} (${target.itemId})" +
-                    (if (target.reference.isNotBlank() && target.type != "WASTE") " to ${target.reference}" else "") +
-                    " goes back into stock and leaves the reports. " +
-                    "The sheet keeps the ${target.noun} with an UNDO line showing who cancelled it."
-            )
-        },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Undo ${target.noun}") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+fun UndoDialog(target: UndoTarget, onConfirm: () -> Unit, onDismiss: () -> Unit, onDone: (String) -> Unit = {}) {
+    ApprovalDialog(
+        title = "Undo this ${target.noun}?",
+        body = "${Format.qtyUnit(target.qty, target.unit)} of ${target.code} (${target.itemId})" +
+            (if (target.reference.isNotBlank() && target.type != "WASTE") " to ${target.reference}" else "") +
+            " goes back into stock and leaves the reports. " +
+            "The sheet keeps the ${target.noun} with an UNDO line showing who cancelled it.",
+        confirmLabel = "Undo ${target.noun}",
+        onConfirm = onConfirm,
+        request = { reason -> Graph.repo.requestUndo(target.movementId, reason) },
+        onDone = { onDismiss(); onDone(it) },
+        onDismiss = onDismiss,
     )
+}
+
+/** Undo, or a note that an undo is already waiting for an admin. */
+@Composable
+fun UndoButton(movementId: String, waiting: Set<String>, onClick: () -> Unit) {
+    if (movementId in waiting) {
+        androidx.compose.material3.Text(
+            "Waiting for admin",
+            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+            color = com.zinax.stock.ui.theme.LocalStatus.current.warn,
+        )
+    } else {
+        androidx.compose.material3.TextButton(onClick = onClick) {
+            androidx.compose.material3.Text("Undo", color = com.zinax.stock.ui.theme.LocalStatus.current.bad)
+        }
+    }
 }

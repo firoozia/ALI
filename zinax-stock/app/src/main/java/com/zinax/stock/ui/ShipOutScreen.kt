@@ -46,6 +46,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
     val shippedNow by dao.takenSince(startedAt).collectAsStateWithLifecycle(emptyList())
     val undone by dao.undoneIds().collectAsStateWithLifecycle(emptyList())
     var undoing by remember { mutableStateOf<UndoTarget?>(null) }
+    val waiting = rememberWaiting()
 
     var input by remember { mutableStateOf("") }
     var item by remember { mutableStateOf<Item?>(null) }
@@ -77,6 +78,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
         FormBody(padding) {
             Button(
                 onClick = {
+                    Graph.session.leaving()
                     scanner.launch(
                         ScanOptions()
                             .setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
@@ -129,7 +131,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                     if (it.status == ItemStatus.VOID) "This label was deleted as a mistake. Do not use it." else "This label was already shipped out.",
                     status.bad, status.badSoft,
                 )
-                if (it.status != ItemStatus.VOID) PastShipOuts(it.id, undone) { m ->
+                if (it.status != ItemStatus.VOID) PastShipOuts(it.id, undone, waiting) { m ->
                     undoing = UndoTarget.of(m)
                 }
 
@@ -192,9 +194,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        TextButton(onClick = { undoing = UndoTarget.of(m) }) {
-                            Text("Undo", color = status.bad)
-                        }
+                        UndoButton(m.id, waiting) { undoing = UndoTarget.of(m) }
                     }
                 }
             }
@@ -234,6 +234,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                 }
             },
             onDismiss = { undoing = null },
+            onDone = { msg -> scope.launch { snackbar.showSnackbar(msg); item = dao.item(target.itemId) } },
         )
     }
 }
@@ -247,7 +248,7 @@ private fun kindOf(m: com.zinax.stock.data.Movement): String = when (m.type) {
 
 /** Earlier ship-outs, cuts and write-offs of one label that are still in effect, each with Undo. */
 @Composable
-private fun PastShipOuts(itemId: String, undone: List<String>, onUndo: (com.zinax.stock.data.Movement) -> Unit) {
+private fun PastShipOuts(itemId: String, undone: List<String>, waiting: Set<String>, onUndo: (com.zinax.stock.data.Movement) -> Unit) {
     val outs by Graph.db.dao().takenFrom(itemId).collectAsStateWithLifecycle(emptyList())
     val live = outs.filter { it.id !in undone }
     if (live.isEmpty()) return
@@ -261,7 +262,7 @@ private fun PastShipOuts(itemId: String, undone: List<String>, onUndo: (com.zina
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { onUndo(m) }) { Text("Undo", color = LocalStatus.current.bad) }
+                UndoButton(m.id, waiting) { onUndo(m) }
             }
         }
     }

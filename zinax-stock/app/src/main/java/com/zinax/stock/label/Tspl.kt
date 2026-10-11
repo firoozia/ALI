@@ -21,6 +21,14 @@ object Tspl {
 
     const val DOTS_PER_MM = 8
 
+    /** XP-420B prints up to 108 mm wide. */
+    const val MAX_WIDTH_MM = 108
+    const val MAX_HEIGHT_MM = 200
+    const val MIN_MM = 20
+
+    /** Common label rolls, width × height in mm. */
+    val PRESETS = listOf(58 to 39, 50 to 30, 40 to 30, 60 to 40, 70 to 50, 100 to 50, 100 to 70)
+
     fun widthDots(s: Setup) = s.widthMm * DOTS_PER_MM
     fun heightDots(s: Setup) = s.heightMm * DOTS_PER_MM
 

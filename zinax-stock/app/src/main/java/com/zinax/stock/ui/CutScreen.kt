@@ -99,6 +99,7 @@ fun CutScreen(startItem: String?, onBack: () -> Unit) {
         }
     }
     val scan = {
+        Graph.session.leaving()
         scanner.launch(
             ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
                 .setPrompt("Point at the roll label").setBeepEnabled(true).setOrientationLocked(false)

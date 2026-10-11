@@ -52,6 +52,8 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit) {
     var open by remember { mutableStateOf<String?>(null) }
     var moving by remember { mutableStateOf<MoveTarget?>(null) }
     var deleting by remember { mutableStateOf<MoveTarget?>(null) }
+    val waiting = rememberWaiting()
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
     val places = remember(items) {
         val used = items.map { it.location.ifBlank { NO_LOCATION } }.distinct()
@@ -69,7 +71,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit) {
             .sortedWith(compareBy<Map.Entry<String, List<Item>>>({ it.value.first().categoryEnum.ordinal }, { Report.codeSortKey(it.value.first().code) }, { it.value.first().code }))
     }
 
-    ScreenScaffold("Stock", onBack) { padding ->
+    ScreenScaffold("Stock", onBack, snackbar) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -151,8 +153,12 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit) {
                                     }
                                     Row {
                                         TextButton(onClick = { onCut(item.id) }) { Text("✂ Cut") }
-                                        TextButton(onClick = { deleting = MoveTarget("Delete ${item.id}?", listOf(item.id), "") }) {
-                                            Text("Delete", color = LocalStatus.current.bad)
+                                        if (item.id in waiting) {
+                                            Text("Waiting for admin", style = MaterialTheme.typography.labelMedium, color = LocalStatus.current.warn)
+                                        } else {
+                                            TextButton(onClick = { deleting = MoveTarget("Delete ${item.id}?", listOf(item.id), "") }) {
+                                                Text("Delete", color = LocalStatus.current.bad)
+                                            }
                                         }
                                     }
                                     if (item.isOpen) {
@@ -182,23 +188,19 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit) {
     }
 
     deleting?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(target.title) },
-            text = {
-                Text(
-                    "Use this only for labels entered by mistake. They leave stock and the Stock tab of the sheet " +
-                        "and stay in the Items tab marked VOID. Throw the printed label away. " +
-                        "If it came from a packing list, it goes back to \"to print\" in Receive."
-                )
+        ApprovalDialog(
+            title = target.title,
+            body = "Use this only for labels entered by mistake. They leave stock and the Stock tab of the sheet " +
+                "and stay in the Items tab marked VOID. Throw the printed label away. " +
+                "If it came from a packing list, it goes back to \"to print\" in Receive.",
+            confirmLabel = "Delete",
+            onConfirm = {
+                deleting = null
+                scope.launch { Graph.repo.voidItems(target.ids) }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    deleting = null
-                    scope.launch { Graph.repo.voidItems(target.ids) }
-                }) { Text("Delete", color = LocalStatus.current.bad) }
-            },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+            request = { reason -> Graph.repo.requestDelete(target.ids, reason) },
+            onDone = { msg -> deleting = null; scope.launch { snackbar.showSnackbar(msg) } },
+            onDismiss = { deleting = null },
         )
     }
 }

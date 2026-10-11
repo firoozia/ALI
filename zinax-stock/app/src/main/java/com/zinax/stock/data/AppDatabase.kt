@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [Shipment::class, ExpectedUnit::class, Item::class, Movement::class, Customer::class],
-    version = 3,
+    entities = [Shipment::class, ExpectedUnit::class, Item::class, Movement::class, Customer::class, AppUser::class, ChangeRequest::class],
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,9 +37,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 1.9.0: users with PINs, and undo or delete requests waiting for an admin. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `users` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `role` TEXT NOT NULL, " +
+                        "`canReceive` INTEGER NOT NULL, `active` INTEGER NOT NULL, `pinHash` TEXT NOT NULL, `salt` TEXT NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, `dirty` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `requests` (`id` TEXT NOT NULL, `kind` TEXT NOT NULL, `target` TEXT NOT NULL, " +
+                        "`summary` TEXT NOT NULL, `reason` TEXT NOT NULL, `requestedBy` TEXT NOT NULL, `device` TEXT NOT NULL, " +
+                        "`requestedAt` INTEGER NOT NULL, `status` TEXT NOT NULL, `decidedBy` TEXT NOT NULL, `decidedAt` INTEGER NOT NULL, " +
+                        "`note` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, `dirty` INTEGER NOT NULL, `notified` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`id`))"
+                )
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "zinax.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

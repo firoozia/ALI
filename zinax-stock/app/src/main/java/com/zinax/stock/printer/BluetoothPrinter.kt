@@ -7,9 +7,13 @@ import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
 
@@ -78,19 +82,47 @@ class BluetoothPrinter(private val context: Context) {
         }
     }
 
+    /**
+     * Connects within about [SECURE_MS] + [INSECURE_MS] instead of Android's own 12 s per try,
+     * and gives up at once when the print is cancelled.
+     */
     @SuppressLint("MissingPermission")
-    private fun connect(device: android.bluetooth.BluetoothDevice): BluetoothSocket {
-        val first = try {
-            device.createRfcommSocketToServiceRecord(spp).also { it.connect() }
-        } catch (e: IOException) {
-            null
-        }
-        if (first != null) return first
+    private suspend fun connect(device: android.bluetooth.BluetoothDevice): BluetoothSocket {
+        open(device.createRfcommSocketToServiceRecord(spp), SECURE_MS)?.let { return it }
         // Some printers only accept the insecure channel.
-        return try {
-            device.createInsecureRfcommSocketToServiceRecord(spp).also { it.connect() }
-        } catch (e: IOException) {
-            throw IOException("Could not connect to the printer. Check it is on, paired and not used by another phone.")
+        open(device.createInsecureRfcommSocketToServiceRecord(spp), INSECURE_MS)?.let { return it }
+        throw IOException("Printer not found. Check it is on, in range and not printing for another phone.")
+    }
+
+    /** The connected [socket], or null when it did not connect within [ms]. Closing the socket stops a blocked connect. */
+    private suspend fun open(socket: BluetoothSocket, ms: Long): BluetoothSocket? = coroutineScope {
+        val attempt = async(Dispatchers.IO) {
+            try {
+                socket.connect()
+                true
+            } catch (_: IOException) {
+                false
+            }
         }
+        try {
+            val ok = withTimeoutOrNull(ms) { attempt.await() }
+            if (ok == true) socket else {
+                closeQuietly(socket)
+                attempt.await()
+                null
+            }
+        } catch (e: CancellationException) {
+            closeQuietly(socket)
+            throw e
+        }
+    }
+
+    private fun closeQuietly(socket: BluetoothSocket) {
+        try { socket.close() } catch (_: IOException) {}
+    }
+
+    private companion object {
+        const val SECURE_MS = 5_000L
+        const val INSECURE_MS = 3_000L
     }
 }

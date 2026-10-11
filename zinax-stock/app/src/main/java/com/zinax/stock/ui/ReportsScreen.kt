@@ -67,6 +67,8 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
     var open by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
     var undoing by remember { mutableStateOf<UndoTarget?>(null) }
+    val waiting = rememberWaiting()
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
     fun choose(r: Range) {
         if (r == Range.CUSTOM) { picking = true; return }
@@ -90,7 +92,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
     val customers = remember(shown, activity) { if (activity == Activity.CUT) OutReport.customerLines(shown) else emptyList() }
     val stamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.US) }
 
-    ScreenScaffold("Reports", onBack) { padding ->
+    ScreenScaffold("Reports", onBack, snackbar) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -193,9 +195,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                     if (activity in OutReport.undoable && o.id.isNotEmpty()) {
-                                        TextButton(onClick = { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference, o.type) }) {
-                                            Text("Undo", color = LocalStatus.current.bad)
-                                        }
+                                        UndoButton(o.id, waiting) { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference, o.type) }
                                     }
                                 }
                             }
@@ -237,12 +237,14 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                 scope.launch {
                     try {
                         Graph.repo.undoShipOut(target.movementId)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        snackbar.showSnackbar(e.message ?: "Could not undo")
                     }
                     all = Graph.activityFor(activity, from, to)
                 }
             },
             onDismiss = { undoing = null },
+            onDone = { msg -> scope.launch { snackbar.showSnackbar(msg); all = Graph.activityFor(activity, from, to) } },
         )
     }
 

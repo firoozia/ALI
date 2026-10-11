@@ -6,6 +6,7 @@ import com.zinax.stock.core.CustomerNames
 import com.zinax.stock.core.CutPlan
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.LabelId
+import com.zinax.stock.core.Pin
 import com.zinax.stock.importer.ParsedUnit
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -224,7 +225,7 @@ class Repository(
      * Cancels a ship-out made by mistake: the amount goes back on the package and the package is in stock again.
      * The ship-out stays in the log with an UNDO row naming who cancelled it.
      */
-    suspend fun undoShipOut(movementId: String) {
+    suspend fun undoShipOut(movementId: String, by: String = prefs.userName) {
         db.withTransaction {
             val m = dao.movement(movementId) ?: error("Ship-out not found")
             check(m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE)) { "Only ship-outs, cuts and waste can be undone" }
@@ -238,7 +239,7 @@ class Repository(
                 listOf(
                     Movement(
                         id = uuid(), itemId = item.id, type = MovementType.UNDO, qty = m.qty, reference = m.id,
-                        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = by,
                     )
                 )
             )
@@ -260,7 +261,7 @@ class Repository(
      * Deletes labels entered by mistake. They leave stock, reports and the sheet's Stock tab, and stay
      * in the Items tab marked VOID. A label printed from a packing list goes back to "to print".
      */
-    suspend fun voidItems(itemIds: List<String>) {
+    suspend fun voidItems(itemIds: List<String>, by: String = prefs.userName) {
         db.withTransaction {
             val t = now()
             val items = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }.filter { it.status == ItemStatus.IN_STOCK }
@@ -270,7 +271,7 @@ class Repository(
                 items.map {
                     Movement(
                         id = uuid(), itemId = it.id, type = MovementType.VOID, qty = it.remaining, reference = "Deleted",
-                        at = t, device = prefs.deviceCode, code = it.code, size = it.size, unit = it.unit, user = prefs.userName,
+                        at = t, device = prefs.deviceCode, code = it.code, size = it.size, unit = it.unit, user = by,
                     )
                 }
             )
@@ -300,6 +301,127 @@ class Repository(
                 }
             )
         }
+        onChange()
+    }
+
+    // ---------- users ----------
+
+    private fun sameName(a: String, b: String) = CustomerNames.key(a) == CustomerNames.key(b)
+
+    suspend fun addUser(name: String, role: String, canReceive: Boolean, pin: String): AppUser {
+        val clean = CustomerNames.clean(name)
+        require(clean.isNotEmpty()) { "Enter a name" }
+        require(Pin.valid(pin)) { "PIN must be ${Pin.MIN} to ${Pin.MAX} digits" }
+        require(dao.allUsers().none { sameName(it.name, clean) }) { "There is already a user called $clean" }
+        val salt = Pin.newSalt()
+        val u = AppUser(uuid(), clean, role, canReceive, true, Pin.hash(pin, salt), salt, now())
+        dao.putUsers(listOf(u))
+        onChange()
+        return u
+    }
+
+    /** Changes name, role, receive permission or active; at least one active admin always stays. */
+    suspend fun updateUser(id: String, name: String, role: String, canReceive: Boolean, active: Boolean): AppUser {
+        val all = dao.allUsers()
+        val u = all.firstOrNull { it.id == id } ?: error("User not found")
+        val clean = CustomerNames.clean(name)
+        require(clean.isNotEmpty()) { "Enter a name" }
+        require(all.none { it.id != id && sameName(it.name, clean) }) { "There is already a user called $clean" }
+        val stillAdmin = role == Roles.ADMIN && active
+        if (u.isAdmin && u.active && !stillAdmin) {
+            check(all.any { it.id != id && it.isAdmin && it.active }) { "Keep at least one active admin" }
+        }
+        val updated = u.copy(name = clean, role = role, canReceive = canReceive, active = active, updatedAt = now(), dirty = true)
+        dao.putUsers(listOf(updated))
+        onChange()
+        return updated
+    }
+
+    suspend fun setPin(id: String, pin: String) {
+        require(Pin.valid(pin)) { "PIN must be ${Pin.MIN} to ${Pin.MAX} digits" }
+        val u = dao.user(id) ?: error("User not found")
+        val salt = Pin.newSalt()
+        dao.putUsers(listOf(u.copy(pinHash = Pin.hash(pin, salt), salt = salt, updatedAt = now(), dirty = true)))
+        onChange()
+    }
+
+    // ---------- requests ----------
+
+    private suspend fun checkNotWaiting(targets: List<String>) {
+        val waiting = dao.pendingRequestsNow().flatMap { it.targets }.toSet()
+        check(targets.none { it in waiting }) { "Already waiting for an admin" }
+    }
+
+    private suspend fun newRequest(kind: String, target: String, summary: String, reason: String): ChangeRequest {
+        val t = now()
+        val r = ChangeRequest(
+            id = uuid(), kind = kind, target = target, summary = summary, reason = reason.trim(),
+            requestedBy = prefs.userName, device = prefs.deviceCode, requestedAt = t, updatedAt = t,
+            notified = RequestStatus.PENDING,
+        )
+        dao.putRequests(listOf(r))
+        onChange()
+        return r
+    }
+
+    /** Asks an admin to undo a ship-out, cut or write-off. Nothing changes until it is approved. */
+    suspend fun requestUndo(movementId: String, reason: String): ChangeRequest {
+        val m = dao.movement(movementId) ?: error("Not found")
+        check(m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE)) { "Only ship-outs, cuts and waste can be undone" }
+        check(movementId !in dao.undoneIdsNow()) { "This was already undone" }
+        checkNotWaiting(listOf(movementId))
+        val noun = when (m.type) { MovementType.CUT -> "cut"; MovementType.WASTE -> "write-off"; else -> "ship-out" }
+        val to = if (m.type != MovementType.WASTE && m.reference.isNotBlank()) " to ${m.reference}" else ""
+        val by = if (m.user.isNotBlank() && m.user != prefs.userName) " (done by ${m.user})" else ""
+        return newRequest(
+            RequestKind.UNDO, movementId,
+            "Undo $noun ${Format.qtyUnit(m.qty, m.unit)} of ${m.code} (${m.itemId})$to$by", reason,
+        )
+    }
+
+    /** Asks an admin to delete labels entered by mistake. */
+    suspend fun requestDelete(itemIds: List<String>, reason: String): ChangeRequest {
+        val items = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }.filter { it.status == ItemStatus.IN_STOCK }
+        check(items.isNotEmpty()) { "Nothing in stock to delete" }
+        checkNotWaiting(items.map { it.id })
+        val summary = if (items.size == 1) {
+            val i = items.first()
+            "Delete ${i.id} · ${i.code} · ${Format.qtyUnit(i.remaining, i.unit)}"
+        } else {
+            "Delete ${items.size} labels of ${items.map { it.code }.distinct().joinToString(", ")} · " +
+                items.groupBy { it.unit }.entries.joinToString(", ") { (u, l) -> Format.qtyUnit(l.sumOf { it.remaining }, u) }
+        }
+        return newRequest(RequestKind.DELETE, items.joinToString(",") { it.id }, summary, reason)
+    }
+
+    /** Carries out the request as [admin] and marks it approved. Throws, leaving it waiting, if it cannot be done. */
+    suspend fun approveRequest(id: String, admin: String) {
+        val r = dao.request(id) ?: error("Request not found")
+        check(r.status == RequestStatus.PENDING) { "Already ${r.status.lowercase()} by ${r.decidedBy}" }
+        when (r.kind) {
+            RequestKind.UNDO -> {
+                if (r.target !in dao.undoneIdsNow()) {
+                    dao.movement(r.target) ?: error("${r.requestedBy}'s change has not reached this phone yet. Sync and try again.")
+                    undoShipOut(r.target, admin)
+                }
+            }
+            RequestKind.DELETE -> voidItems(r.targets, admin)
+            else -> error("Unknown request")
+        }
+        decide(r, RequestStatus.APPROVED, admin, "")
+    }
+
+    suspend fun rejectRequest(id: String, admin: String, note: String) {
+        val r = dao.request(id) ?: error("Request not found")
+        check(r.status == RequestStatus.PENDING) { "Already ${r.status.lowercase()} by ${r.decidedBy}" }
+        decide(r, RequestStatus.REJECTED, admin, note)
+    }
+
+    private suspend fun decide(r: ChangeRequest, status: String, admin: String, note: String) {
+        val t = now()
+        dao.putRequests(
+            listOf(r.copy(status = status, decidedBy = admin, decidedAt = t, note = note.trim(), updatedAt = t, dirty = true, notified = status))
+        )
         onChange()
     }
 }

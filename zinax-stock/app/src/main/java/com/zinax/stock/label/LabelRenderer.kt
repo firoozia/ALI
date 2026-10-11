@@ -15,22 +15,38 @@ import com.zinax.stock.printer.LabelSpec
 import com.zinax.stock.data.Item
 
 /**
- * Draws the 58 × 39 mm label (464 × 312 dots at 203 dpi):
- * code large on the left, size and quantity under it, QR on the right, ID along the bottom.
+ * Draws the labels. Layouts are designed for 58 × 39 mm (464 × 312 dots at 203 dpi) and scaled to
+ * the label size in Settings: the page keeps that design's proportions on its shorter side and the
+ * extra room on the other side goes to the text.
  */
 object LabelRenderer {
     private const val MARGIN = 14
+    private const val BASE_W = 464f
+    private const val BASE_H = 312f
+
+    /** A white bitmap of the real label size; [c] draws in design units [w] × [h]. */
+    private class Page(val bmp: Bitmap, val c: Canvas, val k: Float, val w: Float, val h: Float)
+
+    private fun page(setup: Tspl.Setup): Page {
+        val bmp = Bitmap.createBitmap(Tspl.widthDots(setup), Tspl.heightDots(setup), Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp).apply { drawColor(Color.WHITE) }
+        val k = minOf(bmp.width / BASE_W, bmp.height / BASE_H)
+        c.scale(k, k)
+        return Page(bmp, c, k, bmp.width / k, bmp.height / k)
+    }
+
+    /** QR side in design units: 200 on the base label, smaller if the page is short. */
+    private fun qrSide(p: Page) = minOf(200f, p.h - 2 * MARGIN - 40f)
 
     fun render(item: Item, setup: Tspl.Setup): Bitmap {
-        val w = Tspl.widthDots(setup)
-        val h = Tspl.heightDots(setup)
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val c = Canvas(bmp)
-        c.drawColor(Color.WHITE)
+        val p = page(setup)
+        val c = p.c
+        val w = p.w
+        val h = p.h
 
-        val qrSize = 200
+        val qrSize = qrSide(p)
         val qrLeft = w - MARGIN - qrSize
-        drawQr(c, item.id, qrLeft, MARGIN, qrSize)
+        drawQr(p, item.id, qrLeft, MARGIN.toFloat(), qrSize)
 
         val condensed = Typeface.create("sans-serif-condensed", Typeface.BOLD)
         val textWidth = qrLeft - MARGIN - 12f
@@ -58,9 +74,9 @@ object LabelRenderer {
             color = Color.BLACK
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         }
-        fit(mono, item.id, (w - 2 * MARGIN).toFloat(), 34f, 18f)
+        fit(mono, item.id, w - 2 * MARGIN, 34f, 18f)
         c.drawText(item.id, MARGIN.toFloat(), h - MARGIN - mono.fontMetrics.descent, mono)
-        return bmp
+        return p.bmp
     }
 
     private fun fit(p: Paint, text: String, maxWidth: Float, maxSize: Float, minSize: Float) {
@@ -72,19 +88,27 @@ object LabelRenderer {
         }
     }
 
-    private fun drawQr(c: Canvas, text: String, left: Int, top: Int, size: Int) {
+    /** Draws the QR in whole printer dots so every module prints the same size. */
+    private fun drawQr(page: Page, text: String, left: Float, top: Float, size: Float) {
         val hints = mapOf(EncodeHintType.MARGIN to 0, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M)
         val m = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, hints)
-        val module = size / m.width
-        val offset = (size - module * m.width) / 2
+        val dots = (size * page.k).toInt()
+        val module = maxOf(1, dots / m.width)
+        val offset = (dots - module * m.width) / 2
+        val x0 = (left * page.k).toInt() + offset
+        val y0 = (top * page.k).toInt() + offset
         val p = Paint().apply { color = Color.BLACK }
+        val c = page.c
+        c.save()
+        c.scale(1 / page.k, 1 / page.k)
         for (y in 0 until m.height) for (x in 0 until m.width) {
             if (m[x, y]) {
-                val l = (left + offset + x * module).toFloat()
-                val t = (top + offset + y * module).toFloat()
+                val l = (x0 + x * module).toFloat()
+                val t = (y0 + y * module).toFloat()
                 c.drawRect(l, t, l + module, t + module, p)
             }
         }
+        c.restore()
     }
 
     /** Threshold to 1-bit for the printer. */
@@ -100,18 +124,16 @@ object LabelRenderer {
         }
     }
 
-    fun tsplJob(spec: LabelSpec, setup: Tspl.Setup): ByteArray {
-        val bmp = when (spec) {
-            is LabelSpec.Roll -> render(spec.item, setup)
-            is LabelSpec.Remainder -> renderRemainder(spec.item, setup)
-            is LabelSpec.CustomerCut -> renderCustomer(spec, setup)
-        }
-        return Tspl.job(toBlack(bmp), bmp.width, bmp.height, setup).also { bmp.recycle() }
+    /** The label as it will print; also used for the preview in Settings. */
+    fun bitmap(spec: LabelSpec, setup: Tspl.Setup): Bitmap = when (spec) {
+        is LabelSpec.Roll -> render(spec.item, setup)
+        is LabelSpec.Remainder -> renderRemainder(spec.item, setup)
+        is LabelSpec.CustomerCut -> renderCustomer(spec, setup)
     }
 
-    private fun blank(setup: Tspl.Setup): Pair<Bitmap, Canvas> {
-        val bmp = Bitmap.createBitmap(Tspl.widthDots(setup), Tspl.heightDots(setup), Bitmap.Config.ARGB_8888)
-        return bmp to Canvas(bmp).apply { drawColor(Color.WHITE) }
+    fun tsplJob(spec: LabelSpec, setup: Tspl.Setup): ByteArray {
+        val bmp = bitmap(spec, setup)
+        return Tspl.job(toBlack(bmp), bmp.width, bmp.height, setup).also { bmp.recycle() }
     }
 
     private fun condensed() = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -130,9 +152,10 @@ object LabelRenderer {
      * and a small footer with the invoice number, date and cut reference. No QR.
      */
     fun renderCustomer(spec: LabelSpec.CustomerCut, setup: Tspl.Setup): Bitmap {
-        val (bmp, c) = blank(setup)
-        val w = bmp.width.toFloat()
-        val h = bmp.height.toFloat()
+        val p = page(setup)
+        val c = p.c
+        val w = p.w
+        val h = p.h
         val inner = w - 2 * MARGIN
 
         val name = condensed()
@@ -168,7 +191,7 @@ object LabelRenderer {
         if (spec.invoice.isNotBlank()) c.drawText(spec.invoice, MARGIN.toFloat(), footY, foot)
         foot.textAlign = Paint.Align.RIGHT
         c.drawText("${Format.date(spec.at)} · ${spec.ref}", w - MARGIN, footY, foot)
-        return bmp
+        return p.bmp
     }
 
     /**
@@ -176,12 +199,13 @@ object LabelRenderer {
      * "left of 120 m", the same QR and ID as the roll so scanning keeps working.
      */
     fun renderRemainder(item: Item, setup: Tspl.Setup): Bitmap {
-        val (bmp, c) = blank(setup)
-        val w = bmp.width
-        val h = bmp.height
-        val qrSize = 200
+        val p = page(setup)
+        val c = p.c
+        val w = p.w
+        val h = p.h
+        val qrSize = qrSide(p)
         val qrLeft = w - MARGIN - qrSize
-        drawQr(c, item.id, qrLeft, MARGIN, qrSize)
+        drawQr(p, item.id, qrLeft, MARGIN.toFloat(), qrSize)
         val textWidth = qrLeft - MARGIN - 12f
 
         val tag = condensed().apply { textSize = 40f }
@@ -208,8 +232,8 @@ object LabelRenderer {
         c.drawText("left of ${Format.qtyUnit(item.qty, item.unit)}", MARGIN.toFloat(), y, of)
 
         val id = mono()
-        fit(id, item.id, (w - 2 * MARGIN).toFloat(), 34f, 18f)
+        fit(id, item.id, w - 2 * MARGIN, 34f, 18f)
         c.drawText(item.id, MARGIN.toFloat(), h - MARGIN - id.fontMetrics.descent, id)
-        return bmp
+        return p.bmp
     }
 }

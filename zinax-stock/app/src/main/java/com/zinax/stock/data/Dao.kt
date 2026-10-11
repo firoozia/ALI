@@ -110,6 +110,53 @@ interface StockDao {
     @Query("SELECT * FROM items WHERE status = 'IN_STOCK' AND code = :code ORDER BY receivedAt")
     fun inStockOfCode(code: String): Flow<List<Item>>
 
+    // users
+    @Query("SELECT * FROM users ORDER BY name COLLATE NOCASE")
+    fun users(): Flow<List<AppUser>>
+
+    @Query("SELECT * FROM users")
+    suspend fun allUsers(): List<AppUser>
+
+    @Query("SELECT * FROM users WHERE id = :id")
+    suspend fun user(id: String): AppUser?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putUsers(rows: List<AppUser>)
+
+    @Query("SELECT * FROM users WHERE dirty = 1")
+    suspend fun dirtyUsers(): List<AppUser>
+
+    @Query("UPDATE users SET dirty = 0 WHERE id IN (:ids) AND updatedAt <= :upTo")
+    suspend fun cleanUsers(ids: List<String>, upTo: Long)
+
+    // requests
+    @Query("SELECT * FROM requests ORDER BY requestedAt DESC LIMIT 300")
+    fun requests(): Flow<List<ChangeRequest>>
+
+    @Query("SELECT * FROM requests WHERE status = 'PENDING' ORDER BY requestedAt")
+    fun pendingRequests(): Flow<List<ChangeRequest>>
+
+    @Query("SELECT * FROM requests WHERE status = 'PENDING'")
+    suspend fun pendingRequestsNow(): List<ChangeRequest>
+
+    @Query("SELECT * FROM requests WHERE id = :id")
+    suspend fun request(id: String): ChangeRequest?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putRequests(rows: List<ChangeRequest>)
+
+    @Query("SELECT * FROM requests WHERE dirty = 1")
+    suspend fun dirtyRequests(): List<ChangeRequest>
+
+    @Query("UPDATE requests SET dirty = 0 WHERE id IN (:ids) AND updatedAt <= :upTo")
+    suspend fun cleanRequests(ids: List<String>, upTo: Long)
+
+    @Query("SELECT * FROM requests WHERE status != notified")
+    suspend fun requestsToNotify(): List<ChangeRequest>
+
+    @Query("UPDATE requests SET notified = :status WHERE id = :id")
+    suspend fun setNotified(id: String, status: String)
+
     // customers
     @Query("SELECT * FROM customers WHERE hidden = 0 ORDER BY name COLLATE NOCASE")
     fun customers(): Flow<List<Customer>>

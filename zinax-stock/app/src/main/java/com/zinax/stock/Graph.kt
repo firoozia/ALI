@@ -22,6 +22,7 @@ import com.zinax.stock.data.Repository
 import com.zinax.stock.printer.BluetoothPrinter
 import com.zinax.stock.printer.PrintQueue
 import com.zinax.stock.sync.ReportWorker
+import com.zinax.stock.sync.RequestNotifier
 import com.zinax.stock.sync.SheetsSync
 import com.zinax.stock.sync.SyncWorker
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +41,7 @@ object Graph {
     lateinit var printer: BluetoothPrinter
     lateinit var printQueue: PrintQueue
     lateinit var sync: SheetsSync
+    lateinit var session: Session
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     fun init(app: Application) {
@@ -49,7 +51,11 @@ object Graph {
         repo = Repository(db, prefs) { SyncWorker.soon(app) }
         printer = BluetoothPrinter(app)
         printQueue = PrintQueue(printer, prefs, scope)
-        sync = SheetsSync(db, prefs)
+        session = Session(prefs, db.dao())
+        sync = SheetsSync(db, prefs) {
+            session.refresh()
+            RequestNotifier.check(app)
+        }
     }
 
     suspend fun stockReportText(): String {
@@ -140,6 +146,7 @@ class ZinaxApp : Application() {
         super.onCreate()
         Graph.init(this)
         ReportWorker.createChannel(this)
+        RequestNotifier.createChannel(this)
         SyncWorker.schedulePeriodic(this)
         ReportWorker.schedule(this)
     }
@@ -171,6 +178,7 @@ object Share {
     }
 
     private fun start(context: Context, send: Intent) {
+        Graph.session.leaving()
         val chooser = Intent.createChooser(send, "Send to").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (send.hasExtra(Intent.EXTRA_STREAM)) chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         try {
@@ -180,6 +188,7 @@ object Share {
     }
 
     fun openUrl(context: Context, url: String) {
+        Graph.session.leaving()
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (_: ActivityNotFoundException) {

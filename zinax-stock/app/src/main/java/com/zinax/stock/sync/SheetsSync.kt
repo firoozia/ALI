@@ -3,7 +3,10 @@ package com.zinax.stock.sync
 import androidx.room.withTransaction
 import com.zinax.stock.core.Format
 import com.zinax.stock.data.AppDatabase
+import com.zinax.stock.data.AppUser
+import com.zinax.stock.data.ChangeRequest
 import com.zinax.stock.data.Customer
+import com.zinax.stock.data.RequestStatus
 import com.zinax.stock.data.ExpectedUnit
 import com.zinax.stock.data.Item
 import com.zinax.stock.data.Movement
@@ -24,7 +27,12 @@ import java.net.URL
  * Push: every row changed on this phone. Pull: every row the sheet changed since the last sync.
  * The newer updatedAt wins on both sides.
  */
-class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
+class SheetsSync(
+    private val db: AppDatabase,
+    private val prefs: Prefs,
+    /** Runs after each successful sync: notifications, and checking the signed-in user. */
+    private val afterSync: suspend () -> Unit = {},
+) {
     private val dao = db.dao()
     private val lock = Mutex()
 
@@ -36,6 +44,8 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
             val items = dao.dirtyItems()
             val movements = dao.dirtyMovements()
             val customers = dao.dirtyCustomers()
+            val users = dao.dirtyUsers()
+            val requests = dao.dirtyRequests()
             val pushedAt = System.currentTimeMillis()
 
             val body = JSONObject()
@@ -49,6 +59,8 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 .put("items", JSONArray(items.map { it.toJson() }))
                 .put("movements", JSONArray(movements.map { it.toJson() }))
                 .put("customers", JSONArray(customers.map { it.toJson() }))
+                .put("users", JSONArray(users.map { it.toJson() }))
+                .put("requests", JSONArray(requests.map { it.toJson() }))
 
             val response = JSONObject(post(prefs.webAppUrl, body.toString()))
             if (!response.optBoolean("ok")) throw IOException(response.optString("error", "The sheet refused the sync."))
@@ -59,18 +71,24 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
                 items.map { it.id }.chunked(500).forEach { dao.cleanItems(it, pushedAt) }
                 movements.map { it.id }.chunked(500).forEach { dao.cleanMovements(it) }
                 customers.map { it.id }.chunked(500).forEach { dao.cleanCustomers(it, pushedAt) }
+                users.map { it.id }.chunked(500).forEach { dao.cleanUsers(it, pushedAt) }
+                requests.map { it.id }.chunked(500).forEach { dao.cleanRequests(it, pushedAt) }
                 mergeShipments(response.optJSONArray("shipments"))
                 mergeExpected(response.optJSONArray("expected"))
                 mergeItems(response.optJSONArray("items"))
                 mergeMovements(response.optJSONArray("movements"))
                 mergeCustomers(response.optJSONArray("customers"))
+                mergeUsers(response.optJSONArray("users"))
+                mergeRequests(response.optJSONArray("requests"))
             }
+            response.optString("rev").takeIf { it.isNotEmpty() }?.let { prefs.lastRev = it }
             if (response.has("movements")) prefs.movementsBackfilled = true
             prefs.lastServerSync = response.optLong("now", prefs.lastServerSync)
             response.optString("sheetUrl").takeIf { it.startsWith("https://") }?.let { prefs.sheetUrl = it }
-            val pushed = shipments.size + expected.size + items.size + movements.size + customers.size
+            val pushed = shipments.size + expected.size + items.size + movements.size + customers.size + users.size + requests.size
             val msg = "Synced ${Format.dateTime(System.currentTimeMillis())} · sent $pushed change(s)"
             prefs.lastSyncMessage = msg
+            try { afterSync() } catch (_: Exception) {}
             msg
         } catch (e: Exception) {
             val msg = "Sync failed ${Format.dateTime(System.currentTimeMillis())}: ${e.message ?: e.javaClass.simpleName}"
@@ -79,7 +97,65 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
         }
     }
 
+    /**
+     * Quick check whether anything changed in the sheet since the last sync; syncs if so.
+     * Used every few seconds while the app is open, so approvals arrive quickly.
+     */
+    suspend fun syncIfChanged() {
+        if (!prefs.syncConfigured) return
+        val res = JSONObject(post(prefs.webAppUrl, JSONObject().put("action", "poll").put("token", prefs.token).toString()))
+        if (!res.optBoolean("ok")) return
+        val rev = res.optString("rev")
+        if (rev.isEmpty() || rev != prefs.lastRev || dao.dirtyRequests().isNotEmpty()) sync()
+    }
+
+    /** Checks the admin code shown in the Apps Script log. Throws with the reason when it is wrong. */
+    suspend fun verifyAdminCode(code: String) {
+        if (!prefs.syncConfigured) throw IOException("Add the web app URL and token first.")
+        val res = JSONObject(
+            post(prefs.webAppUrl, JSONObject().put("action", "verifyAdmin").put("token", prefs.token).put("code", code.trim()).toString())
+        )
+        if (!res.optBoolean("ok")) {
+            val err = res.optString("error")
+            throw IOException(if (err == "Unknown action") "Update the Apps Script to version 1.9.0 and deploy a new version first." else err.ifEmpty { "Wrong admin code" })
+        }
+    }
+
     // ---------- merge ----------
+
+    private suspend fun mergeUsers(arr: JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        val rows = (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+            AppUser(
+                id = it.getString("id"), name = it.optString("name"), role = it.optString("role"),
+                canReceive = it.optBoolean("canReceive", false), active = it.optBoolean("active", true),
+                pinHash = it.optString("pinHash"), salt = it.optString("salt"), updatedAt = it.optLong("updatedAt"), dirty = false,
+            )
+        }.filter { remote -> dao.user(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
+        if (rows.isNotEmpty()) dao.putUsers(rows)
+    }
+
+    private suspend fun mergeRequests(arr: JSONArray?) {
+        if (arr == null || arr.length() == 0) return
+        val rows = (0 until arr.length()).map { arr.getJSONObject(it) }.mapNotNull {
+            val remote = ChangeRequest(
+                id = it.getString("id"), kind = it.optString("kind"), target = it.optString("target"),
+                summary = it.optString("summary"), reason = it.optString("reason"), requestedBy = it.optString("requestedBy"),
+                device = it.optString("device"), requestedAt = it.optLong("requestedAt"),
+                status = it.optString("status").ifEmpty { RequestStatus.PENDING }, decidedBy = it.optString("decidedBy"),
+                decidedAt = it.optLong("decidedAt"), note = it.optString("note"), updatedAt = it.optLong("updatedAt"), dirty = false,
+            )
+            val local = dao.request(remote.id)
+            when {
+                local == null -> remote
+                // A decision is final: the first one the sheet saw wins.
+                remote.status != RequestStatus.PENDING && local.status != remote.status -> remote.copy(notified = local.notified)
+                local.dirty || local.updatedAt > remote.updatedAt -> null
+                else -> remote.copy(notified = local.notified)
+            }
+        }
+        if (rows.isNotEmpty()) dao.putRequests(rows)
+    }
 
     private suspend fun mergeShipments(arr: JSONArray?) {
         if (arr == null) return
@@ -149,6 +225,15 @@ class SheetsSync(private val db: AppDatabase, private val prefs: Prefs) {
 
     private fun JSONObject.optNullableDouble(key: String): Double? =
         if (!has(key) || isNull(key) || optString(key).isEmpty()) null else optDouble(key).takeIf { !it.isNaN() }
+
+    private fun AppUser.toJson() = JSONObject()
+        .put("id", id).put("name", name).put("role", role).put("canReceive", canReceive).put("active", active)
+        .put("pinHash", pinHash).put("salt", salt).put("updatedAt", updatedAt)
+
+    private fun ChangeRequest.toJson() = JSONObject()
+        .put("id", id).put("kind", kind).put("target", target).put("summary", summary).put("reason", reason)
+        .put("requestedBy", requestedBy).put("device", device).put("requestedAt", requestedAt).put("status", status)
+        .put("decidedBy", decidedBy).put("decidedAt", decidedAt).put("note", note).put("updatedAt", updatedAt)
 
     private fun Customer.toJson() = JSONObject()
         .put("id", id).put("name", name).put("createdAt", createdAt).put("createdBy", createdBy)

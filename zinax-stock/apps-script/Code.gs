@@ -4,7 +4,8 @@
  * Install (once):
  * 1. Create a Google Sheet named "Zinax Stock Data".
  * 2. Extensions > Apps Script, paste this file, save.
- * 3. Run `setup` and allow access. The log prints the token for the app.
+ * 3. Run `setup` and allow access. The log prints the token and the admin code for the app.
+ *    (Run it again any time to see them; it changes nothing else.)
  * 4. Deploy > New deployment > Web app. Execute as: Me. Who has access: Anyone.
  *    Copy the URL ending in /exec into the app's Settings with the token.
  *
@@ -27,6 +28,11 @@ const SHEETS = {
              'UpdatedAt', 'ServerAt'],
   // Customer library shared by the phones. Add a name on a new row, fix a name, or put TRUE in Hidden to stop suggesting it.
   Customers: ['ID', 'Name', 'CreatedAt', 'By', 'Hidden', 'UpdatedAt', 'ServerAt'],
+  // People who sign in to the app. Role ADMIN or USER; Active FALSE stops someone signing in. PINs are stored hashed.
+  Users: ['ID', 'Name', 'Role', 'CanReceive', 'Active', 'PinHash', 'Salt', 'UpdatedAt', 'ServerAt'],
+  // Undo and delete asked by users, and the admin's answer.
+  Requests: ['ID', 'Kind', 'Target', 'Summary', 'Reason', 'RequestedBy', 'Device', 'RequestedAt', 'Status', 'DecidedBy',
+             'DecidedAt', 'Note', 'UpdatedAt', 'ServerAt'],
 };
 
 // Columns kept as plain text so codes like "0101" or sizes like "0.30*1400" are not turned into numbers.
@@ -36,6 +42,8 @@ const TEXT_COLUMNS = {
   Expected: ['Pallet', 'Code', 'Size'],
   Shipments: [],
   Customers: ['Name'],
+  Users: ['Name', 'PinHash', 'Salt'],
+  Requests: ['Target'],
 };
 
 function setup() {
@@ -50,11 +58,13 @@ function setup() {
     token = Utilities.getUuid().replace(/-/g, '').slice(0, 20);
     props.setProperty('ZINAX_TOKEN', token);
   }
+  const adminCode = adminCode_();
   ScriptApp.getProjectTriggers()
     .filter(function (t) { return t.getHandlerFunction() === 'weeklyBackup'; })
     .forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('weeklyBackup').timeBased().onWeekDay(BACKUP_DAY).atHour(BACKUP_HOUR).create();
   Logger.log('Token for the app: ' + token);
+  Logger.log('Admin code (to create the first admin or reset a PIN): ' + adminCode);
   Logger.log('Sheet: ' + ss.getUrl());
 }
 
@@ -63,12 +73,25 @@ function doGet() {
 }
 
 function doPost(e) {
+  let req;
+  try {
+    req = JSON.parse(e.postData.contents);
+  } catch (err) {
+    return json_({ ok: false, error: 'Bad request' });
+  }
+  const props = PropertiesService.getScriptProperties();
+  const token = props.getProperty('ZINAX_TOKEN');
+  if (!token || req.token !== token) return json_({ ok: false, error: 'Wrong token. Copy it again from the Apps Script log.' });
+  // Asked every few seconds by open apps: answers without touching the sheet.
+  if (req.action === 'poll') return json_({ ok: true, rev: props.getProperty('ZINAX_REV') || '0' });
+  if (req.action === 'verifyAdmin') {
+    const code = props.getProperty('ZINAX_ADMIN_CODE');
+    if (!code) return json_({ ok: false, error: 'No admin code yet. In Apps Script run setup once, then read the code in the log.' });
+    return json_(String(req.code || '').trim().toUpperCase() === code ? { ok: true } : { ok: false, error: 'Wrong admin code' });
+  }
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(30000);
-    const req = JSON.parse(e.postData.contents);
-    const token = PropertiesService.getScriptProperties().getProperty('ZINAX_TOKEN');
-    if (!token || req.token !== token) return json_({ ok: false, error: 'Wrong token. Copy it again from the Apps Script log.' });
     if (req.action === 'ping') return json_({ ok: true, now: Date.now() });
     if (req.action === 'sync') return json_(sync_(req));
     return json_({ ok: false, error: 'Unknown action' });
@@ -109,6 +132,21 @@ function sync_(req) {
     return [c.id, c.name, date_(c.createdAt), c.createdBy || '', c.hidden ? true : false, c.updatedAt, now];
   }, 5);
 
+  upsert_('Users', req.users || [], function (u) {
+    return [u.id, u.name, u.role === 'ADMIN' ? 'ADMIN' : 'USER', u.canReceive ? true : false, u.active === false ? false : true,
+            u.pinHash || '', u.salt || '', u.updatedAt, now];
+  }, 7);
+
+  // A decision is final: once approved or rejected, a later write from another phone does not change it.
+  upsert_('Requests', req.requests || [], function (r) {
+    return [r.id, r.kind, r.target, r.summary || '', r.reason || '', r.requestedBy || '', r.device || '', date_(r.requestedAt),
+            r.status || 'PENDING', r.decidedBy || '', date_(r.decidedAt), r.note || '', r.updatedAt, now];
+  }, 12, function (old) { return old[8] && old[8] !== 'PENDING'; });
+
+  const pushed = ['shipments', 'expected', 'items', 'movements', 'customers', 'users', 'requests']
+    .some(function (k) { return (req[k] || []).length; });
+  if (pushed) bump_();
+
   if ((req.items || []).length) stockSheet_();
   if ((req.movements || []).length) { outSheet_(); cutsSheet_(); }
   const movementsSince = req.movementsSince === undefined ? since : Number(req.movementsSince) || 0;
@@ -135,6 +173,17 @@ function sync_(req) {
                reference: String(r[7]), at: ms_(r[8]), device: String(r[9]), user: String(r[11] || ''),
                customer: String(r[12] || ''), invoice: String(r[13] || '') };
     }),
+    rev: PropertiesService.getScriptProperties().getProperty('ZINAX_REV') || '0',
+    users: changed_('Users', since).filter(function (r) { return String(r[1]).trim(); }).map(function (r) {
+      return { id: String(r[0]), name: String(r[1]).trim(), role: String(r[2]).trim().toUpperCase() === 'ADMIN' ? 'ADMIN' : 'USER',
+               canReceive: yes_(r[3]), active: r[4] === '' ? true : yes_(r[4]), pinHash: String(r[5] || ''),
+               salt: String(r[6] || ''), updatedAt: Number(r[7]) || 0 };
+    }),
+    requests: changed_('Requests', since).map(function (r) {
+      return { id: String(r[0]), kind: String(r[1]), target: String(r[2]), summary: String(r[3]), reason: String(r[4]),
+               requestedBy: String(r[5]), device: String(r[6]), requestedAt: ms_(r[7]), status: String(r[8] || 'PENDING'),
+               decidedBy: String(r[9] || ''), decidedAt: ms_(r[10]), note: String(r[11] || ''), updatedAt: Number(r[12]) || 0 };
+    }),
     customers: changed_('Customers', since).filter(function (r) { return String(r[1]).trim(); }).map(function (r) {
       return { id: String(r[0]), name: String(r[1]).trim(), createdAt: ms_(r[2]), createdBy: String(r[3] || ''),
                hidden: yes_(r[4]), updatedAt: Number(r[5]) || 0 };
@@ -152,6 +201,7 @@ function sync_(req) {
 function onEdit(e) {
   const sh = e.range.getSheet();
   if (sh.getName() === 'Customers') return customersEdited_(e);
+  if (sh.getName() === 'Users') return usersEdited_(e);
   if (sh.getName() !== 'Items') return;
   const first = Math.max(2, e.range.getRow());
   const last = e.range.getLastRow();
@@ -172,6 +222,7 @@ function onEdit(e) {
     r[C('ServerAt')] = now;
   });
   sh.getRange(first, 1, rows.length, cols.length).setValues(rows);
+  bump_();
 
   const remainingCol = C('Remaining') + 1;
   if (rows.length === 1 && e.range.getNumColumns() === 1 && e.range.getColumn() === remainingCol && rows[0][0]) {
@@ -212,6 +263,47 @@ function customersEdited_(e) {
     r[6] = now;
   });
   sh.getRange(first, 1, rows.length, width).setValues(rows);
+  bump_();
+}
+
+/**
+ * Edits in the Users tab: Role, CanReceive and Active can be changed by hand. New users and PINs
+ * are made in the app, because the sheet only holds the PIN's hash.
+ */
+function usersEdited_(e) {
+  const sh = e.range.getSheet();
+  const first = Math.max(2, e.range.getRow());
+  const last = e.range.getLastRow();
+  if (last < first) return;
+  const width = SHEETS.Users.length;
+  const rows = sh.getRange(first, 1, last - first + 1, width).getValues();
+  const now = Date.now();
+  rows.forEach(function (r) {
+    if (!r[0]) return;
+    r[2] = String(r[2]).trim().toUpperCase() === 'ADMIN' ? 'ADMIN' : 'USER';
+    r[3] = yes_(r[3]);
+    r[4] = r[4] === '' ? true : yes_(r[4]);
+    r[7] = Math.max(now, (Number(r[7]) || 0) + 1);
+    r[8] = now;
+  });
+  sh.getRange(first, 1, rows.length, width).setValues(rows);
+  bump_();
+}
+
+/** Tells open apps (through `poll`) that something changed and they should sync. */
+function bump_() {
+  PropertiesService.getScriptProperties().setProperty('ZINAX_REV', String(Date.now()));
+}
+
+/** The code that lets someone create the first admin, or reset a PIN, from the app. Made once. */
+function adminCode_() {
+  const props = PropertiesService.getScriptProperties();
+  let code = props.getProperty('ZINAX_ADMIN_CODE');
+  if (!code) {
+    code = Utilities.getUuid().replace(/-/g, '').slice(0, 8).toUpperCase();
+    props.setProperty('ZINAX_ADMIN_CODE', code);
+  }
+  return code;
 }
 
 // ---------- sheet helpers ----------
@@ -241,8 +333,11 @@ function readAll_(name) {
   return sh.getRange(2, 1, last - 1, SHEETS[name].length).getValues();
 }
 
-/** Insert or replace rows by ID. A row is replaced only when the incoming UpdatedAt is not older. */
-function upsert_(name, objects, toRow, updatedIdx) {
+/**
+ * Insert or replace rows by ID. A row is replaced only when the incoming UpdatedAt is not older,
+ * and never when [keep] says the existing row must stay.
+ */
+function upsert_(name, objects, toRow, updatedIdx, keep) {
   if (!objects.length) return;
   const sh = sheet_(name);
   const width = SHEETS[name].length;
@@ -257,7 +352,7 @@ function upsert_(name, objects, toRow, updatedIdx) {
       index[String(row[0])] = data.length;
       data.push(row);
       changed = true;
-    } else if (Number(data[i][updatedIdx]) <= Number(row[updatedIdx])) {
+    } else if (Number(data[i][updatedIdx]) <= Number(row[updatedIdx]) && !(keep && keep(data[i], row))) {
       data[i] = row;
       changed = true;
     }

@@ -3,6 +3,7 @@ package com.zinax.stock.printer
 import com.zinax.stock.data.Item
 import com.zinax.stock.data.Prefs
 import com.zinax.stock.label.LabelRenderer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -71,10 +72,17 @@ class PrintQueue(
                     _state.value = PrintState.Running(title, n, items.size)
                 }
                 _state.value = PrintState.Done(title, items)
+            } catch (e: CancellationException) {
+                _state.value = PrintState.Failed(title, items, sent, "Printing cancelled.")
             } catch (e: Exception) {
                 _state.value = PrintState.Failed(title, items, sent, e.message ?: "Printing failed.")
             }
         }
+    }
+
+    /** Stops the running print: a printer still being looked for is given up at once. */
+    fun cancel() {
+        if (_state.value is PrintState.Running) job?.cancel()
     }
 
     /** Reprint starting at label [fromNumber] (1-based) of the last run. */

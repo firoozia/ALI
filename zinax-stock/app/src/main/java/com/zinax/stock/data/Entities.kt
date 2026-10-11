@@ -92,6 +92,67 @@ data class Customer(
     val dirty: Boolean = true,
 )
 
+object Roles {
+    const val ADMIN = "ADMIN"
+    const val USER = "USER"
+}
+
+/** A person who signs in with a PIN. Shared by the phones through the Users tab. */
+@Entity(tableName = "users")
+data class AppUser(
+    @PrimaryKey val id: String,
+    val name: String,
+    /** [Roles.ADMIN] or [Roles.USER]. */
+    val role: String,
+    /** A user who may receive goods and print labels. Admins always can. */
+    val canReceive: Boolean = false,
+    val active: Boolean = true,
+    val pinHash: String,
+    val salt: String,
+    val updatedAt: Long,
+    val dirty: Boolean = true,
+) {
+    val isAdmin: Boolean get() = role == Roles.ADMIN
+    val mayReceive: Boolean get() = isAdmin || canReceive
+}
+
+object RequestKind {
+    /** Undo a ship-out, cut or write-off; the target is the movement ID. */
+    const val UNDO = "UNDO"
+    /** Delete labels entered by mistake; the target is the item IDs, comma separated. */
+    const val DELETE = "DELETE"
+}
+
+object RequestStatus {
+    const val PENDING = "PENDING"
+    const val APPROVED = "APPROVED"
+    const val REJECTED = "REJECTED"
+}
+
+/** A user's undo or delete, waiting for an admin. Shared through the Requests tab. */
+@Entity(tableName = "requests")
+data class ChangeRequest(
+    @PrimaryKey val id: String,
+    val kind: String,
+    val target: String,
+    /** What it changes, in words, e.g. "Undo cut 20 m of 101 (ZX-251009-A0003) to Bahar". */
+    val summary: String,
+    val reason: String,
+    val requestedBy: String,
+    val device: String,
+    val requestedAt: Long,
+    val status: String = RequestStatus.PENDING,
+    val decidedBy: String = "",
+    val decidedAt: Long = 0,
+    val note: String = "",
+    val updatedAt: Long,
+    val dirty: Boolean = true,
+    /** This phone only: the status a notification was last shown (or not needed) for. */
+    val notified: String = "",
+) {
+    val targets: List<String> get() = target.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+}
+
 /** A product the app has seen, offered as a suggestion when typing a code. */
 data class ProductHint(
     val category: String,
