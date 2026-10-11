@@ -79,13 +79,17 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
             Button(
                 onClick = {
                     Graph.session.leaving()
-                    scanner.launch(
-                        ScanOptions()
-                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
-                            .setPrompt("Point at the label QR")
-                            .setBeepEnabled(true)
-                            .setOrientationLocked(false)
-                    )
+                    try {
+                        scanner.launch(
+                            ScanOptions()
+                                .setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
+                                .setPrompt("Point at the label QR")
+                                .setBeepEnabled(true)
+                                .setOrientationLocked(false)
+                        )
+                    } catch (e: Exception) {
+                        scope.launch { snackbar.showSnackbar("Could not open the camera: ${e.message ?: e.javaClass.simpleName}") }
+                    }
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Scan label") }

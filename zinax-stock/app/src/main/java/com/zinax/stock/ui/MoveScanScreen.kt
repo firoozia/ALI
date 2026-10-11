@@ -95,11 +95,15 @@ fun MoveScanScreen(onBack: () -> Unit) {
     }
     val scan: () -> Unit = {
         Graph.session.leaving()
-        scanner.launch(
-            ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
-                .setPrompt("Moving to ${target.trim()} · ${lines.count { it.from != null && !it.back }} moved · Back to stop")
-                .setBeepEnabled(true).setOrientationLocked(false)
-        )
+        try {
+            scanner.launch(
+                ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
+                    .setPrompt("Moving to ${target.trim()} · ${lines.count { it.from != null && !it.back }} moved · Back to stop")
+                    .setBeepEnabled(true).setOrientationLocked(false)
+            )
+        } catch (e: Exception) {
+            scope.launch { snackbar.showSnackbar("Could not open the camera: ${e.message ?: e.javaClass.simpleName}") }
+        }
     }
     nextScan.set(scan)
 

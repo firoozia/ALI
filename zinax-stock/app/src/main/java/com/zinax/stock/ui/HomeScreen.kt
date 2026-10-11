@@ -58,6 +58,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -67,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import com.zinax.stock.CrashLog
 import com.zinax.stock.Graph
 import com.zinax.stock.Routes
 import com.zinax.stock.Share
@@ -96,6 +99,31 @@ fun HomeScreen(nav: NavController) {
     val sheetUrl = remember(tick) { prefs.sheetUrl }
     val syncMessage = remember(tick) { prefs.lastSyncMessage }
     val reminder = remember(tick) { if (prefs.reportEnabled) "Daily %02d:%02d".format(prefs.reportHour, prefs.reportMinute) else "Off" }
+
+    // The last unexpected close, offered once so it can be sent for fixing.
+    var crash by remember { mutableStateOf(CrashLog.read(context)) }
+    crash?.let { report ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {},
+            title = { Text("The app closed unexpectedly") },
+            text = {
+                Text(
+                    "The last time, Zinax Stock closed by itself. Send this report (for example on WhatsApp) so the problem can be fixed. " +
+                        "It contains only the error, the phone model and the app version.",
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    CrashLog.clear(context)
+                    crash = null
+                    Share.text(context, report)
+                }) { Text("Send report") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { CrashLog.clear(context); crash = null }) { Text("Close") }
+            },
+        )
+    }
 
     val look = LocalLook.current
     val emerald = look.header != null

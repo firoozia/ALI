@@ -159,6 +159,7 @@ object Graph {
 class ZinaxApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        CrashLog.install(this)
         Graph.init(this)
         ReportWorker.createChannel(this)
         RequestNotifier.createChannel(this)

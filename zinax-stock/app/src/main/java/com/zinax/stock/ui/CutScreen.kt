@@ -100,10 +100,14 @@ fun CutScreen(startItem: String?, onBack: () -> Unit) {
     }
     val scan = {
         Graph.session.leaving()
-        scanner.launch(
-            ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
-                .setPrompt("Point at the roll label").setBeepEnabled(true).setOrientationLocked(false)
-        )
+        try {
+            scanner.launch(
+                ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE, ScanOptions.CODE_128)
+                    .setPrompt("Point at the roll label").setBeepEnabled(true).setOrientationLocked(false)
+            )
+        } catch (e: Exception) {
+            scope.launch { snackbar.showSnackbar("Could not open the camera: ${e.message ?: e.javaClass.simpleName}") }
+        }
     }
 
     val item = stock.firstOrNull { it.id == itemId }
