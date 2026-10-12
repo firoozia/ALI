@@ -128,11 +128,35 @@ fun Pill(text: String, color: Color, soft: Color) {
 
 /** Big code on the left, details in the middle, an action on the right. */
 @Composable
-fun CodeRow(code: String, title: String, subtitle: String, trailing: @Composable () -> Unit = {}, codeColor: Color = MaterialTheme.colorScheme.onSurface) {
+fun CodeRow(
+    code: String,
+    title: String,
+    subtitle: String,
+    trailing: @Composable () -> Unit = {},
+    codeColor: Color = MaterialTheme.colorScheme.onSurface,
+    /** Part of [title] drawn in the orange "open" colours, e.g. "2 open". */
+    highlight: String? = null,
+) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(code, style = CodeStyle, color = codeColor, modifier = Modifier.width(88.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            val at = if (highlight.isNullOrEmpty()) -1 else title.indexOf(highlight)
+            if (at < 0) {
+                Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            } else {
+                val status = com.zinax.stock.ui.theme.LocalStatus.current
+                Text(
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        append(title.substring(0, at))
+                        pushStyle(androidx.compose.ui.text.SpanStyle(color = status.openText, background = status.open, fontWeight = FontWeight.Bold))
+                        append(" $highlight ")
+                        pop()
+                        append(title.substring(at + highlight!!.length))
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
         trailing()

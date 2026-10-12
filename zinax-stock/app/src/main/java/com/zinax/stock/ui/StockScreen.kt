@@ -145,6 +145,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                             code = first.code,
                             title = (if (opened > 0) "${list.size - opened} full · $opened open" else "${list.size} $pack") +
                                 " · ${Format.qtyUnit(total, first.unit)}",
+                            highlight = if (opened > 0) "$opened open" else null,
                             subtitle = listOf(first.categoryEnum.label, Format.size(first.size), notes[key].orEmpty())
                                 .filter { it.isNotBlank() }.joinToString(" · "),
                         )
@@ -168,8 +169,8 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                             val status = LocalStatus.current
                             val rowMod = if (item.isOpen) {
                                 Modifier.fillMaxWidth()
-                                    .background(status.warnSoft)
-                                    .drawBehind { drawRect(status.warn, size = Size(4.dp.toPx(), size.height)) }
+                                    .background(status.open)
+                                    .drawBehind { drawRect(status.openText, size = Size(4.dp.toPx(), size.height)) }
                                     .padding(start = 10.dp)
                             } else Modifier.fillMaxWidth()
                             Row(rowMod, verticalAlignment = Alignment.CenterVertically) {
