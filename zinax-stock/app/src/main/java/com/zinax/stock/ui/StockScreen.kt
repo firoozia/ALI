@@ -2,6 +2,7 @@ package com.zinax.stock.ui
 
 import com.zinax.stock.ui.theme.LocalStatus
 import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,10 +30,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zinax.stock.Graph
+import com.zinax.stock.core.Category
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.Report
 import com.zinax.stock.data.Item
@@ -49,6 +53,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
     val items by Graph.db.dao().inStock().collectAsStateWithLifecycle(emptyList())
     var query by remember { mutableStateOf("") }
     var place by remember { mutableStateOf<String?>(null) }
+    var cat by remember { mutableStateOf<Category?>(null) }
     var openOnly by remember { mutableStateOf(false) }
     var open by remember { mutableStateOf<String?>(null) }
     var moving by remember { mutableStateOf<MoveTarget?>(null) }
@@ -69,10 +74,17 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
         catalog.filter { !it.hidden && it.note.isNotBlank() }.associate { "${it.groupId}|${it.code}|${it.size}|${it.unit}" to it.note }
     }
     val openCount = remember(items) { items.count { it.isOpen } }
-    val shown = remember(items, query, place, openOnly, notes) {
+    // Groups that have stock, in catalog order, with how many packages each holds.
+    val cats = remember(items) {
+        val counts = items.groupingBy { it.categoryEnum }.eachCount()
+        Category.entries.filter { it in counts }.map { it to counts.getValue(it) }
+    }
+    val shown = remember(items, query, place, cat, openOnly, notes) {
         items.filter { !openOnly || it.isOpen }
+            .filter { cat == null || it.categoryEnum == cat }
             .filter {
                 query.isBlank() || it.code.contains(query.trim(), true) || it.id.contains(query.trim(), true) ||
+                    it.categoryEnum.label.contains(query.trim(), true) ||
                     notes["${it.category}|${it.code}|${it.size}|${it.unit}"]?.contains(query.trim(), true) == true
             }
             .filter { place == null || it.location.ifBlank { NO_LOCATION } == place }
@@ -91,6 +103,14 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
         ) {
             item {
                 OutlinedTextField(query, { query = it }, label = { Text("Search code, label ID or colour") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+            if (cats.size > 1 || cat != null) item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item { FilterChip(selected = cat == null, onClick = { cat = null }, label = { Text("All groups") }) }
+                    items(cats) { (c, n) ->
+                        FilterChip(selected = cat == c, onClick = { cat = if (cat == c) null else c }, label = { Text("${c.label} ($n)") })
+                    }
+                }
             }
             if (places.size > 1 || place != null || openCount > 0) item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -141,9 +161,18 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                                 deleting = MoveTarget("Delete all ${list.size} of ${first.code}?", list.map { it.id }, "")
                             }) { Text("Delete all ${list.size}", color = LocalStatus.current.bad) }
                         }
-                        list.sortedBy { it.receivedAt }.forEach { item ->
+                        // Open rolls first, the least left on top because they are used up first; then full ones by date.
+                        list.sortedWith(compareByDescending<Item> { it.isOpen }.thenBy { if (it.isOpen) it.remaining else 0.0 }.thenBy { it.receivedAt })
+                            .forEach { item ->
                             HorizontalDivider()
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            val status = LocalStatus.current
+                            val rowMod = if (item.isOpen) {
+                                Modifier.fillMaxWidth()
+                                    .background(status.warnSoft)
+                                    .drawBehind { drawRect(status.warn, size = Size(4.dp.toPx(), size.height)) }
+                                    .padding(start = 10.dp)
+                            } else Modifier.fillMaxWidth()
+                            Row(rowMod, verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Text(item.id, style = MonoStyle, fontWeight = FontWeight.Medium)
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -156,8 +185,9 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                                             item.pallet?.let { "Pallet $it" },
                                             Format.date(item.receivedAt),
                                         ).joinToString(" · "),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = if (item.isOpen) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (item.isOpen) FontWeight.SemiBold else null,
+                                        color = if (item.isOpen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                                 Column {
