@@ -165,9 +165,9 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
                     )
                     val amount = Format.number(qty)
-                    if (customer.isBlank()) {
+                    if (customer.isBlank() && amount != null) {
                         Text(
-                            "Enter the customer to get a customer label after shipping.",
+                            "Enter the customer to ship out.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -182,14 +182,12 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                                             if (updated.status == ItemStatus.IN_STOCK) ", ${Format.qtyUnit(updated.remaining, it.unit)} left" else ""
                                     )
                                     val who = CustomerNames.clean(customer)
-                                    if (who.isNotEmpty()) {
-                                        val label = LabelSpec.CustomerCut(
-                                            customer = who, code = it.code, size = it.size, length = amount, unit = it.unit,
-                                            invoice = invoice.trim(), at = System.currentTimeMillis(), ref = "${it.id.substringAfterLast('-')}-S",
-                                        )
-                                        if (Graph.prefs.autoPrintShip) Graph.printQueue.printLabels(listOf(label), "ship to $who")
-                                        else pending = label
-                                    }
+                                    val label = LabelSpec.CustomerCut(
+                                        customer = who, code = it.code, size = it.size, length = amount, unit = it.unit,
+                                        invoice = invoice.trim(), at = System.currentTimeMillis(), ref = "${it.id.substringAfterLast('-')}-S",
+                                    )
+                                    if (Graph.prefs.autoPrintShip) Graph.printQueue.printLabels(listOf(label), "ship to $who")
+                                    else pending = label
                                     item = null
                                     older = null
                                     customer = ""
@@ -199,7 +197,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                                 }
                             }
                         },
-                        enabled = amount != null && amount > 0 && amount <= it.remaining + 1e-6,
+                        enabled = amount != null && amount > 0 && amount <= it.remaining + 1e-6 && customer.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Confirm ship out") }
                     OutlinedButton(onClick = { moving = true }, modifier = Modifier.fillMaxWidth()) { Text("Move to another place") }

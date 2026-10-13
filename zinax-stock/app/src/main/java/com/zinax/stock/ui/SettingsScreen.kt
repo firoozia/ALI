@@ -199,7 +199,7 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             SwitchRow("Print the customer label automatically after Ship out", autoShip) { autoShip = it; prefs.autoPrintShip = it }
             Text(
                 "When a switch is off, a Print customer label button appears after each cut or ship out. " +
-                    "Ship out only makes a label when a customer name is entered.",
+                    "Cut and Ship out both need a customer name.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

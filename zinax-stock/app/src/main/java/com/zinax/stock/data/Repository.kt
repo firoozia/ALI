@@ -106,6 +106,7 @@ class Repository(
     /** Ships [qty] out of [itemId]. A package is marked shipped when nothing is left. */
     suspend fun shipOut(itemId: String, qty: Double, customer: String, invoice: String = ""): Item {
         val who = CustomerNames.clean(customer)
+        require(who.isNotEmpty()) { "Enter the customer" }
         val reference = listOf(who, invoice.trim()).filter { it.isNotEmpty() }.joinToString(" · ")
         val result = db.withTransaction {
             val item = dao.item(itemId) ?: error("Unknown label $itemId")
