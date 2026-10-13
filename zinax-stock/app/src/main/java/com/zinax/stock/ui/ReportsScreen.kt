@@ -19,6 +19,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDateRangePickerState
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zinax.stock.Graph
 import com.zinax.stock.core.Activity
+import com.zinax.stock.core.CustomerNames
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.OutReport
 import com.zinax.stock.core.OutSource
@@ -64,6 +66,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
     var from by remember { mutableLongStateOf(today) }
     var to by remember { mutableLongStateOf(Format.addDays(today, 1)) }
     var user by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
     var open by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
     var undoing by remember { mutableStateOf<UndoTarget?>(null) }
@@ -87,7 +90,12 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
     var all by remember { mutableStateOf<List<OutSource>>(emptyList()) }
     LaunchedEffect(moves, activity, from, to) { all = Graph.activityFor(activity, from, to) }
     val users = remember(all) { all.map { OutReport.who(it) }.distinct().sorted() }
-    val shown = remember(all, user) { if (user == null) all else all.filter { OutReport.who(it) == user } }
+    // Search by customer, invoice, code or label ID; case and Arabic/Persian letter forms are ignored.
+    val shown = remember(all, user, query) {
+        val k = CustomerNames.key(query)
+        all.filter { user == null || OutReport.who(it) == user }
+            .filter { k.isEmpty() || listOf(it.customer, it.invoice, it.code, it.itemId, it.reference).any { f -> CustomerNames.key(f).contains(k) } }
+    }
     val lines = remember(shown) { OutReport.lines(shown) }
     val customers = remember(shown, activity) { if (activity == Activity.CUT) OutReport.customerLines(shown) else emptyList() }
     val stamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.US) }
@@ -111,6 +119,11 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                         }
                     }
                     Text(OutReport.period(from, to), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        query, { query = it; open = null }, label = { Text("Search customer, invoice or code") },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = ""; open = null }) { Text("Clear") } },
+                    )
                     if (users.size > 1 || user != null) {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             item { FilterChip(selected = user == null, onClick = { user = null }, label = { Text("All users") }) }
@@ -122,7 +135,11 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
             item {
                 Panel {
                     if (lines.isEmpty()) {
-                        Text("Nothing ${activity.verb} in this period.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            if (query.isNotBlank() && all.isNotEmpty()) "Nothing ${activity.verb} matches \"${query.trim()}\" in this period."
+                            else "Nothing ${activity.verb} in this period.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     } else {
                         Text(
                             "${shown.map { it.itemId }.distinct().size} packages · ${lines.size} codes",
