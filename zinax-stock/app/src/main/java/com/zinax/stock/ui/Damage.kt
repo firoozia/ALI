@@ -27,9 +27,18 @@ import com.zinax.stock.Graph
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.Lengths
 import com.zinax.stock.data.Item
+import com.zinax.stock.printer.LabelSpec
 import kotlinx.coroutines.launch
 
 private val REASONS = listOf("Torn", "Stained", "Water damage", "Crushed core", "Factory defect", "Other")
+
+/** The sticker for the damaged piece: DAMAGED across the top, the length, the code, and the reason in the footer. */
+fun damageLabel(code: String, size: String, qty: Double, unit: String, reason: String, note: String, at: Long, rollId: String) =
+    LabelSpec.CustomerCut(
+        customer = "DAMAGED", code = code, size = size, length = qty, unit = unit,
+        invoice = (if (reason == "Other" && note.isNotBlank()) note else reason).take(16), at = at,
+        ref = rollId.substringAfterLast('-') + "-D",
+    )
 
 private data class DamageEntry(val qty: Double, val reason: String, val note: String)
 
@@ -108,6 +117,10 @@ fun DamageDialog(item: Item, onDismiss: () -> Unit, onDone: (String) -> Unit) {
                 scope.launch {
                     try {
                         Graph.repo.reportDamage(item.id, e.qty, e.reason, e.note)
+                        if (Graph.prefs.autoPrintDamage) {
+                            val label = damageLabel(item.code, item.size, e.qty, item.unit, e.reason, e.note, System.currentTimeMillis(), item.id)
+                            Graph.printQueue.printLabels(listOf(label), "damage ${item.code}")
+                        }
                         onDismiss()
                         onDone("Damage reported: ${Format.qtyUnit(e.qty, item.unit)} of ${item.code}")
                     } catch (ex: Exception) {

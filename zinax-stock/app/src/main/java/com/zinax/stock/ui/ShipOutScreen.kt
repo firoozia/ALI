@@ -295,11 +295,15 @@ private fun PastShipOuts(itemId: String, undone: List<String>, waiting: Set<Stri
     }
 }
 
-private fun canLabel(m: com.zinax.stock.data.Movement) = m.type == MovementType.OUT || m.type == MovementType.CUT
+private fun canLabel(m: com.zinax.stock.data.Movement) =
+    m.type == MovementType.OUT || m.type == MovementType.CUT || m.type == MovementType.DAMAGE
 
 /** Customer label for an earlier ship out or cut. Older entries kept the name only in the reference text. */
 private fun labelOf(m: com.zinax.stock.data.Movement): LabelSpec.CustomerCut {
     val parts = m.reference.split(" · ").map { it.trim() }.filter { it.isNotEmpty() }
+    if (m.type == MovementType.DAMAGE) {
+        return damageLabel(m.code, m.size, m.qty, m.unit, parts.firstOrNull().orEmpty(), parts.getOrNull(1).orEmpty(), m.at, m.itemId)
+    }
     return LabelSpec.CustomerCut(
         customer = m.customer.ifBlank { parts.firstOrNull().orEmpty() },
         code = m.code, size = m.size, length = m.qty, unit = m.unit,

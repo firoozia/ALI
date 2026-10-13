@@ -195,10 +195,13 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
 
             var autoCut by remember { mutableStateOf(prefs.autoPrintCut) }
             var autoShip by remember { mutableStateOf(prefs.autoPrintShip) }
+            var autoDamage by remember { mutableStateOf(prefs.autoPrintDamage) }
             SwitchRow("Print the customer label automatically after Cut", autoCut) { autoCut = it; prefs.autoPrintCut = it }
             SwitchRow("Print the customer label automatically after Ship out", autoShip) { autoShip = it; prefs.autoPrintShip = it }
+            SwitchRow("Print a DAMAGED label automatically after Report damage", autoDamage) { autoDamage = it; prefs.autoPrintDamage = it }
             Text(
-                "When a switch is off, a Print customer label button appears after each cut or ship out. " +
+                "When a switch is off, a Print customer label button appears after each cut or ship out, and a Label button " +
+                    "sits beside every earlier ship out, cut or damage report of a roll in Ship out. " +
                     "Cut and Ship out both need a customer name.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -193,5 +193,10 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("autoPrintShip", false)
         set(v) = edit { putBoolean("autoPrintShip", v) }
 
+    /** Print a DAMAGED label by itself right after damage is reported on this phone. On by default. */
+    var autoPrintDamage: Boolean
+        get() = sp.getBoolean("autoPrintDamage", true)
+        set(v) = edit { putBoolean("autoPrintDamage", v) }
+
     val syncConfigured: Boolean get() = webAppUrl.startsWith("https://") && token.isNotBlank()
 }
