@@ -231,7 +231,7 @@ class Repository(
     suspend fun undoShipOut(movementId: String, by: String = prefs.userName) {
         db.withTransaction {
             val m = dao.movement(movementId) ?: error("Ship-out not found")
-            check(m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE)) { "Only ship-outs, cuts and waste can be undone" }
+            check(m.type in TAKEN_OUT) { "Only ship-outs, cuts, waste and damage reports can be undone" }
             check(movementId !in dao.undoneIdsNow()) { "This was already undone" }
             val item = dao.item(m.itemId) ?: error("Label ${m.itemId} not found")
             check(item.status != ItemStatus.VOID) { "${item.id} was deleted" }
@@ -248,6 +248,41 @@ class Repository(
             )
         }
         onChange()
+    }
+
+    private val TAKEN_OUT = setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE)
+
+    private fun damageLabel(reason: String, note: String) = listOf(reason.trim(), note.trim()).filter { it.isNotEmpty() }.joinToString(" · ")
+
+    /**
+     * Records [qty] of damaged material found on a roll. It leaves the stock with the reason in the log;
+     * a roll that was whole becomes an open roll. Undo puts it back.
+     */
+    suspend fun reportDamage(itemId: String, qty: Double, reason: String, note: String, by: String = prefs.userName): Item {
+        val result = db.withTransaction {
+            val item = dao.item(itemId) ?: error("Unknown label $itemId")
+            check(item.status == ItemStatus.IN_STOCK) { "$itemId is not in stock" }
+            require(qty > 0) { "Enter a length above zero" }
+            require(qty <= item.remaining + 1e-6) { "Only ${Format.qtyUnit(item.remaining, item.unit)} left on $itemId" }
+            require(reason.isNotBlank()) { "Pick a reason" }
+            val t = now()
+            val left = (item.remaining - qty).let { if (it < 1e-6) 0.0 else it }
+            val updated = item.copy(
+                remaining = left, status = if (left == 0.0) ItemStatus.SHIPPED else ItemStatus.IN_STOCK, updatedAt = t, dirty = true,
+            )
+            dao.putItems(listOf(updated))
+            dao.putMovements(
+                listOf(
+                    Movement(
+                        id = uuid(), itemId = item.id, type = MovementType.DAMAGE, qty = qty, reference = damageLabel(reason, note),
+                        at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = by,
+                    )
+                )
+            )
+            updated
+        }
+        onChange()
+        return result
     }
 
     /** Oldest in-stock package of the same code and size received on an earlier day. */
@@ -587,15 +622,28 @@ class Repository(
     /** Asks an admin to undo a ship-out, cut or write-off. Nothing changes until it is approved. */
     suspend fun requestUndo(movementId: String, reason: String): ChangeRequest {
         val m = dao.movement(movementId) ?: error("Not found")
-        check(m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE)) { "Only ship-outs, cuts and waste can be undone" }
+        check(m.type in TAKEN_OUT) { "Only ship-outs, cuts, waste and damage reports can be undone" }
         check(movementId !in dao.undoneIdsNow()) { "This was already undone" }
         checkNotWaiting(listOf(movementId))
-        val noun = when (m.type) { MovementType.CUT -> "cut"; MovementType.WASTE -> "write-off"; else -> "ship-out" }
-        val to = if (m.type != MovementType.WASTE && m.reference.isNotBlank()) " to ${m.reference}" else ""
+        val noun = when (m.type) { MovementType.CUT -> "cut"; MovementType.WASTE -> "write-off"; MovementType.DAMAGE -> "damage report"; else -> "ship-out" }
+        val to = if (m.type != MovementType.WASTE && m.type != MovementType.DAMAGE && m.reference.isNotBlank()) " to ${m.reference}" else ""
         val by = if (m.user.isNotBlank() && m.user != prefs.userName) " (done by ${m.user})" else ""
         return newRequest(
             RequestKind.UNDO, movementId,
             "Undo $noun ${Format.qtyUnit(m.qty, m.unit)} of ${m.code} (${m.itemId})$to$by", reason,
+        )
+    }
+
+    /** Asks an admin to record damaged material on a roll. Nothing changes until it is approved. */
+    suspend fun requestDamage(itemId: String, qty: Double, reason: String, note: String, why: String): ChangeRequest {
+        val item = dao.item(itemId) ?: error("Not found")
+        check(item.status == ItemStatus.IN_STOCK) { "$itemId is not in stock" }
+        require(qty > 0 && qty <= item.remaining + 1e-6) { "Only ${Format.qtyUnit(item.remaining, item.unit)} left on $itemId" }
+        checkNotWaiting(listOf(itemId))
+        val payload = org.json.JSONObject().put("qty", qty).put("reason", reason.trim()).put("note", note.trim()).toString()
+        return newRequest(
+            RequestKind.DAMAGE, itemId,
+            "Damage ${Format.qtyUnit(qty, item.unit)} of ${item.code} (${item.id}): ${damageLabel(reason, note)}", why, payload,
         )
     }
 
@@ -636,6 +684,11 @@ class Repository(
                 }
             }
             RequestKind.DELETE -> voidItems(r.targets, admin)
+            RequestKind.DAMAGE -> {
+                check(r.payload.isNotBlank()) { "The damage details did not reach this phone. Update the Apps Script and sync." }
+                val p = org.json.JSONObject(r.payload)
+                reportDamage(r.target, p.getDouble("qty"), p.optString("reason"), p.optString("note"), r.requestedBy)
+            }
             RequestKind.EDIT -> {
                 check(r.payload.isNotBlank()) { "The new values did not reach this phone. Update the Apps Script to 2.1.0 and sync." }
                 editItems(r.targets, ItemEdit.fromJson(r.payload), admin)

@@ -61,6 +61,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
     var editing by remember { mutableStateOf<List<Item>?>(null) }
     var editPlan by remember { mutableStateOf<Pair<List<Item>, ItemEdit>?>(null) }
     var reprint by remember { mutableStateOf<List<Item>?>(null) }
+    var damaging by remember { mutableStateOf<Item?>(null) }
     val waiting = rememberWaiting()
     val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
@@ -207,6 +208,9 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                                         }
                                     }
                                     Row {
+                                        TextButton(onClick = { damaging = item }, enabled = item.id !in waiting) { Text("Damage") }
+                                    }
+                                    Row {
                                         TextButton(onClick = { editing = listOf(item) }, enabled = item.id !in waiting) { Text("Edit") }
                                         if (item.isOpen) {
                                             TextButton(onClick = { Graph.printQueue.printLabels(listOf(LabelSpec.Remainder(item)), "remainder ${item.id}") }) {
@@ -221,6 +225,10 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                 }
             }
         }
+    }
+
+    damaging?.let { target ->
+        DamageDialog(target, onDismiss = { damaging = null }, onDone = { msg -> scope.launch { snackbar.showSnackbar(msg) } })
     }
 
     moving?.let { target ->

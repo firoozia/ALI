@@ -198,6 +198,7 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
     var cm by remember { mutableStateOf(prefs.cutInCm && metresRoll) }
     var askEnd by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var damaging by remember { mutableStateOf(false) }
 
     val length = Lengths.parse(lengthText, cm && metresRoll)
     val fits = length != null && length <= item.remaining + 1e-6
@@ -294,6 +295,11 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
         enabled = item.isOpen,
         modifier = Modifier.fillMaxWidth(),
     ) { Text("Print remainder label (${Format.qtyUnit(item.remaining, item.unit)})") }
+
+    OutlinedButton(onClick = { damaging = true }, modifier = Modifier.fillMaxWidth()) { Text("Report damage on this roll") }
+    if (damaging) {
+        DamageDialog(item, onDismiss = { damaging = false }, onDone = { msg -> scope.launch { snackbar.showSnackbar(msg) } })
+    }
 
     if (askEnd && length != null) {
         val end = CutPlan.left(item.remaining, length)

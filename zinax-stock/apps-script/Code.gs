@@ -536,20 +536,21 @@ function outSheet_() {
     'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
 }
 
-/** Cuts: every cut for a customer and every short end written off, newest first. */
+/** Cuts: every cut for a customer, every short end written off and every damage report, newest first. */
 function cutsSheet_() {
   const ss = SpreadsheetApp.getActive();
   const tz = ss.getSpreadsheetTimeZone();
   const moves = readAll_('Movements');
   const undone = undone_(moves);
   const rows = moves.filter(function (r) {
-    return (r[2] === 'CUT' || r[2] === 'WASTE') && !undone[String(r[0])];
+    return (r[2] === 'CUT' || r[2] === 'WASTE' || r[2] === 'DAMAGE') && !undone[String(r[0])];
   }).sort(function (a, b) { return ms_(b[8]) - ms_(a[8]); }).map(function (r) {
-    return [Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd HH:mm'), r[2] === 'CUT' ? 'Cut' : 'Waste',
-            String(r[12] || ''), String(r[13] || ''), String(r[5]), String(r[6]), Number(r[3]) || 0, r[4], r[1],
+    // A damage report has no customer; its reason (from the Reference column) takes that place.
+    return [Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd HH:mm'), r[2] === 'CUT' ? 'Cut' : (r[2] === 'DAMAGE' ? 'Damage' : 'Waste'),
+            r[2] === 'DAMAGE' ? String(r[7] || '') : String(r[12] || ''), String(r[13] || ''), String(r[5]), String(r[6]), Number(r[3]) || 0, r[4], r[1],
             String(r[11] || '').trim() || ('phone ' + r[9])];
   });
-  writeSummary_(ss, 'Cuts', 3, ['Date', 'Type', 'Customer', 'Invoice', 'Code', 'Size', 'Length', 'Unit', 'Roll', 'By'], rows,
+  writeSummary_(ss, 'Cuts', 3, ['Date', 'Type', 'Customer / reason', 'Invoice', 'Code', 'Size', 'Length', 'Unit', 'Roll', 'By'], rows,
     'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
 }
 

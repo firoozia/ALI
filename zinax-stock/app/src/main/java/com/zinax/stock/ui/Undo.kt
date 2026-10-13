@@ -11,7 +11,7 @@ data class UndoTarget(
     val type: String = "OUT",
 ) {
     /** "ship-out", "cut" or "write-off". */
-    val noun: String get() = when (type) { "CUT" -> "cut"; "WASTE" -> "write-off"; else -> "ship-out" }
+    val noun: String get() = when (type) { "CUT" -> "cut"; "WASTE" -> "write-off"; "DAMAGE" -> "damage report"; else -> "ship-out" }
 
     companion object {
         fun of(m: Movement) = UndoTarget(m.id, m.itemId, m.code, m.qty, m.unit, m.reference, m.type)
@@ -27,7 +27,7 @@ fun UndoDialog(target: UndoTarget, onConfirm: () -> Unit, onDismiss: () -> Unit,
     ApprovalDialog(
         title = "Undo this ${target.noun}?",
         body = "${Format.qtyUnit(target.qty, target.unit)} of ${target.code} (${target.itemId})" +
-            (if (target.reference.isNotBlank() && target.type != "WASTE") " to ${target.reference}" else "") +
+            (if (target.reference.isNotBlank() && target.type != "WASTE" && target.type != "DAMAGE") " to ${target.reference}" else "") +
             " goes back into stock and leaves the reports. " +
             "The sheet keeps the ${target.noun} with an UNDO line showing who cancelled it.",
         confirmLabel = "Undo ${target.noun}",

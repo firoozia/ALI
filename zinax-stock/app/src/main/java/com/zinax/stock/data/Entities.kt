@@ -75,6 +75,8 @@ object MovementType {
     const val CUT = "CUT"
     /** A short end written off after a cut. */
     const val WASTE = "WASTE"
+    /** Material found damaged on a roll and taken out of stock; the reason is in the reference. */
+    const val DAMAGE = "DAMAGE"
     /** Category, code, size or unit corrected by an admin; [Movement.reference] says what changed. */
     const val EDIT = "EDIT"
     /** Cancels a ship-out, cut or waste made by mistake; [Movement.reference] holds the cancelled movement's ID. */
@@ -125,6 +127,8 @@ object RequestKind {
     const val DELETE = "DELETE"
     /** Correct category, code, size or unit; the target is the item IDs, the new values are in [ChangeRequest.payload]. */
     const val EDIT = "EDIT"
+    /** Report damaged material on a roll; the target is the item ID, qty and reason are in [ChangeRequest.payload]. */
+    const val DAMAGE = "DAMAGE"
 }
 
 object RequestStatus {

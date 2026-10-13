@@ -100,10 +100,10 @@ interface StockDao {
     suspend fun cutCount(itemId: String): Int
 
     /** Ship-outs and cuts of one package that can still be undone, newest first. */
-    @Query("SELECT * FROM movements WHERE itemId = :itemId AND type IN ('OUT', 'CUT', 'WASTE') ORDER BY at DESC")
+    @Query("SELECT * FROM movements WHERE itemId = :itemId AND type IN ('OUT', 'CUT', 'WASTE', 'DAMAGE') ORDER BY at DESC")
     fun takenFrom(itemId: String): Flow<List<Movement>>
 
-    @Query("SELECT * FROM movements WHERE type IN ('OUT', 'CUT', 'WASTE') AND at >= :since ORDER BY at DESC")
+    @Query("SELECT * FROM movements WHERE type IN ('OUT', 'CUT', 'WASTE', 'DAMAGE') AND at >= :since ORDER BY at DESC")
     fun takenSince(since: Long): Flow<List<Movement>>
 
     /** In-stock packages of one code, for cutting. */

@@ -9,6 +9,7 @@ enum class Activity(val type: String, val title: String, val verb: String) {
     OUT("OUT", "Ship-outs", "shipped"),
     CUT("CUT", "Cuts", "cut"),
     WASTE("WASTE", "Waste", "written off"),
+    DAMAGE("DAMAGE", "Damage", "damaged"),
     IN("IN", "Received", "received"),
     VOID("VOID", "Deleted", "deleted"),
     MOVE("MOVE", "Moved", "moved"),
@@ -68,7 +69,7 @@ object OutReport {
     private const val EPS = 1e-6
 
     /** Activities that take goods out and can be undone. */
-    val undoable = setOf(Activity.OUT, Activity.CUT, Activity.WASTE)
+    val undoable = setOf(Activity.OUT, Activity.CUT, Activity.WASTE, Activity.DAMAGE)
 
     fun customerLines(outs: List<OutSource>): List<CustomerLine> =
         outs.groupBy { CustomerNames.key(it.customer) }

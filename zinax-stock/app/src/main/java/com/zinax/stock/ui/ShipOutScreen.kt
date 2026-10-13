@@ -268,6 +268,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
 private fun kindOf(m: com.zinax.stock.data.Movement): String = when (m.type) {
     com.zinax.stock.data.MovementType.CUT -> "Cut"
     com.zinax.stock.data.MovementType.WASTE -> "Written off"
+    com.zinax.stock.data.MovementType.DAMAGE -> "Damaged"
     else -> "Shipped"
 }
 
