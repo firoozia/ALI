@@ -89,6 +89,18 @@ assert.ok(cs.cells[1][5]>1000); assert.equal(cs.cells[1][4],true);
 r=post({token:'tok',action:'sync',since:cs.cells[1][6]-1});
 assert.ok(r.customers.some(c=>c.id==='k1' && c.name==='Bahar Design' && c.hidden===true));
 assert.ok(r.customers.some(c=>c.id==='k3' && c.name==='Mehdi Trading' && c.hidden===false && c.createdBy==='SHEET'));
+// bulk paste: 194 names pasted in one go all get their own ID, and a phone pulls every one of them
+const custBefore=cs.cells.length; let custSeq=0; ctx.Utilities.getUuid=()=>'bulk-'+(++custSeq);
+for(let i=0;i<194;i++) cs.cells[custBefore+i]=['','CUSTOMER '+i,'','','','',''];
+ctx.onEdit({range:{getSheet:()=>cs,getRow:()=>custBefore+1,getLastRow:()=>custBefore+194,getNumColumns:()=>1,getColumn:()=>2}});
+assert.equal(new Set(cs.cells.slice(custBefore).map(r=>r[0])).size,194); assert.ok(cs.cells.slice(custBefore).every(r=>r[3]==='SHEET' && r[4]===false && r[5]>0));
+r=post({token:'tok',action:'sync',since:0}); assert.ok(r.customers.filter(c=>c.name.startsWith('CUSTOMER ')).length===194);
+// deleting a row in the sheet is not sent to phones: they simply stop hearing about it
+cs.cells.splice(custBefore+190,4); r=post({token:'tok',action:'sync',since:0});
+assert.equal(r.customers.filter(c=>c.name.startsWith('CUSTOMER ')).length,190);
+// fallback: names pasted without the trigger running are stamped by hand
+cs.cells.push(['','LATE NAME','','','','','']); ctx.Utilities.getUuid=()=>'late-1'; ctx.stampCustomers();
+assert.equal(cs.cells[cs.cells.length-1][0],'late-1');
 // admin code and quick poll
 assert.equal(post({token:'tok',action:'verifyAdmin',code:'x'}).ok,false);
 ctx.Utilities.getUuid=()=>'abcd1234-ffff';

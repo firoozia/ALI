@@ -291,6 +291,17 @@ function customersEdited_(e) {
 }
 
 /**
+ * Fallback: run this by hand from the Apps Script editor (Run > stampCustomers) if names were pasted into the
+ * Customers tab but their ID and date did not fill in by themselves. It stamps every row that has a name.
+ */
+function stampCustomers() {
+  const sh = sheet_('Customers');
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  customersEdited_({ range: { getSheet: function () { return sh; }, getRow: function () { return 2; }, getLastRow: function () { return last; } } });
+}
+
+/**
  * Edits in the Users tab: Role, CanReceive and Active can be changed by hand. New users and PINs
  * are made in the app, because the sheet only holds the PIN's hash.
  */
