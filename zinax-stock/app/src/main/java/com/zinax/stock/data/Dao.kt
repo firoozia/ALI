@@ -83,6 +83,9 @@ interface StockDao {
     fun shippedSince(since: Long): Flow<List<Movement>>
 
     /** Movements of one [type] (OUT, IN, VOID, MOVE) from [from] up to, not including, [to]. */
+    @Query("SELECT * FROM movements WHERE at >= :from AND at < :to ORDER BY at")
+    fun movementsBetweenAll(from: Long, to: Long): Flow<List<Movement>>
+
     @Query("SELECT * FROM movements WHERE type = :type AND at >= :from AND at < :to ORDER BY at")
     fun movementsBetween(type: String, from: Long, to: Long): Flow<List<Movement>>
 

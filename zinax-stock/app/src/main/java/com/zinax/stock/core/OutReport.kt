@@ -5,15 +5,15 @@ import java.util.Date
 import java.util.Locale
 
 /** Kinds of stock change a report can show. */
-enum class Activity(val type: String, val title: String, val verb: String) {
-    OUT("OUT", "Ship-outs", "shipped"),
-    CUT("CUT", "Cuts", "cut"),
-    WASTE("WASTE", "Waste", "written off"),
-    DAMAGE("DAMAGE", "Damage", "damaged"),
-    IN("IN", "Received", "received"),
-    VOID("VOID", "Deleted", "deleted"),
-    MOVE("MOVE", "Moved", "moved"),
-    EDIT("EDIT", "Edited", "edited"),
+enum class Activity(val type: String, val title: String, val verb: String, val noun: String) {
+    OUT("OUT", "Ship-outs", "shipped", "Ship-out"),
+    CUT("CUT", "Cuts", "cut", "Cut"),
+    WASTE("WASTE", "Waste", "written off", "Waste"),
+    DAMAGE("DAMAGE", "Damage", "damaged", "Damage"),
+    IN("IN", "Received", "received", "Received"),
+    VOID("VOID", "Deleted", "deleted", "Deleted"),
+    MOVE("MOVE", "Moved", "moved", "Moved"),
+    EDIT("EDIT", "Edited", "edited", "Edited"),
 }
 
 /** One stock change, with what the package held when it was labelled. */

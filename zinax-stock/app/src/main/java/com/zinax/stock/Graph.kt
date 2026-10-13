@@ -161,6 +161,26 @@ object Graph {
         }
     }
 
+    /** The same as [shareActivityReport] for the "All" view: every kind of change in the period, one sheet or block per kind. */
+    suspend fun shareAllReport(context: Context, from: Long, to: Long, outs: List<OutSource>, excel: Boolean) {
+        val period = OutReport.period(from, to)
+        val groups = Activity.entries.mapNotNull { a -> outs.filter { it.type == a.type }.takeIf { it.isNotEmpty() }?.let { a to it } }
+        if (excel) {
+            val file = withContext(Dispatchers.IO) {
+                val sheets = groups.flatMap { (a, list) -> OutReport.workbook(a, period, list) }
+                    .ifEmpty { listOf(OutReport.summarySheet("Nothing", emptyList())) }
+                reportFile("Zinax-All-${period.replace(" → ", "_to_")}.xlsx", sheets)
+            }
+            Share.file(context, file, XLSX_MIME, "Zinax all activity $period")
+        } else {
+            Share.text(
+                context,
+                if (groups.isEmpty()) "*Zinax all activity* · $period\n\nNothing happened."
+                else groups.joinToString("\n") { (a, list) -> OutReport.text(a, period, list) },
+            )
+        }
+    }
+
     const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 }
 

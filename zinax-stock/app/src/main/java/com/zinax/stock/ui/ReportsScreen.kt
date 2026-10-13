@@ -57,11 +57,13 @@ private enum class Range(val label: String) { TODAY("Today"), YESTERDAY("Yesterd
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
+fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val today = remember { Format.dayStart(System.currentTimeMillis()) }
+    // null means All: every kind of change in the period, newest first.
     var activity by remember { mutableStateOf(start) }
+    val act = activity
     var range by remember { mutableStateOf(Range.TODAY) }
     var from by remember { mutableLongStateOf(today) }
     var to by remember { mutableLongStateOf(Format.addDays(today, 1)) }
@@ -86,9 +88,14 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
         }
     }
 
-    val moves by Graph.db.dao().movementsBetween(activity.type, from, to).collectAsStateWithLifecycle(emptyList())
+    val moveFlow = remember(act, from, to) {
+        if (act == null) Graph.db.dao().movementsBetweenAll(from, to) else Graph.db.dao().movementsBetween(act.type, from, to)
+    }
+    val moves by moveFlow.collectAsStateWithLifecycle(emptyList())
+    suspend fun load(): List<OutSource> =
+        if (act == null) Activity.entries.flatMap { Graph.activityFor(it, from, to) } else Graph.activityFor(act, from, to)
     var all by remember { mutableStateOf<List<OutSource>>(emptyList()) }
-    LaunchedEffect(moves, activity, from, to) { all = Graph.activityFor(activity, from, to) }
+    LaunchedEffect(moves, act, from, to) { all = load() }
     val users = remember(all) { all.map { OutReport.who(it) }.distinct().sorted() }
     // Search by customer, invoice, code or label ID; case and Arabic/Persian letter forms are ignored.
     val shown = remember(all, user, query) {
@@ -96,8 +103,8 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
         all.filter { user == null || OutReport.who(it) == user }
             .filter { k.isEmpty() || listOf(it.customer, it.invoice, it.code, it.itemId, it.reference).any { f -> CustomerNames.key(f).contains(k) } }
     }
-    val lines = remember(shown) { OutReport.lines(shown) }
-    val customers = remember(shown, activity) { if (activity == Activity.CUT) OutReport.customerLines(shown) else emptyList() }
+    val lines = remember(shown, act) { if (act == null) emptyList() else OutReport.lines(shown) }
+    val customers = remember(shown, act) { if (act == Activity.CUT) OutReport.customerLines(shown) else emptyList() }
     val stamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.US) }
 
     ScreenScaffold("Reports", onBack, snackbar) { padding ->
@@ -109,8 +116,9 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        item { FilterChip(selected = act == null, onClick = { activity = null; open = null; user = null }, label = { Text("All") }) }
                         items(Activity.entries) { a ->
-                            FilterChip(selected = a == activity, onClick = { activity = a; open = null; user = null }, label = { Text(a.title) })
+                            FilterChip(selected = a == act, onClick = { activity = a; open = null; user = null }, label = { Text(a.title) })
                         }
                     }
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -132,12 +140,12 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                     }
                 }
             }
-            item {
+            if (act != null) item {
                 Panel {
                     if (lines.isEmpty()) {
                         Text(
-                            if (query.isNotBlank() && all.isNotEmpty()) "Nothing ${activity.verb} matches \"${query.trim()}\" in this period."
-                            else "Nothing ${activity.verb} in this period.",
+                            if (query.isNotBlank() && all.isNotEmpty()) "Nothing ${act?.verb} matches \"${query.trim()}\" in this period."
+                            else "Nothing ${act?.verb} in this period.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
@@ -179,6 +187,58 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                     }
                 }
             }
+            if (act == null) {
+                item {
+                    Panel {
+                        val groups = Activity.entries.mapNotNull { a -> shown.filter { it.type == a.type }.takeIf { it.isNotEmpty() }?.let { a to it } }
+                        if (groups.isEmpty()) {
+                            Text(
+                                if (query.isNotBlank() && all.isNotEmpty()) "Nothing matches \"${query.trim()}\" in this period." else "Nothing happened in this period.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            Text("Everything in this period", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            groups.forEachIndexed { i, (a, list) ->
+                                if (i > 0) HorizontalDivider()
+                                Row(
+                                    Modifier.fillMaxWidth().clickable { activity = a; open = null; user = null },
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(a.title, fontWeight = FontWeight.Medium)
+                                        Text(
+                                            "${list.map { it.itemId }.distinct().size} packages",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Text(
+                                        list.groupBy { it.unit }.entries.joinToString(", ") { (u, l) -> Format.qtyUnit(l.sumOf { it.qty }, u) },
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                            Text("Tap a line to see only that kind.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("Includes other phones after they sync.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                items(shown.sortedByDescending { it.at }, key = { it.id }) { o ->
+                    val kind = Activity.entries.firstOrNull { it.type == o.type }
+                    Panel {
+                        CodeRow(
+                            code = o.code,
+                            title = (kind?.noun ?: o.type) + " · " + Format.qtyUnit(o.qty, o.unit),
+                            subtitle = listOf(stamp.format(Date(o.at)), OutReport.who(o), o.reference.ifBlank { "—" }).joinToString(" · "),
+                            trailing = {
+                                if (kind != null && kind in OutReport.undoable && o.id.isNotEmpty()) {
+                                    UndoButton(o.id, waiting) { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference, o.type) }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
             items(lines, key = { "${it.code}|${it.size}|${it.unit}" }) { l ->
                 val key = "${l.code}|${l.size}|${l.unit}"
                 Panel {
@@ -188,7 +248,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                             title = OutReport.lineSummary(l),
                             subtitle = listOfNotNull(l.category?.label, Format.size(l.size).takeIf { it.isNotBlank() }).joinToString(" · "),
                         )
-                        if ((activity == Activity.OUT || activity == Activity.CUT) && l.references.isNotEmpty()) {
+                        if ((act == Activity.OUT || act == Activity.CUT) && l.references.isNotEmpty()) {
                             Text("To: ${l.references.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
                         Text("By: ${l.users.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -211,7 +271,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.SemiBold,
                                     )
-                                    if (activity in OutReport.undoable && o.id.isNotEmpty()) {
+                                    if (act != null && act in OutReport.undoable && o.id.isNotEmpty()) {
                                         UndoButton(o.id, waiting) { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference, o.type) }
                                     }
                                 }
@@ -223,11 +283,11 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = { scope.launch { Graph.shareActivityReport(context, activity, from, to, shown, excel = true) } },
+                        onClick = { scope.launch { if (act == null) Graph.shareAllReport(context, from, to, shown, excel = true) else Graph.shareActivityReport(context, act, from, to, shown, excel = true) } },
                         modifier = Modifier.weight(1f),
                     ) { Text("Send Excel") }
                     OutlinedButton(
-                        onClick = { scope.launch { Graph.shareActivityReport(context, activity, from, to, shown, excel = false) } },
+                        onClick = { scope.launch { if (act == null) Graph.shareAllReport(context, from, to, shown, excel = false) else Graph.shareActivityReport(context, act, from, to, shown, excel = false) } },
                         modifier = Modifier.weight(1f),
                     ) { Text("Send as text") }
                 }
@@ -237,7 +297,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                     onClick = {
                         scope.launch {
                             try { Graph.sync.sync() } catch (_: Exception) {}
-                            all = Graph.activityFor(activity, from, to)
+                            all = load()
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -259,11 +319,11 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                     } catch (e: Exception) {
                         snackbar.showSnackbar(e.message ?: "Could not undo")
                     }
-                    all = Graph.activityFor(activity, from, to)
+                    all = load()
                 }
             },
             onDismiss = { undoing = null },
-            onDone = { msg -> scope.launch { snackbar.showSnackbar(msg); all = Graph.activityFor(activity, from, to) } },
+            onDone = { msg -> scope.launch { snackbar.showSnackbar(msg); all = load() } },
         )
     }
 
