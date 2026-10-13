@@ -236,7 +236,9 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity = Activity.OUT) {
                 undoing = null
                 scope.launch {
                     try {
-                        Graph.repo.undoShipOut(target.movementId)
+                        val roll = Graph.repo.undoShipOut(target.movementId)
+                        Graph.printUndoRoll(roll)
+                        if (roll != null) snackbar.showSnackbar("New open roll ${roll.id}: ${Format.qtyUnit(roll.remaining, roll.unit)} of ${roll.code}")
                     } catch (e: Exception) {
                         snackbar.showSnackbar(e.message ?: "Could not undo")
                     }

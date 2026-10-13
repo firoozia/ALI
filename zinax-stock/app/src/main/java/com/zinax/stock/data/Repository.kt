@@ -227,8 +227,13 @@ class Repository(
     /**
      * Cancels a ship-out made by mistake: the amount goes back on the package and the package is in stock again.
      * The ship-out stays in the log with an UNDO row naming who cancelled it.
+     *
+     * A cut, or a ship-out of part of a roll, is a separate piece that cannot be joined to its roll again.
+     * Undoing it makes a new open roll with its own label ID and returns it, so its label can be printed.
+     * Anything else (a whole roll, a write-off, damage) goes back on the same package and null is returned.
      */
-    suspend fun undoShipOut(movementId: String, by: String = prefs.userName) {
+    suspend fun undoShipOut(movementId: String, by: String = prefs.userName): Item? {
+        var made: Item? = null
         db.withTransaction {
             val m = dao.movement(movementId) ?: error("Ship-out not found")
             check(m.type in TAKEN_OUT) { "Only ship-outs, cuts, waste and damage reports can be undone" }
@@ -236,8 +241,20 @@ class Repository(
             val item = dao.item(m.itemId) ?: error("Label ${m.itemId} not found")
             check(item.status != ItemStatus.VOID) { "${item.id} was deleted" }
             val t = now()
-            val back = minOf(item.qty, item.remaining + m.qty)
-            dao.putItems(listOf(item.copy(remaining = back, status = ItemStatus.IN_STOCK, updatedAt = t, dirty = true)))
+            val piece = m.type == MovementType.CUT || (m.type == MovementType.OUT && m.qty < item.qty - 1e-6)
+            if (piece) {
+                val roll = Item(
+                    id = nextIds(1).first(), category = item.category, code = item.code, size = item.size, unit = item.unit,
+                    qty = item.qty, remaining = minOf(item.qty, m.qty), status = ItemStatus.IN_STOCK, shipmentId = null, pallet = null,
+                    netKg = null, grossKg = null, receivedAt = item.receivedAt, location = item.location, device = prefs.deviceCode,
+                    updatedAt = t, dirty = true,
+                )
+                dao.putItems(listOf(roll))
+                made = roll
+            } else {
+                val back = minOf(item.qty, item.remaining + m.qty)
+                dao.putItems(listOf(item.copy(remaining = back, status = ItemStatus.IN_STOCK, updatedAt = t, dirty = true)))
+            }
             dao.putMovements(
                 listOf(
                     Movement(
@@ -248,6 +265,7 @@ class Repository(
             )
         }
         onChange()
+        return made
     }
 
     private val TAKEN_OUT = setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE)
@@ -673,14 +691,15 @@ class Repository(
     }
 
     /** Carries out the request as [admin] and marks it approved. Throws, leaving it waiting, if it cannot be done. */
-    suspend fun approveRequest(id: String, admin: String) {
+    suspend fun approveRequest(id: String, admin: String): Item? {
         val r = dao.request(id) ?: error("Request not found")
         check(r.status == RequestStatus.PENDING) { "Already ${r.status.lowercase()} by ${r.decidedBy}" }
+        var made: Item? = null
         when (r.kind) {
             RequestKind.UNDO -> {
                 if (r.target !in dao.undoneIdsNow()) {
                     dao.movement(r.target) ?: error("${r.requestedBy}'s change has not reached this phone yet. Sync and try again.")
-                    undoShipOut(r.target, admin)
+                    made = undoShipOut(r.target, admin)
                 }
             }
             RequestKind.DELETE -> voidItems(r.targets, admin)
@@ -696,6 +715,7 @@ class Repository(
             else -> error("Unknown request")
         }
         decide(r, RequestStatus.APPROVED, admin, "")
+        return made
     }
 
     suspend fun rejectRequest(id: String, admin: String, note: String) {

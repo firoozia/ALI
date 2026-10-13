@@ -250,9 +250,13 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                 undoing = null
                 scope.launch {
                     try {
-                        Graph.repo.undoShipOut(target.movementId)
+                        val roll = Graph.repo.undoShipOut(target.movementId)
+                        Graph.printUndoRoll(roll)
                         item = dao.item(target.itemId)
-                        snackbar.showSnackbar("Undone ${target.noun}: ${Format.qtyUnit(target.qty, target.unit)} of ${target.code} is back in stock")
+                        snackbar.showSnackbar(
+                            if (roll != null) "Undone ${target.noun}: new open roll ${roll.id} with ${Format.qtyUnit(roll.remaining, roll.unit)} of ${target.code}"
+                            else "Undone ${target.noun}: ${Format.qtyUnit(target.qty, target.unit)} of ${target.code} is back in stock",
+                        )
                     } catch (e: Exception) {
                         snackbar.showSnackbar(e.message ?: "Could not undo")
                     }

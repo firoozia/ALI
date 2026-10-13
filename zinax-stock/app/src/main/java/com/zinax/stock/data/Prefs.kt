@@ -198,5 +198,10 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("autoPrintDamage", true)
         set(v) = edit { putBoolean("autoPrintDamage", v) }
 
+    /** Print the OPEN label of the new roll when a cut or part ship-out is undone. On by default. */
+    var autoPrintUndoRoll: Boolean
+        get() = sp.getBoolean("autoPrintUndoRoll", true)
+        set(v) = edit { putBoolean("autoPrintUndoRoll", v) }
+
     val syncConfigured: Boolean get() = webAppUrl.startsWith("https://") && token.isNotBlank()
 }

@@ -17,6 +17,7 @@ import com.zinax.stock.core.Report
 import com.zinax.stock.core.StockSource
 import com.zinax.stock.core.XlsxWriter
 import com.zinax.stock.data.AppDatabase
+import com.zinax.stock.data.Item
 import com.zinax.stock.data.ItemStatus
 import com.zinax.stock.data.Prefs
 import com.zinax.stock.data.Repository
@@ -70,6 +71,13 @@ object Graph {
                 Category.update(rows.map { Category.Row(it.id, it.name, it.unit, it.pack, it.sort, it.hidden) })
                 groupsVersion.value++
             }
+        }
+    }
+
+    /** Prints the OPEN label of the roll made by undoing a cut, unless the Settings switch is off. */
+    fun printUndoRoll(roll: Item?) {
+        if (roll != null && prefs.autoPrintUndoRoll) {
+            printQueue.printLabels(listOf(com.zinax.stock.printer.LabelSpec.Remainder(roll)), "open roll ${roll.id}")
         }
     }
 

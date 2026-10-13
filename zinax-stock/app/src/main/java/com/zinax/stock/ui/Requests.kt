@@ -136,9 +136,12 @@ fun RequestsScreen(onBack: () -> Unit, openId: String? = null, openAction: Strin
                     deciding = null
                     scope.launch {
                         try {
-                            if (d.approve) Graph.repo.approveRequest(d.request.id, name) else Graph.repo.rejectRequest(d.request.id, name, note)
+                            val roll = if (d.approve) Graph.repo.approveRequest(d.request.id, name) else { Graph.repo.rejectRequest(d.request.id, name, note); null }
+                            Graph.printUndoRoll(roll)
                             RequestNotifier.cancel(context, d.request.id)
-                            snackbar.showSnackbar(if (d.approve) "Approved and done" else "Rejected")
+                            snackbar.showSnackbar(
+                                if (d.approve) "Approved and done" + (roll?.let { " · new open roll ${it.id}" } ?: "") else "Rejected",
+                            )
                         } catch (e: Exception) {
                             snackbar.showSnackbar(e.message ?: "Could not do it")
                         }

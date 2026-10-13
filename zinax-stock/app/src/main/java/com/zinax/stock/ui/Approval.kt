@@ -102,8 +102,9 @@ fun ApprovalDialog(
                                 error = "Wrong PIN"
                             } else {
                                 val r = request(reason)
-                                Graph.repo.approveRequest(r.id, a.name)
-                                onDone("Done, approved by ${a.name}")
+                                val roll = Graph.repo.approveRequest(r.id, a.name)
+                                Graph.printUndoRoll(roll)
+                                onDone("Done, approved by ${a.name}" + (roll?.let { " · new open roll ${it.id}" } ?: ""))
                             }
                         } catch (e: Exception) {
                             error = e.message ?: "Could not do it"

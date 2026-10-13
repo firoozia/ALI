@@ -28,7 +28,8 @@ fun UndoDialog(target: UndoTarget, onConfirm: () -> Unit, onDismiss: () -> Unit,
         title = "Undo this ${target.noun}?",
         body = "${Format.qtyUnit(target.qty, target.unit)} of ${target.code} (${target.itemId})" +
             (if (target.reference.isNotBlank() && target.type != "WASTE" && target.type != "DAMAGE") " to ${target.reference}" else "") +
-            " goes back into stock and leaves the reports. " +
+            (if (target.type == "CUT") " becomes a new open roll with its own label (printed after the undo) and leaves the reports. "
+            else " goes back into stock and leaves the reports. A part of a roll becomes a new open roll with its own label. ") +
             "The sheet keeps the ${target.noun} with an UNDO line showing who cancelled it.",
         confirmLabel = "Undo ${target.noun}",
         onConfirm = onConfirm,
