@@ -29,10 +29,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.zinax.stock.Graph
+import com.zinax.stock.core.CustomerNames
 import com.zinax.stock.core.Format
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.data.Item
 import com.zinax.stock.data.ItemStatus
+import com.zinax.stock.data.MovementType
+import com.zinax.stock.printer.LabelSpec
 import com.zinax.stock.ui.theme.LocalStatus
 import kotlinx.coroutines.launch
 
@@ -56,6 +59,8 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
     var customer by remember { mutableStateOf("") }
     var invoice by remember { mutableStateOf("") }
     var moving by remember { mutableStateOf(false) }
+    // Customer label waiting for a tap when automatic printing is off.
+    var pending by remember { mutableStateOf<LabelSpec.CustomerCut?>(null) }
 
     fun lookup(raw: String) {
         val id = LabelId.normalize(raw)
@@ -76,6 +81,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
 
     ScreenScaffold("Ship out", onBack, snackbar, actions = { TextButton(onClick = onReport) { Text("Report") } }) { padding ->
         FormBody(padding) {
+            pending?.let { spec -> PendingLabel(spec) { pending = null } }
             Button(
                 onClick = {
                     Graph.session.leaving()
@@ -168,6 +174,15 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                                         "Shipped ${Format.qtyUnit(amount, it.unit)} of ${it.code}" +
                                             if (updated.status == ItemStatus.IN_STOCK) ", ${Format.qtyUnit(updated.remaining, it.unit)} left" else ""
                                     )
+                                    val who = CustomerNames.clean(customer)
+                                    if (who.isNotEmpty()) {
+                                        val label = LabelSpec.CustomerCut(
+                                            customer = who, code = it.code, size = it.size, length = amount, unit = it.unit,
+                                            invoice = invoice.trim(), at = System.currentTimeMillis(), ref = "${it.id.substringAfterLast('-')}-S",
+                                        )
+                                        if (Graph.prefs.autoPrintShip) Graph.printQueue.printLabels(listOf(label), "ship to $who")
+                                        else pending = label
+                                    }
                                     item = null
                                     older = null
                                     customer = ""
@@ -197,6 +212,16 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                        if (m.customer.isNotBlank() && m.type != MovementType.WASTE) {
+                            TextButton(onClick = {
+                                val label = LabelSpec.CustomerCut(
+                                    customer = m.customer, code = m.code, size = m.size, length = m.qty, unit = m.unit,
+                                    invoice = m.invoice, at = m.at,
+                                    ref = m.itemId.substringAfterLast('-') + if (m.type == MovementType.CUT) "-C" else "-S",
+                                )
+                                Graph.printQueue.printLabels(listOf(label), "label for ${m.customer}")
+                            }) { Text("Label") }
                         }
                         UndoButton(m.id, waiting) { undoing = UndoTarget.of(m) }
                     }

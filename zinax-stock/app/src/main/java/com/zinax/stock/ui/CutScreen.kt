@@ -83,6 +83,8 @@ fun CutScreen(startItem: String?, onBack: () -> Unit) {
     val dao = Graph.db.dao()
     var itemId by remember { mutableStateOf(startItem) }
     var code by remember { mutableStateOf("") }
+    // Customer label waiting for a tap when automatic printing is off.
+    var pending by remember { mutableStateOf<LabelSpec.CustomerCut?>(null) }
     val stock by dao.inStock().collectAsStateWithLifecycle(emptyList())
 
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -118,13 +120,14 @@ fun CutScreen(startItem: String?, onBack: () -> Unit) {
         actions = { TextButton(onClick = scan) { Text("Scan roll") } },
     ) { padding ->
         FormBody(padding) {
+            pending?.let { spec -> PendingLabel(spec) { pending = null } }
             if (itemId == null || item == null) {
                 if (itemId != null && item == null) {
                     Notice("This roll is no longer in stock. Pick another.", LocalStatus.current.warn, LocalStatus.current.warnSoft)
                 }
                 PickRoll(stock, code, { code = it }) { picked -> itemId = picked.id; code = picked.code }
             } else {
-                CutForm(item, snackbar, onChangeRoll = { itemId = null })
+                CutForm(item, snackbar, onChangeRoll = { itemId = null }, onManual = { pending = it })
             }
         }
     }
@@ -184,7 +187,7 @@ private fun PickRoll(stock: List<Item>, code: String, onCode: (String) -> Unit, 
 }
 
 @Composable
-private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () -> Unit) {
+private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () -> Unit, onManual: (LabelSpec.CustomerCut) -> Unit) {
     val scope = rememberCoroutineScope()
     val status = LocalStatus.current
     val prefs = Graph.prefs
@@ -206,15 +209,12 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
         scope.launch {
             try {
                 val r = Graph.repo.cut(item.id, len, customer, invoice, end)
-                Graph.printQueue.printLabels(
-                    listOf(
-                        LabelSpec.CustomerCut(
-                            customer = r.customer, code = item.code, size = item.size, length = r.length, unit = item.unit,
-                            invoice = r.invoice, at = r.at, ref = "${item.id.substringAfterLast('-')}-C${r.cutNo}",
-                        )
-                    ),
-                    "cut for ${r.customer.ifBlank { item.code }}",
+                val label = LabelSpec.CustomerCut(
+                    customer = r.customer, code = item.code, size = item.size, length = r.length, unit = item.unit,
+                    invoice = r.invoice, at = r.at, ref = "${item.id.substringAfterLast('-')}-C${r.cutNo}",
                 )
+                if (prefs.autoPrintCut) Graph.printQueue.printLabels(listOf(label), "cut for ${r.customer.ifBlank { item.code }}")
+                else onManual(label)
                 lengthText = ""
                 val tail = when {
                     r.wasted > 0 -> ", ${Format.qtyUnit(r.wasted, item.unit)} written off"
@@ -285,7 +285,7 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
         },
         enabled = fits && customer.isNotBlank() && !busy,
         modifier = Modifier.fillMaxWidth(),
-    ) { Text("✂ Cut & print customer label") }
+    ) { Text(if (prefs.autoPrintCut) "✂ Cut & print customer label" else "✂ Cut") }
     if (customer.isBlank() && length != null) {
         Text("Enter the customer to cut.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -317,6 +317,25 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
             confirmButton = {},
             dismissButton = { TextButton(onClick = { askEnd = false }) { Text("Back") } },
         )
+    }
+}
+
+/** Shown when automatic printing is off: the customer label of the last cut or ship out, one tap to print. */
+@Composable
+internal fun PendingLabel(spec: LabelSpec.CustomerCut, onDone: () -> Unit) {
+    Panel {
+        Text("Customer label not printed yet", style = MaterialTheme.typography.labelLarge)
+        Text(
+            listOf(spec.customer, spec.code, Format.qtyUnit(spec.length, spec.unit)).filter { it.isNotBlank() }.joinToString(" · "),
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = {
+                Graph.printQueue.printLabels(listOf(spec), "label for ${spec.customer}")
+                onDone()
+            }) { Text("Print customer label") }
+            TextButton(onClick = onDone) { Text("Skip") }
+        }
     }
 }
 

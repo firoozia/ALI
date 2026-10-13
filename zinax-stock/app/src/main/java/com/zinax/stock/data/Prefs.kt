@@ -183,5 +183,15 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("cutInCm", false)
         set(v) = edit { putBoolean("cutInCm", v) }
 
+    /** Print the customer label by itself right after a cut. On by default. */
+    var autoPrintCut: Boolean
+        get() = sp.getBoolean("autoPrintCut", true)
+        set(v) = edit { putBoolean("autoPrintCut", v) }
+
+    /** Print the customer label by itself right after a ship out with a customer. Off by default. */
+    var autoPrintShip: Boolean
+        get() = sp.getBoolean("autoPrintShip", false)
+        set(v) = edit { putBoolean("autoPrintShip", v) }
+
     val syncConfigured: Boolean get() = webAppUrl.startsWith("https://") && token.isNotBlank()
 }

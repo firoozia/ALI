@@ -193,6 +193,17 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            var autoCut by remember { mutableStateOf(prefs.autoPrintCut) }
+            var autoShip by remember { mutableStateOf(prefs.autoPrintShip) }
+            SwitchRow("Print the customer label automatically after Cut", autoCut) { autoCut = it; prefs.autoPrintCut = it }
+            SwitchRow("Print the customer label automatically after Ship out", autoShip) { autoShip = it; prefs.autoPrintShip = it }
+            Text(
+                "When a switch is off, a Print customer label button appears after each cut or ship out. " +
+                    "Ship out only makes a label when a customer name is entered.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
             if (admin) {
             Section("Locations")
             Text(
