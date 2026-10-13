@@ -165,6 +165,13 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
                     )
                     val amount = Format.number(qty)
+                    if (customer.isBlank()) {
+                        Text(
+                            "Enter the customer to get a customer label after shipping.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Button(
                         onClick = {
                             scope.launch {
@@ -213,16 +220,7 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        if (m.customer.isNotBlank() && m.type != MovementType.WASTE) {
-                            TextButton(onClick = {
-                                val label = LabelSpec.CustomerCut(
-                                    customer = m.customer, code = m.code, size = m.size, length = m.qty, unit = m.unit,
-                                    invoice = m.invoice, at = m.at,
-                                    ref = m.itemId.substringAfterLast('-') + if (m.type == MovementType.CUT) "-C" else "-S",
-                                )
-                                Graph.printQueue.printLabels(listOf(label), "label for ${m.customer}")
-                            }) { Text("Label") }
-                        }
+                        if (canLabel(m)) LabelButton(m)
                         UndoButton(m.id, waiting) { undoing = UndoTarget.of(m) }
                     }
                 }
@@ -291,8 +289,28 @@ private fun PastShipOuts(itemId: String, undone: List<String>, waiting: Set<Stri
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f),
                 )
+                if (canLabel(m)) LabelButton(m)
                 UndoButton(m.id, waiting) { onUndo(m) }
             }
         }
     }
+}
+
+private fun canLabel(m: com.zinax.stock.data.Movement) = m.type == MovementType.OUT || m.type == MovementType.CUT
+
+/** Customer label for an earlier ship out or cut. Older entries kept the name only in the reference text. */
+private fun labelOf(m: com.zinax.stock.data.Movement): LabelSpec.CustomerCut {
+    val parts = m.reference.split(" · ").map { it.trim() }.filter { it.isNotEmpty() }
+    return LabelSpec.CustomerCut(
+        customer = m.customer.ifBlank { parts.firstOrNull().orEmpty() },
+        code = m.code, size = m.size, length = m.qty, unit = m.unit,
+        invoice = m.invoice.ifBlank { if (m.customer.isBlank()) parts.getOrNull(1).orEmpty() else "" },
+        at = m.at,
+        ref = m.itemId.substringAfterLast('-') + if (m.type == MovementType.CUT) "-C" else "-S",
+    )
+}
+
+@Composable
+private fun LabelButton(m: com.zinax.stock.data.Movement) {
+    TextButton(onClick = { Graph.printQueue.printLabels(listOf(labelOf(m)), "label for ${labelOf(m).customer.ifBlank { m.code }}") }) { Text("Label") }
 }
