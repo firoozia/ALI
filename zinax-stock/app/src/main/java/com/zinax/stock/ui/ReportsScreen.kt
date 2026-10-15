@@ -64,6 +64,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
     // null means All: every kind of change in the period, newest first.
     var activity by remember { mutableStateOf(start) }
     val act = activity
+    val status = LocalStatus.current
     var range by remember { mutableStateOf(Range.TODAY) }
     var from by remember { mutableLongStateOf(today) }
     var to by remember { mutableLongStateOf(Format.addDays(today, 1)) }
@@ -93,7 +94,8 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
     }
     val moves by moveFlow.collectAsStateWithLifecycle(emptyList())
     suspend fun load(): List<OutSource> =
-        if (act == null) Activity.entries.flatMap { Graph.activityFor(it, from, to) } else Graph.activityFor(act, from, to)
+        if (act == null) Activity.entries.flatMap { Graph.activityFor(it, from, to, includeUndone = true) }
+        else Graph.activityFor(act, from, to, includeUndone = true)
     var all by remember { mutableStateOf<List<OutSource>>(emptyList()) }
     LaunchedEffect(moves, act, from, to) { all = load() }
     val users = remember(all) { all.map { OutReport.who(it) }.distinct().sorted() }
@@ -103,8 +105,11 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
         all.filter { user == null || OutReport.who(it) == user }
             .filter { k.isEmpty() || listOf(it.customer, it.invoice, it.code, it.itemId, it.reference).any { f -> CustomerNames.key(f).contains(k) } }
     }
-    val lines = remember(shown, act) { if (act == null) emptyList() else OutReport.lines(shown) }
-    val customers = remember(shown, act) { if (act == Activity.CUT) OutReport.customerLines(shown) else emptyList() }
+    // Cancelled (undone) entries are listed but never counted: totals, lines and exports use [live].
+    val live = remember(shown) { shown.filter { !it.undone } }
+    val undoneRows = remember(shown) { shown.filter { it.undone }.sortedByDescending { it.at } }
+    val lines = remember(live, act) { if (act == null) emptyList() else OutReport.lines(live) }
+    val customers = remember(live, act) { if (act == Activity.CUT) OutReport.customerLines(live) else emptyList() }
     val stamp = remember { SimpleDateFormat("MM-dd HH:mm", Locale.US) }
 
     ScreenScaffold("Reports", onBack, snackbar) { padding ->
@@ -190,7 +195,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
             if (act == null) {
                 item {
                     Panel {
-                        val groups = Activity.entries.mapNotNull { a -> shown.filter { it.type == a.type }.takeIf { it.isNotEmpty() }?.let { a to it } }
+                        val groups = Activity.entries.mapNotNull { a -> live.filter { it.type == a.type }.takeIf { it.isNotEmpty() }?.let { a to it } }
                         if (groups.isEmpty()) {
                             Text(
                                 if (query.isNotBlank() && all.isNotEmpty()) "Nothing matches \"${query.trim()}\" in this period." else "Nothing happened in this period.",
@@ -225,13 +230,19 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
                 }
                 items(shown.sortedByDescending { it.at }, key = { it.id }) { o ->
                     val kind = Activity.entries.firstOrNull { it.type == o.type }
-                    Panel {
+                    // Yellow: cancelled with Undo. Red: deleted.
+                    val deleted = o.type == Activity.VOID.type
+                    Panel(
+                        container = if (o.undone) status.warnSoft else if (deleted) status.badSoft else MaterialTheme.colorScheme.surface,
+                        border = if (o.undone) status.warn else if (deleted) status.bad else MaterialTheme.colorScheme.outline,
+                    ) {
                         CodeRow(
                             code = o.code,
-                            title = (kind?.noun ?: o.type) + " · " + Format.qtyUnit(o.qty, o.unit),
-                            subtitle = listOf(stamp.format(Date(o.at)), OutReport.who(o), o.reference.ifBlank { "—" }).joinToString(" · "),
+                            title = (if (o.undone) "UNDONE · " else "") + (kind?.noun ?: o.type) + " · " + Format.qtyUnit(o.qty, o.unit),
+                            subtitle = listOf(stamp.format(Date(o.at)), OutReport.who(o), o.reference.ifBlank { "—" }).joinToString(" · ") +
+                                if (o.undone) " · undone by ${o.undoneBy}" else "",
                             trailing = {
-                                if (kind != null && kind in OutReport.undoable && o.id.isNotEmpty()) {
+                                if (!o.undone && kind != null && kind in OutReport.undoable && o.id.isNotEmpty()) {
                                     UndoButton(o.id, waiting) { undoing = UndoTarget(o.id, o.itemId, o.code, o.qty, o.unit, o.reference, o.type) }
                                 }
                             },
@@ -241,7 +252,10 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
             }
             items(lines, key = { "${it.code}|${it.size}|${it.unit}" }) { l ->
                 val key = "${l.code}|${l.size}|${l.unit}"
-                Panel {
+                Panel(
+                    container = if (act == Activity.VOID) status.badSoft else MaterialTheme.colorScheme.surface,
+                    border = if (act == Activity.VOID) status.bad else MaterialTheme.colorScheme.outline,
+                ) {
                     Column(Modifier.clickable { open = if (open == key) null else key }) {
                         CodeRow(
                             code = l.code,
@@ -254,7 +268,7 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
                         Text("By: ${l.users.joinToString(", ")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (open == key) {
-                        shown.filter { it.code == l.code && it.size == l.size && it.unit == l.unit }.sortedBy { it.at }.forEach { o ->
+                        live.filter { it.code == l.code && it.size == l.size && it.unit == l.unit }.sortedBy { it.at }.forEach { o ->
                             HorizontalDivider()
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
@@ -280,14 +294,30 @@ fun ReportsScreen(onBack: () -> Unit, start: Activity? = null) {
                     }
                 }
             }
+            if (act != null && undoneRows.isNotEmpty()) item {
+                Panel(container = status.warnSoft, border = status.warn) {
+                    Text("Undone in this period (${undoneRows.size}) · not counted above", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    undoneRows.forEach { o ->
+                        HorizontalDivider()
+                        Text(
+                            "${o.code} · ${Format.qtyUnit(o.qty, o.unit)} · ${o.reference.ifBlank { "—" }}",
+                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            "${stamp.format(Date(o.at))} · ${OutReport.who(o)} · undone by ${o.undoneBy}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = { scope.launch { if (act == null) Graph.shareAllReport(context, from, to, shown, excel = true) else Graph.shareActivityReport(context, act, from, to, shown, excel = true) } },
+                        onClick = { scope.launch { if (act == null) Graph.shareAllReport(context, from, to, live, excel = true) else Graph.shareActivityReport(context, act, from, to, live, excel = true) } },
                         modifier = Modifier.weight(1f),
                     ) { Text("Send Excel") }
                     OutlinedButton(
-                        onClick = { scope.launch { if (act == null) Graph.shareAllReport(context, from, to, shown, excel = false) else Graph.shareActivityReport(context, act, from, to, shown, excel = false) } },
+                        onClick = { scope.launch { if (act == null) Graph.shareAllReport(context, from, to, live, excel = false) else Graph.shareActivityReport(context, act, from, to, live, excel = false) } },
                         modifier = Modifier.weight(1f),
                     ) { Text("Send as text") }
                 }

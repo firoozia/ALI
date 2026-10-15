@@ -35,6 +35,9 @@ data class OutSource(
     val id: String = "",
     val customer: String = "",
     val invoice: String = "",
+    /** Cancelled with Undo; shown in reports but left out of every total. */
+    val undone: Boolean = false,
+    val undoneBy: String = "",
 )
 
 /** Cuts for one customer in the report period. */

@@ -226,6 +226,10 @@ interface StockDao {
     @Query("SELECT reference FROM movements WHERE type = 'UNDO'")
     suspend fun undoneIdsNow(): List<String>
 
+    /** The UNDO rows themselves: [Movement.reference] is the cancelled movement, [Movement.user] who cancelled it. */
+    @Query("SELECT * FROM movements WHERE type = 'UNDO'")
+    suspend fun undoMovementsNow(): List<Movement>
+
     /** Movements pulled from the sheet; a movement never changes, so a known ID is skipped. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun putMovementsIfAbsent(rows: List<Movement>)

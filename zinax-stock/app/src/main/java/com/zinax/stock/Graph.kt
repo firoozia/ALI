@@ -88,9 +88,12 @@ object Graph {
     }
 
     /** Movements of one kind in [from, to), with each package's family and full amount. */
-    suspend fun activityFor(activity: Activity, from: Long, to: Long): List<OutSource> {
-        val undone = if (activity in OutReport.undoable) db.dao().undoneIdsNow().toHashSet() else emptySet()
-        val moves = db.dao().movementsBetweenNow(activity.type, from, to).filter { it.id !in undone }
+    suspend fun activityFor(activity: Activity, from: Long, to: Long, includeUndone: Boolean = false): List<OutSource> {
+        // Cancelled movement ID -> who cancelled it. Left out unless the report wants to show them.
+        val undoneBy = if (activity in OutReport.undoable) {
+            db.dao().undoMovementsNow().associate { it.reference to it.user.ifBlank { "phone ${it.device}" } }
+        } else emptyMap()
+        val moves = db.dao().movementsBetweenNow(activity.type, from, to).filter { includeUndone || it.id !in undoneBy }
         val items = moves.map { it.itemId }.distinct().chunked(500).flatMap { db.dao().itemsByIds(it) }.associateBy { it.id }
         return moves
             // A label deleted as a mistake was never really received.
@@ -99,7 +102,7 @@ object Graph {
                 val item = items[m.itemId]
                 OutSource(
                     m.itemId, item?.categoryEnum, m.code, m.size, m.unit, m.qty, item?.qty, m.reference, m.at, m.device,
-                    m.user, m.type, m.id, m.customer, m.invoice,
+                    m.user, m.type, m.id, m.customer, m.invoice, undone = m.id in undoneBy, undoneBy = undoneBy[m.id].orEmpty(),
                 )
             }
     }

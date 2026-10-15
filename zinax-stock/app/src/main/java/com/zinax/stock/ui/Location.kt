@@ -31,7 +31,7 @@ const val NO_LOCATION = "No location"
 
 /** A storage location as a yellow badge, optionally with a package count. */
 @Composable
-fun LocationBadge(name: String, count: Int? = null) {
+fun LocationBadge(name: String, count: Int? = null, total: String? = null) {
     val status = LocalStatus.current
     val none = name.isBlank() || name == NO_LOCATION
     Surface(
@@ -39,7 +39,7 @@ fun LocationBadge(name: String, count: Int? = null) {
         shape = RoundedCornerShape(6.dp),
     ) {
         Text(
-            text = (if (none) NO_LOCATION else name) + (count?.let { "  ·  $it" } ?: ""),
+            text = (if (none) NO_LOCATION else name) + (count?.let { "  ·  $it" } ?: "") + (total?.let { "  ·  $it" } ?: ""),
             color = if (none) MaterialTheme.colorScheme.onSurfaceVariant else status.placeText,
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.labelLarge,
@@ -51,9 +51,9 @@ fun LocationBadge(name: String, count: Int? = null) {
 /** Badges for each location of a group, most packages first. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun LocationBadges(counts: List<Pair<String, Int>>) {
+fun LocationBadges(counts: List<Triple<String, Int, String?>>) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        counts.forEach { (name, n) -> LocationBadge(name, n) }
+        counts.forEach { (name, n, total) -> LocationBadge(name, n, total) }
     }
 }
 

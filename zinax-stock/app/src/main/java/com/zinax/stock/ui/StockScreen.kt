@@ -5,6 +5,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -47,6 +50,7 @@ import kotlinx.coroutines.launch
 /** What the move dialog is moving: one package, or every package in a code group on screen. */
 private data class MoveTarget(val title: String, val ids: List<String>, val current: String)
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> Unit) {
     val scope = rememberCoroutineScope()
@@ -127,7 +131,8 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
             item {
                 Text(
                     "${shown.size} packages · ${shown.map { it.code }.distinct().size} codes" + (place?.let { " in $it" } ?: " in stock") +
-                        if (openOnly) " · open rolls only" else "",
+                        (if (openOnly) " · open rolls only" else "") +
+                        " · " + shown.groupBy { it.unit }.entries.joinToString(", ") { (u, l) -> Format.qtyUnit(l.sumOf { it.remaining }, u) },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -139,7 +144,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                 val pack = Report.plural(first.categoryEnum.pack, list.size)
                 val byPlace = list.groupBy { it.location.ifBlank { NO_LOCATION } }
                     .entries.sortedByDescending { it.value.size }
-                    .map { (p, l) -> p to l.size }
+                    .map { (p, l) -> Triple(p, l.size, Format.qtyUnit(l.sumOf { it.remaining }, first.unit) as String?) }
                 Panel {
                     Column(Modifier.clickable { open = if (open == key) null else key }) {
                         CodeRow(
@@ -170,53 +175,46 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                             val status = LocalStatus.current
                             val rowMod = if (item.isOpen) {
                                 Modifier.fillMaxWidth()
-                                    .background(status.open)
-                                    .drawBehind { drawRect(status.openText, size = Size(4.dp.toPx(), size.height)) }
-                                    .padding(start = 10.dp)
-                            } else Modifier.fillMaxWidth()
-                            Row(rowMod, verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text(item.id, style = MonoStyle, fontWeight = FontWeight.Medium)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    .background(status.open.copy(alpha = 0.22f))
+                                    .drawBehind { drawRect(status.open, size = Size(4.dp.toPx(), size.height)) }
+                                    .padding(start = 10.dp, top = 4.dp, bottom = 2.dp)
+                            } else Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp)
+                            Column(rowMod) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text(item.id, style = MonoStyle, fontWeight = FontWeight.Medium)
+                                        Text(
+                                            listOfNotNull(
+                                                Format.qtyUnit(item.remaining, item.unit) + if (item.remaining < item.qty) " of ${Format.qty(item.qty)}" else "",
+                                                item.pallet?.let { "Pallet $it" },
+                                                Format.date(item.receivedAt),
+                                            ).joinToString(" · "),
+                                            style = if (item.isOpen) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (item.isOpen) FontWeight.SemiBold else null,
+                                            color = if (item.isOpen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                         if (item.isOpen) OpenBadge(true)
                                         LocationBadge(item.location)
                                     }
-                                    Text(
-                                        listOfNotNull(
-                                            Format.qtyUnit(item.remaining, item.unit) + if (item.remaining < item.qty) " of ${Format.qty(item.qty)}" else "",
-                                            item.pallet?.let { "Pallet $it" },
-                                            Format.date(item.receivedAt),
-                                        ).joinToString(" · "),
-                                        style = if (item.isOpen) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                                        fontWeight = if (item.isOpen) FontWeight.SemiBold else null,
-                                        color = if (item.isOpen) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
                                 }
-                                Column {
-                                    Row {
-                                        TextButton(onClick = { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }) { Text("Move") }
-                                        TextButton(onClick = { Graph.printQueue.print(listOf(item), item.id) }) { Text("Reprint") }
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                    RowAction("Move") { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }
+                                    RowAction("Reprint") { Graph.printQueue.print(listOf(item), item.id) }
+                                    RowAction("✂ Cut") { onCut(item.id) }
+                                    RowAction("Damage", enabled = item.id !in waiting) { damaging = item }
+                                    RowAction("Edit", enabled = item.id !in waiting) { editing = listOf(item) }
+                                    if (item.isOpen) {
+                                        RowAction("Remainder") { Graph.printQueue.printLabels(listOf(LabelSpec.Remainder(item)), "remainder ${item.id}") }
                                     }
-                                    Row {
-                                        TextButton(onClick = { onCut(item.id) }) { Text("✂ Cut") }
-                                        if (item.id in waiting) {
-                                            Text("Waiting for admin", style = MaterialTheme.typography.labelMedium, color = LocalStatus.current.warn)
-                                        } else {
-                                            TextButton(onClick = { deleting = MoveTarget("Delete ${item.id}?", listOf(item.id), "") }) {
-                                                Text("Delete", color = LocalStatus.current.bad)
-                                            }
-                                        }
-                                    }
-                                    Row {
-                                        TextButton(onClick = { damaging = item }, enabled = item.id !in waiting) { Text("Damage") }
-                                    }
-                                    Row {
-                                        TextButton(onClick = { editing = listOf(item) }, enabled = item.id !in waiting) { Text("Edit") }
-                                        if (item.isOpen) {
-                                            TextButton(onClick = { Graph.printQueue.printLabels(listOf(LabelSpec.Remainder(item)), "remainder ${item.id}") }) {
-                                                Text("Remainder")
-                                            }
-                                        }
+                                    if (item.id in waiting) {
+                                        Text(
+                                            "Waiting for admin", style = MaterialTheme.typography.labelMedium, color = status.warn,
+                                            modifier = Modifier.padding(horizontal = 8.dp).align(Alignment.CenterVertically),
+                                        )
+                                    } else {
+                                        RowAction("Delete", color = status.bad) { deleting = MoveTarget("Delete ${item.id}?", listOf(item.id), "") }
                                     }
                                 }
                             }
@@ -305,4 +303,14 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
             onDismiss = { deleting = null },
         )
     }
+}
+
+/** A compact text button for the actions under a roll, so the row stays short. */
+@Composable
+private fun RowAction(text: String, color: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified, enabled: Boolean = true, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick, enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        modifier = Modifier.heightIn(min = 34.dp),
+    ) { Text(text, color = color, style = MaterialTheme.typography.labelLarge) }
 }
