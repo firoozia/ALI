@@ -198,8 +198,9 @@ object LabelRenderer {
     }
 
     /**
-     * Remainder label for an open roll: OPEN on a black band, code and size, metres left large,
-     * "left of 120 m", the same QR and ID as the roll so scanning keeps working.
+     * Remainder label for an open roll. Same QR and ID as the roll, so scanning keeps working.
+     * Left: the code big and bold, size and thickness small under it, the metres left large.
+     * Right: the QR with a black OPEN block under it, kept clear of the QR's white border.
      */
     fun renderRemainder(item: Item, setup: Tspl.Setup): Bitmap {
         val p = page(setup)
@@ -211,31 +212,39 @@ object LabelRenderer {
         drawQr(p, item.id, qrLeft, QR_QUIET, qrSize)
         val textWidth = qrLeft - MARGIN - QR_QUIET
 
-        val tag = condensed().apply { textSize = 40f }
-        val tagW = tag.measureText("OPEN") + 16f
-        val tagH = tag.fontMetrics.descent - tag.fontMetrics.ascent
-        c.drawRect(MARGIN.toFloat(), MARGIN.toFloat(), MARGIN + tagW, MARGIN + tagH, Paint().apply { color = Color.BLACK })
-        tag.color = Color.WHITE
-        c.drawText("OPEN", MARGIN + 8f, MARGIN - tag.fontMetrics.ascent, tag)
+        // OPEN block under the QR, leaving the QR's white border free of black.
+        val blockTop = QR_QUIET + qrSize + 16f
+        val blockBottom = h - MARGIN
+        if (blockBottom - blockTop >= 30f) {
+            c.drawRect(qrLeft, blockTop, qrLeft + qrSize, blockBottom, Paint().apply { color = Color.BLACK })
+            val open = condensed().apply { color = Color.WHITE }
+            fit(open, "OPEN", qrSize - 20f, minOf(60f, (blockBottom - blockTop) / 1.25f), 24f)
+            val m = open.fontMetrics
+            val baseline = (blockTop + blockBottom) / 2f - (m.ascent + m.descent) / 2f
+            open.textAlign = Paint.Align.CENTER
+            c.drawText("OPEN", qrLeft + qrSize / 2f, baseline, open)
+        }
 
-        val line = condensed()
-        val codeText = listOf(item.code, Format.size(item.size)).filter { it.isNotBlank() }.joinToString(" · ")
-        fit(line, codeText, textWidth, 40f, 18f)
-        var y = MARGIN + tagH + 6f - line.fontMetrics.ascent
-        c.drawText(codeText, MARGIN.toFloat(), y, line)
+        // Code: big and bold
+        val paint = condensed()
+        fit(paint, item.code, textWidth, 96f, 40f)
+        val codeBaseline = MARGIN - paint.fontMetrics.ascent * 0.92f
+        c.drawText(item.code, MARGIN.toFloat(), codeBaseline, paint)
 
-        val big = condensed()
+        // Size and thickness, smaller, right under the code
+        val second = if (item.size.isNotBlank()) Format.size(item.size) else item.categoryEnum.label
+        fit(paint, second, textWidth, 28f, 16f)
+        val sizeBaseline = codeBaseline + 8 - paint.fontMetrics.ascent
+        c.drawText(second, MARGIN.toFloat(), sizeBaseline, paint)
+
+        // Metres left, large
         val left = Format.qtyUnit(item.remaining, item.unit)
-        fit(big, left, textWidth, 84f, 30f)
-        y += 4f - big.fontMetrics.ascent
-        c.drawText(left, MARGIN.toFloat(), y, big)
-
-        val of = condensed().apply { textSize = 28f }
-        y += 4f - of.fontMetrics.ascent
-        c.drawText("left of ${Format.qtyUnit(item.qty, item.unit)}", MARGIN.toFloat(), y, of)
+        fit(paint, left, textWidth, 96f, 36f)
+        val leftBaseline = sizeBaseline + 6 - paint.fontMetrics.ascent
+        c.drawText(left, MARGIN.toFloat(), leftBaseline, paint)
 
         val id = mono()
-        fit(id, item.id, w - 2 * MARGIN, 34f, 18f)
+        fit(id, item.id, textWidth, 24f, 12f)
         c.drawText(item.id, MARGIN.toFloat(), h - MARGIN - id.fontMetrics.descent, id)
         return p.bmp
     }
