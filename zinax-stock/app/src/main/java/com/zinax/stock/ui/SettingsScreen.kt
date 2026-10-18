@@ -19,7 +19,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -118,6 +117,20 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             }
             Text(
                 "Changes only colours and styling on this phone. Stock, users and settings stay the same.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text("Language", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.FilterChip(
+                    selected = !UiLang.fa, onClick = { prefs.language = "en"; UiLang.fa = false }, label = { Text("English") },
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = UiLang.fa, onClick = { prefs.language = "fa"; UiLang.fa = true }, label = { Text("فارسی") },
+                )
+            }
+            Text(
+                "Persian changes only the words of menus and messages on this phone. Layout, numbers, codes and printed labels stay the same.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

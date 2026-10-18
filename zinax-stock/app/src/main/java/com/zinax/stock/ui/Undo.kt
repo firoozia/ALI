@@ -43,14 +43,14 @@ fun UndoDialog(target: UndoTarget, onConfirm: () -> Unit, onDismiss: () -> Unit,
 @Composable
 fun UndoButton(movementId: String, waiting: Set<String>, onClick: () -> Unit) {
     if (movementId in waiting) {
-        androidx.compose.material3.Text(
+        Text(
             "Waiting for admin",
             style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
             color = com.zinax.stock.ui.theme.LocalStatus.current.warn,
         )
     } else {
         androidx.compose.material3.TextButton(onClick = onClick) {
-            androidx.compose.material3.Text("Undo", color = com.zinax.stock.ui.theme.LocalStatus.current.bad)
+            Text("Undo", color = com.zinax.stock.ui.theme.LocalStatus.current.bad)
         }
     }
 }

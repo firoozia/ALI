@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -70,7 +69,11 @@ fun ScreenScaffold(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
-        snackbarHost = { if (snackbar != null) SnackbarHost(snackbar) },
+        snackbarHost = {
+            if (snackbar != null) SnackbarHost(snackbar) { data ->
+                androidx.compose.material3.Snackbar(modifier = Modifier.padding(12.dp)) { Text(data.visuals.message) }
+            }
+        },
         containerColor = MaterialTheme.colorScheme.background,
         content = content,
     )
@@ -147,11 +150,15 @@ fun CodeRow(
                 val status = com.zinax.stock.ui.theme.LocalStatus.current
                 Text(
                     androidx.compose.ui.text.buildAnnotatedString {
-                        append(title.substring(0, at))
+                        fun ui(s: String) = if (UiLang.fa) com.zinax.stock.core.Lang.tr(s) else s
+                        // " · " between the parts is kept as it is; each part is translated on its own.
+                        fun part(s: String) = (if (s.startsWith(" · ")) " · " else "") + ui(s.removePrefix(" · ").removeSuffix(" · ")) +
+                            (if (s.endsWith(" · ") && s != " · ") " · " else "")
+                        append(part(title.substring(0, at)))
                         pushStyle(androidx.compose.ui.text.SpanStyle(color = status.openText, background = status.open, fontWeight = FontWeight.Bold))
-                        append(" $highlight ")
+                        append(" ${ui(highlight!!)} ")
                         pop()
-                        append(title.substring(at + highlight!!.length))
+                        append(part(title.substring(at + highlight.length)))
                     },
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.bodyMedium,
