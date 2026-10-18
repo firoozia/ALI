@@ -94,6 +94,7 @@ class SheetsSync(
             response.optString("rev").takeIf { it.isNotEmpty() }?.let { prefs.lastRev = it }
             if (response.has("movements")) prefs.movementsBackfilled = true
             prefs.lastServerSync = response.optLong("now", prefs.lastServerSync)
+            response.optLong("lastBackup", 0L).takeIf { it > 0 }?.let { prefs.lastBackup = it }
             response.optString("sheetUrl").takeIf { it.startsWith("https://") }?.let { prefs.sheetUrl = it }
             val pushed = shipments.size + expected.size + items.size + movements.size + customers.size + users.size + requests.size + groups.size + products.size
             val msg = "Synced ${Format.dateTime(System.currentTimeMillis())} · sent $pushed change(s)"

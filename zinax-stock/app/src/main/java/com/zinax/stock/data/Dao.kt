@@ -99,6 +99,10 @@ interface StockDao {
     @Query("SELECT * FROM movements WHERE type = :type AND at >= :from AND at < :to ORDER BY at")
     suspend fun movementsBetweenNow(type: String, from: Long, to: Long): List<Movement>
 
+    /** Everything that happened to one package, oldest first. */
+    @Query("SELECT * FROM movements WHERE itemId = :itemId ORDER BY at")
+    fun movementsOf(itemId: String): Flow<List<Movement>>
+
     @Query("SELECT * FROM movements WHERE id = :id")
     suspend fun movement(id: String): Movement?
 

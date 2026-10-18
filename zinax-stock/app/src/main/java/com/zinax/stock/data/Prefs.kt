@@ -155,6 +155,11 @@ class Prefs(context: Context) {
         set(v) = edit { putString("sheetUrl", v.trim()) }
 
     /** Server time of the last successful sync; rows changed after it are pulled next time. */
+    /** When the sheet's nightly backup last ran, as told by the script; 0 when it never did or the script is older. */
+    var lastBackup: Long
+        get() = sp.getLong("lastBackup", 0)
+        set(v) = edit { putLong("lastBackup", v) }
+
     var lastServerSync: Long
         get() = sp.getLong("lastServerSync", 0)
         set(v) = edit { putLong("lastServerSync", v) }

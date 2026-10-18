@@ -153,4 +153,20 @@ const pr=ps.cells[ps.cells.length-1]; assert.ok(String(pr[0]).startsWith('P_'));
 r=post({token:'tok',action:'sync',since:Math.min(pr[9],g[7])-1});
 assert.ok(r.products.some(p=>p.code==='H-1' && p.groupId==='G_HANDLE' && p.note==='Black'));
 assert.ok(r.groups.some(x=>x.id==='G_HANDLE' && x.name==='Handle'));
+// nightly backup retention: last 30 days all, then the first of each month for 12 months
+{
+  const fmt=ctx.Utilities.formatDate; ctx.Utilities.formatDate=(d,tz,f)=>f==='yyyy-MM'?d.toISOString().slice(0,7):fmt(d,tz,f);
+  const day=86400000, now=Date.UTC(2026,9,18);
+  const backups=[]; for(let i=0;i<500;i++) backups.push({id:i, at:now-i*day});
+  const del=new Set(ctx.backupsToDelete_(backups,now,'UTC').map(b=>b.id));
+  for(let i=0;i<=30;i++) assert.ok(!del.has(i),'recent '+i);
+  const kept=backups.filter(b=>!del.has(b.id)&&b.id>30);
+  assert.ok(kept.length>=11 && kept.length<=13, 'monthly kept '+kept.length);
+  assert.equal(new Set(kept.map(b=>new Date(b.at).toISOString().slice(0,7))).size, kept.length, 'one per month');
+  assert.ok(kept.filter(b=>b.id<400).every(b=>new Date(b.at).getUTCDate()===1), 'first of month');
+  assert.ok(del.has(499));
+  ctx.Utilities.formatDate=fmt;
+}
+props.ZINAX_LAST_BACKUP='1234';
+assert.equal(post({token:'tok',action:'sync',since:0}).lastBackup,1234);
 console.log('APPS_SCRIPT_TESTS_OK');

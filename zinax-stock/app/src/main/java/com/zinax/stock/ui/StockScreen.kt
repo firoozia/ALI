@@ -51,7 +51,7 @@ private data class MoveTarget(val title: String, val ids: List<String>, val curr
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> Unit, onCount: () -> Unit) {
+fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> Unit, onCount: () -> Unit, onHistory: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val items by Graph.db.dao().inStock().collectAsStateWithLifecycle(emptyList())
     var query by remember { mutableStateOf("") }
@@ -204,6 +204,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                                     RowAction("Move") { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }
                                     RowAction("Reprint") { Graph.printQueue.print(listOf(item), item.id) }
+                                    RowAction("History") { onHistory(item.id) }
                                     RowAction("✂ Cut") { onCut(item.id) }
                                     RowAction("Damage", enabled = item.id !in waiting) { damaging = item }
                                     RowAction("Edit", enabled = item.id !in waiting) { editing = listOf(item) }

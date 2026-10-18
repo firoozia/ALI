@@ -31,6 +31,7 @@ import com.zinax.stock.ui.LockScreen
 import com.zinax.stock.ui.MoveScanScreen
 import com.zinax.stock.ui.ReceiveScanScreen
 import com.zinax.stock.ui.StockCountScreen
+import com.zinax.stock.ui.ItemHistoryScreen
 import com.zinax.stock.ui.RequestsScreen
 import com.zinax.stock.ui.UsersScreen
 import com.zinax.stock.ui.CatalogScreen
@@ -66,6 +67,9 @@ object Routes {
     const val MOVE_SCAN = "movescan"
     const val RECEIVE_SCAN = "receivescan"
     const val COUNT = "count"
+    const val HISTORY = "history?id={id}"
+
+    fun history(id: String? = null) = "history?id=${android.net.Uri.encode(id.orEmpty())}"
     const val CATALOG = "catalog"
     const val REQUESTS = "requests?open={open}&act={act}"
 
@@ -176,7 +180,7 @@ class MainActivity : FragmentActivity() {
                     }
                     composable(Routes.SHIP_OUT) { ShipOutScreen(onBack = back, onReport = { nav.navigate(Routes.OUT_REPORT) }) }
                     composable(Routes.STOCK) {
-                        StockScreen(onBack = back, onCut = { id -> nav.navigate(Routes.cut(id)) }, onMoveScan = { nav.navigate(Routes.MOVE_SCAN) }, onCount = { nav.navigate(Routes.COUNT) })
+                        StockScreen(onBack = back, onCut = { id -> nav.navigate(Routes.cut(id)) }, onMoveScan = { nav.navigate(Routes.MOVE_SCAN) }, onCount = { nav.navigate(Routes.COUNT) }, onHistory = { id -> nav.navigate(Routes.history(id)) })
                     }
                     composable(Routes.SETTINGS) { SettingsScreen(onBack = back, onCustomers = { nav.navigate(Routes.CUSTOMERS) }, onUsers = { nav.navigate(Routes.USERS) }, onCatalog = { nav.navigate(Routes.CATALOG) }) }
                     composable(Routes.CUT, listOf(navArgument("item") { type = NavType.StringType; defaultValue = "" })) {
@@ -187,6 +191,9 @@ class MainActivity : FragmentActivity() {
                     composable(Routes.MOVE_SCAN) { MoveScanScreen(onBack = back) }
                     composable(Routes.RECEIVE_SCAN) { ReceiveScanScreen(onBack = back) }
                     composable(Routes.COUNT) { StockCountScreen(onBack = back) }
+                    composable(Routes.HISTORY, listOf(navArgument("id") { type = NavType.StringType; defaultValue = "" })) {
+                        ItemHistoryScreen(it.arguments?.getString("id").orEmpty(), onBack = back)
+                    }
                     composable(Routes.CATALOG) { CatalogScreen(onBack = back) }
                     composable(
                         Routes.REQUESTS,

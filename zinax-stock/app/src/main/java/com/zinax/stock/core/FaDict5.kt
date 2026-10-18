@@ -119,5 +119,23 @@ Finish ⇒ پایان
 Remove {} missing ⇒ حذف {} گمشده
 Use this only for packages that are really gone. They leave stock and stay in the Items tab of the sheet marked VOID. ⇒ فقط برای بسته‌هایی که واقعاً نیستند. از موجودی خارج می‌شوند و در برگه Items شیت با علامت VOID می‌مانند.
 Counting {} · {} scanned · Back to stop ⇒ در حال شمارش {1} · {2} اسکن شد · برای توقف Back
+History ⇒ تاریخچه
+Shipped out ⇒ خارج شد
+Left ⇒ باقی‌مانده
+Place ⇒ محل
+Shipment ⇒ محموله
+Pallet ⇒ پالت
+Received by ⇒ دریافت توسط
+Scan a label ⇒ اسکن لیبل
+Label history ⇒ تاریخچه لیبل
+Scan a label to see its history ⇒ برای دیدن تاریخچه، لیبل را اسکن کنید
+{} is not in this phone. Sync and scan again. ⇒ {} در این گوشی نیست. همگام‌سازی کنید و دوباره اسکن کنید.
+open ⇒ باز
+No history on this phone yet. Sync to get it. ⇒ هنوز تاریخچه‌ای در این گوشی نیست. برای دریافت، همگام‌سازی کنید.
+Undone by {} ⇒ لغو شده توسط {}
+phone {} ⇒ گوشی {}
+No sheet backup yet. In Apps Script run setup once to start the nightly backup. ⇒ هنوز پشتیبانی از شیت گرفته نشده. در Apps Script یک بار setup را اجرا کنید تا پشتیبان شبانه شروع شود.
+Last sheet backup {} ⇒ آخرین پشتیبان شیت {}
+more than 2 days ago ⇒ بیش از 2 روز پیش
 """
 }

@@ -39,6 +39,8 @@ import com.zinax.stock.Biometric
 import com.zinax.stock.Graph
 import com.zinax.stock.Share
 import com.zinax.stock.core.Category
+import com.zinax.stock.core.Format
+import com.zinax.stock.ui.theme.LocalStatus
 import com.zinax.stock.core.LabelId
 import com.zinax.stock.core.Lengths
 import com.zinax.stock.label.Tspl
@@ -345,6 +347,14 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             OutlinedTextField(token, { token = it; prefs.token = it }, label = { Text("Token") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(sheet, { sheet = it; prefs.sheetUrl = it }, label = { Text("Sheet link (filled in after the first sync)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Text(syncMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val backup = remember(tick) { prefs.lastBackup }
+            val backupOld = System.currentTimeMillis() - backup > 2 * 24 * 3600 * 1000L
+            Text(
+                if (backup == 0L) "No sheet backup yet. In Apps Script run setup once to start the nightly backup."
+                else "Last sheet backup ${Format.dateTime(backup)}" + if (backupOld) " · more than 2 days ago" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (backup == 0L || backupOld) LocalStatus.current.warn else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
                     scope.launch {

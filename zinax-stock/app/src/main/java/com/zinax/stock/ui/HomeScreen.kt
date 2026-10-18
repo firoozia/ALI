@@ -163,7 +163,7 @@ fun HomeScreen(nav: NavController) {
         // Fit the phone: the whole page is drawn smaller (down to 70 %) until it fits the screen height, and
         // on a tall screen the cards grow to fill the space. Only a very short screen scrolls.
         val density = LocalDensity.current
-        val buttonRows = if (canReceive) 5 else 3
+        val buttonRows = if (canReceive) 5 else 4
         val top = if (emerald) 128 + 56 else 36
         val needed = ((top + 3 * 140 + (if (emerald) 60 else 46) + buttonRows * 54 + 12 * (4 + buttonRows) + 12) *
             density.fontScale.coerceAtLeast(1f)).dp
@@ -245,9 +245,10 @@ fun HomeScreen(nav: NavController) {
                     PillButton(R.drawable.lucide_download, "Import list", Modifier.weight(1f)) { nav.navigate(Routes.IMPORT) }
                     PillButton(R.drawable.lucide_printer, "Print by hand", Modifier.weight(1f)) { nav.navigate(Routes.manual()) }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PillButton(R.drawable.lucide_package_check, "Receive by scan", Modifier.weight(1f)) { nav.navigate(Routes.RECEIVE_SCAN) }
-                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (canReceive) PillButton(R.drawable.lucide_package_check, "Receive by scan", Modifier.weight(1f)) { nav.navigate(Routes.RECEIVE_SCAN) }
+                PillButton(R.drawable.lucide_scan_line, "Label history", Modifier.weight(1f)) { nav.navigate(Routes.history()) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 PillButton(R.drawable.lucide_file_spreadsheet, "Send Excel", Modifier.weight(1f), primary = true) {

@@ -9,12 +9,14 @@
  * 4. Deploy > New deployment > Web app. Execute as: Me. Who has access: Anyone.
  *    Copy the URL ending in /exec into the app's Settings with the token.
  *
- * `setup` also installs the weekly backup (see BACKUP_* below).
+ * `setup` also installs the nightly backup (see BACKUP_* below). Run `backupNow` to make one at once.
  */
 
-const BACKUP_DAY = ScriptApp.WeekDay.FRIDAY;
+// Every night at BACKUP_HOUR a copy of the whole sheet goes to BACKUP_FOLDER in Google Drive.
+// All copies of the last BACKUP_DAYS days are kept, then the first copy of each month for BACKUP_MONTHS months.
 const BACKUP_HOUR = 2;
-const BACKUP_KEEP = 12;
+const BACKUP_DAYS = 30;
+const BACKUP_MONTHS = 12;
 const BACKUP_FOLDER = 'Zinax Stock Backups';
 
 // Column order of each sheet. The first column is the row ID; ServerAt is set by this script.
@@ -66,9 +68,9 @@ function setup() {
   }
   const adminCode = adminCode_();
   ScriptApp.getProjectTriggers()
-    .filter(function (t) { return t.getHandlerFunction() === 'weeklyBackup'; })
+    .filter(function (t) { return ['weeklyBackup', 'nightlyBackup'].indexOf(t.getHandlerFunction()) >= 0; })
     .forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  ScriptApp.newTrigger('weeklyBackup').timeBased().onWeekDay(BACKUP_DAY).atHour(BACKUP_HOUR).create();
+  ScriptApp.newTrigger('nightlyBackup').timeBased().everyDays(1).atHour(BACKUP_HOUR).create();
   Logger.log('Token for the app: ' + token);
   Logger.log('Admin code (to create the first admin or reset a PIN): ' + adminCode);
   Logger.log('Sheet: ' + ss.getUrl());
@@ -168,6 +170,7 @@ function sync_(req) {
     ok: true,
     now: now,
     sheetUrl: SpreadsheetApp.getActive().getUrl(),
+    lastBackup: Number(PropertiesService.getScriptProperties().getProperty('ZINAX_LAST_BACKUP') || 0),
     shipments: changed_('Shipments', since).map(function (r) {
       return { id: r[0], name: r[1], source: r[2], createdAt: ms_(r[3]), updatedAt: Number(r[4]) };
     }),
@@ -565,20 +568,42 @@ function cutsSheet_() {
     'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
 }
 
-// ---------- weekly backup ----------
+// ---------- nightly backup ----------
 
-function weeklyBackup() {
+function nightlyBackup() {
   const ss = SpreadsheetApp.getActive();
   const folders = DriveApp.getFoldersByName(BACKUP_FOLDER);
   const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(BACKUP_FOLDER);
-  const stamp = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd');
+  const tz = ss.getSpreadsheetTimeZone();
+  const stamp = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HHmm');
   DriveApp.getFileById(ss.getId()).makeCopy(ss.getName() + ' backup ' + stamp, folder);
+  PropertiesService.getScriptProperties().setProperty('ZINAX_LAST_BACKUP', String(Date.now()));
 
   const files = [];
   const it = folder.getFiles();
   while (it.hasNext()) files.push(it.next());
-  files.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
-  files.slice(BACKUP_KEEP).forEach(function (f) { f.setTrashed(true); });
+  backupsToDelete_(files.map(function (f) { return { file: f, at: f.getDateCreated().getTime() }; }), Date.now(), tz)
+    .forEach(function (b) { b.file.setTrashed(true); });
+}
+
+/** Old installs still have a weekly trigger calling this until `setup` runs again. */
+function weeklyBackup() { nightlyBackup(); }
+
+/** Makes a backup now, e.g. before a big change in the sheet. */
+function backupNow() { nightlyBackup(); }
+
+/** Copies past the retention: older than BACKUP_DAYS, except the first of each month for BACKUP_MONTHS months. */
+function backupsToDelete_(backups, now, tz) {
+  const day = 24 * 3600 * 1000;
+  const keptMonths = {};
+  return backups.slice().sort(function (a, b) { return a.at - b.at; }).filter(function (b) {
+    if (now - b.at <= BACKUP_DAYS * day) return false;
+    if (now - b.at > (BACKUP_MONTHS * 31 + BACKUP_DAYS) * day) return true;
+    const month = Utilities.formatDate(new Date(b.at), tz, 'yyyy-MM');
+    if (keptMonths[month]) return true;
+    keptMonths[month] = true;
+    return false;
+  });
 }
 
 // ---------- values ----------

@@ -115,5 +115,23 @@ Finish ⇒ إنهاء
 Remove {} missing ⇒ حذف {} مفقود
 Use this only for packages that are really gone. They leave stock and stay in the Items tab of the sheet marked VOID. ⇒ استخدمه فقط للطرود المفقودة فعلاً. تخرج من المخزون وتبقى في ورقة Items بعلامة VOID.
 Counting {} · {} scanned · Back to stop ⇒ جارٍ جرد {1} · {2} تم مسحها · للإيقاف Back
+History ⇒ السجل
+Shipped out ⇒ تم الشحن
+Left ⇒ المتبقي
+Place ⇒ المكان
+Shipment ⇒ الشحنة
+Pallet ⇒ المنصة
+Received by ⇒ استلمه
+Scan a label ⇒ مسح ملصق
+Label history ⇒ سجل الملصق
+Scan a label to see its history ⇒ امسح ملصقاً لرؤية سجله
+{} is not in this phone. Sync and scan again. ⇒ {} غير موجود في هذا الهاتف. زامن وامسح مجدداً.
+open ⇒ مفتوح
+No history on this phone yet. Sync to get it. ⇒ لا يوجد سجل في هذا الهاتف بعد. زامن للحصول عليه.
+Undone by {} ⇒ أُلغي بواسطة {}
+phone {} ⇒ الهاتف {}
+No sheet backup yet. In Apps Script run setup once to start the nightly backup. ⇒ لا توجد نسخة احتياطية للورقة بعد. في Apps Script شغّل setup مرة واحدة لبدء النسخ الليلي.
+Last sheet backup {} ⇒ آخر نسخة احتياطية للورقة {}
+more than 2 days ago ⇒ منذ أكثر من يومين
 """
 }
