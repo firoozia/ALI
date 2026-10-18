@@ -68,6 +68,11 @@ object Lang {
             val values = m.groupValues.drop(1).map { v -> isolate(compute(v, depth + 1)) }
             return fill(t.fa, values)
         }
+        // Long text made of known pieces (the pieces of a text written over several lines in the code).
+        var out = c
+        var replaced = false
+        for ((en, fa) in fragments) if (en in out) { out = out.replace(en, fa); replaced = true }
+        if (replaced) return out
         // Lines made of parts: "3 full · 2 open · 16 m" or "14 cartons, 210 PAIR". Each part is translated on its own.
         for (sep in SEPARATORS) {
             if (sep !in c) continue
@@ -75,9 +80,7 @@ object Lang {
             val done = parts.map { compute(it, depth + 1) }
             if (done != parts) return done.joinToString(sep)
         }
-        var out = c
-        for ((en, fa) in fragments) if (en in out) out = out.replace(en, fa)
-        return out
+        return c
     }
 
     private val SEPARATORS = listOf(" · ", ", ")
