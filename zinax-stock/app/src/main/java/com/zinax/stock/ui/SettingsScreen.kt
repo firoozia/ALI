@@ -124,7 +124,7 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("en" to "English", "fa" to "فارسی", "ar" to "العربية").forEach { (code, name) ->
                     androidx.compose.material3.FilterChip(
-                        selected = UiLang.lang == code, onClick = { prefs.language = code; UiLang.lang = code }, label = { Text(name) },
+                        selected = UiLang.lang == code, onClick = { prefs.language = code; prefs.languagePending = code != "en"; UiLang.lang = code }, label = { Text(name) },
                     )
                 }
             }

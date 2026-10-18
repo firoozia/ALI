@@ -116,6 +116,8 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             ZinaxTheme {
+                // The language counts as safe once the screens have run on it for a few seconds.
+                LaunchedEffect(com.zinax.stock.ui.UiLang.lang) { delay(5000); Graph.prefs.languagePending = false }
                 val nav = rememberNavController()
                 val back: () -> Unit = { nav.popBackStack() }
                 val user by Graph.session.user.collectAsStateWithLifecycle()

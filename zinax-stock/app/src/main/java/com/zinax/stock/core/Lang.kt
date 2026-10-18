@@ -31,7 +31,7 @@ object Lang {
                 if ("{}" in en) {
                     val parts = en.split("{}")
                     // A value never swallows the " · " that separates the parts of a line.
-                    val rx = Regex("^" + parts.joinToString("((?:(?! · ).)+?)") { Regex.escape(it) } + "$", RegexOption.DOT_MATCHES_ALL)
+                    val rx = Regex("^" + parts.joinToString("(.+?)") { Regex.escape(it) } + "$", RegexOption.DOT_MATCHES_ALL)
                     templates.add(Template(rx, to, parts.sumOf { it.length }))
                 } else {
                     exact[en] = to
@@ -62,9 +62,10 @@ object Lang {
     /** [s] in [lang] ("fa" or "ar"); any other language, and anything without a translation, stays as it is. */
     fun tr(s: String, lang: String = "fa"): String {
         if (s.isBlank()) return s
-        val d = dict(lang) ?: return s
+        val d = try { dict(lang) } catch (e: Throwable) { null } ?: return s
         synchronized(d.cache) { d.cache[s]?.let { return it } }
-        val r = compute(d, s, 0)
+        // A translation problem must never take the app down: show the English text instead.
+        val r = try { compute(d, s, 0) } catch (e: Throwable) { s }
         synchronized(d.cache) { d.cache[s] = r }
         return r
     }
@@ -83,6 +84,8 @@ object Lang {
         if (depth > 3) return c
         for (t in d.templates) {
             val m = t.regex.matchEntire(c) ?: continue
+            // A value never swallows the " · " that separates the parts of a line.
+            if (m.groupValues.drop(1).any { " · " in it }) continue
             val values = m.groupValues.drop(1).map { v -> isolate(compute(d, v, depth + 1)) }
             return fill(t.target, values)
         }

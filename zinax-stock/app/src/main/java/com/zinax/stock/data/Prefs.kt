@@ -63,6 +63,11 @@ class Prefs(context: Context) {
 
     /** Look of the app on this phone: "teal" (Theme 1) or "emerald" (Theme 2). */
     /** "en", "fa" or "ar": the language of the menus and messages. Numbers, codes and labels stay as they are. */
+    /** True while a non-English language has not yet run safely; if the app dies meanwhile, the next start uses English. */
+    var languagePending: Boolean
+        get() = sp.getBoolean("languagePending", false)
+        set(v) = edit { putBoolean("languagePending", v) }
+
     var language: String
         get() = sp.getString("language", "en") ?: "en"
         set(v) = edit { putString("language", v) }
