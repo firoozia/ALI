@@ -86,5 +86,34 @@ already received ⇒ تم استلامه سابقاً
 Hide cartons not received ⇒ إخفاء الكراتين غير المستلمة
 Show {} cartons not received ⇒ عرض {} كرتون غير مستلمة
 Receiving · {} scanned · Back to stop ⇒ جارٍ الاستلام · {1} تم مسحها · للإيقاف Back
+Count ⇒ جرد
+Stock count ⇒ جرد المخزون
+Place to count ⇒ مكان الجرد
+{}: {} packages in the app ⇒ {1}: {2} طرد في التطبيق
+Scan every label on the shelves of this place. Press Back on the camera to stop. ⇒ امسح كل ملصق على رفوف هذا المكان. اضغط Back في الكاميرا للإيقاف.
+Scan labels ⇒ مسح الملصقات
+already counted ⇒ تم عدّه سابقاً
+not in this phone ⇒ غير موجود في هذا الهاتف
+recorded as shipped ⇒ مسجّل كمشحون
+recorded as deleted ⇒ مسجّل كمحذوف
+recorded in {} ⇒ مسجّل في {}
+Found {} of {} ⇒ وُجد {1} من {2}
+All found ⇒ وُجد الكل
+Extra {} ⇒ زائد {}
+Missing {} ⇒ مفقود {}
+Move here ⇒ نقل إلى هنا
+Look for missing packages in other places first: scanning them there shows them as extra. Remove only those that are really gone. ⇒ ابحث عن الطرود المفقودة في الأماكن الأخرى أولاً: مسحها هناك يظهرها كزائدة. احذف فقط ما فُقد فعلاً.
+Remove {} missing from stock ⇒ حذف {} مفقود من المخزون
+Send count result ⇒ إرسال نتيجة الجرد
+Finish and start a new count ⇒ إنهاء وبدء جرد جديد
+Start a new count? ⇒ بدء جرد جديد؟
+The {} labels scanned in {} will be cleared. ⇒ سيتم مسح {1} ملصق ممسوح في {2}.
+Start new count ⇒ بدء جرد جديد
+Finish this count? ⇒ إنهاء هذا الجرد؟
+Send the result first if you need it. The scanned list will be cleared. ⇒ أرسل النتيجة أولاً إذا احتجتها. سيتم مسح قائمة المسح.
+Finish ⇒ إنهاء
+Remove {} missing ⇒ حذف {} مفقود
+Use this only for packages that are really gone. They leave stock and stay in the Items tab of the sheet marked VOID. ⇒ استخدمه فقط للطرود المفقودة فعلاً. تخرج من المخزون وتبقى في ورقة Items بعلامة VOID.
+Counting {} · {} scanned · Back to stop ⇒ جارٍ جرد {1} · {2} تم مسحها · للإيقاف Back
 """
 }

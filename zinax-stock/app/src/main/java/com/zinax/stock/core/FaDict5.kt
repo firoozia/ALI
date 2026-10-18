@@ -90,5 +90,34 @@ already received ⇒ قبلاً دریافت شده
 Hide cartons not received ⇒ پنهان کردن کارتن‌های دریافت‌نشده
 Show {} cartons not received ⇒ نمایش {} کارتن دریافت‌نشده
 Receiving · {} scanned · Back to stop ⇒ در حال دریافت · {1} اسکن شد · برای توقف Back
+Count ⇒ شمارش
+Stock count ⇒ انبارگردانی
+Place to count ⇒ مکان شمارش
+{}: {} packages in the app ⇒ {1}: {2} بسته در اپ
+Scan every label on the shelves of this place. Press Back on the camera to stop. ⇒ همه لیبل‌های قفسه‌های این مکان را اسکن کنید. برای توقف، در دوربین Back را بزنید.
+Scan labels ⇒ اسکن لیبل‌ها
+already counted ⇒ قبلاً شمرده شده
+not in this phone ⇒ در این گوشی نیست
+recorded as shipped ⇒ ثبت‌شده به‌عنوان خارج‌شده
+recorded as deleted ⇒ ثبت‌شده به‌عنوان حذف‌شده
+recorded in {} ⇒ ثبت‌شده در {}
+Found {} of {} ⇒ {1} از {2} پیدا شد
+All found ⇒ همه پیدا شد
+Extra {} ⇒ اضافه {}
+Missing {} ⇒ گمشده {}
+Move here ⇒ انتقال به اینجا
+Look for missing packages in other places first: scanning them there shows them as extra. Remove only those that are really gone. ⇒ اول بسته‌های گمشده را در مکان‌های دیگر بگردید؛ اسکن آن‌ها در آنجا به‌عنوان اضافه نشان داده می‌شود. فقط آن‌هایی را حذف کنید که واقعاً نیستند.
+Remove {} missing from stock ⇒ حذف {} گمشده از موجودی
+Send count result ⇒ ارسال نتیجه شمارش
+Finish and start a new count ⇒ پایان و شروع شمارش جدید
+Start a new count? ⇒ شمارش جدید شروع شود؟
+The {} labels scanned in {} will be cleared. ⇒ {1} لیبل اسکن‌شده در {2} پاک می‌شود.
+Start new count ⇒ شروع شمارش جدید
+Finish this count? ⇒ این شمارش تمام شود؟
+Send the result first if you need it. The scanned list will be cleared. ⇒ اگر نتیجه را لازم دارید اول آن را بفرستید. فهرست اسکن‌شده پاک می‌شود.
+Finish ⇒ پایان
+Remove {} missing ⇒ حذف {} گمشده
+Use this only for packages that are really gone. They leave stock and stay in the Items tab of the sheet marked VOID. ⇒ فقط برای بسته‌هایی که واقعاً نیستند. از موجودی خارج می‌شوند و در برگه Items شیت با علامت VOID می‌مانند.
+Counting {} · {} scanned · Back to stop ⇒ در حال شمارش {1} · {2} اسکن شد · برای توقف Back
 """
 }

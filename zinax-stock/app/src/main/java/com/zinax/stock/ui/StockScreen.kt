@@ -51,7 +51,7 @@ private data class MoveTarget(val title: String, val ids: List<String>, val curr
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> Unit) {
+fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> Unit, onCount: () -> Unit) {
     val scope = rememberCoroutineScope()
     val items by Graph.db.dao().inStock().collectAsStateWithLifecycle(emptyList())
     var query by remember { mutableStateOf("") }
@@ -99,7 +99,10 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
             .sortedWith(compareBy<Map.Entry<String, List<Item>>>({ it.value.first().categoryEnum.ordinal }, { Report.codeSortKey(it.value.first().code) }, { it.value.first().code }))
     }
 
-    ScreenScaffold("Stock", onBack, snackbar, actions = { TextButton(onClick = onMoveScan) { Text("Move by scan") } }) { padding ->
+    ScreenScaffold("Stock", onBack, snackbar, actions = {
+        TextButton(onClick = onCount) { Text("Count") }
+        TextButton(onClick = onMoveScan) { Text("Move by scan") }
+    }) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),

@@ -47,6 +47,19 @@ class Prefs(context: Context) {
         set(v) = edit { putString("lastRev", v) }
 
     /** The place last chosen in Move by scan. */
+    /** The stock count in progress, kept so a locked or closed app does not lose it. */
+    var countLocation: String
+        get() = sp.getString("countLocation", "") ?: ""
+        set(v) = edit { putString("countLocation", v) }
+
+    var countScanned: List<String>
+        get() = (sp.getString("countScanned", "") ?: "").split(",").filter { it.isNotBlank() }
+        set(v) = edit { putString("countScanned", v.joinToString(",")) }
+
+    var countStarted: Long
+        get() = sp.getLong("countStarted", 0L)
+        set(v) = edit { putLong("countStarted", v) }
+
     var moveTarget: String
         get() = sp.getString("moveTarget", "") ?: ""
         set(v) = edit { putString("moveTarget", v) }
