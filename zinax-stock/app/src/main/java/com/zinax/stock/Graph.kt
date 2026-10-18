@@ -52,7 +52,7 @@ object Graph {
     fun init(app: Application) {
         this.app = app
         prefs = Prefs(app)
-        com.zinax.stock.ui.UiLang.fa = prefs.language == "fa"
+        com.zinax.stock.ui.UiLang.lang = prefs.language
         db = AppDatabase.create(app)
         repo = Repository(db, prefs) { SyncWorker.soon(app) }
         printer = BluetoothPrinter(app)

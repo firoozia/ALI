@@ -1,0 +1,80 @@
+package com.zinax.stock.core
+
+/** Messages and errors from the data layer, printer and sync, request summaries, report lines. */
+internal object ArDict5 {
+    const val TEXT = """
+Enter the customer ⇒ أدخل العميل
+Unknown label {} ⇒ ملصق غير معروف {}
+{} was already shipped ⇒ سبق إخراج {}
+Enter a quantity above zero ⇒ أدخل كمية أكبر من الصفر
+Only {} {} left on {} ⇒ تبقّى {1} {2} فقط على {3}
+Enter a length above zero ⇒ أدخل طولاً أكبر من الصفر
+Only {} left on {} ⇒ تبقّى {1} فقط على {2}
+Short end ⇒ طرف قصير
+Ship-out not found ⇒ لم يُعثر على الإخراج
+Only ship-outs, cuts, waste and damage reports can be undone ⇒ يمكن التراجع فقط عن الإخراج والقطع والهدر وتقارير التلف
+This was already undone ⇒ سبق التراجع عن هذا
+Label {} not found ⇒ لم يُعثر على الملصق {}
+{} was deleted ⇒ تم حذف {}
+Pick a reason ⇒ اختر سبباً
+Enter a code ⇒ أدخل الرمز
+Enter a unit ⇒ أدخل الوحدة
+Enter a name ⇒ أدخل الاسم
+{} {} is already in {} ⇒ {1} {2} موجود أصلاً في {3}
+There is already a group called {} ⇒ توجد مجموعة باسم {} بالفعل
+Other cannot be removed ⇒ لا يمكن حذف «أخرى»
+PIN must be {} to {} digits ⇒ يجب أن يكون الرمز السري من {1} إلى {2} أرقام
+There is already a user called {} ⇒ يوجد مستخدم باسم {} بالفعل
+User not found ⇒ لم يُعثر على المستخدم
+Keep at least one active admin ⇒ أبقِ مديراً نشطاً واحداً على الأقل
+Already waiting for an admin ⇒ بانتظار المدير بالفعل
+Nothing in stock to delete ⇒ لا شيء في المخزون للحذف
+Nothing would change ⇒ لن يتغير شيء
+Request not found ⇒ لم يُعثر على الطلب
+{}'s change has not reached this phone yet. Sync and try again. ⇒ لم يصل تغيير {} إلى هذا الهاتف بعد. زامن وحاول مرة أخرى.
+The damage details did not reach this phone. Update the Apps Script and sync. ⇒ لم تصل تفاصيل التلف إلى هذا الهاتف. حدّث Apps Script وزامن.
+The new values did not reach this phone. Update the Apps Script to 2.1.0 and sync. ⇒ لم تصل القيم الجديدة إلى هذا الهاتف. حدّث Apps Script إلى الإصدار 2.1.0 وزامن.
+Unknown request ⇒ طلب غير معروف
+Undo {} {} of {} ({}) ⇒ تراجع عن {1} {2} من {3} ({4})
+Undo {} {} of {} ({}) to {} ⇒ تراجع عن {1} {2} من {3} ({4}) إلى {5}
+Undo {} {} of {} ({}) (done by {}) ⇒ تراجع عن {1} {2} من {3} ({4}) (نفّذه {5})
+Undo {} {} of {} ({}) to {} (done by {}) ⇒ تراجع عن {1} {2} من {3} ({4}) إلى {5} (نفّذه {6})
+{} (done by {}) ⇒ {1} (نفّذه {2})
+Damage {} of {} ({}): {} ⇒ تلف {1} من {2} ({3}): {4}
+Delete {} labels of {} ⇒ حذف {1} ملصق من {2}
+Edit {}: {} ⇒ تعديل {1}: {2}
+Edit {} labels of {}: {} ⇒ تعديل {1} ملصق من {2}: {3}
+Category {} → {} ⇒ الفئة {1} → {2}
+Code {} → {} ⇒ الرمز {1} → {2}
+Size {} → {} ⇒ المقاس {1} → {2}
+Unit {} → {} ⇒ الوحدة {1} → {2}
+{} package ⇒ {} طرد
+{} packages ⇒ {} طرد
+{} ({} cut) ⇒ {1} ({2} قطع)
+Allow Nearby devices (Bluetooth) for Zinax Stock in Android settings. ⇒ اسمح بإذن «الأجهزة القريبة (بلوتوث)» لزيناكس ستوك من إعدادات أندرويد.
+This phone has no Bluetooth. ⇒ هذا الهاتف ليس فيه بلوتوث.
+Turn on Bluetooth and try again. ⇒ شغّل البلوتوث وحاول مرة أخرى.
+Printer not found. Check it is on, in range and not printing for another phone. ⇒ لم تُوجد الطابعة. تأكد أنها تعمل وفي النطاق ولا تطبع لهاتف آخر.
+No printer selected. Pick the XP-420B in Settings. ⇒ لم تُختر طابعة. اختر XP-420B من الإعدادات.
+No printer selected. Pick the XP-420B first. ⇒ لم تُختر طابعة. اختر XP-420B أولاً.
+Printing cancelled. ⇒ أُلغيت الطباعة.
+Printing failed. ⇒ فشلت الطباعة.
+Wait until printing has finished. ⇒ انتظر حتى تنتهي الطباعة.
+Calibrating: the printer feeds a few labels and stops at the start of one. Then print a test label. ⇒ جارٍ المعايرة: تسحب الطابعة بضعة ملصقات وتتوقف عند بداية ملصق. بعدها اطبع ملصقاً تجريبياً.
+Could not reach the printer. ⇒ تعذر الوصول إلى الطابعة.
+Add the web app URL and token in Settings to sync. ⇒ أضف رابط تطبيق الويب والتوكن في الإعدادات للمزامنة.
+Add the web app URL and token first. ⇒ أضف رابط تطبيق الويب والتوكن أولاً.
+Unknown action ⇒ إجراء غير معروف
+Update the Apps Script to version 1.9.0 and deploy a new version first. ⇒ حدّث Apps Script إلى الإصدار 1.9.0 وانشر نسخة جديدة أولاً.
+Wrong admin code ⇒ رمز المدير خاطئ
+Wrong token. Copy it again from the Apps Script log. ⇒ التوكن خاطئ. انسخه من جديد من سجل Apps Script.
+The web app asks for a Google sign-in. In Apps Script set the deployment's "Who has access" to Anyone. ⇒ يطلب تطبيق الويب تسجيل الدخول إلى Google. في Apps Script اجعل «Who has access» للنشر Anyone.
+The web app did not return data. Check the Web app URL in Settings and deploy a new version of the script. ⇒ لم يُرجع تطبيق الويب بيانات. تحقق من رابط تطبيق الويب في الإعدادات وانشر نسخة جديدة من السكربت.
+Web app not found (404). In Apps Script open Deploy → Manage deployments, copy the Web app URL of the active deployment and paste it in Settings → Google Sheet. ⇒ لم يُعثر على تطبيق الويب (404). في Apps Script افتح Deploy ← Manage deployments وانسخ رابط تطبيق الويب للنشر النشط والصقه في الإعدادات ← Google Sheet.
+No access to the web app ({}). The deployment must run as Me with "Who has access" set to Anyone. ⇒ لا يوجد وصول إلى تطبيق الويب ({}). يجب أن يعمل النشر بصفة Me وأن يكون «Who has access» على Anyone.
+Google is busy (429). The app tries again by itself in a minute. ⇒ Google مشغول (429). يعيد التطبيق المحاولة تلقائياً بعد دقيقة.
+Google had a problem ({}). The app tries again by itself in a minute. ⇒ حدثت مشكلة في Google ({}). يعيد التطبيق المحاولة تلقائياً بعد دقيقة.
+The web app answered with error {} ⇒ ردّ تطبيق الويب بالخطأ {}
+Bad request ⇒ طلب غير صالح
+"""
+}

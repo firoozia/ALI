@@ -150,7 +150,7 @@ fun CodeRow(
                 val status = com.zinax.stock.ui.theme.LocalStatus.current
                 Text(
                     androidx.compose.ui.text.buildAnnotatedString {
-                        fun ui(s: String) = if (UiLang.fa) com.zinax.stock.core.Lang.tr(s) else s
+                        fun ui(s: String) = UiLang.tr(s)
                         // " · " between the parts is kept as it is; each part is translated on its own.
                         fun part(s: String) = (if (s.startsWith(" · ")) " · " else "") + ui(s.removePrefix(" · ").removeSuffix(" · ")) +
                             (if (s.endsWith(" · ") && s != " · ") " · " else "")

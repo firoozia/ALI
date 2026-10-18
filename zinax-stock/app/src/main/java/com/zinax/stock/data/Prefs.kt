@@ -62,7 +62,7 @@ class Prefs(context: Context) {
         set(v) = edit { putString("biometricUserId", v) }
 
     /** Look of the app on this phone: "teal" (Theme 1) or "emerald" (Theme 2). */
-    /** "en" or "fa": the language of the menus and messages. Numbers, codes and labels stay as they are. */
+    /** "en", "fa" or "ar": the language of the menus and messages. Numbers, codes and labels stay as they are. */
     var language: String
         get() = sp.getString("language", "en") ?: "en"
         set(v) = edit { putString("language", v) }

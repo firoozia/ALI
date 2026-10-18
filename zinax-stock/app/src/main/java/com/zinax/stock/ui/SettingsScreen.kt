@@ -122,15 +122,14 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             )
             Text("Language", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                androidx.compose.material3.FilterChip(
-                    selected = !UiLang.fa, onClick = { prefs.language = "en"; UiLang.fa = false }, label = { Text("English") },
-                )
-                androidx.compose.material3.FilterChip(
-                    selected = UiLang.fa, onClick = { prefs.language = "fa"; UiLang.fa = true }, label = { Text("فارسی") },
-                )
+                listOf("en" to "English", "fa" to "فارسی", "ar" to "العربية").forEach { (code, name) ->
+                    androidx.compose.material3.FilterChip(
+                        selected = UiLang.lang == code, onClick = { prefs.language = code; UiLang.lang = code }, label = { Text(name) },
+                    )
+                }
             }
             Text(
-                "Persian changes only the words of menus and messages on this phone. Layout, numbers, codes and printed labels stay the same.",
+                "Persian and Arabic change only the words of menus and messages on this phone. Layout, numbers, codes and printed labels stay the same.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -1,5 +1,7 @@
 package com.zinax.stock
 
+import com.zinax.stock.core.ArDict
+import com.zinax.stock.core.FaDict
 import com.zinax.stock.core.Lang
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -45,5 +47,24 @@ class LangTest {
 
     @Test fun a_group_name_inside_a_chip() {
         assertEquals("فیلم PVC (120)", t("PVC film (120)").replace("‎", ""))
+    }
+
+    private fun keys(text: String) = text.lineSequence().mapNotNull { l -> l.indexOf(Lang.SEP).takeIf { it > 0 }?.let { l.substring(0, it).trim() } }.toSet()
+
+    @Test fun arabic_has_every_string_persian_has() {
+        val fa = keys(FaDict.all())
+        val ar = keys(ArDict.all())
+        assertEquals("missing in Arabic", emptySet<String>(), fa - ar)
+        assertEquals("only in Arabic", emptySet<String>(), ar - fa)
+    }
+
+    @Test fun arabic_text() {
+        assertEquals("المخزون", Lang.tr("Stock", "ar"))
+        assertEquals("3 كامل · 2 مفتوح · 190 m", Lang.tr("3 full · 2 open · 190 m", "ar").replace("\u200E", ""))
+        assertEquals("ZX-261014-A0012", Lang.tr("ZX-261014-A0012", "ar"))
+    }
+
+    @Test fun english_is_left_alone() {
+        assertEquals("Stock", Lang.tr("Stock", "en"))
     }
 }

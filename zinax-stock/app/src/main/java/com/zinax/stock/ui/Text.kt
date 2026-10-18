@@ -19,9 +19,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import com.zinax.stock.core.Lang
 
-/** The app language on this phone. Changing it redraws every screen. */
+/** The app language on this phone: "en", "fa" or "ar". Changing it redraws every screen. */
 object UiLang {
-    var fa by mutableStateOf(false)
+    var lang by mutableStateOf("en")
+
+    /** The text in the chosen language, or as written when the language is English. */
+    fun tr(s: String): String = if (lang == "en") s else Lang.tr(s, lang)
 }
 
 /** Text in the language chosen in Settings. Strings are written in English and translated here. */
@@ -46,7 +49,7 @@ fun Text(
     style: TextStyle = LocalTextStyle.current,
 ) {
     androidx.compose.material3.Text(
-        text = if (UiLang.fa) Lang.tr(text) else text,
+        text = UiLang.tr(text),
         modifier = modifier, color = color, fontSize = fontSize, fontStyle = fontStyle, fontWeight = fontWeight,
         fontFamily = fontFamily, letterSpacing = letterSpacing, textDecoration = textDecoration, textAlign = textAlign,
         lineHeight = lineHeight, overflow = overflow, softWrap = softWrap, maxLines = maxLines, minLines = minLines,

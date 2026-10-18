@@ -6,7 +6,7 @@ internal object FaDict4 {
 Appearance ⇒ ظاهر
 Language ⇒ زبان
 Changes only colours and styling on this phone. Stock, users and settings stay the same. ⇒ فقط رنگ‌ها و ظاهر را روی این گوشی عوض می‌کند. موجودی، کاربران و تنظیمات همان می‌مانند.
-Persian changes only the words of menus and messages on this phone. Layout, numbers, codes and printed labels stay the same. ⇒ فارسی فقط کلمه‌های منوها و پیام‌ها را روی این گوشی عوض می‌کند. چیدمان، عددها، کدها و لیبل‌های چاپی همان می‌مانند.
+Persian and Arabic change only the words of menus and messages on this phone. Layout, numbers, codes and printed labels stay the same. ⇒ فارسی فقط کلمه‌های منوها و پیام‌ها را روی این گوشی عوض می‌کند. چیدمان، عددها، کدها و لیبل‌های چاپی همان می‌مانند.
 Theme 1 · Teal ⇒ تم ۱ · سبزآبی
 Theme 2 · Emerald ⇒ تم ۲ · زمردی
 Printer ⇒ پرینتر
