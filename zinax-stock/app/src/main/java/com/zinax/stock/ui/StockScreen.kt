@@ -54,6 +54,12 @@ private data class MoveTarget(val title: String, val ids: List<String>, val curr
 fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> Unit, onCount: () -> Unit, onHistory: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val items by Graph.db.dao().inStock().collectAsStateWithLifecycle(emptyList())
+    val products by Graph.db.dao().products().collectAsStateWithLifecycle(emptyList())
+    val low = remember(products, items) {
+        com.zinax.stock.data.LowStock.lines(products, items).associateBy {
+            com.zinax.stock.data.LowStock.key(it.product.groupId, it.product.code, it.product.size, it.product.unit)
+        }
+    }
     var query by remember { mutableStateOf("") }
     var place by remember { mutableStateOf<String?>(null) }
     var cat by remember { mutableStateOf<Category?>(null) }
@@ -159,6 +165,13 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                         )
                         Spacer(Modifier.height(6.dp))
                         LocationBadges(byPlace)
+                        low[com.zinax.stock.data.LowStock.key(first.category, first.code, first.size, first.unit)]?.let { l ->
+                            Text(
+                                "Low stock · min ${Format.qtyUnit(l.product.minQty, l.product.unit)}",
+                                color = LocalStatus.current.warn, fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                     if (open == key) {
                         Row {

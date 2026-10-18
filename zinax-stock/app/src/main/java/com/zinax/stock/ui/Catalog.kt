@@ -329,6 +329,7 @@ private fun ProductDialog(
     var unit by remember { mutableStateOf(product.unit) }
     var qty by remember { mutableStateOf(if (product.packQty > 0) Format.qty(product.packQty) else "") }
     var note by remember { mutableStateOf(product.note) }
+    var min by remember { mutableStateOf(if (product.minQty > 0) Format.qty(product.minQty) else "") }
     var applyToStock by remember { mutableStateOf(true) }
     var inStock by remember { mutableIntStateOf(0) }
     LaunchedEffect(product.id) { if (!isNew) inStock = Graph.repo.stockOf(product).size }
@@ -363,6 +364,11 @@ private fun ProductDialog(
                     modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
                 OutlinedTextField(note, { note = it }, label = { Text("Colour or description (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    min, { min = it }, label = { Text("Minimum stock in ${unit.ifBlank { "units" }} (optional)") }, singleLine = true,
+                    supportingText = { Text("At or under this the product shows as low stock.") },
+                    modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
                 if (keyChanged && inStock > 0) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = applyToStock, onCheckedChange = { applyToStock = it })
@@ -388,7 +394,8 @@ private fun ProductDialog(
                 enabled = code.isNotBlank() && unit.isNotBlank(),
                 onClick = {
                     onSave(
-                        product.copy(groupId = group, code = code, size = size, unit = unit, packQty = Format.number(qty) ?: 0.0, note = note),
+                        product.copy(groupId = group, code = code, size = size, unit = unit, packQty = Format.number(qty) ?: 0.0, note = note,
+                            minQty = Format.number(min)?.coerceAtLeast(0.0) ?: 0.0),
                         keyChanged && applyToStock,
                     )
                 },

@@ -87,6 +87,8 @@ fun HomeScreen(nav: NavController) {
     val stock by Graph.db.dao().inStock().collectAsStateWithLifecycle(emptyList())
     val shipments by Graph.db.dao().shipments().collectAsStateWithLifecycle(emptyList())
     val pending by Graph.db.dao().pendingItemCount().collectAsStateWithLifecycle(0)
+    val products by Graph.db.dao().products().collectAsStateWithLifecycle(emptyList())
+    val low = remember(products, stock) { com.zinax.stock.data.LowStock.lines(products, stock) }
     val status = LocalStatus.current
     val printer = remember(tick) { prefs.printerName }
     val me by Graph.session.user.collectAsStateWithLifecycle()
@@ -181,6 +183,7 @@ fun HomeScreen(nav: NavController) {
                     if (printer != null) StatusBadge(R.drawable.lucide_printer, "Printer: $printer")
                     else StatusBadge(R.drawable.lucide_printer, "No printer", warn = true)
                     if (pending > 0) StatusBadge(R.drawable.lucide_refresh_cw, "$pending to sync", warn = true)
+                    if (low.isNotEmpty()) StatusBadge(R.drawable.lucide_package_check, "${low.size} low stock", warn = true) { nav.navigate(Routes.LOW) }
                 }
             }
             if (look.header != null) {
@@ -339,11 +342,14 @@ private fun SyncStatus(failed: Boolean, syncLine: String, infoLine: String) {
 
 /** User and printer status on light mint; amber when something needs attention. */
 @Composable
-private fun StatusBadge(icon: Int, text: String, warn: Boolean = false) {
+private fun StatusBadge(icon: Int, text: String, warn: Boolean = false, onClick: (() -> Unit)? = null) {
     val status = LocalStatus.current
     val look = LocalLook.current
     val fg = if (warn) status.warn else look.badgeText
-    Surface(color = if (warn) status.warnSoft else look.badge, shape = RoundedCornerShape(50)) {
+    Surface(
+        color = if (warn) status.warnSoft else look.badge, shape = RoundedCornerShape(50),
+        modifier = if (onClick != null) Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onClick) else Modifier,
+    ) {
         Row(
             Modifier.padding(start = 8.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
             verticalAlignment = Alignment.CenterVertically,

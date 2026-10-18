@@ -137,5 +137,21 @@ phone {} ⇒ گوشی {}
 No sheet backup yet. In Apps Script run setup once to start the nightly backup. ⇒ هنوز پشتیبانی از شیت گرفته نشده. در Apps Script یک بار setup را اجرا کنید تا پشتیبان شبانه شروع شود.
 Last sheet backup {} ⇒ آخرین پشتیبان شیت {}
 more than 2 days ago ⇒ بیش از 2 روز پیش
+{} low stock ⇒ {} کمبود موجودی
+Low stock ⇒ کمبود موجودی
+Low stock: {} ⇒ کمبود موجودی: {}
+Low stock · min {} ⇒ کمبود موجودی · حداقل {}
+{} products have a minimum ⇒ {} کالا حداقل دارد
+{} at or under it ⇒ {} در حد یا زیر آن
+No minimums yet. Set Minimum stock on each product in Settings → Products & groups, or fill the MinQty column of the Products tab in the sheet. ⇒ هنوز حداقلی تعیین نشده. در Settings ← Products & groups برای هر کالا Minimum stock را بزنید، یا ستون MinQty برگه Products شیت را پر کنید.
+Everything is above its minimum ⇒ همه کالاها بالای حداقل هستند
+{} of min {} ⇒ {1} از حداقل {2}
+Out of stock ⇒ تمام شده
+{} {} left ⇒ {1} {2} مانده
+short {} ⇒ کسری {}
+Send the list ⇒ ارسال فهرست
+Set minimums in Products ⇒ تعیین حداقل‌ها در Products
+Minimum stock in {} (optional) ⇒ حداقل موجودی به {} (اختیاری)
+At or under this the product shows as low stock. ⇒ در این مقدار یا کمتر، کالا کمبود موجودی نشان داده می‌شود.
 """
 }

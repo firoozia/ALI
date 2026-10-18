@@ -133,5 +133,21 @@ phone {} ⇒ الهاتف {}
 No sheet backup yet. In Apps Script run setup once to start the nightly backup. ⇒ لا توجد نسخة احتياطية للورقة بعد. في Apps Script شغّل setup مرة واحدة لبدء النسخ الليلي.
 Last sheet backup {} ⇒ آخر نسخة احتياطية للورقة {}
 more than 2 days ago ⇒ منذ أكثر من يومين
+{} low stock ⇒ {} نقص مخزون
+Low stock ⇒ نقص المخزون
+Low stock: {} ⇒ نقص المخزون: {}
+Low stock · min {} ⇒ نقص المخزون · الحد الأدنى {}
+{} products have a minimum ⇒ {} منتج له حد أدنى
+{} at or under it ⇒ {} عند الحد أو أقل
+No minimums yet. Set Minimum stock on each product in Settings → Products & groups, or fill the MinQty column of the Products tab in the sheet. ⇒ لا توجد حدود دنيا بعد. حدّد Minimum stock لكل منتج في الإعدادات ← Products & groups، أو املأ عمود MinQty في ورقة Products.
+Everything is above its minimum ⇒ كل المنتجات فوق الحد الأدنى
+{} of min {} ⇒ {1} من الحد الأدنى {2}
+Out of stock ⇒ نفد من المخزون
+{} {} left ⇒ متبقٍّ {1} {2}
+short {} ⇒ النقص {}
+Send the list ⇒ إرسال القائمة
+Set minimums in Products ⇒ تحديد الحدود الدنيا في Products
+Minimum stock in {} (optional) ⇒ الحد الأدنى للمخزون بـ {} (اختياري)
+At or under this the product shows as low stock. ⇒ عند هذا الحد أو أقل يظهر المنتج كنقص في المخزون.
 """
 }

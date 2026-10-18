@@ -152,8 +152,18 @@ class SheetsSync(
                 id = it.getString("id"), groupId = it.optString("groupId"), code = it.optString("code"), size = it.optString("size"),
                 unit = it.optString("unit"), packQty = it.optDouble("packQty", 0.0).takeIf { q -> !q.isNaN() } ?: 0.0,
                 note = it.optString("note"), hidden = it.optBoolean("hidden", false), updatedAt = it.optLong("updatedAt"), dirty = false,
-            )
-        }.filter { remote -> dao.product(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
+                minQty = it.optDouble("minQty", 0.0).takeIf { q -> !q.isNaN() } ?: 0.0,
+            ) to it.has("minQty")
+        }.mapNotNull { (remote, hasMin) ->
+            val local = dao.product(remote.id)
+            when {
+                local == null -> remote
+                local.dirty || local.updatedAt > remote.updatedAt -> null
+                // An older script does not send the minimum; keep the one already here.
+                !hasMin -> remote.copy(minQty = local.minQty)
+                else -> remote
+            }
+        }
         if (rows.isNotEmpty()) dao.putProducts(rows)
     }
 
@@ -276,7 +286,7 @@ class SheetsSync(
 
     private fun Product.toJson() = JSONObject()
         .put("id", id).put("groupId", groupId).put("code", code).put("size", size).put("unit", unit).put("packQty", packQty)
-        .put("note", note).put("hidden", hidden).put("updatedAt", updatedAt)
+        .put("note", note).put("hidden", hidden).put("updatedAt", updatedAt).put("minQty", minQty)
 
     private fun AppUser.toJson() = JSONObject()
         .put("id", id).put("name", name).put("role", role).put("canReceive", canReceive).put("active", active)

@@ -460,7 +460,9 @@ class Repository(
         if (twin != null) {
             require(old != null) { "${clean.code} ${Format.size(clean.size)} is already in ${Category.fromName(clean.groupId).label}" }
             // Moving onto a product that is already there: keep that one, drop this one, and move the labels.
-            val keep = if (twin.note.isBlank() && clean.note.isNotBlank()) twin.copy(note = clean.note, updatedAt = t, dirty = true) else twin
+            val keep = if ((twin.note.isBlank() && clean.note.isNotBlank()) || (twin.minQty <= 0 && clean.minQty > 0)) {
+                twin.copy(note = twin.note.ifBlank { clean.note }, minQty = twin.minQty.takeIf { it > 0 } ?: clean.minQty, updatedAt = t, dirty = true)
+            } else twin
             dao.putProducts(listOfNotNull(keep.takeIf { it !== twin }, old.copy(hidden = true, updatedAt = t, dirty = true)))
             var moved = emptyList<Item>()
             if (applyToStock) {

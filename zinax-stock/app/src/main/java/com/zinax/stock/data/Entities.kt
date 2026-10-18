@@ -195,6 +195,8 @@ data class Product(
     val hidden: Boolean = false,
     val updatedAt: Long,
     val dirty: Boolean = true,
+    /** Minimum stock in [unit]; at or under it the product shows as low. 0 when not set. */
+    val minQty: Double = 0.0,
 )
 
 /** Group, code, size, unit and package quantity of a label, for building the first catalog. */

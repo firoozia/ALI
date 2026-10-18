@@ -35,7 +35,8 @@ const SHEETS = {
   // Product groups. ID is stored on labels; Name, Unit and Pack can be changed here. Add a group by typing a Name on a new row.
   Groups: ['ID', 'Name', 'Unit', 'Pack', 'Order', 'Hidden', 'UpdatedAt', 'ServerAt'],
   // Product catalog. Group is a group ID from the Groups tab. Add a product by typing a Group and Code on a new row.
-  Products: ['ID', 'Group', 'Code', 'Size', 'Unit', 'PackQty', 'Note', 'Hidden', 'UpdatedAt', 'ServerAt'],
+  // MinQty: minimum stock in Unit; at or under it the product is listed in the Low stock tab and warned about in the app.
+  Products: ['ID', 'Group', 'Code', 'Size', 'Unit', 'PackQty', 'Note', 'Hidden', 'UpdatedAt', 'ServerAt', 'MinQty'],
   // Undo and delete asked by users, and the admin's answer.
   Requests: ['ID', 'Kind', 'Target', 'Summary', 'Reason', 'RequestedBy', 'Device', 'RequestedAt', 'Status', 'DecidedBy',
              'DecidedAt', 'Note', 'UpdatedAt', 'ServerAt', 'Payload'],
@@ -155,14 +156,15 @@ function sync_(req) {
     return [g.id, g.name, g.unit, g.pack, Number(g.order) || 0, g.hidden ? true : false, g.updatedAt, now];
   }, 6);
   upsert_('Products', req.products || [], function (p) {
-    return [p.id, p.groupId, p.code, p.size || '', p.unit, Number(p.packQty) || '', p.note || '', p.hidden ? true : false, p.updatedAt, now];
+    return [p.id, p.groupId, p.code, p.size || '', p.unit, Number(p.packQty) || '', p.note || '', p.hidden ? true : false, p.updatedAt, now,
+            Number(p.minQty) || ''];
   }, 8);
 
   const pushed = ['shipments', 'expected', 'items', 'movements', 'customers', 'users', 'requests', 'groups', 'products']
     .some(function (k) { return (req[k] || []).length; });
   if (pushed) bump_();
 
-  if ((req.items || []).length) stockSheet_();
+  if ((req.items || []).length || (req.products || []).length || (req.groups || []).length) stockSheet_();
   if ((req.movements || []).length) { outSheet_(); cutsSheet_(); }
   const movementsSince = req.movementsSince === undefined ? since : Number(req.movementsSince) || 0;
 
@@ -196,7 +198,8 @@ function sync_(req) {
     }),
     products: changed_('Products', since).filter(function (r) { return String(r[0]).trim() && String(r[2]).trim(); }).map(function (r) {
       return { id: String(r[0]), groupId: String(r[1]), code: String(r[2]), size: String(r[3]), unit: String(r[4]),
-               packQty: Number(r[5]) || 0, note: String(r[6] || ''), hidden: yes_(r[7]), updatedAt: Number(r[8]) || 0 };
+               packQty: Number(r[5]) || 0, note: String(r[6] || ''), hidden: yes_(r[7]), updatedAt: Number(r[8]) || 0,
+               minQty: Number(r[10]) || 0 };
     }),
     users: changed_('Users', since).filter(function (r) { return String(r[1]).trim(); }).map(function (r) {
       return { id: String(r[0]), name: String(r[1]).trim(), role: String(r[2]).trim().toUpperCase() === 'ADMIN' ? 'ADMIN' : 'USER',
@@ -358,7 +361,8 @@ function catalogEdited_(e, name) {
   });
   sh.getRange(first, 1, rows.length, cols.length).setValues(rows);
   bump_();
-  if (name === 'Groups') stockSheet_();
+  // Group names and minimums show in the Stock and Low stock tabs.
+  stockSheet_();
 }
 
 /** Tells open apps (through `poll`) that something changed and they should sync. */
@@ -491,6 +495,7 @@ function stockSheet_() {
     return g.row.concat([where]);
   }).sort(function (a, b) { return byCode_(a, b, 0, 1); });
   writeSummary_(ss, 'Stock', 0, ['Category', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Locations'], stockRows, updated);
+  lowSheet_(ss, groupName, updated);
 
   const placeRows = Object.keys(places).map(function (k) { return places[k]; }).sort(function (a, b) {
     if (a[0] !== b[0]) {
@@ -501,6 +506,34 @@ function stockSheet_() {
     return byCode_(a, b, 1, 2);
   });
   writeSummary_(ss, 'By location', 1, ['Location', 'Category', 'Code', 'Size', 'Unit', 'Packages', 'Total'], placeRows, updated);
+}
+
+/** Low stock: products whose stock is at or under the MinQty set in the Products tab. Empty ones first. */
+function lowSheet_(ss, groupName, updated) {
+  if (!ss.getSheetByName('Products')) return;
+  const key = function (g, c, s, u) { return [g, String(c).trim(), String(s).trim(), String(u).trim()].join('|').toLowerCase(); };
+  const have = {};
+  readAll_('Items').forEach(function (r) {
+    if (r[7] !== 'IN_STOCK') return;
+    const k = key(r[1], r[2], r[3], r[6]);
+    if (!have[k]) have[k] = { qty: 0, n: 0 };
+    have[k].qty += Number(r[5]) || 0;
+    have[k].n += 1;
+  });
+  const rows = [];
+  readAll_('Products').forEach(function (p) {
+    const min = Number(p[10]) || 0;
+    if (!String(p[2]).trim() || yes_(p[7]) || min <= 0) return;
+    const h = have[key(p[1], p[2], p[3], p[4])] || { qty: 0, n: 0 };
+    if (h.qty > min + 1e-6) return;
+    rows.push([groupName[String(p[1])] || p[1], String(p[2]), String(p[3]), p[4], h.n, Math.round(h.qty * 100) / 100, min,
+               Math.round(Math.max(0, min - h.qty) * 100) / 100, h.qty <= 1e-6 ? 'OUT OF STOCK' : 'LOW']);
+  });
+  rows.sort(function (a, b) {
+    if ((a[8] === 'LOW') !== (b[8] === 'LOW')) return a[8] === 'LOW' ? 1 : -1;
+    return a[5] / a[6] - b[5] / b[6];
+  });
+  writeSummary_(ss, 'Low stock', 1, ['Category', 'Code', 'Size', 'Unit', 'Packages', 'Have', 'Min', 'Short', 'Status'], rows, updated);
 }
 
 function writeSummary_(ss, name, position, headers, rows, updated) {

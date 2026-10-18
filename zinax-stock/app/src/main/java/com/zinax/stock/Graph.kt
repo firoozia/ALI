@@ -25,6 +25,8 @@ import com.zinax.stock.printer.BluetoothPrinter
 import com.zinax.stock.printer.PrintQueue
 import com.zinax.stock.sync.ReportWorker
 import com.zinax.stock.sync.RequestNotifier
+import com.zinax.stock.sync.LowStockNotifier
+import com.zinax.stock.data.LowStock
 import com.zinax.stock.sync.SheetsSync
 import com.zinax.stock.sync.SyncWorker
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +65,7 @@ object Graph {
         sync = SheetsSync(db, prefs) {
             session.refresh()
             RequestNotifier.check(app)
+            try { LowStockNotifier.check(app) } catch (_: Exception) {}
             repo.seedCatalog()
         }
         scope.launch {
@@ -87,7 +90,11 @@ object Graph {
     suspend fun stockReportText(): String {
         val items = db.dao().inStock().first()
         val lines = Report.stockLines(items.map { StockSource(it.categoryEnum, it.code, it.size, it.unit, it.remaining) })
-        return Report.stockText(lines, System.currentTimeMillis())
+        val low = LowStock.lines(db.dao().allProducts(), items)
+        val lowText = if (low.isEmpty()) "" else "\n\n*Low stock ${low.size}*\n" + low.joinToString("\n") {
+            "${it.product.code} ${Format.size(it.product.size)}".trim() + " · ${Format.qtyUnit(it.have, it.product.unit)} of min ${Format.qtyUnit(it.product.minQty, it.product.unit)}"
+        }
+        return Report.stockText(lines, System.currentTimeMillis()) + lowText
     }
 
     /** Movements of one kind in [from, to), with each package's family and full amount. */
@@ -197,6 +204,7 @@ class ZinaxApp : Application() {
         Graph.init(this)
         ReportWorker.createChannel(this)
         RequestNotifier.createChannel(this)
+        LowStockNotifier.createChannel(this)
         SyncWorker.schedulePeriodic(this)
         ReportWorker.schedule(this)
     }

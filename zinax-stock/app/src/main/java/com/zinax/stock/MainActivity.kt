@@ -31,6 +31,8 @@ import com.zinax.stock.ui.LockScreen
 import com.zinax.stock.ui.MoveScanScreen
 import com.zinax.stock.ui.ReceiveScanScreen
 import com.zinax.stock.ui.StockCountScreen
+import com.zinax.stock.ui.LowStockScreen
+import com.zinax.stock.sync.LowStockNotifier
 import com.zinax.stock.ui.ItemHistoryScreen
 import com.zinax.stock.ui.RequestsScreen
 import com.zinax.stock.ui.UsersScreen
@@ -67,6 +69,7 @@ object Routes {
     const val MOVE_SCAN = "movescan"
     const val RECEIVE_SCAN = "receivescan"
     const val COUNT = "count"
+    const val LOW = "lowstock"
     const val HISTORY = "history?id={id}"
 
     fun history(id: String? = null) = "history?id=${android.net.Uri.encode(id.orEmpty())}"
@@ -89,10 +92,12 @@ private data class OpenRequest(val id: String, val action: String)
 class MainActivity : FragmentActivity() {
     private var pendingAction by mutableStateOf<String?>(null)
     private var openRequest by mutableStateOf<OpenRequest?>(null)
+    private var openLow by mutableStateOf(false)
 
     private fun readIntent(intent: Intent?) {
         pendingAction = intent?.getStringExtra(ReportWorker.EXTRA_ACTION)
         val id = intent?.getStringExtra(RequestNotifier.EXTRA_REQUEST)
+        if (intent?.getBooleanExtra(LowStockNotifier.EXTRA_OPEN_LOW, false) == true) openLow = true
         if (id != null) openRequest = OpenRequest(id, intent?.getStringExtra(RequestNotifier.EXTRA_REQUEST_ACTION) ?: RequestNotifier.OPEN)
     }
 
@@ -134,6 +139,11 @@ class MainActivity : FragmentActivity() {
                         pendingAction = null
                         Graph.shareStockReport(this@MainActivity)
                     }
+                }
+                LaunchedEffect(openLow, user) {
+                    if (!openLow || user == null) return@LaunchedEffect
+                    openLow = false
+                    nav.navigate(Routes.LOW)
                 }
                 LaunchedEffect(openRequest, user) {
                     val r = openRequest ?: return@LaunchedEffect
@@ -191,6 +201,7 @@ class MainActivity : FragmentActivity() {
                     composable(Routes.MOVE_SCAN) { MoveScanScreen(onBack = back) }
                     composable(Routes.RECEIVE_SCAN) { ReceiveScanScreen(onBack = back) }
                     composable(Routes.COUNT) { StockCountScreen(onBack = back) }
+                    composable(Routes.LOW) { LowStockScreen(onBack = back, onCatalog = { nav.navigate(Routes.CATALOG) }) }
                     composable(Routes.HISTORY, listOf(navArgument("id") { type = NavType.StringType; defaultValue = "" })) {
                         ItemHistoryScreen(it.arguments?.getString("id").orEmpty(), onBack = back)
                     }

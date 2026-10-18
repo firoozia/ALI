@@ -156,6 +156,11 @@ class Prefs(context: Context) {
 
     /** Server time of the last successful sync; rows changed after it are pulled next time. */
     /** When the sheet's nightly backup last ran, as told by the script; 0 when it never did or the script is older. */
+    /** Products already reported as low, so each is told once until it is restocked. */
+    var lowNotified: Set<String>
+        get() = sp.getStringSet("lowNotified", emptySet())?.toSet() ?: emptySet()
+        set(v) = edit { putStringSet("lowNotified", v) }
+
     var lastBackup: Long
         get() = sp.getLong("lastBackup", 0)
         set(v) = edit { putLong("lastBackup", v) }

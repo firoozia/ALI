@@ -87,7 +87,7 @@ assert.equal(cs.cells[3][0],'k3'); assert.equal(cs.cells[3][3],'SHEET'); assert.
 cs.cells[1][1]='Bahar Design'; cs.cells[1][4]='yes';
 ctx.onEdit({range:{getSheet:()=>cs,getRow:()=>2,getLastRow:()=>2,getNumColumns:()=>1,getColumn:()=>2}});
 assert.ok(cs.cells[1][5]>1000); assert.equal(cs.cells[1][4],true);
-r=post({token:'tok',action:'sync',since:cs.cells[1][6]-1});
+r=post({token:'tok',action:'sync',since:Math.min(cs.cells[1][6],cs.cells[3][6])-1});
 assert.ok(r.customers.some(c=>c.id==='k1' && c.name==='Bahar Design' && c.hidden===true));
 assert.ok(r.customers.some(c=>c.id==='k3' && c.name==='Mehdi Trading' && c.hidden===false && c.createdBy==='SHEET'));
 // bulk paste: 194 names pasted in one go all get their own ID, and a phone pulls every one of them
@@ -153,6 +153,13 @@ const pr=ps.cells[ps.cells.length-1]; assert.ok(String(pr[0]).startsWith('P_'));
 r=post({token:'tok',action:'sync',since:Math.min(pr[9],g[7])-1});
 assert.ok(r.products.some(p=>p.code==='H-1' && p.groupId==='G_HANDLE' && p.note==='Black'));
 assert.ok(r.groups.some(x=>x.id==='G_HANDLE' && x.name==='Handle'));
+// minimum stock: pushed from a phone, read back, and listed in the Low stock tab
+r=post({token:'tok',action:'sync',since:0,products:[{id:'P_MDF',groupId:'G_MDF',code:'M-18',size:'18mm',unit:'pcs',packQty:0,note:'',hidden:false,updatedAt:9500,minQty:20},
+  {id:'P_OK',groupId:'PVC',code:'101',size:'0.30*1400',unit:'m',packQty:120,note:'',hidden:false,updatedAt:9500,minQty:1}]});
+assert.ok(r.products.some(p=>p.id==='P_MDF' && p.minQty===20));
+const lowRows=sheets['Low stock'].cells.slice(1).filter(x=>x[1]);
+assert.deepEqual(lowRows.find(x=>x[1]==='M-18').slice(0,9),['MDF board','M-18','18mm','pcs',1,10,20,10,'LOW']);
+assert.ok(lowRows.every(x=>x[5]<=x[6]));
 // nightly backup retention: last 30 days all, then the first of each month for 12 months
 {
   const fmt=ctx.Utilities.formatDate; ctx.Utilities.formatDate=(d,tz,f)=>f==='yyyy-MM'?d.toISOString().slice(0,7):fmt(d,tz,f);
