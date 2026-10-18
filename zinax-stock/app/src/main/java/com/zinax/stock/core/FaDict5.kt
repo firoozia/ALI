@@ -153,5 +153,42 @@ Send the list ⇒ ارسال فهرست
 Set minimums in Products ⇒ تعیین حداقل‌ها در Products
 Minimum stock in {} (optional) ⇒ حداقل موجودی به {} (اختیاری)
 At or under this the product shows as low stock. ⇒ در این مقدار یا کمتر، کالا کمبود موجودی نشان داده می‌شود.
+New version {} ⇒ نسخه جدید {}
+tap to download (now {}) ⇒ برای دانلود بزنید (نسخه فعلی {})
+available ⇒ موجود
+Phone {} not synced {} days ⇒ گوشی {1} {2} روز همگام نشده
+Phones ⇒ گوشی‌ها
+Phone {} ⇒ گوشی {}
+Phone {} (this phone) ⇒ گوشی {} (همین گوشی)
+last sync {} ⇒ آخرین همگام‌سازی {}
+Customer return ⇒ برگشت از مشتری
+Return ⇒ برگشت
+Returns ⇒ برگشتی‌ها
+returned ⇒ برگشت داده شد
+Returned by customer ⇒ برگشت از مشتری
+No ship-outs or cuts for this customer on this phone. ⇒ برای این مشتری در این گوشی خروج یا برشی نیست.
+What came back from? ⇒ از کدام خروج برگشته؟
+Choose the customer, then the ship-out or cut the material came from. ⇒ مشتری را انتخاب کنید، بعد خروج یا برشی که کالا از آن آمده.
+Quantity returned ({}) ⇒ مقدار برگشتی ({})
+Record return ⇒ ثبت برگشت
+Choose another ⇒ انتخاب دیگری
+Returned as new open roll {} ⇒ به‌عنوان رول باز جدید {} برگشت
+printing its label ⇒ در حال چاپ لیبل
+{} is back in stock with its own label ⇒ {} با همان لیبل به موجودی برگشت
+Only {} of this can still come back ⇒ فقط {} از این قابل برگشت است
+Only ship-outs and cuts can be returned ⇒ فقط خروج و برش قابل برگشت است
+This was undone already ⇒ این قبلاً لغو شده است
+Reserve ⇒ رزرو
+Release ⇒ آزاد کردن
+Reserved ⇒ رزرو شده
+Reservation ⇒ رزرو
+Reserved for ⇒ رزرو برای
+Reserved for {} ⇒ رزرو برای {}
+Reserve {} ⇒ رزرو {}
+Released (was {}) ⇒ آزاد شد (قبلاً {})
+Others see it is set aside and are warned before shipping or cutting it. ⇒ دیگران می‌بینند که کنار گذاشته شده و پیش از خروج یا برش هشدار می‌گیرند.
+Reserved for {}. Ship it to someone else only if they agree. ⇒ رزرو برای {}. فقط با موافقت او برای کس دیگری خارج کنید.
+Reserved for {}. Cut it for someone else only if they agree. ⇒ رزرو برای {}. فقط با موافقت او برای کس دیگری برش بزنید.
+The result is saved to the Counts tab of the sheet. The scanned list will be cleared. ⇒ نتیجه در برگه Counts شیت ذخیره می‌شود. فهرست اسکن‌شده پاک می‌شود.
 """
 }

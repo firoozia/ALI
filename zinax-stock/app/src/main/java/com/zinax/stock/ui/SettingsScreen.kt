@@ -364,6 +364,20 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
                 }) { Text("Sync now") }
                 OutlinedButton(onClick = { Share.openUrl(context, prefs.sheetUrl) }, enabled = sheet.isNotBlank()) { Text("Open sheet") }
             }
+            val phones = remember(tick) { com.zinax.stock.data.Devices.parse(prefs.devicesJson) }
+            if (phones.isNotEmpty()) {
+                Text("Phones", style = MaterialTheme.typography.labelLarge)
+                val now = System.currentTimeMillis()
+                phones.forEach { d ->
+                    val old = d.device != prefs.deviceCode && d.daysSince(now) >= com.zinax.stock.data.Devices.STALE_DAYS
+                    Text(
+                        "Phone ${d.device}" + (if (d.device == prefs.deviceCode) " (this phone)" else "") +
+                            " · ${d.user.ifBlank { "—" }} · ${d.appVersion.ifBlank { "—" }} · last sync ${Format.dateTime(d.at)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (old) LocalStatus.current.warn else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             } else {
                 Section("Google Sheet")

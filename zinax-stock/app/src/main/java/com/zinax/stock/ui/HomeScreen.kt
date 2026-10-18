@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalView
@@ -101,6 +102,16 @@ fun HomeScreen(nav: NavController) {
     val syncMessage = remember(tick) { prefs.lastSyncMessage }
     val reminder = remember(tick) { if (prefs.reportEnabled) "Daily %02d:%02d".format(prefs.reportHour, prefs.reportMinute) else "Off" }
 
+    // A newer APK on GitHub, offered at the top of the page.
+    val installed = remember {
+        try {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info) to info.versionName.orEmpty()
+        } catch (_: Exception) { 0L to "" }
+    }
+    var update by remember { mutableStateOf<com.zinax.stock.sync.UpdateCheck.Update?>(null) }
+    LaunchedEffect(Unit) { update = com.zinax.stock.sync.UpdateCheck.latest()?.takeIf { installed.first > 0 && it.code > installed.first } }
+
     // The last unexpected close, offered once so it can be sent for fixing.
     var crash by remember { mutableStateOf(CrashLog.read(context)) }
     crash?.let { report ->
@@ -166,7 +177,7 @@ fun HomeScreen(nav: NavController) {
         // on a tall screen the cards grow to fill the space. Only a very short screen scrolls.
         val density = LocalDensity.current
         val buttonRows = if (canReceive) 5 else 4
-        val top = if (emerald) 128 + 56 else 36
+        val top = (if (emerald) 128 + 56 else 36) + (if (update != null) 56 else 0)
         val needed = ((top + 3 * 140 + (if (emerald) 60 else 46) + buttonRows * 54 + 12 * (4 + buttonRows) + 12) *
             density.fontScale.coerceAtLeast(1f)).dp
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
@@ -183,6 +194,16 @@ fun HomeScreen(nav: NavController) {
                     if (printer != null) StatusBadge(R.drawable.lucide_printer, "Printer: $printer")
                     else StatusBadge(R.drawable.lucide_printer, "No printer", warn = true)
                     if (pending > 0) StatusBadge(R.drawable.lucide_refresh_cw, "$pending to sync", warn = true)
+                    if (isAdmin) {
+                        val stale = remember(tick) {
+                            com.zinax.stock.data.Devices.stale(com.zinax.stock.data.Devices.parse(prefs.devicesJson), prefs.deviceCode, System.currentTimeMillis())
+                        }
+                        stale.forEach { d ->
+                            StatusBadge(R.drawable.lucide_refresh_cw, "Phone ${d.device}${if (d.user.isNotBlank()) " (${d.user})" else ""} not synced ${d.daysSince(System.currentTimeMillis())} days", warn = true) {
+                                nav.navigate(Routes.SETTINGS)
+                            }
+                        }
+                    }
                     if (low.isNotEmpty()) StatusBadge(R.drawable.lucide_package_check, "${low.size} low stock", warn = true) { nav.navigate(Routes.LOW) }
                 }
             }
@@ -195,6 +216,18 @@ fun HomeScreen(nav: NavController) {
             ) {
             val rowMod = if (fits) Modifier.weight(1f) else Modifier
             if (!emerald) badges()
+            update?.let { u ->
+                Surface(
+                    color = status.okSoft, shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { Share.openUrl(context, u.url) },
+                ) {
+                    Text(
+                        "New version ${u.name.ifBlank { "available" }} · tap to download (now ${installed.second})",
+                        color = status.ok, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
+            }
 
             val latest = shipments.firstOrNull()
             Row(rowMod, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

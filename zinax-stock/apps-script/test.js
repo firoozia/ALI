@@ -153,6 +153,17 @@ const pr=ps.cells[ps.cells.length-1]; assert.ok(String(pr[0]).startsWith('P_'));
 r=post({token:'tok',action:'sync',since:Math.min(pr[9],g[7])-1});
 assert.ok(r.products.some(p=>p.code==='H-1' && p.groupId==='G_HANDLE' && p.note==='Black'));
 assert.ok(r.groups.some(x=>x.id==='G_HANDLE' && x.name==='Handle'));
+// devices, counts, reservations and returns
+r=post({token:'tok',action:'sync',since:0,device:'B',user:'Sara',appVersion:'2.15.0',
+  counts:[{id:'c1',place:'Warehouse 1',at:5000,user:'Sara',device:'B',expected:3,found:2,missing:1,extra:1,missingIds:['ZX-1'],extraIds:['ZX-9']}],
+  items:[{...item,id:'ZX-251009-A0077',reservedFor:'Bahar Design',updatedAt:99999}],
+  movements:[{id:'ret1',itemId:'ZX-251009-A0077',type:'RETURN',qty:12,reference:'Bahar Design',at:6000,device:'B',code:'101',size:'x',unit:'m',user:'Sara',customer:'Bahar Design',invoice:'INV-9'}]});
+assert.ok(r.devices.some(d=>d.device==='B' && d.user==='Sara' && d.appVersion==='2.15.0' && d.at>0));
+assert.deepEqual(sheets.Counts.cells[1].slice(5,11),[3,2,1,1,'ZX-1','ZX-9']);
+assert.ok(r.items.some(i=>i.id==='ZX-251009-A0077' && i.reservedFor==='Bahar Design'));
+assert.ok(sheets.Cuts.cells.some(x=>x[1]==='Return' && x[2]==='Bahar Design' && x[6]===12));
+post({token:'tok',action:'sync',since:0,device:'B',user:'Ali',appVersion:'2.15.0',counts:[{id:'c1',place:'Warehouse 1'}]});
+assert.equal(sheets.Devices.cells.filter(x=>x[0]==='B').length,1); assert.equal(sheets.Counts.cells.length,2);
 // minimum stock: pushed from a phone, read back, and listed in the Low stock tab
 r=post({token:'tok',action:'sync',since:0,products:[{id:'P_MDF',groupId:'G_MDF',code:'M-18',size:'18mm',unit:'pcs',packQty:0,note:'',hidden:false,updatedAt:9500,minQty:20},
   {id:'P_OK',groupId:'PVC',code:'101',size:'0.30*1400',unit:'m',packQty:120,note:'',hidden:false,updatedAt:9500,minQty:1}]});

@@ -263,9 +263,12 @@ fun StockCountScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { askFinish = false },
             title = { Text("Finish this count?") },
-            text = { Text("Send the result first if you need it. The scanned list will be cleared.") },
+            text = { Text("The result is saved to the Counts tab of the sheet. The scanned list will be cleared.") },
             confirmButton = {
                 TextButton(onClick = {
+                    val result = Triple(found.size, missing.map { it.id }, extras)
+                    val total = expected.size
+                    scope.launch { Graph.repo.saveCount(placeName, total, result.first, result.second, result.third) }
                     save(emptyList()); prefs.countStarted = 0L; lookups.clear(); last = null; askFinish = false
                 }) { Text("Finish") }
             },

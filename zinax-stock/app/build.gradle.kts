@@ -13,8 +13,8 @@ android {
         applicationId = "com.zinax.stock"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
-        versionName = "2.14.0"
+        versionCode = 49
+        versionName = "2.15.0"
     }
 
     signingConfigs {

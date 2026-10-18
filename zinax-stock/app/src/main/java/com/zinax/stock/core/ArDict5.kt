@@ -149,5 +149,42 @@ Send the list ⇒ إرسال القائمة
 Set minimums in Products ⇒ تحديد الحدود الدنيا في Products
 Minimum stock in {} (optional) ⇒ الحد الأدنى للمخزون بـ {} (اختياري)
 At or under this the product shows as low stock. ⇒ عند هذا الحد أو أقل يظهر المنتج كنقص في المخزون.
+New version {} ⇒ إصدار جديد {}
+tap to download (now {}) ⇒ اضغط للتنزيل (الحالي {})
+available ⇒ متاح
+Phone {} not synced {} days ⇒ الهاتف {1} لم يُزامن منذ {2} أيام
+Phones ⇒ الهواتف
+Phone {} ⇒ الهاتف {}
+Phone {} (this phone) ⇒ الهاتف {} (هذا الهاتف)
+last sync {} ⇒ آخر مزامنة {}
+Customer return ⇒ مرتجع من العميل
+Return ⇒ إرجاع
+Returns ⇒ المرتجعات
+returned ⇒ أُرجع
+Returned by customer ⇒ أرجعه العميل
+No ship-outs or cuts for this customer on this phone. ⇒ لا توجد شحنات أو قصّات لهذا العميل على هذا الهاتف.
+What came back from? ⇒ من أي شحنة أُرجع؟
+Choose the customer, then the ship-out or cut the material came from. ⇒ اختر العميل ثم الشحنة أو القصّة التي جاءت منها المادة.
+Quantity returned ({}) ⇒ الكمية المرتجعة ({})
+Record return ⇒ تسجيل الإرجاع
+Choose another ⇒ اختيار آخر
+Returned as new open roll {} ⇒ أُرجع كلفة مفتوحة جديدة {}
+printing its label ⇒ جارٍ طباعة الملصق
+{} is back in stock with its own label ⇒ {} عاد إلى المخزون بملصقه نفسه
+Only {} of this can still come back ⇒ يمكن إرجاع {} فقط من هذا
+Only ship-outs and cuts can be returned ⇒ يمكن إرجاع الشحنات والقصّات فقط
+This was undone already ⇒ تم إلغاء هذا مسبقاً
+Reserve ⇒ حجز
+Release ⇒ إلغاء الحجز
+Reserved ⇒ محجوز
+Reservation ⇒ الحجز
+Reserved for ⇒ محجوز لـ
+Reserved for {} ⇒ محجوز لـ {}
+Reserve {} ⇒ حجز {}
+Released (was {}) ⇒ أُلغي الحجز (كان {})
+Others see it is set aside and are warned before shipping or cutting it. ⇒ يرى الآخرون أنه محجوز ويُنبَّهون قبل شحنه أو قصّه.
+Reserved for {}. Ship it to someone else only if they agree. ⇒ محجوز لـ {}. اشحنه لغيره فقط بموافقته.
+Reserved for {}. Cut it for someone else only if they agree. ⇒ محجوز لـ {}. اقطعه لغيره فقط بموافقته.
+The result is saved to the Counts tab of the sheet. The scanned list will be cleared. ⇒ تُحفظ النتيجة في ورقة Counts. سيتم مسح قائمة المسح.
 """
 }

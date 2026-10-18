@@ -9,8 +9,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [Shipment::class, ExpectedUnit::class, Item::class, Movement::class, Customer::class, AppUser::class, ChangeRequest::class,
-        GroupRow::class, Product::class],
-    version = 8,
+        GroupRow::class, Product::class, StockCount::class],
+    version = 9,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -93,9 +93,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 2.15.0: packages reserved for a customer, and finished stock counts. */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN reservedFor TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `counts` (`id` TEXT NOT NULL, `place` TEXT NOT NULL, `at` INTEGER NOT NULL, " +
+                        "`user` TEXT NOT NULL, `device` TEXT NOT NULL, `expected` INTEGER NOT NULL, `found` INTEGER NOT NULL, " +
+                        "`missing` INTEGER NOT NULL, `extra` INTEGER NOT NULL, `missingIds` TEXT NOT NULL, `extraIds` TEXT NOT NULL, " +
+                        "`dirty` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "zinax.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build()
     }
 }

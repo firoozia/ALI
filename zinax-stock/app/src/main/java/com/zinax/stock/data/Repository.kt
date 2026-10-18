@@ -142,6 +142,7 @@ class Repository(
                 remaining = left,
                 status = if (left == 0.0) ItemStatus.SHIPPED else ItemStatus.IN_STOCK,
                 updatedAt = t, dirty = true,
+                reservedFor = if (left == 0.0 || CustomerNames.key(item.reservedFor) == CustomerNames.key(who)) "" else item.reservedFor,
             )
             dao.putItems(listOf(updated))
             dao.putMovements(
@@ -204,6 +205,7 @@ class Repository(
                 remaining = left,
                 status = if (left == 0.0) ItemStatus.SHIPPED else ItemStatus.IN_STOCK,
                 updatedAt = t, dirty = true,
+                reservedFor = if (left == 0.0 || CustomerNames.key(item.reservedFor) == CustomerNames.key(who)) "" else item.reservedFor,
             )
             dao.putItems(listOf(updated))
             dao.putMovements(moves)
@@ -289,6 +291,98 @@ class Repository(
         }
         onChange()
         return made
+    }
+
+    /** Keeps a finished stock count so it reaches the Counts tab of the sheet. */
+    suspend fun saveCount(place: String, expected: Int, found: Int, missingIds: List<String>, extraIds: List<String>) {
+        dao.putCounts(
+            listOf(
+                StockCount(
+                    id = uuid(), place = place, at = now(), user = prefs.userName, device = prefs.deviceCode,
+                    expected = expected, found = found, missing = missingIds.size, extra = extraIds.size,
+                    missingIds = missingIds.joinToString(","), extraIds = extraIds.joinToString(","),
+                )
+            )
+        )
+        onChange()
+    }
+
+    /** Puts packages aside for [customer], or frees them when [customer] is blank. Each change is logged. */
+    suspend fun reserve(itemIds: List<String>, customer: String) {
+        val who = CustomerNames.clean(customer)
+        val t = now()
+        db.withTransaction {
+            val items = itemIds.chunked(500).flatMap { dao.itemsByIds(it) }
+                .filter { it.status == ItemStatus.IN_STOCK && it.reservedFor != who }
+            if (items.isEmpty()) return@withTransaction
+            dao.putItems(items.map { it.copy(reservedFor = who, updatedAt = t, dirty = true) })
+            dao.putMovements(
+                items.map {
+                    Movement(
+                        id = uuid(), itemId = it.id, type = MovementType.RESERVE, qty = it.remaining,
+                        reference = if (who.isEmpty()) "Released (was ${it.reservedFor})" else "Reserved for $who",
+                        at = t, device = prefs.deviceCode, code = it.code, size = it.size, unit = it.unit, user = prefs.userName,
+                        customer = who.ifEmpty { it.reservedFor },
+                    )
+                }
+            )
+            if (who.isNotEmpty()) addCustomerIn(who, t)
+        }
+        onChange()
+    }
+
+    /** A customer return: [item] is the package the material is on now; [newLabel] when it needs a label printed. */
+    data class Returned(val item: Item, val newLabel: Boolean)
+
+    /**
+     * Takes back [qty] that [customer] returned from the ship-out or cut [movementId].
+     * A whole package that left with its label goes back on the same label; anything else (a cut piece,
+     * part of a roll) becomes a new open roll with its own label ID, to be labelled.
+     */
+    suspend fun returnFromCustomer(movementId: String, qty: Double, customer: String, invoice: String, note: String, location: String): Returned {
+        val who = CustomerNames.clean(customer)
+        require(who.isNotEmpty()) { "Enter the customer" }
+        require(qty > 0) { "Enter a quantity above zero" }
+        val result = idLock.withLock {
+            db.withTransaction {
+                val m = dao.movement(movementId) ?: error("Ship-out not found")
+                check(m.type == MovementType.OUT || m.type == MovementType.CUT) { "Only ship-outs and cuts can be returned" }
+                check(movementId !in dao.undoneIdsNow()) { "This was undone already" }
+                val item = dao.item(m.itemId) ?: error("Label ${m.itemId} not found")
+                // Everything this customer took from the package, less what already came back.
+                val undone = dao.undoneIdsNow().toSet()
+                val taken = dao.takenBy(item.id, m.customer).filter { it.id !in undone }.sumOf { it.qty }
+                val open = (taken - dao.returnedQty(item.id, m.customer)).coerceAtLeast(0.0)
+                require(qty <= minOf(m.qty, open) + 1e-6) { "Only ${Format.qtyUnit(minOf(m.qty, open), m.unit)} of this can still come back" }
+                val t = now()
+                val whole = m.type == MovementType.OUT && item.status == ItemStatus.SHIPPED && m.qty >= item.qty - 1e-6 && qty >= item.qty - 1e-6
+                val target = if (whole) {
+                    item.copy(remaining = item.qty, status = ItemStatus.IN_STOCK, location = location.trim(), updatedAt = t, dirty = true)
+                } else {
+                    Item(
+                        id = nextIds(1).first(), category = item.category, code = item.code, size = item.size, unit = item.unit,
+                        qty = item.qty, remaining = minOf(item.qty, qty), status = ItemStatus.IN_STOCK, shipmentId = null, pallet = null,
+                        netKg = null, grossKg = null, receivedAt = t, location = location.trim(), device = prefs.deviceCode,
+                        updatedAt = t, dirty = true,
+                    )
+                }
+                dao.putItems(listOf(target))
+                dao.putMovements(
+                    listOf(
+                        Movement(
+                            id = uuid(), itemId = target.id, type = MovementType.RETURN, qty = qty,
+                            // "from <ID>" names the package it left on, so the same material cannot come back twice.
+                            reference = listOf(who, invoice.trim(), "from ${item.id}", note.trim()).filter { it.isNotEmpty() }.joinToString(" · "),
+                            at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                            customer = m.customer.ifBlank { who }, invoice = invoice.trim(),
+                        )
+                    )
+                )
+                Returned(target, !whole)
+            }
+        }
+        onChange()
+        return result
     }
 
     private val TAKEN_OUT = setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE)

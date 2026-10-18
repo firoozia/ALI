@@ -99,6 +99,18 @@ interface StockDao {
     @Query("SELECT * FROM movements WHERE type = :type AND at >= :from AND at < :to ORDER BY at")
     suspend fun movementsBetweenNow(type: String, from: Long, to: Long): List<Movement>
 
+    /** How much [customer] has brought back from package [itemId]; a return's reference says "from <ID>". */
+    @Query("SELECT COALESCE(SUM(qty), 0) FROM movements WHERE type = 'RETURN' AND customer = :customer COLLATE NOCASE AND reference LIKE '%from ' || :itemId || '%'")
+    suspend fun returnedQty(itemId: String, customer: String): Double
+
+    /** How much [customer] took from package [itemId] by ship-outs and cuts, undone ones included. */
+    @Query("SELECT * FROM movements WHERE type IN ('OUT', 'CUT') AND itemId = :itemId AND customer = :customer COLLATE NOCASE")
+    suspend fun takenBy(itemId: String, customer: String): List<Movement>
+
+    /** Ship-outs and cuts for one customer, newest first, to choose what came back. */
+    @Query("SELECT * FROM movements WHERE type IN ('OUT', 'CUT') AND customer = :customer COLLATE NOCASE ORDER BY at DESC LIMIT 200")
+    fun outsForCustomer(customer: String): Flow<List<Movement>>
+
     /** Everything that happened to one package, oldest first. */
     @Query("SELECT * FROM movements WHERE itemId = :itemId ORDER BY at")
     fun movementsOf(itemId: String): Flow<List<Movement>>
@@ -154,6 +166,15 @@ interface StockDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putProducts(rows: List<Product>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putCounts(rows: List<StockCount>)
+
+    @Query("SELECT * FROM counts WHERE dirty = 1")
+    suspend fun dirtyCounts(): List<StockCount>
+
+    @Query("UPDATE counts SET dirty = 0 WHERE id IN (:ids)")
+    suspend fun cleanCounts(ids: List<String>)
 
     @Query("SELECT * FROM products WHERE dirty = 1")
     suspend fun dirtyProducts(): List<Product>

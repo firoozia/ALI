@@ -71,6 +71,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
     var editPlan by remember { mutableStateOf<Pair<List<Item>, ItemEdit>?>(null) }
     var reprint by remember { mutableStateOf<List<Item>?>(null) }
     var damaging by remember { mutableStateOf<Item?>(null) }
+    var reserving by remember { mutableStateOf<Item?>(null) }
     val waiting = rememberWaiting()
     val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
@@ -214,10 +215,18 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                                         LocationBadge(item.location)
                                     }
                                 }
+                                if (item.reservedFor.isNotBlank()) {
+                                    Text(
+                                        "Reserved for ${item.reservedFor}", color = status.warn, fontWeight = FontWeight.SemiBold,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                                     RowAction("Move") { moving = MoveTarget("Move ${item.id}", listOf(item.id), item.location) }
                                     RowAction("Reprint") { Graph.printQueue.print(listOf(item), item.id) }
                                     RowAction("History") { onHistory(item.id) }
+                                    if (item.reservedFor.isBlank()) RowAction("Reserve") { reserving = item }
+                                    else RowAction("Release") { scope.launch { Graph.repo.reserve(listOf(item.id), "") } }
                                     RowAction("✂ Cut") { onCut(item.id) }
                                     RowAction("Damage", enabled = item.id !in waiting) { damaging = item }
                                     RowAction("Edit", enabled = item.id !in waiting) { editing = listOf(item) }
@@ -239,6 +248,28 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                 }
             }
         }
+    }
+
+    reserving?.let { target ->
+        var who by remember(target.id) { mutableStateOf("") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { reserving = null },
+            title = { Text("Reserve ${target.id}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${target.code} · ${Format.qtyUnit(target.remaining, target.unit)}. Others see it is set aside and are warned before shipping or cutting it.")
+                    CustomerField(who, { who = it })
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = who.isNotBlank(), onClick = {
+                    val id = target.id
+                    reserving = null
+                    scope.launch { Graph.repo.reserve(listOf(id), who) }
+                }) { Text("Reserve") }
+            },
+            dismissButton = { TextButton(onClick = { reserving = null }) { Text("Cancel") } },
+        )
     }
 
     damaging?.let { target ->

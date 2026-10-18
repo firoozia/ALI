@@ -5,6 +5,7 @@ import com.zinax.stock.core.Format
 import com.zinax.stock.data.AppDatabase
 import com.zinax.stock.data.AppUser
 import com.zinax.stock.data.ChangeRequest
+import com.zinax.stock.data.StockCount
 import com.zinax.stock.data.Customer
 import com.zinax.stock.data.GroupRow
 import com.zinax.stock.data.Product
@@ -50,12 +51,15 @@ class SheetsSync(
             val requests = dao.dirtyRequests()
             val groups = dao.dirtyGroups()
             val products = dao.dirtyProducts()
+            val counts = dao.dirtyCounts()
             val pushedAt = System.currentTimeMillis()
 
             val body = JSONObject()
                 .put("action", "sync")
                 .put("token", prefs.token)
                 .put("device", prefs.deviceCode)
+                .put("user", prefs.userName)
+                .put("appVersion", prefs.appVersion)
                 .put("since", prefs.lastServerSync)
                 .put("movementsSince", if (prefs.movementsBackfilled) prefs.lastServerSync else 0L)
                 .put("shipments", JSONArray(shipments.map { it.toJson() }))
@@ -67,6 +71,7 @@ class SheetsSync(
                 .put("requests", JSONArray(requests.map { it.toJson() }))
                 .put("groups", JSONArray(groups.map { it.toJson() }))
                 .put("products", JSONArray(products.map { it.toJson() }))
+                .put("counts", JSONArray(counts.map { it.toJson() }))
 
             val response = JSONObject(post(prefs.webAppUrl, body.toString()))
             if (!response.optBoolean("ok")) throw IOException(response.optString("error", "The sheet refused the sync."))
@@ -81,6 +86,7 @@ class SheetsSync(
                 requests.map { it.id }.chunked(500).forEach { dao.cleanRequests(it, pushedAt) }
                 groups.map { it.id }.chunked(500).forEach { dao.cleanGroups(it, pushedAt) }
                 products.map { it.id }.chunked(500).forEach { dao.cleanProducts(it, pushedAt) }
+                counts.map { it.id }.chunked(500).forEach { dao.cleanCounts(it) }
                 mergeShipments(response.optJSONArray("shipments"))
                 mergeExpected(response.optJSONArray("expected"))
                 mergeItems(response.optJSONArray("items"))
@@ -94,6 +100,7 @@ class SheetsSync(
             response.optString("rev").takeIf { it.isNotEmpty() }?.let { prefs.lastRev = it }
             if (response.has("movements")) prefs.movementsBackfilled = true
             prefs.lastServerSync = response.optLong("now", prefs.lastServerSync)
+            response.optJSONArray("devices")?.let { prefs.devicesJson = it.toString() }
             response.optLong("lastBackup", 0L).takeIf { it > 0 }?.let { prefs.lastBackup = it }
             response.optString("sheetUrl").takeIf { it.startsWith("https://") }?.let { prefs.sheetUrl = it }
             val pushed = shipments.size + expected.size + items.size + movements.size + customers.size + users.size + requests.size + groups.size + products.size
@@ -244,8 +251,18 @@ class SheetsSync(
                 netKg = it.optNullableDouble("netKg"), grossKg = it.optNullableDouble("grossKg"),
                 receivedAt = it.optLong("receivedAt"), location = it.optString("location"),
                 device = it.optString("device"), updatedAt = it.optLong("updatedAt"), dirty = false,
-            )
-        }.filter { remote -> dao.item(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
+                reservedFor = it.optString("reservedFor"),
+            ) to it.has("reservedFor")
+        }.mapNotNull { (remote, hasReserve) ->
+            val local = dao.item(remote.id)
+            when {
+                local == null -> remote
+                local.dirty || local.updatedAt > remote.updatedAt -> null
+                // An older script does not send the reservation; keep the one already here.
+                !hasReserve -> remote.copy(reservedFor = local.reservedFor)
+                else -> remote
+            }
+        }
         if (rows.isNotEmpty()) dao.putItems(rows)
     }
 
@@ -284,6 +301,12 @@ class SheetsSync(
         .put("id", id).put("name", name).put("unit", unit).put("pack", pack).put("order", sort).put("hidden", hidden)
         .put("updatedAt", updatedAt)
 
+    private fun StockCount.toJson() = JSONObject()
+        .put("id", id).put("place", place).put("at", at).put("user", user).put("device", device)
+        .put("expected", expected).put("found", found).put("missing", missing).put("extra", extra)
+        .put("missingIds", JSONArray(missingIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
+        .put("extraIds", JSONArray(extraIds.split(",").map { it.trim() }.filter { it.isNotEmpty() }))
+
     private fun Product.toJson() = JSONObject()
         .put("id", id).put("groupId", groupId).put("code", code).put("size", size).put("unit", unit).put("packQty", packQty)
         .put("note", note).put("hidden", hidden).put("updatedAt", updatedAt).put("minQty", minQty)
@@ -315,7 +338,7 @@ class SheetsSync(
         .put("qty", qty).put("remaining", remaining).put("status", status)
         .put("shipmentId", shipmentId ?: "").put("pallet", pallet ?: "")
         .put("netKg", netKg ?: JSONObject.NULL).put("grossKg", grossKg ?: JSONObject.NULL)
-        .put("receivedAt", receivedAt).put("location", location).put("device", device).put("updatedAt", updatedAt)
+        .put("receivedAt", receivedAt).put("location", location).put("device", device).put("updatedAt", updatedAt).put("reservedFor", reservedFor)
 
     private fun Movement.toJson() = JSONObject()
         .put("id", id).put("itemId", itemId).put("type", type).put("qty", qty).put("reference", reference)

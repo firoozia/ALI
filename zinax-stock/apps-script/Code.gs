@@ -22,7 +22,7 @@ const BACKUP_FOLDER = 'Zinax Stock Backups';
 // Column order of each sheet. The first column is the row ID; ServerAt is set by this script.
 const SHEETS = {
   Items: ['ID', 'Category', 'Code', 'Size', 'Qty', 'Remaining', 'Unit', 'Status', 'Shipment', 'Pallet', 'NetKg', 'GrossKg',
-          'ReceivedAt', 'Location', 'Device', 'UpdatedAt', 'ServerAt', 'ShipmentId'],
+          'ReceivedAt', 'Location', 'Device', 'UpdatedAt', 'ServerAt', 'ShipmentId', 'ReservedFor'],
   Movements: ['ID', 'ItemID', 'Type', 'Qty', 'Unit', 'Code', 'Size', 'Reference', 'At', 'Device', 'ServerAt', 'User',
               'Customer', 'Invoice'],
   Shipments: ['ID', 'Name', 'Source', 'CreatedAt', 'UpdatedAt', 'ServerAt'],
@@ -40,6 +40,10 @@ const SHEETS = {
   // Undo and delete asked by users, and the admin's answer.
   Requests: ['ID', 'Kind', 'Target', 'Summary', 'Reason', 'RequestedBy', 'Device', 'RequestedAt', 'Status', 'DecidedBy',
              'DecidedAt', 'Note', 'UpdatedAt', 'ServerAt', 'Payload'],
+  // One row per phone: who used it and when it last synced, so a phone that stopped syncing is noticed.
+  Devices: ['Device', 'User', 'AppVersion', 'LastSync', 'LastSyncAt'],
+  // Stock counts finished in the app: what was expected in a place, what was found, missing and extra.
+  Counts: ['ID', 'Place', 'At', 'By', 'Device', 'Expected', 'Found', 'Missing', 'Extra', 'MissingIDs', 'ExtraIDs'],
 };
 
 // Columns kept as plain text so codes like "0101" or sizes like "0.30*1400" are not turned into numbers.
@@ -53,6 +57,8 @@ const TEXT_COLUMNS = {
   Requests: ['Target'],
   Groups: ['Name'],
   Products: ['Code', 'Size', 'Note'],
+  Devices: ['Device', 'User', 'AppVersion'],
+  Counts: ['Place', 'MissingIDs', 'ExtraIDs'],
 };
 
 function setup() {
@@ -129,7 +135,7 @@ function sync_(req) {
   upsert_('Items', req.items || [], function (i) {
     return [i.id, i.category, i.code, i.size, i.qty, i.remaining, i.unit, i.status, shipmentNames[i.shipmentId] || '',
             i.pallet || '', blank_(i.netKg), blank_(i.grossKg), date_(i.receivedAt), i.location || '', i.device,
-            i.updatedAt, now, i.shipmentId || ''];
+            i.updatedAt, now, i.shipmentId || '', i.reservedFor || ''];
   }, 15);
 
   appendNew_('Movements', req.movements || [], function (m) {
@@ -160,6 +166,16 @@ function sync_(req) {
             Number(p.minQty) || ''];
   }, 8);
 
+  appendNew_('Counts', req.counts || [], function (c) {
+    return [c.id, c.place || '', date_(c.at), c.user || '', c.device || '', Number(c.expected) || 0, Number(c.found) || 0,
+            Number(c.missing) || 0, Number(c.extra) || 0, (c.missingIds || []).join(', '), (c.extraIds || []).join(', ')];
+  });
+  if (req.device) {
+    upsert_('Devices', [req], function (d) {
+      return [String(d.device), d.user || '', d.appVersion || '', date_(now), now];
+    }, 4);
+  }
+
   const pushed = ['shipments', 'expected', 'items', 'movements', 'customers', 'users', 'requests', 'groups', 'products']
     .some(function (k) { return (req[k] || []).length; });
   if (pushed) bump_();
@@ -172,6 +188,9 @@ function sync_(req) {
     ok: true,
     now: now,
     sheetUrl: SpreadsheetApp.getActive().getUrl(),
+    devices: readAll_('Devices').filter(function (r) { return String(r[0]).trim(); }).map(function (r) {
+      return { device: String(r[0]), user: String(r[1] || ''), appVersion: String(r[2] || ''), at: Number(r[4]) || 0 };
+    }),
     lastBackup: Number(PropertiesService.getScriptProperties().getProperty('ZINAX_LAST_BACKUP') || 0),
     shipments: changed_('Shipments', since).map(function (r) {
       return { id: r[0], name: r[1], source: r[2], createdAt: ms_(r[3]), updatedAt: Number(r[4]) };
@@ -184,7 +203,8 @@ function sync_(req) {
     items: changed_('Items', since).map(function (r) {
       return { id: r[0], category: r[1], code: String(r[2]), size: String(r[3]), qty: Number(r[4]), remaining: Number(r[5]),
                unit: r[6], status: r[7], pallet: String(r[9]), netKg: num_(r[10]), grossKg: num_(r[11]),
-               receivedAt: ms_(r[12]), location: String(r[13]), device: r[14], updatedAt: Number(r[15]), shipmentId: r[17] };
+               receivedAt: ms_(r[12]), location: String(r[13]), device: r[14], updatedAt: Number(r[15]), shipmentId: r[17],
+               reservedFor: String(r[18] || '') };
     }),
     movements: changed_('Movements', movementsSince).map(function (r) {
       return { id: r[0], itemId: r[1], type: r[2], qty: Number(r[3]), unit: r[4], code: String(r[5]), size: String(r[6]),
@@ -590,10 +610,10 @@ function cutsSheet_() {
   const moves = readAll_('Movements');
   const undone = undone_(moves);
   const rows = moves.filter(function (r) {
-    return (r[2] === 'CUT' || r[2] === 'WASTE' || r[2] === 'DAMAGE') && !undone[String(r[0])];
+    return (r[2] === 'CUT' || r[2] === 'WASTE' || r[2] === 'DAMAGE' || r[2] === 'RETURN') && !undone[String(r[0])];
   }).sort(function (a, b) { return ms_(b[8]) - ms_(a[8]); }).map(function (r) {
     // A damage report has no customer; its reason (from the Reference column) takes that place.
-    return [Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd HH:mm'), r[2] === 'CUT' ? 'Cut' : (r[2] === 'DAMAGE' ? 'Damage' : 'Waste'),
+    return [Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd HH:mm'), ({ CUT: 'Cut', DAMAGE: 'Damage', RETURN: 'Return' })[r[2]] || 'Waste',
             r[2] === 'DAMAGE' ? String(r[7] || '') : String(r[12] || ''), String(r[13] || ''), String(r[5]), String(r[6]), Number(r[3]) || 0, r[4], r[1],
             String(r[11] || '').trim() || ('phone ' + r[9])];
   });

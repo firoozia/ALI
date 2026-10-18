@@ -57,6 +57,7 @@ object Graph {
         if (prefs.languagePending) { prefs.language = "en"; prefs.languagePending = false }
         com.zinax.stock.ui.UiLang.lang = prefs.language
         if (prefs.language != "en") prefs.languagePending = true
+        prefs.appVersion = try { app.packageManager.getPackageInfo(app.packageName, 0).versionName.orEmpty() } catch (_: Exception) { "" }
         db = AppDatabase.create(app)
         repo = Repository(db, prefs) { SyncWorker.soon(app) }
         printer = BluetoothPrinter(app)

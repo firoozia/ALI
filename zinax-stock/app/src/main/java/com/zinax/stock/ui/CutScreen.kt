@@ -249,6 +249,9 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
     }
 
     CustomerField(customer, { customer = it })
+    if (item.reservedFor.isNotBlank() && com.zinax.stock.core.CustomerNames.key(item.reservedFor) != com.zinax.stock.core.CustomerNames.key(customer)) {
+        Notice("Reserved for ${item.reservedFor}. Cut it for someone else only if they agree.", status.warn, status.warnSoft, "Reserved")
+    }
     OutlinedTextField(
         invoice, { invoice = it }, label = { Text("Invoice no. (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),

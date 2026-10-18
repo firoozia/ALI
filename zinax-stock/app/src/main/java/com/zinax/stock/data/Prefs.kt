@@ -161,6 +161,28 @@ class Prefs(context: Context) {
         get() = sp.getStringSet("lowNotified", emptySet())?.toSet() ?: emptySet()
         set(v) = edit { putStringSet("lowNotified", v) }
 
+    /** The newest release seen on GitHub, and when it was looked for. */
+    var updateCheckedAt: Long
+        get() = sp.getLong("updateCheckedAt", 0)
+        set(v) = edit { putLong("updateCheckedAt", v) }
+    var updateCode: Long
+        get() = sp.getLong("updateCode", 0)
+        set(v) = edit { putLong("updateCode", v) }
+    var updateName: String
+        get() = sp.getString("updateName", "") ?: ""
+        set(v) = edit { putString("updateName", v) }
+    var updateUrl: String
+        get() = sp.getString("updateUrl", "") ?: ""
+        set(v) = edit { putString("updateUrl", v) }
+
+    /** Installed app version, set at start; sent with each sync so the sheet shows what each phone runs. */
+    var appVersion: String = ""
+
+    /** Every phone's last sync as the sheet saw it: JSON array of {device, user, appVersion, at}. */
+    var devicesJson: String
+        get() = sp.getString("devicesJson", "[]") ?: "[]"
+        set(v) = edit { putString("devicesJson", v) }
+
     var lastBackup: Long
         get() = sp.getLong("lastBackup", 0)
         set(v) = edit { putLong("lastBackup", v) }

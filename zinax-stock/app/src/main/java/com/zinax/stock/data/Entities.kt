@@ -64,6 +64,8 @@ data class Item(
     val device: String,
     val updatedAt: Long,
     val dirty: Boolean = true,
+    /** Customer this package is put aside for; empty when free. */
+    val reservedFor: String = "",
 ) {
     val categoryEnum: Category get() = Category.fromName(category)
 }
@@ -83,6 +85,10 @@ object MovementType {
     const val EDIT = "EDIT"
     /** Cancels a ship-out, cut or waste made by mistake; [Movement.reference] holds the cancelled movement's ID. */
     const val UNDO = "UNDO"
+    /** Material a customer brought back; on the package it went back to, with the customer and the ship-out or cut it came from. */
+    const val RETURN = "RETURN"
+    /** Put aside for a customer, or released again; [Movement.reference] says which. */
+    const val RESERVE = "RESERVE"
 }
 
 /** A customer in the shared library, offered while typing names. */
@@ -197,6 +203,24 @@ data class Product(
     val dirty: Boolean = true,
     /** Minimum stock in [unit]; at or under it the product shows as low. 0 when not set. */
     val minQty: Double = 0.0,
+)
+
+/** A finished stock count of one place, sent to the Counts tab of the sheet. */
+@Entity(tableName = "counts")
+data class StockCount(
+    @PrimaryKey val id: String,
+    val place: String,
+    val at: Long,
+    val user: String,
+    val device: String,
+    val expected: Int,
+    val found: Int,
+    val missing: Int,
+    val extra: Int,
+    /** Label IDs, comma separated. */
+    val missingIds: String,
+    val extraIds: String,
+    val dirty: Boolean = true,
 )
 
 /** Group, code, size, unit and package quantity of a label, for building the first catalog. */

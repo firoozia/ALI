@@ -39,7 +39,7 @@ import com.zinax.stock.ui.theme.LocalStatus
 import kotlinx.coroutines.launch
 
 @Composable
-fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
+fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit, onReturn: () -> Unit) {
     val scope = rememberCoroutineScope()
     val status = LocalStatus.current
     val snackbar = remember { SnackbarHostState() }
@@ -78,7 +78,10 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
         result.contents?.let { lookup(it) }
     }
 
-    ScreenScaffold("Ship out", onBack, snackbar, actions = { TextButton(onClick = onReport) { Text("Report") } }) { padding ->
+    ScreenScaffold("Ship out", onBack, snackbar, actions = {
+        TextButton(onClick = onReturn) { Text("Return") }
+        TextButton(onClick = onReport) { Text("Report") }
+    }) { padding ->
         FormBody(padding) {
             pending?.let { spec -> PendingLabel(spec) { pending = null } }
             Button(
@@ -144,6 +147,9 @@ fun ShipOutScreen(onBack: () -> Unit, onReport: () -> Unit) {
                     undoing = UndoTarget.of(m)
                 }
 
+                if (inStock && it.reservedFor.isNotBlank()) {
+                    Notice("Reserved for ${it.reservedFor}. Ship it to someone else only if they agree.", status.warn, status.warnSoft, "Reserved")
+                }
                 older?.let { o ->
                     Notice(
                         "${o.id} (${o.code}) came in on ${Format.date(o.receivedAt)}" +

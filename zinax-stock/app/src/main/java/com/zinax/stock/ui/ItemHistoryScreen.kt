@@ -42,7 +42,9 @@ private fun typeName(type: String) = when (type) {
     MovementType.CUT -> "Cut"
     MovementType.WASTE -> "Waste"
     MovementType.DAMAGE -> "Damage"
+    MovementType.RETURN -> "Returned by customer"
     MovementType.MOVE -> "Moved"
+    MovementType.RESERVE -> "Reservation"
     MovementType.EDIT -> "Edited"
     MovementType.VOID -> "Deleted"
     MovementType.UNDO -> "Undo"
@@ -110,7 +112,7 @@ fun ItemHistoryScreen(initialId: String, onBack: () -> Unit) {
                 return@FormBody
             }
 
-            val received = history.firstOrNull { m -> m.type == MovementType.IN }
+            val received = history.firstOrNull { m -> m.type == MovementType.IN || m.type == MovementType.RETURN }
             val undone = history.filter { m -> m.type == MovementType.UNDO }.associateBy { m -> m.reference }
             Panel {
                 Text(it.id, style = MonoStyle)
@@ -122,6 +124,7 @@ fun ItemHistoryScreen(initialId: String, onBack: () -> Unit) {
                 }
                 KeyValue("Left", "${Format.qtyUnit(it.remaining, it.unit)} of ${Format.qtyUnit(it.qty, it.unit)}")
                 KeyValue("Place", it.location.ifBlank { NO_LOCATION })
+                if (it.reservedFor.isNotBlank()) KeyValue("Reserved for", it.reservedFor)
                 KeyValue("Group", it.categoryEnum.label)
                 shipment?.let { s -> KeyValue("Shipment", s.name) }
                 it.pallet?.takeIf { p -> p.isNotBlank() }?.let { p -> KeyValue("Pallet", p) }
@@ -139,7 +142,7 @@ fun ItemHistoryScreen(initialId: String, onBack: () -> Unit) {
                         val cancel = undone[m.id]
                         Column {
                             Text(
-                                typeName(m.type) + (if (m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE, MovementType.IN))
+                                typeName(m.type) + (if (m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE, MovementType.IN, MovementType.RETURN))
                                     " · ${Format.qtyUnit(m.qty, m.unit)}" else ""),
                                 fontWeight = FontWeight.SemiBold,
                                 color = if (cancel != null) status.warn else MaterialTheme.colorScheme.onSurface,
