@@ -18,8 +18,9 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[2],'utf8'), 
 const post=b=>JSON.parse(ctx.doPost({postData:{contents:JSON.stringify(b)}}).t);
 assert.equal(post({token:'bad',action:'sync'}).ok,false);
 const item={id:'ZX-251009-A0001',category:'PVC',code:'101',size:'0.30*1400',unit:'m',qty:120,remaining:120,status:'IN_STOCK',shipmentId:'s1',pallet:'1',netKg:64,grossKg:null,receivedAt:1000,location:'',device:'A',updatedAt:1000};
-let r=post({token:'tok',action:'sync',since:0,shipments:[{id:'s1',name:'CN-1',source:'f.xlsx',createdAt:1,updatedAt:1}],expected:[{id:'e1',shipmentId:'s1',pallet:'1',lineNo:1,category:'PVC',code:'101',size:'0.30*1400',qty:120,unit:'m',netKg:64,grossKg:67,itemId:'ZX-251009-A0001',updatedAt:1000}],items:[item, {...item,id:'ZX-251009-A0002'}],movements:[{id:'m1',itemId:item.id,type:'IN',qty:120,reference:'Pallet 1',at:1000,device:'A',code:'101',size:'x',unit:'m'}]});
+let r=post({token:'tok',action:'sync',since:0,shipments:[{id:'s1',name:'CN-1',source:'f.xlsx',createdAt:1,updatedAt:1}],expected:[{id:'e1',shipmentId:'s1',pallet:'1',lineNo:1,category:'PVC',code:'101',size:'0.30*1400',qty:120,unit:'m',netKg:64,grossKg:67,itemId:'ZX-251009-A0001',labelId:'ZX-261017-KO0001',updatedAt:1000}],items:[item, {...item,id:'ZX-251009-A0002'}],movements:[{id:'m1',itemId:item.id,type:'IN',qty:120,reference:'Pallet 1',at:1000,device:'A',code:'101',size:'x',unit:'m'}]});
 assert.ok(r.ok, JSON.stringify(r)); assert.equal(r.items.length,2); assert.equal(r.items[0].netKg,64); assert.equal(r.items[0].grossKg,null); assert.equal(r.items[0].shipmentId,'s1'); assert.equal(r.shipments[0].name,'CN-1');
+assert.equal(sheets.Expected.cells[1][14],'ZX-261017-KO0001'); assert.equal(r.expected[0].labelId,'ZX-261017-KO0001');
 assert.equal(sheets.Items.cells[1][8],'CN-1');
 // stale update ignored, newer applied; movement dedupe
 r=post({token:'tok',action:'sync',since:r.now,items:[{...item,remaining:50,updatedAt:500},{...item,id:'ZX-251009-A0002',remaining:0,status:'SHIPPED',updatedAt:2000}],movements:[{id:'m1',itemId:item.id,type:'IN',qty:120,at:1000,device:'A',code:'101',size:'x',unit:'m'}]});
