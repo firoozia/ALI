@@ -33,6 +33,8 @@ data class ExpectedUnit(
     val itemId: String?,
     val updatedAt: Long,
     val dirty: Boolean = true,
+    /** Label ID the supplier printed on this carton; scanning it receives the unit. Null for lists labelled here. */
+    val labelId: String? = null,
 )
 
 object ItemStatus {

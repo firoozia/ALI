@@ -76,5 +76,15 @@ Google is busy (429). The app tries again by itself in a minute. ⇒ Google مش
 Google had a problem ({}). The app tries again by itself in a minute. ⇒ حدثت مشكلة في Google ({}). يعيد التطبيق المحاولة تلقائياً بعد دقيقة.
 The web app answered with error {} ⇒ ردّ تطبيق الويب بالخطأ {}
 Bad request ⇒ طلب غير صالح
+Receive by scan ⇒ الاستلام بالمسح
+No supplier-labelled list yet. Import the carton labels file with Import list first, then wait for it to sync to the other phones. ⇒ لا توجد قائمة بملصقات المورّد بعد. استورد ملف ملصقات الكراتين عبر Import list أولاً ثم انتظر مزامنتها مع الهواتف الأخرى.
+{} of {} cartons received ⇒ {1} من {2} كرتون تم استلامها
+The camera opens again after each carton. Press Back on the camera to stop. ⇒ تُفتح الكاميرا مجدداً بعد كل كرتون. اضغط Back في الكاميرا للإيقاف.
+Scan cartons ⇒ مسح الكراتين
+Not in any imported list. Check the list was imported and synced. ⇒ غير موجود في أي قائمة مستوردة. تأكد من استيراد القائمة ومزامنتها.
+already received ⇒ تم استلامه سابقاً
+Hide cartons not received ⇒ إخفاء الكراتين غير المستلمة
+Show {} cartons not received ⇒ عرض {} كرتون غير مستلمة
+Receiving · {} scanned · Back to stop ⇒ جارٍ الاستلام · {1} تم مسحها · للإيقاف Back
 """
 }

@@ -31,6 +31,13 @@ interface StockDao {
     @Query("SELECT * FROM expected WHERE id = :id")
     suspend fun expectedById(id: String): ExpectedUnit?
 
+    @Query("SELECT * FROM expected WHERE labelId = :labelId LIMIT 1")
+    suspend fun expectedByLabel(labelId: String): ExpectedUnit?
+
+    /** Cartons the supplier labelled, for the receive-by-scan progress. */
+    @Query("SELECT * FROM expected WHERE labelId IS NOT NULL")
+    fun prelabelled(): Flow<List<ExpectedUnit>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putExpected(rows: List<ExpectedUnit>)
 

@@ -25,7 +25,7 @@ const SHEETS = {
               'Customer', 'Invoice'],
   Shipments: ['ID', 'Name', 'Source', 'CreatedAt', 'UpdatedAt', 'ServerAt'],
   Expected: ['ID', 'ShipmentID', 'Pallet', 'Line', 'Category', 'Code', 'Size', 'Qty', 'Unit', 'NetKg', 'GrossKg', 'ItemID',
-             'UpdatedAt', 'ServerAt'],
+             'UpdatedAt', 'ServerAt', 'LabelID'],
   // Customer library shared by the phones. Add a name on a new row, fix a name, or put TRUE in Hidden to stop suggesting it.
   Customers: ['ID', 'Name', 'CreatedAt', 'By', 'Hidden', 'UpdatedAt', 'ServerAt'],
   // People who sign in to the app. Role ADMIN or USER; Active FALSE stops someone signing in. PINs are stored hashed.
@@ -120,7 +120,7 @@ function sync_(req) {
 
   upsert_('Expected', req.expected || [], function (u) {
     return [u.id, u.shipmentId, u.pallet, u.lineNo, u.category, u.code, u.size, u.qty, u.unit,
-            blank_(u.netKg), blank_(u.grossKg), u.itemId || '', u.updatedAt, now];
+            blank_(u.netKg), blank_(u.grossKg), u.itemId || '', u.updatedAt, now, u.labelId || ''];
   }, 12);
 
   upsert_('Items', req.items || [], function (i) {
@@ -174,7 +174,7 @@ function sync_(req) {
     expected: changed_('Expected', since).map(function (r) {
       return { id: r[0], shipmentId: r[1], pallet: String(r[2]), lineNo: Number(r[3]), category: r[4], code: String(r[5]),
                size: String(r[6]), qty: Number(r[7]), unit: r[8], netKg: num_(r[9]), grossKg: num_(r[10]),
-               itemId: r[11], updatedAt: Number(r[12]) };
+               itemId: r[11], updatedAt: Number(r[12]), labelId: String(r[14] || '') };
     }),
     items: changed_('Items', since).map(function (r) {
       return { id: r[0], category: r[1], code: String(r[2]), size: String(r[3]), qty: Number(r[4]), remaining: Number(r[5]),

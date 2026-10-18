@@ -29,6 +29,7 @@ import com.zinax.stock.sync.ReportWorker
 import com.zinax.stock.sync.RequestNotifier
 import com.zinax.stock.ui.LockScreen
 import com.zinax.stock.ui.MoveScanScreen
+import com.zinax.stock.ui.ReceiveScanScreen
 import com.zinax.stock.ui.RequestsScreen
 import com.zinax.stock.ui.UsersScreen
 import com.zinax.stock.ui.CatalogScreen
@@ -62,6 +63,7 @@ object Routes {
     const val CUSTOMERS = "customers"
     const val USERS = "users"
     const val MOVE_SCAN = "movescan"
+    const val RECEIVE_SCAN = "receivescan"
     const val CATALOG = "catalog"
     const val REQUESTS = "requests?open={open}&act={act}"
 
@@ -179,6 +181,7 @@ class MainActivity : FragmentActivity() {
                     composable(Routes.CUSTOMERS) { CustomersScreen(onBack = back) }
                     composable(Routes.USERS) { UsersScreen(onBack = back) }
                     composable(Routes.MOVE_SCAN) { MoveScanScreen(onBack = back) }
+                    composable(Routes.RECEIVE_SCAN) { ReceiveScanScreen(onBack = back) }
                     composable(Routes.CATALOG) { CatalogScreen(onBack = back) }
                     composable(
                         Routes.REQUESTS,

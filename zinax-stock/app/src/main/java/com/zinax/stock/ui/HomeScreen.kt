@@ -245,6 +245,9 @@ fun HomeScreen(nav: NavController) {
                     PillButton(R.drawable.lucide_download, "Import list", Modifier.weight(1f)) { nav.navigate(Routes.IMPORT) }
                     PillButton(R.drawable.lucide_printer, "Print by hand", Modifier.weight(1f)) { nav.navigate(Routes.manual()) }
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PillButton(R.drawable.lucide_package_check, "Receive by scan", Modifier.weight(1f)) { nav.navigate(Routes.RECEIVE_SCAN) }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 PillButton(R.drawable.lucide_file_spreadsheet, "Send Excel", Modifier.weight(1f), primary = true) {

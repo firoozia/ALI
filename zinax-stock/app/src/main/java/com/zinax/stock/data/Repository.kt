@@ -33,7 +33,7 @@ class Repository(
             ExpectedUnit(
                 id = uuid(), shipmentId = shipment.id, pallet = it.pallet, lineNo = it.lineNo,
                 category = it.category.name, code = it.code, size = it.size, qty = it.qty, unit = Units.normalize(it.unit),
-                netKg = it.netKg, grossKg = it.grossKg, itemId = null, updatedAt = t,
+                netKg = it.netKg, grossKg = it.grossKg, itemId = null, updatedAt = t, labelId = it.labelId,
             )
         }
         db.withTransaction {
@@ -43,6 +43,29 @@ class Repository(
         onChange()
         return shipment.id
     }
+
+    /** Result of scanning a carton the supplier labelled. [duplicate] means it was received before. */
+    data class Received(val unit: ExpectedUnit?, val item: Item?, val duplicate: Boolean)
+
+    /** Receives one pre-labelled carton: the item takes the printed label ID, so the same label ships it out later. */
+    suspend fun receiveByLabel(labelId: String, location: String): Received = idLock.withLock {
+        db.withTransaction {
+            val unit = dao.expectedByLabel(labelId) ?: return@withTransaction Received(null, null, false)
+            val existing = dao.item(labelId)
+            if (unit.itemId != null || existing != null) return@withTransaction Received(unit, existing, true)
+            val t = now()
+            val item = Item(
+                id = labelId, category = unit.category, code = unit.code, size = unit.size, unit = unit.unit,
+                qty = unit.qty, remaining = unit.qty, status = ItemStatus.IN_STOCK,
+                shipmentId = unit.shipmentId, pallet = unit.pallet, netKg = unit.netKg, grossKg = unit.grossKg,
+                receivedAt = t, location = location.trim(), device = prefs.deviceCode, updatedAt = t,
+            )
+            dao.putItems(listOf(item))
+            dao.putExpected(listOf(unit.copy(itemId = labelId, updatedAt = t, dirty = true)))
+            dao.putMovements(listOf(inMovement(item, t)))
+            Received(unit, item, false)
+        }
+    }.also { onChange() }
 
     /** Next free label IDs for today on this device. */
     private suspend fun nextIds(count: Int): List<String> {

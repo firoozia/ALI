@@ -2,6 +2,7 @@ package com.zinax.stock.importer
 
 import com.zinax.stock.core.Category
 import com.zinax.stock.core.Format
+import com.zinax.stock.core.LabelId
 
 /** One package expected in a shipment: one row of the packing list, one label. */
 data class ParsedUnit(
@@ -14,6 +15,8 @@ data class ParsedUnit(
     val unit: String,
     val netKg: Double?,
     val grossKg: Double?,
+    /** Set when the supplier already printed this carton's label. */
+    val labelId: String? = null,
 )
 
 data class ParseResult(
@@ -41,6 +44,8 @@ data class ParseResult(
 object PackingListParser {
 
     fun parse(rows: List<List<String>>, defaultCategory: Category): ParseResult {
+        val cartonHeader = rows.indexOfFirst { isCartonHeader(it) }
+        if (cartonHeader >= 0) return parseCartons(rows, cartonHeader, defaultCategory)
         val simpleHeader = rows.indexOfFirst { isSimpleHeader(it) }
         val supplierHeader = rows.indexOfFirst { supplierColumns(it) != null }
         return when {
@@ -49,6 +54,36 @@ object PackingListParser {
             supplierHeader >= 0 -> parseSupplier(rows, defaultCategory)
             else -> ParseResult(emptyList(), "unknown", listOf("No header row found. Expected \"NO. / Item no.\" or \"Code / Qty\"."))
         }
+    }
+
+    // ---------- carton labels printed by the supplier ----------
+
+    private fun isCartonHeader(row: List<String>): Boolean =
+        row.any { norm(it).startsWith("label id") } && row.any { norm(it).startsWith("qty in carton") }
+
+    /** One row per carton, each with the label ID the supplier prints on it. */
+    private fun parseCartons(rows: List<List<String>>, header: Int, defaultCategory: Category): ParseResult {
+        val h = rows[header].map { norm(it) }
+        fun col(prefix: String) = h.indexOfFirst { it.startsWith(prefix) }
+        val id = col("label id"); val pallet = col("pallet"); val code = col("code")
+        val qty = col("qty in carton"); val unit = col("unit"); val group = col("group")
+        val warnings = mutableListOf<String>()
+        val seen = HashSet<String>()
+        val units = mutableListOf<ParsedUnit>()
+        for (r in rows.drop(header + 1)) {
+            fun cell(i: Int) = if (i >= 0 && i < r.size) r[i].trim() else ""
+            val labelId = LabelId.normalize(cell(id))
+            val q = cell(qty).replace(",", "").toDoubleOrNull()
+            if (labelId.isEmpty() || cell(code).isEmpty() || q == null) continue
+            if (!seen.add(labelId)) { warnings += "Label ID $labelId appears twice; the second row is skipped."; continue }
+            units += ParsedUnit(
+                pallet = cell(pallet), lineNo = units.size + 1, category = Category.parse(cell(group)) ?: defaultCategory,
+                code = cell(code), size = "", qty = q, unit = cell(unit).ifEmpty { "pcs" },
+                netKg = null, grossKg = null, labelId = labelId,
+            )
+        }
+        if (units.isEmpty()) warnings += "No carton rows found under the Label ID column."
+        return ParseResult(units, "carton labels", warnings)
     }
 
     private fun norm(s: String) = s.trim().lowercase()

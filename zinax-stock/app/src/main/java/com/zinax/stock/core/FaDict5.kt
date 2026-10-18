@@ -80,5 +80,15 @@ Shipment name ⇒ نام محموله
 Manual ⇒ دستی
 {} of {} ⇒ {1} از {2}
 Delete {} ⇒ حذف {}
+Receive by scan ⇒ ورود با اسکن
+No supplier-labelled list yet. Import the carton labels file with Import list first, then wait for it to sync to the other phones. ⇒ هنوز لیستی با لیبل تأمین‌کننده نیست. ابتدا فایل لیبل کارتن‌ها را با Import list وارد کنید و منتظر همگام‌سازی با گوشی‌های دیگر بمانید.
+{} of {} cartons received ⇒ {1} از {2} کارتن دریافت شد
+The camera opens again after each carton. Press Back on the camera to stop. ⇒ پس از هر کارتن دوربین دوباره باز می‌شود. برای توقف، در دوربین Back را بزنید.
+Scan cartons ⇒ اسکن کارتن‌ها
+Not in any imported list. Check the list was imported and synced. ⇒ در هیچ لیست واردشده‌ای نیست. بررسی کنید لیست وارد و همگام شده باشد.
+already received ⇒ قبلاً دریافت شده
+Hide cartons not received ⇒ پنهان کردن کارتن‌های دریافت‌نشده
+Show {} cartons not received ⇒ نمایش {} کارتن دریافت‌نشده
+Receiving · {} scanned · Back to stop ⇒ در حال دریافت · {1} اسکن شد · برای توقف Back
 """
 }

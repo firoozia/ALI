@@ -208,8 +208,17 @@ class SheetsSync(
                 size = it.optString("size"), qty = it.optDouble("qty", 0.0), unit = it.optString("unit"),
                 netKg = it.optNullableDouble("netKg"), grossKg = it.optNullableDouble("grossKg"),
                 itemId = it.optString("itemId").ifEmpty { null }, updatedAt = it.optLong("updatedAt"), dirty = false,
+                labelId = it.optString("labelId").ifEmpty { null },
             )
-        }.filter { remote -> dao.expectedById(remote.id).let { it == null || (!it.dirty && it.updatedAt <= remote.updatedAt) } }
+        }.mapNotNull { remote ->
+            val local = dao.expectedById(remote.id)
+            when {
+                local == null -> remote
+                local.dirty || local.updatedAt > remote.updatedAt -> null
+                // An older script does not return the label ID; keep the one already here.
+                else -> remote.copy(labelId = remote.labelId ?: local.labelId)
+            }
+        }
         if (rows.isNotEmpty()) dao.putExpected(rows)
     }
 
@@ -288,7 +297,7 @@ class SheetsSync(
         .put("id", id).put("shipmentId", shipmentId).put("pallet", pallet).put("lineNo", lineNo)
         .put("category", category).put("code", code).put("size", size).put("qty", qty).put("unit", unit)
         .put("netKg", netKg ?: JSONObject.NULL).put("grossKg", grossKg ?: JSONObject.NULL)
-        .put("itemId", itemId ?: "").put("updatedAt", updatedAt)
+        .put("itemId", itemId ?: "").put("updatedAt", updatedAt).put("labelId", labelId ?: "")
 
     private fun Item.toJson() = JSONObject()
         .put("id", id).put("category", category).put("code", code).put("size", size).put("unit", unit)
