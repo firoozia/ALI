@@ -14,10 +14,24 @@ from __future__ import annotations
 from typing import List
 
 from . import formula
-from .library import MaterialLibrary
+from .library import MaterialLibrary, _band_of
 from .models import BuildConfig, GeneratedPart, SlotMaterial, UnitInstance
 
-__all__ = ["generate_parts", "cut_size", "GeneratorError"]
+__all__ = ["generate_parts", "cut_size", "GeneratorError", "apply_groove"]
+
+_EDGE_NAMES = ("edge_1", "edge_2", "edge_3", "edge_4")
+
+
+def apply_groove(cell: str) -> str:
+    """Add a groove mark to an edge cell, in ZINAX notation.
+
+    N -> S, P1 -> S/P1, S and S/P1 are left as-is.
+    """
+    band = _band_of(cell)
+    if band is None:
+        # cell is N / S / blank -> groove only
+        return "S"
+    return f"S/{band}"
 
 
 class GeneratorError(ValueError):
@@ -73,6 +87,15 @@ def _edges_for(spec_edges, band: str) -> dict:
     return cells
 
 
+def _groove_edges(spec_groove_edge) -> list:
+    """Normalise a part spec's groove_edge into a list of edge names."""
+    if spec_groove_edge in (None, "none", "", False):
+        return []
+    if isinstance(spec_groove_edge, str):
+        return [spec_groove_edge] if spec_groove_edge in _EDGE_NAMES else []
+    return [e for e in spec_groove_edge if e in _EDGE_NAMES]
+
+
 def generate_parts(inst: UnitInstance, lib: MaterialLibrary) -> List[GeneratedPart]:
     tmpl = inst.template
     v = _vars(inst)
@@ -97,6 +120,10 @@ def generate_parts(inst: UnitInstance, lib: MaterialLibrary) -> List[GeneratedPa
         edges = {"edge_1": "N", "edge_2": "N", "edge_3": "N", "edge_4": "N"}
         if not is_vacuum:
             edges = _edges_for(spec.edges, band)
+            # groove mark on the back-facing edge, only in the groove method
+            if (inst.build.back_method or "groove").lower() == "groove":
+                for ge in _groove_edges(spec.groove_edge):
+                    edges[ge] = apply_groove(edges[ge])
         out.append(GeneratedPart(
             unit_name=inst.name or tmpl.name_en or tmpl.id,
             part_type=spec.type,

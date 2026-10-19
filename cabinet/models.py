@@ -30,6 +30,8 @@ class PartSpec:
     slot: str = "body"       # body | door | back
     grain: str = "L"         # L | W | none  (stored, does not lock rotation)
     edges: object = "none"
+    groove_edge: object = "none"   # which edge holds the back groove in groove method
+                                   # e.g. "edge_3"; applied only when back_method == "groove"
 
 
 @dataclass
@@ -57,6 +59,7 @@ class UnitTemplate:
                 slot=p.get("slot", "body"),
                 grain=p.get("grain", "L"),
                 edges=p.get("edges", "none"),
+                groove_edge=p.get("groove_edge", "none"),
             ))
         return cls(
             id=d["id"],

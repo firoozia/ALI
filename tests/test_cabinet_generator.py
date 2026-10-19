@@ -71,7 +71,9 @@ def test_door_edges_banded_carcass_not(lib):
     door = [p for p in parts if p.part_type == "door"][0]
     assert (door.edge_1, door.edge_2, door.edge_3, door.edge_4) == ("P1", "P1", "P1", "P1")
     side = [p for p in parts if p.part_type == "side"][0]
-    assert (side.edge_1, side.edge_2, side.edge_3, side.edge_4) == ("N", "N", "N", "N")
+    # no PVC band on the carcass; in the default groove method the rear edge (edge_3)
+    # carries a groove mark "S".
+    assert (side.edge_1, side.edge_2, side.edge_3, side.edge_4) == ("N", "N", "S", "N")
 
 
 def test_cut_size_subtracts_band_thickness(lib):
