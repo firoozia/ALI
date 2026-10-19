@@ -1,0 +1,53 @@
+{
+  "_meta": {
+    "version": "0.1-seed",
+    "units": "mm",
+    "editable": true,
+    "note": "Seed library — edit freely in the app (add/edit/remove). Codes MUST match ZINAX CAM (pvc_code / mdf_thickness_mm / edge-band codes) so the sheet is created correctly on import. Standard thicknesses only: 3, 6, 16, 18."
+  },
+
+  "thicknesses_mm": [3, 6, 16, 18],
+
+  "materials": [
+    { "code": "MEL-W",     "name": "Melamine White",     "type": "melamine", "default_thickness": 18 },
+    { "code": "MEL-WENGE", "name": "Melamine Wenge",     "type": "melamine", "default_thickness": 18 },
+    { "code": "MEL-OAK",   "name": "Melamine Oak",       "type": "melamine", "default_thickness": 18 },
+    { "code": "MEL-GREY",  "name": "Melamine Grey",      "type": "melamine", "default_thickness": 16 },
+    { "code": "MDF",       "name": "Raw MDF (body)",     "type": "mdf",      "default_thickness": 16 },
+    { "code": "FIB-6",     "name": "MDF back 6",         "type": "fiber",    "default_thickness": 6  },
+    { "code": "FIB-3",     "name": "HDF back 3",         "type": "fiber",    "default_thickness": 3  },
+    { "code": "WHT-001",   "name": "Vacuum film white",  "type": "vacuum",   "default_thickness": 18 },
+    { "code": "CRM-002",   "name": "Vacuum film cream",  "type": "vacuum",   "default_thickness": 18 }
+  ],
+
+  "edge_bands": [
+    { "code": "P1", "name": "PVC 0.5", "thickness_mm": 0.5, "width_mm": 22 },
+    { "code": "P2", "name": "PVC 1.0", "thickness_mm": 1.0, "width_mm": 22 },
+    { "code": "P3", "name": "PVC 2.0", "thickness_mm": 2.0, "width_mm": 22 }
+  ],
+  "edge_band_defaults": { "subtract": true, "default_waste_mm": 50 },
+
+  "sheets": [
+    { "name": "2800 x 2070", "width": 2800, "height": 2070, "thickness": 18, "material": "MEL-W" },
+    { "name": "2800 x 1220", "width": 2800, "height": 1220, "thickness": 16, "material": "MDF" },
+    { "name": "2440 x 1220", "width": 2440, "height": 1220, "thickness": 18, "material": "MEL-W" }
+  ],
+
+  "construction": {
+    "default_back_method": "groove",
+    "back_methods": ["groove", "staple", "outside"],
+    "groove": {
+      "depth_mm": 8,
+      "setback_mm": 10,
+      "width": "fiber_thickness",
+      "comment": "World standard: cut a groove and seat the fiber/MDF (any thickness) in it. Groove width = that fiber's thickness."
+    },
+    "defaults": {
+      "body_thickness_mm": 16,
+      "door_thickness_mm": 18,
+      "back_thickness_mm": 6,
+      "door_gap_mm": 3,
+      "shelf_setback_mm": 20
+    }
+  }
+}
