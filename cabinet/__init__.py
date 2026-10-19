@@ -10,6 +10,9 @@ from .models import (BuildConfig, GeneratedPart, PartSpec, SlotMaterial,
                      UnitInstance, UnitTemplate)
 from .generator import GeneratorError, cut_size, generate_parts
 from .order_csv import ORDER_CSV_HEADER, OrderMeta, to_csv_string, write_order_csv
+from .order import ManualPart, Order, build_order
+from .summary import BandLine, MaterialLine, Summary, band_meters, summarize
+from .report import render_report_html, write_report_html
 
 __all__ = [
     "FormulaError", "evaluate", "trace",
@@ -18,4 +21,7 @@ __all__ = [
     "UnitInstance", "UnitTemplate",
     "GeneratorError", "cut_size", "generate_parts",
     "ORDER_CSV_HEADER", "OrderMeta", "to_csv_string", "write_order_csv",
+    "ManualPart", "Order", "build_order",
+    "BandLine", "MaterialLine", "Summary", "band_meters", "summarize",
+    "render_report_html", "write_report_html",
 ]
