@@ -1,0 +1,13 @@
+{
+  "id": "wardrobe_2door",
+  "name": { "fa": "کمد دو درب", "en": "Wardrobe 2-Door" },
+  "category": "tall",
+  "params": { "W": 1000, "H": 2200, "D": 600, "doors": 2, "shelves": 4 },
+  "parts": [
+    { "type": "side",   "name": {"fa":"بدنه","en":"Side"},   "qty": "2",      "w": "D",                     "h": "H",     "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_3" },
+    { "type": "top",    "name": {"fa":"سقف","en":"Top"},     "qty": "1",      "w": "W-2*t",                 "h": "D",     "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_1" },
+    { "type": "bottom", "name": {"fa":"کف","en":"Bottom"},   "qty": "1",      "w": "W-2*t",                 "h": "D",     "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_1" },
+    { "type": "shelf",  "name": {"fa":"طبقه","en":"Shelf"},  "qty": "shelves","w": "W-2*t",                 "h": "D-ss",  "slot": "body", "grain": "L", "edges": "front" },
+    { "type": "door",   "name": {"fa":"درب","en":"Door"},    "qty": "doors",  "w": "(W-(doors+1)*g)/doors", "h": "H-2*g", "slot": "door", "grain": "L", "edges": "all" }
+  ]
+}

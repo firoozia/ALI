@@ -1,0 +1,15 @@
+{
+  "id": "base_3drawer",
+  "name": { "fa": "کابینت زمینی کشودار", "en": "Base Drawer Unit" },
+  "category": "base",
+  "params": { "W": 800, "H": 720, "D": 560, "drawers": 3 },
+  "parts": [
+    { "type": "side",         "name": {"fa":"بدنه","en":"Side"},            "qty": "2",          "w": "D",           "h": "H",                        "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_3" },
+    { "type": "top",          "name": {"fa":"سقف","en":"Top"},              "qty": "1",          "w": "W-2*t",       "h": "D",                        "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_1" },
+    { "type": "bottom",       "name": {"fa":"کف","en":"Bottom"},            "qty": "1",          "w": "W-2*t",       "h": "D",                        "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_1" },
+    { "type": "drawer_front", "name": {"fa":"درب کشو","en":"Drawer Front"}, "qty": "drawers",    "w": "W-2*g",       "h": "(H-(drawers+1)*g)/drawers","slot": "door", "grain": "L", "edges": "all" },
+    { "type": "drawer_side",  "name": {"fa":"بدنه کشو","en":"Box Side"},    "qty": "drawers*2",  "w": "D-ddr",       "h": "dbh",                      "slot": "body", "grain": "L", "edges": "none" },
+    { "type": "drawer_fb",    "name": {"fa":"جلو/عقب کشو","en":"Box F/B"},  "qty": "drawers*2",  "w": "W-2*t-dsc",   "h": "dbh",                      "slot": "body", "grain": "L", "edges": "none" },
+    { "type": "drawer_bottom","name": {"fa":"کف کشو","en":"Box Bottom"},    "qty": "drawers",    "w": "W-2*t-dsc",   "h": "D-ddr",                    "slot": "back", "grain": "none", "edges": "none" }
+  ]
+}

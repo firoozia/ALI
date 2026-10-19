@@ -50,6 +50,9 @@ def _vars(inst: UnitInstance) -> dict:
         "ss": b.shelf_setback_mm,
         "dg": b.groove_depth_mm,
         "s": b.groove_setback_mm,
+        "dsc": b.drawer_box_side_clearance_mm,
+        "ddr": b.drawer_box_depth_reduction_mm,
+        "dbh": b.drawer_box_height_mm,
     }
     for k, val in p.items():
         try:
@@ -115,7 +118,13 @@ def generate_parts(inst: UnitInstance, lib: MaterialLibrary) -> List[GeneratedPa
             )
         mat = _slot_material(inst, spec.slot)
         thickness = _slot_thickness(inst.build, spec.slot)
-        is_vacuum = spec.slot == "door" and mat.type == "vacuum"
+        product = getattr(spec, "product", "auto")
+        if product == "vacuum":
+            is_vacuum = True
+        elif product == "melamine":
+            is_vacuum = False
+        else:
+            is_vacuum = spec.slot == "door" and mat.type == "vacuum"
         product_type = "vacuum_door" if is_vacuum else "melamine"
         edges = {"edge_1": "N", "edge_2": "N", "edge_3": "N", "edge_4": "N"}
         if not is_vacuum:

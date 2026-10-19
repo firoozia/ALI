@@ -1,0 +1,13 @@
+{
+  "id": "base_2door_vacuum",
+  "name": { "fa": "کابینت زمینی درب وکیوم", "en": "Base 2-Door (Vacuum)" },
+  "category": "base",
+  "params": { "W": 800, "H": 720, "D": 560, "doors": 2, "shelves": 1 },
+  "parts": [
+    { "type": "side",   "name": {"fa":"بدنه","en":"Side"},   "qty": "2",      "w": "D",       "h": "H",     "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_3" },
+    { "type": "top",    "name": {"fa":"سقف","en":"Top"},     "qty": "1",      "w": "W-2*t",   "h": "D",     "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_1" },
+    { "type": "bottom", "name": {"fa":"کف","en":"Bottom"},   "qty": "1",      "w": "W-2*t",   "h": "D",     "slot": "body", "grain": "L", "edges": "none", "groove_edge": "edge_1" },
+    { "type": "shelf",  "name": {"fa":"طبقه","en":"Shelf"},  "qty": "shelves","w": "W-2*t",   "h": "D-ss",  "slot": "body", "grain": "L", "edges": "front" },
+    { "type": "door",   "name": {"fa":"درب وکیوم","en":"Vacuum Door"}, "qty": "doors", "w": "(W-(doors+1)*g)/doors", "h": "H-2*g", "slot": "door", "grain": "L", "edges": "none", "product": "vacuum" }
+  ]
+}

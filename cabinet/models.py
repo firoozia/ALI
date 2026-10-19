@@ -32,6 +32,8 @@ class PartSpec:
     edges: object = "none"
     groove_edge: object = "none"   # which edge holds the back groove in groove method
                                    # e.g. "edge_3"; applied only when back_method == "groove"
+    product: str = "auto"    # auto | melamine | vacuum
+                             # "vacuum" forces a vacuum_door row (no bands, uses design_code)
 
 
 @dataclass
@@ -60,6 +62,7 @@ class UnitTemplate:
                 grain=p.get("grain", "L"),
                 edges=p.get("edges", "none"),
                 groove_edge=p.get("groove_edge", "none"),
+                product=p.get("product", "auto"),
             ))
         return cls(
             id=d["id"],
@@ -88,6 +91,10 @@ class BuildConfig:
     shelf_setback_mm: float = 20.0
     groove_depth_mm: float = 8.0
     groove_setback_mm: float = 10.0
+    # drawer-box clearances (defaults from the Cabinet Pro analysis; editable per shop/runner)
+    drawer_box_side_clearance_mm: float = 26.0   # width lost to the runners
+    drawer_box_depth_reduction_mm: float = 50.0  # box shorter than cabinet depth
+    drawer_box_height_mm: float = 120.0          # melamine box side height
 
 
 @dataclass
