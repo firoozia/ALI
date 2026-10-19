@@ -1,0 +1,13 @@
+{
+  "id": "base_2door",
+  "name": { "fa": "کابینت زمینی دو درب", "en": "Base 2-Door" },
+  "category": "base",
+  "params": { "W": 800, "H": 720, "D": 560, "doors": 2, "shelves": 1 },
+  "parts": [
+    { "type": "side",   "name": {"fa":"بدنه","en":"Side"},   "qty": "2",      "w": "D",       "h": "H",     "slot": "body", "grain": "L", "edges": "none" },
+    { "type": "top",    "name": {"fa":"سقف","en":"Top"},     "qty": "1",      "w": "W-2*t",   "h": "D",     "slot": "body", "grain": "L", "edges": "none" },
+    { "type": "bottom", "name": {"fa":"کف","en":"Bottom"},   "qty": "1",      "w": "W-2*t",   "h": "D",     "slot": "body", "grain": "L", "edges": "none" },
+    { "type": "shelf",  "name": {"fa":"طبقه","en":"Shelf"},  "qty": "shelves","w": "W-2*t",   "h": "D-ss",  "slot": "body", "grain": "L", "edges": "front" },
+    { "type": "door",   "name": {"fa":"درب","en":"Door"},    "qty": "doors",  "w": "(W-(doors+1)*g)/doors", "h": "H-2*g", "slot": "door", "grain": "L", "edges": "all" }
+  ]
+}
