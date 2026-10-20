@@ -45,6 +45,7 @@ private fun typeName(type: String) = when (type) {
     MovementType.RETURN -> "Returned by customer"
     MovementType.MOVE -> "Moved"
     MovementType.RESERVE -> "Reservation"
+    "ADJUST" -> "Amount changed in the sheet"
     MovementType.EDIT -> "Edited"
     MovementType.VOID -> "Deleted"
     MovementType.UNDO -> "Undo"
@@ -142,7 +143,7 @@ fun ItemHistoryScreen(initialId: String, onBack: () -> Unit) {
                         val cancel = undone[m.id]
                         Column {
                             Text(
-                                typeName(m.type) + (if (m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE, MovementType.IN, MovementType.RETURN))
+                                typeName(m.type) + (if (m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE, MovementType.IN, MovementType.RETURN, "ADJUST"))
                                     " · ${Format.qtyUnit(m.qty, m.unit)}" else ""),
                                 fontWeight = FontWeight.SemiBold,
                                 color = if (cancel != null) status.warn else MaterialTheme.colorScheme.onSurface,

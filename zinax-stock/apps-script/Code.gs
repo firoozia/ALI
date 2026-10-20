@@ -22,7 +22,7 @@ const BACKUP_FOLDER = 'Zinax Stock Backups';
 // Column order of each sheet. The first column is the row ID; ServerAt is set by this script.
 const SHEETS = {
   Items: ['ID', 'Category', 'Code', 'Size', 'Qty', 'Remaining', 'Unit', 'Status', 'Shipment', 'Pallet', 'NetKg', 'GrossKg',
-          'ReceivedAt', 'Location', 'Device', 'UpdatedAt', 'ServerAt', 'ShipmentId', 'ReservedFor'],
+          'ReceivedAt', 'Location', 'Device', 'UpdatedAt', 'ServerAt', 'ShipmentId', 'ReservedFor', 'Check'],
   Movements: ['ID', 'ItemID', 'Type', 'Qty', 'Unit', 'Code', 'Size', 'Reference', 'At', 'Device', 'ServerAt', 'User',
               'Customer', 'Invoice'],
   Shipments: ['ID', 'Name', 'Source', 'CreatedAt', 'UpdatedAt', 'ServerAt'],
@@ -118,6 +118,8 @@ function doPost(e) {
 }
 
 function sync_(req) {
+  // Hand edits in the Items tab that onEdit missed are sent to the phones from here.
+  const handEdited = itemsEdited_();
   const now = Date.now();
   const since = Number(req.since) || 0;
   const shipmentNames = {};
@@ -133,9 +135,9 @@ function sync_(req) {
   }, 12);
 
   upsert_('Items', req.items || [], function (i) {
-    return [i.id, i.category, i.code, i.size, i.qty, i.remaining, i.unit, i.status, shipmentNames[i.shipmentId] || '',
+    return withCheck_([i.id, i.category, i.code, i.size, i.qty, i.remaining, i.unit, i.status, shipmentNames[i.shipmentId] || '',
             i.pallet || '', blank_(i.netKg), blank_(i.grossKg), date_(i.receivedAt), i.location || '', i.device,
-            i.updatedAt, now, i.shipmentId || '', i.reservedFor || ''];
+            i.updatedAt, now, i.shipmentId || '', i.reservedFor || '']);
   }, 15);
 
   appendNew_('Movements', req.movements || [], function (m) {
@@ -180,7 +182,7 @@ function sync_(req) {
     .some(function (k) { return (req[k] || []).length; });
   if (pushed) bump_();
 
-  if ((req.items || []).length || (req.products || []).length || (req.groups || []).length) stockSheet_();
+  if (handEdited || (req.items || []).length || (req.products || []).length || (req.groups || []).length) stockSheet_();
   if ((req.movements || []).length) { outSheet_(); cutsSheet_(); }
   const movementsSince = req.movementsSince === undefined ? since : Number(req.movementsSince) || 0;
 
@@ -260,33 +262,134 @@ function onEdit(e) {
   const C = function (name) { return cols.indexOf(name); };
   const rows = sh.getRange(first, 1, last - first + 1, cols.length).getValues();
   const now = Date.now();
+  const ids = groupIds_();
+  const moves = [];
   rows.forEach(function (r) {
     if (!r[0]) return;
-    if (r[C('Remaining')] !== '' && !isNaN(Number(r[C('Remaining')]))) {
-      const left = Number(r[C('Remaining')]);
-      if (left <= 0 && r[C('Status')] === 'IN_STOCK') r[C('Status')] = 'SHIPPED';
-      else if (left > 0 && r[C('Status')] === 'SHIPPED') r[C('Status')] = 'IN_STOCK';
+    const before = String(r[C('Check')] || '');
+    stampItem_(r, ids, now);
+    if (before) {
+      editMoves_(before, r, now).forEach(function (m) { moves.push(m); });
+    } else if (e.range.getNumColumns() === 1 && e.range.getColumn() === C('Remaining') + 1 && rows.length === 1) {
+      // A row from before the Check column: the old value of the one edited cell says how much changed.
+      const delta = (Number(e.value) || 0) - (Number(e.oldValue) || 0);
+      if (delta !== 0) moves.push(sheetMove_(r, 'ADJUST', delta, 'Edited in sheet', now));
     }
-    // Never older than what a phone last wrote, even if its clock runs ahead.
-    r[C('UpdatedAt')] = Math.max(now, (Number(r[C('UpdatedAt')]) || 0) + 1);
-    r[C('ServerAt')] = now;
   });
   sh.getRange(first, 1, rows.length, cols.length).setValues(rows);
+  addMoves_(moves);
   bump_();
-
-  const remainingCol = C('Remaining') + 1;
-  if (rows.length === 1 && e.range.getNumColumns() === 1 && e.range.getColumn() === remainingCol && rows[0][0]) {
-    const r = rows[0];
-    const delta = (Number(e.value) || 0) - (Number(e.oldValue) || 0);
-    if (delta !== 0) {
-      const mv = sheet_('Movements');
-      mv.getRange(mv.getLastRow() + 1, 1, 1, SHEETS.Movements.length).setValues([[
-        Utilities.getUuid(), r[0], 'ADJUST', delta, r[C('Unit')], r[C('Code')], r[C('Size')],
-        'Edited in sheet', new Date(now), 'SHEET', now, '', '', '',
-      ]]);
-    }
-  }
   stockSheet_();
+}
+
+// ---------- hand edits in the Items tab ----------
+
+// Columns a person may change by hand. Check holds them as the phones last saw them, so a change made
+// while onEdit did not run (pasted, edited from another tool, a trigger that failed) is still found.
+const ITEM_FIELDS = ['Category', 'Code', 'Size', 'Qty', 'Remaining', 'Unit', 'Status', 'Pallet', 'Location', 'ReservedFor'];
+
+function itemCheck_(r) {
+  return ITEM_FIELDS.map(function (n) {
+    const v = r[SHEETS.Items.indexOf(n)];
+    return v === null || v === undefined ? '' : String(v).trim();
+  }).join('|');
+}
+
+function withCheck_(row) {
+  row[SHEETS.Items.indexOf('Check')] = itemCheck_(row);
+  return row;
+}
+
+/** Group names typed in Category (e.g. "PVC film") turned into group IDs (e.g. "PVC"). */
+function groupIds_() {
+  const ids = {};
+  const ss = SpreadsheetApp.getActive();
+  if (ss.getSheetByName('Groups')) readAll_('Groups').forEach(function (g) {
+    if (!g[0]) return;
+    ids[String(g[0]).trim().toLowerCase()] = String(g[0]);
+    if (String(g[1]).trim()) ids[String(g[1]).trim().toLowerCase()] = String(g[0]);
+  });
+  return ids;
+}
+
+/** A row changed by hand: fixes the group and status, stamps it newer than any phone, and records the new Check. */
+function stampItem_(r, ids, now) {
+  const C = function (name) { return SHEETS.Items.indexOf(name); };
+  const cat = String(r[C('Category')]).trim();
+  if (cat && ids[cat.toLowerCase()]) r[C('Category')] = ids[cat.toLowerCase()];
+  if (r[C('Remaining')] !== '' && !isNaN(Number(r[C('Remaining')]))) {
+    const left = Number(r[C('Remaining')]);
+    if (left <= 0 && r[C('Status')] === 'IN_STOCK') r[C('Status')] = 'SHIPPED';
+    else if (left > 0 && r[C('Status')] === 'SHIPPED') r[C('Status')] = 'IN_STOCK';
+  }
+  // Never older than what a phone last wrote, even if its clock runs ahead.
+  r[C('UpdatedAt')] = Math.max(now, (Number(r[C('UpdatedAt')]) || 0) + 1);
+  r[C('ServerAt')] = now;
+  r[C('Check')] = itemCheck_(r);
+}
+
+/** Log rows for a hand edit: ADJUST for a changed amount, EDIT naming the other changes. */
+function editMoves_(before, r, now) {
+  const old = before.split('|');
+  const cur = itemCheck_(r).split('|');
+  const moves = [];
+  const changes = [];
+  const remainingAt = ITEM_FIELDS.indexOf('Remaining');
+  const statusAt = ITEM_FIELDS.indexOf('Status');
+  const amountChanged = old[remainingAt] !== cur[remainingAt];
+  if (amountChanged) {
+    const delta = (Number(cur[remainingAt]) || 0) - (Number(old[remainingAt]) || 0);
+    if (delta !== 0) moves.push(sheetMove_(r, 'ADJUST', delta, 'Edited in sheet', now));
+  }
+  ITEM_FIELDS.forEach(function (n, k) {
+    if (k === remainingAt || (k === statusAt && amountChanged)) return;
+    if ((old[k] || '') !== (cur[k] || '')) changes.push(n + ' ' + (old[k] || '—') + ' → ' + (cur[k] || '—'));
+  });
+  if (changes.length) moves.push(sheetMove_(r, 'EDIT', Number(r[SHEETS.Items.indexOf('Remaining')]) || 0, changes.join(', ') + ' (sheet)', now));
+  return moves;
+}
+
+function sheetMove_(r, type, qty, reference, now) {
+  const C = function (name) { return SHEETS.Items.indexOf(name); };
+  return [Utilities.getUuid(), r[0], type, qty, r[C('Unit')], r[C('Code')], r[C('Size')], reference, new Date(now), 'SHEET', now, 'Sheet', '', ''];
+}
+
+function addMoves_(moves) {
+  if (!moves.length) return;
+  const mv = sheet_('Movements');
+  mv.getRange(mv.getLastRow() + 1, 1, moves.length, SHEETS.Movements.length).setValues(moves);
+}
+
+/**
+ * Finds rows of the Items tab changed by hand since the phones last saw them, stamps them so the phones
+ * take them, and logs what changed. Rows with no Check yet only get one. Returns true when any row changed.
+ */
+function itemsEdited_() {
+  const sh = sheet_('Items');
+  const data = readAll_('Items');
+  if (!data.length) return false;
+  const at = SHEETS.Items.indexOf('Check');
+  const ids = groupIds_();
+  const now = Date.now();
+  const moves = [];
+  let write = false;
+  let stamped = false;
+  data.forEach(function (r) {
+    if (!String(r[0]).trim()) return;
+    const before = String(r[at] || '');
+    const cat = String(r[1]).trim();
+    const groupTyped = cat && ids[cat.toLowerCase()] && ids[cat.toLowerCase()] !== cat;
+    if (before && before === itemCheck_(r) && !groupTyped) return;
+    write = true;
+    if (!before) { r[at] = itemCheck_(r); return; }
+    stampItem_(r, ids, now);
+    editMoves_(before, r, now).forEach(function (m) { moves.push(m); });
+    stamped = true;
+  });
+  if (write) sh.getRange(2, 1, data.length, SHEETS.Items.length).setValues(data);
+  addMoves_(moves);
+  if (stamped) bump_();
+  return stamped;
 }
 
 /**
@@ -489,15 +592,21 @@ function stockSheet_() {
   // Show group names instead of IDs when the Groups tab has them.
   const groupName = {};
   if (ss.getSheetByName('Groups')) readAll_('Groups').forEach(function (g) { if (g[0]) groupName[String(g[0])] = String(g[1] || g[0]); });
+  // Minimum stock per product, as in the Low stock tab.
+  const minOf = {};
+  if (ss.getSheetByName('Products')) readAll_('Products').forEach(function (p) {
+    if (String(p[2]).trim() && !yes_(p[7]) && Number(p[10]) > 0) minOf[productKey_(p[1], p[2], p[3], p[4])] = Number(p[10]);
+  });
   readAll_('Items').forEach(function (r) {
     if (r[7] !== 'IN_STOCK') return;
     const cat = groupName[String(r[1])] || r[1];
     const key = [cat, r[2], r[3], r[6]].join('|');
-    if (!groups[key]) groups[key] = { row: [cat, r[2], r[3], r[6], 0, 0], where: {} };
+    if (!groups[key]) groups[key] = { row: [cat, r[2], r[3], r[6], 0, 0], where: {}, open: 0, min: minOf[productKey_(r[1], r[2], r[3], r[6])] || 0 };
     const g = groups[key];
     const loc = String(r[13] || '').trim() || NONE;
     g.row[4] += 1;
     g.row[5] += Number(r[5]) || 0;
+    if ((Number(r[5]) || 0) < (Number(r[4]) || 0) - 1e-6) g.open += 1;
     g.where[loc] = (g.where[loc] || 0) + 1;
     const pkey = [loc, key].join('|');
     if (!places[pkey]) places[pkey] = [loc, cat, r[2], r[3], r[6], 0, 0];
@@ -512,9 +621,13 @@ function stockSheet_() {
       .sort(function (a, b) { return g.where[b] - g.where[a]; })
       .map(function (loc) { return loc + ': ' + g.where[loc]; })
       .join(', ');
-    return g.row.concat([where]);
+    const total = Math.round(g.row[5] * 100) / 100;
+    return [g.row[0], g.row[1], g.row[2], g.row[3], g.row[4], total, where, g.row[4] - g.open, g.open, g.min || '',
+            g.min && total <= g.min + 1e-6 ? 'LOW' : ''];
   }).sort(function (a, b) { return byCode_(a, b, 0, 1); });
-  writeSummary_(ss, 'Stock', 0, ['Category', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Locations'], stockRows, updated);
+  // Packages of the same group, code, size and unit added up, as on the Stock screen of the app.
+  writeSummary_(ss, 'Stock', 0, ['Category', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Locations', 'Full', 'Open', 'Min', 'Status'],
+    stockRows, updated + ' · read only: change codes, sizes and amounts in the Items tab');
   lowSheet_(ss, groupName, updated);
 
   const placeRows = Object.keys(places).map(function (k) { return places[k]; }).sort(function (a, b) {
@@ -526,6 +639,10 @@ function stockSheet_() {
     return byCode_(a, b, 1, 2);
   });
   writeSummary_(ss, 'By location', 1, ['Location', 'Category', 'Code', 'Size', 'Unit', 'Packages', 'Total'], placeRows, updated);
+}
+
+function productKey_(group, code, size, unit) {
+  return [group, String(code).trim(), String(size).trim(), String(unit).trim()].join('|').toLowerCase();
 }
 
 /** Low stock: products whose stock is at or under the MinQty set in the Products tab. Empty ones first. */

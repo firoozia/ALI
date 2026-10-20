@@ -171,6 +171,31 @@ assert.ok(r.products.some(p=>p.id==='P_MDF' && p.minQty===20));
 const lowRows=sheets['Low stock'].cells.slice(1).filter(x=>x[1]);
 assert.deepEqual(lowRows.find(x=>x[1]==='M-18').slice(0,9),['MDF board','M-18','18mm','pcs',1,10,20,10,'LOW']);
 assert.ok(lowRows.every(x=>x[5]<=x[6]));
+// hand edit in the Items tab that onEdit never saw: found on the next sync, sent to phones and logged
+{
+  r=post({token:'tok',action:'sync',since:0,items:[{...item,id:'ZX-251009-H0001',code:'777',size:'0.30*1400',qty:100,remaining:100,location:'',updatedAt:50000}]});
+  const it=sheets.Items, row=it.cells.findIndex(x=>x[0]==='ZX-251009-H0001');
+  const itemCols=vm.runInContext('SHEETS.Items',ctx); const C=n=>itemCols.indexOf(n);
+  assert.ok(String(it.cells[row][C('Check')]).includes('0.30*1400'));
+  const nMoves=sheets.Movements.cells.length;
+  it.cells[row][C('Size')]='0.30*1220'; it.cells[row][C('Category')]='MDF board'; it.cells[row][C('Remaining')]=60;
+  const before=it.cells[row][C('ServerAt')];
+  r=post({token:'tok',action:'sync',since:before});
+  const got=r.items.find(x=>x.id==='ZX-251009-H0001');
+  assert.ok(got, 'hand-edited row sent to phones');
+  assert.equal(got.size,'0.30*1220'); assert.equal(got.category,'G_MDF'); assert.equal(got.remaining,60); assert.ok(got.updatedAt>50000);
+  const added=sheets.Movements.cells.slice(nMoves);
+  assert.ok(added.some(m=>m[2]==='ADJUST' && m[3]===-40 && m[11]==='Sheet'));
+  assert.ok(added.some(m=>m[2]==='EDIT' && String(m[7]).includes('Size 0.30*1400 → 0.30*1220') && String(m[7]).includes('Category')));
+  assert.ok(sheets.Stock.cells.some(x=>x[1]==='777' && x[2]==='0.30*1220' && x[5]===60 && x[8]===1));
+  // nothing changed since: the next sync sends nothing new and logs nothing
+  const n2=sheets.Movements.cells.length;
+  r=post({token:'tok',action:'sync',since:Date.now()+1000});
+  assert.equal(sheets.Movements.cells.length,n2); assert.ok(!r.items.some(x=>x.id==='ZX-251009-H0001'));
+}
+// Stock tab: full / open / min / status columns
+assert.deepEqual(sheets.Stock.cells[0].slice(0,11),['Category','Code','Size','Unit','Packages','Total','Locations','Full','Open','Min','Status']);
+assert.ok(sheets.Stock.cells.some(x=>x[1]==='M-18' && x[9]===20 && x[10]==='LOW'));
 // nightly backup retention: last 30 days all, then the first of each month for 12 months
 {
   const fmt=ctx.Utilities.formatDate; ctx.Utilities.formatDate=(d,tz,f)=>f==='yyyy-MM'?d.toISOString().slice(0,7):fmt(d,tz,f);
