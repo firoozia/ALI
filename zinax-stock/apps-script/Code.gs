@@ -592,24 +592,30 @@ function stockSheet_() {
   // Show group names instead of IDs when the Groups tab has them.
   const groupName = {};
   if (ss.getSheetByName('Groups')) readAll_('Groups').forEach(function (g) { if (g[0]) groupName[String(g[0])] = String(g[1] || g[0]); });
-  // Minimum stock per product, as in the Low stock tab.
+  // Minimum stock per product (one per size), as in the Low stock tab.
   const minOf = {};
   if (ss.getSheetByName('Products')) readAll_('Products').forEach(function (p) {
-    if (String(p[2]).trim() && !yes_(p[7]) && Number(p[10]) > 0) minOf[productKey_(p[1], p[2], p[3], p[4])] = Number(p[10]);
+    if (!String(p[2]).trim() || yes_(p[7]) || !(Number(p[10]) > 0)) return;
+    const k = productKey_(p[1], p[2], '', p[4]);
+    (minOf[k] = minOf[k] || []).push({ size: String(p[3]).trim(), min: Number(p[10]) });
   });
   readAll_('Items').forEach(function (r) {
     if (r[7] !== 'IN_STOCK') return;
     const cat = groupName[String(r[1])] || r[1];
-    const key = [cat, r[2], r[3], r[6]].join('|');
-    if (!groups[key]) groups[key] = { row: [cat, r[2], r[3], r[6], 0, 0], where: {}, open: 0, min: minOf[productKey_(r[1], r[2], r[3], r[6])] || 0 };
+    // All sizes of a code are added up together, as on the Stock screen of the app.
+    const key = [cat, r[2], r[6]].join('|');
+    if (!groups[key]) groups[key] = { row: [cat, r[2], '', r[6], 0, 0], where: {}, open: 0, sizes: {}, mins: minOf[productKey_(r[1], r[2], '', r[6])] || [] };
     const g = groups[key];
+    const size = String(r[3]).trim();
+    g.sizes[size] = (g.sizes[size] || 0) + (Number(r[5]) || 0);
     const loc = String(r[13] || '').trim() || NONE;
     g.row[4] += 1;
     g.row[5] += Number(r[5]) || 0;
     if ((Number(r[5]) || 0) < (Number(r[4]) || 0) - 1e-6) g.open += 1;
     g.where[loc] = (g.where[loc] || 0) + 1;
     const pkey = [loc, key].join('|');
-    if (!places[pkey]) places[pkey] = [loc, cat, r[2], r[3], r[6], 0, 0];
+    if (!places[pkey]) places[pkey] = [loc, cat, r[2], {}, r[6], 0, 0];
+    places[pkey][3][size] = true;
     places[pkey][5] += 1;
     places[pkey][6] += Number(r[5]) || 0;
   });
@@ -622,15 +628,23 @@ function stockSheet_() {
       .map(function (loc) { return loc + ': ' + g.where[loc]; })
       .join(', ');
     const total = Math.round(g.row[5] * 100) / 100;
-    return [g.row[0], g.row[1], g.row[2], g.row[3], g.row[4], total, where, g.row[4] - g.open, g.open, g.min || '',
-            g.min && total <= g.min + 1e-6 ? 'LOW' : ''];
+    const sizes = Object.keys(g.sizes).filter(function (s) { return s; }).sort();
+    // Minimums are per size: LOW names the sizes at or under theirs.
+    const low = g.mins.filter(function (m) { return (g.sizes[m.size] || 0) <= m.min + 1e-6; });
+    const min = g.mins.reduce(function (sum, m) { return sum + m.min; }, 0);
+    return [g.row[0], g.row[1], sizes.join(', '), g.row[3], g.row[4], total, where, g.row[4] - g.open, g.open, min || '',
+            low.length ? 'LOW' + (sizes.length > 1 ? ' ' + low.map(function (m) { return m.size; }).join(', ') : '') : ''];
   }).sort(function (a, b) { return byCode_(a, b, 0, 1); });
   // Packages of the same group, code, size and unit added up, as on the Stock screen of the app.
   writeSummary_(ss, 'Stock', 0, ['Category', 'Code', 'Size', 'Unit', 'Packages', 'Total', 'Locations', 'Full', 'Open', 'Min', 'Status'],
     stockRows, updated + ' · read only: change codes, sizes and amounts in the Items tab');
   lowSheet_(ss, groupName, updated);
 
-  const placeRows = Object.keys(places).map(function (k) { return places[k]; }).sort(function (a, b) {
+  const placeRows = Object.keys(places).map(function (k) {
+    const r = places[k].slice();
+    r[3] = Object.keys(r[3]).filter(function (s) { return s; }).sort().join(', ');
+    return r;
+  }).sort(function (a, b) {
     if (a[0] !== b[0]) {
       if (a[0] === NONE) return 1;
       if (b[0] === NONE) return -1;

@@ -209,4 +209,20 @@ class CoreTest {
         assertTrue(text.contains("101 (0.30 × 1400): 2 rolls, 200 m"))
         assertTrue(text.contains("H-110: 1 carton, 200 pcs"))
     }
+
+    @Test
+    fun stockReportAddsUpAllSizesOfACode() {
+        val lines = Report.stockLines(
+            listOf(
+                StockSource(Category.PVC, "101", "0.30*1400", "m", 120.0),
+                StockSource(Category.PVC, "101", "0.30*1220", "m", 80.0),
+                StockSource(Category.EDGE_BANDING, "101", "0.8*22", "m", 100.0),
+            )
+        )
+        assertEquals(2, lines.size)
+        assertEquals(2, lines[0].packs)
+        assertEquals(200.0, lines[0].total, 0.0)
+        assertEquals("0.30*1220, 0.30*1400", lines[0].size)
+        assertTrue(Report.stockText(lines, 0).contains("101 (0.30 × 1220, 0.30 × 1400): 2 rolls, 200 m"))
+    }
 }

@@ -187,5 +187,7 @@ Reserved for {}. Ship it to someone else only if they agree. ⇒ محجوز لـ
 Reserved for {}. Cut it for someone else only if they agree. ⇒ محجوز لـ {}. اقطعه لغيره فقط بموافقته.
 The result is saved to the Counts tab of the sheet. The scanned list will be cleared. ⇒ تُحفظ النتيجة في ورقة Counts. سيتم مسح قائمة المسح.
 Amount changed in the sheet ⇒ تغيّرت الكمية في الورقة
+{} min {} ⇒ {1} الحد الأدنى {2}
+min {} ⇒ الحد الأدنى {}
 """
 }

@@ -193,6 +193,13 @@ assert.ok(lowRows.every(x=>x[5]<=x[6]));
   r=post({token:'tok',action:'sync',since:Date.now()+1000});
   assert.equal(sheets.Movements.cells.length,n2); assert.ok(!r.items.some(x=>x.id==='ZX-251009-H0001'));
 }
+// Stock tab adds up all sizes of a code: a second size of 777 joins the same row
+r=post({token:'tok',action:'sync',since:0,items:[{...item,id:'ZX-251009-H0002',category:'G_MDF',code:'777',size:'0.30*1400',qty:100,remaining:100,location:'',updatedAt:60000}]});
+{
+  const rows=sheets.Stock.cells.filter(x=>x[1]==='777');
+  assert.equal(rows.length,1); assert.equal(rows[0][2],'0.30*1220, 0.30*1400'); assert.equal(rows[0][4],2); assert.equal(rows[0][5],160);
+  assert.equal(sheets['By location'].cells.filter(x=>x[2]==='777').length,1);
+}
 // Stock tab: full / open / min / status columns
 assert.deepEqual(sheets.Stock.cells[0].slice(0,11),['Category','Code','Size','Unit','Packages','Total','Locations','Full','Open','Min','Status']);
 assert.ok(sheets.Stock.cells.some(x=>x[1]==='M-18' && x[9]===20 && x[10]==='LOW'));

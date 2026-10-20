@@ -191,5 +191,7 @@ Reserved for {}. Ship it to someone else only if they agree. ⇒ رزرو برا
 Reserved for {}. Cut it for someone else only if they agree. ⇒ رزرو برای {}. فقط با موافقت او برای کس دیگری برش بزنید.
 The result is saved to the Counts tab of the sheet. The scanned list will be cleared. ⇒ نتیجه در برگه Counts شیت ذخیره می‌شود. فهرست اسکن‌شده پاک می‌شود.
 Amount changed in the sheet ⇒ مقدار در شیت تغییر کرد
+{} min {} ⇒ {1} حداقل {2}
+min {} ⇒ حداقل {}
 """
 }

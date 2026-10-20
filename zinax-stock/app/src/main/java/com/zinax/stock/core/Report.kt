@@ -1,6 +1,6 @@
 package com.zinax.stock.core
 
-/** One row of the stock list: all in-stock packages with the same code and size. */
+/** One row of the stock list: all in-stock packages of one group and code; [size] lists their sizes. */
 data class StockLine(
     val category: Category,
     val code: String,
@@ -22,11 +22,14 @@ data class CheckLine(
 
 object Report {
     fun stockLines(items: List<StockSource>): List<StockLine> =
-        items.groupBy { Triple(it.category, it.code, it.size) to it.unit }
+        items.groupBy { Triple(it.category, it.code, it.unit) }
             .map { (key, list) ->
-                StockLine(key.first.first, key.first.second, key.first.third, key.second, list.size, list.sumOf { it.remaining })
+                StockLine(key.first, key.second, sizesOf(list.map { it.size }), key.third, list.size, list.sumOf { it.remaining })
             }
-            .sortedWith(compareBy<StockLine>({ it.category.ordinal }, { codeSortKey(it.code) }, { it.code }, { it.size }))
+            .sortedWith(compareBy<StockLine>({ it.category.ordinal }, { codeSortKey(it.code) }, { it.code }))
+
+    /** The different sizes of a code, e.g. "0.30*1400, 0.30*1220". */
+    fun sizesOf(sizes: List<String>): String = sizes.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted().joinToString(", ")
 
     /** Numeric codes sort as numbers (9 before 101). */
     fun codeSortKey(code: String): Long = code.toLongOrNull() ?: Long.MAX_VALUE
@@ -90,11 +93,11 @@ object Report {
             }
         val byPlace = ArrayList<List<Any?>>()
         byPlace.add(listOf("Location", "Category", "Code", "Size", "Unit", "Packages", "Total"))
-        items.groupBy { listOf(it.location.ifBlank { "No location" }, it.category.name, it.code, it.size, it.unit) }
+        items.groupBy { listOf(it.location.ifBlank { "No location" }, it.category.name, it.code, it.unit) }
             .entries
             .sortedWith(compareBy({ it.key[0] == "No location" }, { it.key[0] }, { it.value.first().category.ordinal }, { codeSortKey(it.key[2]) }, { it.key[2] }))
             .forEach { (k, list) ->
-                byPlace.add(listOf(k[0], list.first().category.label, k[2], Format.size(k[3]), k[4], list.size, list.sumOf { it.remaining }))
+                byPlace.add(listOf(k[0], list.first().category.label, k[2], Format.size(sizesOf(list.map { it.size })), k[3], list.size, list.sumOf { it.remaining }))
             }
         return listOf(
             XlsxWriter.SheetData("Stock", stock, listOf(18, 12, 16, 7, 10, 10, 2, 24)),

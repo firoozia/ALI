@@ -100,8 +100,9 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
             }
             .filter { place == null || it.location.ifBlank { NO_LOCATION } == place }
     }
+    // One card per group and code: all sizes of a code are added up together.
     val groups = remember(shown) {
-        shown.groupBy { "${it.category}|${it.code}|${it.size}|${it.unit}" }
+        shown.groupBy { "${it.category}|${it.code}|${it.unit}" }
             .entries
             .sortedWith(compareBy<Map.Entry<String, List<Item>>>({ it.value.first().categoryEnum.ordinal }, { Report.codeSortKey(it.value.first().code) }, { it.value.first().code }))
     }
@@ -148,6 +149,8 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
             }
             items(groups, key = { it.key }) { (key, list) ->
                 val first = list.first()
+                // Sizes are shown on each roll when the code has more than one.
+                val manySizes = list.map { it.size }.distinct().size > 1
                 val total = list.sumOf { it.remaining }
                 val opened = list.count { it.isOpen }
                 val pack = Report.plural(first.categoryEnum.pack, list.size)
@@ -161,18 +164,24 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                             title = (if (opened > 0) "${list.size - opened} full · $opened open" else "${list.size} $pack") +
                                 " · ${Format.qtyUnit(total, first.unit)}",
                             highlight = if (opened > 0) "$opened open" else null,
-                            subtitle = listOf(first.categoryEnum.label, Format.size(first.size), notes[key].orEmpty())
+                            subtitle = (listOf(first.categoryEnum.label, Format.size(Report.sizesOf(list.map { it.size }))) +
+                                list.mapNotNull { notes["${it.category}|${it.code}|${it.size}|${it.unit}"] }.distinct())
                                 .filter { it.isNotBlank() }.joinToString(" · "),
                         )
                         Spacer(Modifier.height(6.dp))
                         LocationBadges(byPlace)
-                        low[com.zinax.stock.data.LowStock.key(first.category, first.code, first.size, first.unit)]?.let { l ->
-                            Text(
-                                "Low stock · min ${Format.qtyUnit(l.product.minQty, l.product.unit)}",
-                                color = LocalStatus.current.warn, fontWeight = FontWeight.SemiBold,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
+                        // Minimums are per size: name the sizes that are low.
+                        list.map { it.size }.distinct().mapNotNull { sz -> low[com.zinax.stock.data.LowStock.key(first.category, first.code, sz, first.unit)] }
+                            .takeIf { it.isNotEmpty() }?.let { lows ->
+                                Text(
+                                    "Low stock · " + lows.joinToString(", ") { l ->
+                                        (Format.size(l.product.size).takeIf { s -> s.isNotBlank() }?.let { s -> "$s " } ?: "") +
+                                            "min ${Format.qtyUnit(l.product.minQty, l.product.unit)}"
+                                    },
+                                    color = LocalStatus.current.warn, fontWeight = FontWeight.SemiBold,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                     }
                     if (open == key) {
                         Row {
@@ -202,6 +211,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
                                         Text(
                                             listOfNotNull(
                                                 Format.qtyUnit(item.remaining, item.unit) + if (item.remaining < item.qty) " of ${Format.qty(item.qty)}" else "",
+                                                Format.size(item.size).takeIf { sz -> manySizes && sz.isNotBlank() },
                                                 item.pallet?.let { "Pallet $it" },
                                                 Format.date(item.receivedAt),
                                             ).joinToString(" · "),
