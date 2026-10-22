@@ -72,6 +72,7 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
     var reprint by remember { mutableStateOf<List<Item>?>(null) }
     var damaging by remember { mutableStateOf<Item?>(null) }
     var reserving by remember { mutableStateOf<Item?>(null) }
+    var jointing by remember { mutableStateOf<Item?>(null) }
     val waiting = rememberWaiting()
     val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
 
@@ -299,7 +300,15 @@ fun StockScreen(onBack: () -> Unit, onCut: (String) -> Unit, onMoveScan: () -> U
     }
 
     editing?.let { list ->
-        EditItemsDialog(list, onSave = { e -> editing = null; editPlan = list to e }, onDismiss = { editing = null })
+        EditItemsDialog(
+            list, onSave = { e -> editing = null; editPlan = list to e }, onDismiss = { editing = null },
+            // A joint is split on one roll at a time.
+            onJoint = list.singleOrNull()?.takeIf { it.remaining > 0 }?.let { one -> { editing = null; jointing = one } },
+        )
+    }
+
+    jointing?.let { target ->
+        JointDialog(target, onDismiss = { jointing = null }, onDone = { msg -> jointing = null; scope.launch { snackbar.showSnackbar(msg) } })
     }
 
     editPlan?.let { (list, e) ->

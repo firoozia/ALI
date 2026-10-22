@@ -32,7 +32,7 @@ import com.zinax.stock.data.ItemEdit
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun EditItemsDialog(items: List<Item>, onSave: (ItemEdit) -> Unit, onDismiss: () -> Unit) {
+fun EditItemsDialog(items: List<Item>, onSave: (ItemEdit) -> Unit, onDismiss: () -> Unit, onJoint: (() -> Unit)? = null) {
     val first = items.first()
     var category by remember { mutableStateOf(first.category) }
     var code by remember { mutableStateOf(first.code) }
@@ -52,6 +52,11 @@ fun EditItemsDialog(items: List<Item>, onSave: (ItemEdit) -> Unit, onDismiss: ()
         title = { Text(if (items.size == 1) "Edit ${first.id}" else "Edit ${items.size} labels of ${first.code}") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (onJoint != null) {
+                    androidx.compose.material3.OutlinedButton(onClick = onJoint, modifier = Modifier.fillMaxWidth()) {
+                        Text("Joint · split this roll in two")
+                    }
+                }
                 Text("Category", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Category.entries.forEach { c ->

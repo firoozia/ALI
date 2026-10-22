@@ -193,5 +193,32 @@ The result is saved to the Counts tab of the sheet. The scanned list will be cle
 Amount changed in the sheet ⇒ مقدار در شیت تغییر کرد
 {} min {} ⇒ {1} حداقل {2}
 min {} ⇒ حداقل {}
+Joint · split this roll in two ⇒ جوینت · تقسیم این رول به دو رول
+Joint in {} ⇒ جوینت در {}
+Joint ⇒ جوینت
+Joints ⇒ جوینت‌ها
+split off ⇒ جدا شد
+Short piece ⇒ تکه کوتاه
+What is it? ⇒ چیست؟
+Length up to the joint ({}) ⇒ طول تا جوینت ({})
+{} on this roll ⇒ {} روی این رول
+Enter the length up to the joint. It becomes a new open roll with its own label and the rest stays on this roll. Nothing leaves stock. ⇒ طول تا جوینت را وارد کنید. این تکه یک رول باز جدید با لیبل خودش می‌شود و بقیه روی همین رول می‌ماند. چیزی از موجودی کم نمی‌شود.
+This roll: {} ⇒ این رول: {}
+New roll: {} ⇒ رول جدید: {}
+Must be shorter than {} ⇒ باید کوتاه‌تر از {} باشد
+Split roll ⇒ تقسیم رول
+Roll split ⇒ رول تقسیم شد
+Stick each label on its roll. ⇒ هر لیبل را روی رول خودش بچسبانید.
+Print both labels ⇒ چاپ هر دو لیبل
+Printing {} labels ⇒ چاپ {} لیبل
+printing {} labels ⇒ در حال چاپ {} لیبل
+Split {} ⇒ تقسیم {}
+Split {}: {} left ⇒ تقسیم {1}: {2} مانده
+new roll {} ⇒ رول جدید {}
+The piece must be shorter than the {} on {} ⇒ تکه باید کوتاه‌تر از {1} روی {2} باشد
+Piece split off (joint) ⇒ تکه جدا شد (جوینت)
+Split from another roll ⇒ جدا شده از رول دیگر
+Print both labels automatically when a roll is split at a joint ⇒ چاپ خودکار هر دو لیبل هنگام تقسیم رول در جوینت
+Could not split ⇒ تقسیم انجام نشد
 """
 }

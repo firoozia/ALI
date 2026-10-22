@@ -89,6 +89,10 @@ object MovementType {
     const val RETURN = "RETURN"
     /** Put aside for a customer, or released again; [Movement.reference] says which. */
     const val RESERVE = "RESERVE"
+    /** A piece split off a roll at a joint: on the roll it left, [Movement.reference] names the reason and the new roll. */
+    const val SPLIT = "SPLIT"
+    /** The same split on the new roll, naming the roll it came from; history only, not counted in reports. */
+    const val SPLIT_IN = "SPLIT_IN"
 }
 
 /** A customer in the shared library, offered while typing names. */

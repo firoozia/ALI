@@ -211,10 +211,12 @@ fun SettingsScreen(onBack: () -> Unit, onCustomers: () -> Unit, onUsers: () -> U
             var autoShip by remember { mutableStateOf(prefs.autoPrintShip) }
             var autoDamage by remember { mutableStateOf(prefs.autoPrintDamage) }
             var autoUndoRoll by remember { mutableStateOf(prefs.autoPrintUndoRoll) }
+            var autoSplit by remember { mutableStateOf(prefs.autoPrintSplit) }
             SwitchRow("Print the customer label automatically after Cut", autoCut) { autoCut = it; prefs.autoPrintCut = it }
             SwitchRow("Print the customer label automatically after Ship out", autoShip) { autoShip = it; prefs.autoPrintShip = it }
             SwitchRow("Print a DAMAGED label automatically after Report damage", autoDamage) { autoDamage = it; prefs.autoPrintDamage = it }
             SwitchRow("Print an OPEN label for the new roll when a cut is undone", autoUndoRoll) { autoUndoRoll = it; prefs.autoPrintUndoRoll = it }
+            SwitchRow("Print both labels automatically when a roll is split at a joint", autoSplit) { autoSplit = it; prefs.autoPrintSplit = it }
             Text(
                 "When a switch is off, a Print customer label button appears after each cut or ship out, and a Label button " +
                     "sits beside every earlier ship out, cut or damage report of a roll in Ship out. " +

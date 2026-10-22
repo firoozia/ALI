@@ -254,6 +254,11 @@ class Prefs(context: Context) {
         set(v) = edit { putBoolean("autoPrintDamage", v) }
 
     /** Print the OPEN label of the new roll when a cut or part ship-out is undone. On by default. */
+    /** After a roll is split at a joint, print the OPEN labels of both rolls at once. */
+    var autoPrintSplit: Boolean
+        get() = sp.getBoolean("autoPrintSplit", true)
+        set(v) = edit { putBoolean("autoPrintSplit", v) }
+
     var autoPrintUndoRoll: Boolean
         get() = sp.getBoolean("autoPrintUndoRoll", true)
         set(v) = edit { putBoolean("autoPrintUndoRoll", v) }

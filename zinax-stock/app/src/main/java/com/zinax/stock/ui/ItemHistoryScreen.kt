@@ -45,6 +45,8 @@ private fun typeName(type: String) = when (type) {
     MovementType.RETURN -> "Returned by customer"
     MovementType.MOVE -> "Moved"
     MovementType.RESERVE -> "Reservation"
+    MovementType.SPLIT -> "Piece split off (joint)"
+    MovementType.SPLIT_IN -> "Split from another roll"
     "ADJUST" -> "Amount changed in the sheet"
     MovementType.EDIT -> "Edited"
     MovementType.VOID -> "Deleted"
@@ -113,7 +115,7 @@ fun ItemHistoryScreen(initialId: String, onBack: () -> Unit) {
                 return@FormBody
             }
 
-            val received = history.firstOrNull { m -> m.type == MovementType.IN || m.type == MovementType.RETURN }
+            val received = history.firstOrNull { m -> m.type == MovementType.IN || m.type == MovementType.RETURN || m.type == MovementType.SPLIT_IN }
             val undone = history.filter { m -> m.type == MovementType.UNDO }.associateBy { m -> m.reference }
             Panel {
                 Text(it.id, style = MonoStyle)
@@ -143,7 +145,7 @@ fun ItemHistoryScreen(initialId: String, onBack: () -> Unit) {
                         val cancel = undone[m.id]
                         Column {
                             Text(
-                                typeName(m.type) + (if (m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE, MovementType.IN, MovementType.RETURN, "ADJUST"))
+                                typeName(m.type) + (if (m.type in setOf(MovementType.OUT, MovementType.CUT, MovementType.WASTE, MovementType.DAMAGE, MovementType.IN, MovementType.RETURN, "ADJUST", MovementType.SPLIT, MovementType.SPLIT_IN))
                                     " · ${Format.qtyUnit(m.qty, m.unit)}" else ""),
                                 fontWeight = FontWeight.SemiBold,
                                 color = if (cancel != null) status.warn else MaterialTheme.colorScheme.onSurface,

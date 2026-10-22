@@ -189,5 +189,32 @@ The result is saved to the Counts tab of the sheet. The scanned list will be cle
 Amount changed in the sheet ⇒ تغيّرت الكمية في الورقة
 {} min {} ⇒ {1} الحد الأدنى {2}
 min {} ⇒ الحد الأدنى {}
+Joint · split this roll in two ⇒ وصلة · قسمة هذه اللفة إلى اثنتين
+Joint in {} ⇒ وصلة في {}
+Joint ⇒ وصلة
+Joints ⇒ الوصلات
+split off ⇒ فُصل
+Short piece ⇒ قطعة قصيرة
+What is it? ⇒ ما هو؟
+Length up to the joint ({}) ⇒ الطول حتى الوصلة ({})
+{} on this roll ⇒ {} على هذه اللفة
+Enter the length up to the joint. It becomes a new open roll with its own label and the rest stays on this roll. Nothing leaves stock. ⇒ أدخل الطول حتى الوصلة. تصبح لفة مفتوحة جديدة بملصقها ويبقى الباقي على هذه اللفة. لا يخرج شيء من المخزون.
+This roll: {} ⇒ هذه اللفة: {}
+New roll: {} ⇒ لفة جديدة: {}
+Must be shorter than {} ⇒ يجب أن يكون أقصر من {}
+Split roll ⇒ قسمة اللفة
+Roll split ⇒ تمت قسمة اللفة
+Stick each label on its roll. ⇒ ألصق كل ملصق على لفته.
+Print both labels ⇒ طباعة الملصقين
+Printing {} labels ⇒ طباعة {} ملصقات
+printing {} labels ⇒ جارٍ طباعة {} ملصقات
+Split {} ⇒ قسمة {}
+Split {}: {} left ⇒ قسمة {1}: متبقٍّ {2}
+new roll {} ⇒ لفة جديدة {}
+The piece must be shorter than the {} on {} ⇒ يجب أن تكون القطعة أقصر من {1} على {2}
+Piece split off (joint) ⇒ فُصلت قطعة (وصلة)
+Split from another roll ⇒ مفصولة من لفة أخرى
+Print both labels automatically when a roll is split at a joint ⇒ طباعة الملصقين تلقائياً عند قسمة لفة عند وصلة
+Could not split ⇒ تعذّرت القسمة
 """
 }

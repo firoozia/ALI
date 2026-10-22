@@ -198,6 +198,7 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
     var askEnd by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var damaging by remember { mutableStateOf(false) }
+    var jointing by remember { mutableStateOf(false) }
 
     val length = Lengths.parse(lengthText, cm && metresRoll)
     val fits = length != null && length <= item.remaining + 1e-6
@@ -245,7 +246,11 @@ private fun CutForm(item: Item, snackbar: SnackbarHostState, onChangeRoll: () ->
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             LocationBadge(item.location)
             TextButton(onClick = onChangeRoll) { Text("Change roll") }
+            TextButton(onClick = { jointing = true }) { Text("Joint") }
         }
+    }
+    if (jointing) {
+        JointDialog(item, onDismiss = { jointing = false }, onDone = { msg -> jointing = false; scope.launch { snackbar.showSnackbar(msg) } })
     }
 
     CustomerField(customer, { customer = it })

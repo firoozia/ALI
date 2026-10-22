@@ -11,6 +11,7 @@ enum class Activity(val type: String, val title: String, val verb: String, val n
     WASTE("WASTE", "Waste", "written off", "Waste"),
     DAMAGE("DAMAGE", "Damage", "damaged", "Damage"),
     RETURN("RETURN", "Returns", "returned", "Return"),
+    SPLIT("SPLIT", "Joints", "split off", "Joint"),
     IN("IN", "Received", "received", "Received"),
     VOID("VOID", "Deleted", "deleted", "Deleted"),
     MOVE("MOVE", "Moved", "moved", "Moved"),

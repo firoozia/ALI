@@ -293,6 +293,48 @@ class Repository(
         return made
     }
 
+    /**
+     * Splits [qty] off a roll, e.g. the metres before a joint that cannot go to a customer. The piece becomes a new
+     * open roll with its own label ID, the roll keeps the rest; the total in stock stays the same.
+     * Returns the roll and the new piece, both to be labelled.
+     */
+    suspend fun splitRoll(itemId: String, qty: Double, reason: String): Pair<Item, Item> {
+        require(qty > 0) { "Enter a length above zero" }
+        val why = reason.trim().ifEmpty { "Joint" }
+        val result = idLock.withLock {
+            db.withTransaction {
+                val item = dao.item(itemId) ?: error("Unknown label $itemId")
+                check(item.status == ItemStatus.IN_STOCK) { "$itemId is not in stock" }
+                require(qty < item.remaining - 1e-6) { "The piece must be shorter than the ${Format.qtyUnit(item.remaining, item.unit)} on $itemId" }
+                val t = now()
+                val piece = Item(
+                    id = nextIds(1).first(), category = item.category, code = item.code, size = item.size, unit = item.unit,
+                    qty = item.qty, remaining = qty, status = ItemStatus.IN_STOCK, shipmentId = item.shipmentId, pallet = item.pallet,
+                    netKg = null, grossKg = null, receivedAt = item.receivedAt, location = item.location, device = prefs.deviceCode,
+                    updatedAt = t, dirty = true,
+                )
+                val left = (item.remaining - qty).let { if (it < 1e-6) 0.0 else it }
+                val roll = item.copy(remaining = left, updatedAt = t, dirty = true)
+                dao.putItems(listOf(roll, piece))
+                dao.putMovements(
+                    listOf(
+                        Movement(
+                            id = uuid(), itemId = item.id, type = MovementType.SPLIT, qty = qty, reference = "$why · to ${piece.id}",
+                            at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                        ),
+                        Movement(
+                            id = uuid(), itemId = piece.id, type = MovementType.SPLIT_IN, qty = qty, reference = "$why · from ${item.id}",
+                            at = t, device = prefs.deviceCode, code = item.code, size = item.size, unit = item.unit, user = prefs.userName,
+                        ),
+                    )
+                )
+                roll to piece
+            }
+        }
+        onChange()
+        return result
+    }
+
     /** Keeps a finished stock count so it reaches the Counts tab of the sheet. */
     suspend fun saveCount(place: String, expected: Int, found: Int, missingIds: List<String>, extraIds: List<String>) {
         dao.putCounts(
