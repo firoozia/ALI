@@ -33,10 +33,12 @@ const SHEETS = {
   // People who sign in to the app. Role ADMIN or USER; Active FALSE stops someone signing in. PINs are stored hashed.
   Users: ['ID', 'Name', 'Role', 'CanReceive', 'Active', 'PinHash', 'Salt', 'UpdatedAt', 'ServerAt'],
   // Product groups. ID is stored on labels; Name, Unit and Pack can be changed here. Add a group by typing a Name on a new row.
-  Groups: ['ID', 'Name', 'Unit', 'Pack', 'Order', 'Hidden', 'UpdatedAt', 'ServerAt'],
+  // BotLimit: default for the AI assistant of products in this group with no BotLimit of their own (see botStock_).
+  Groups: ['ID', 'Name', 'Unit', 'Pack', 'Order', 'Hidden', 'UpdatedAt', 'ServerAt', 'BotLimit'],
   // Product catalog. Group is a group ID from the Groups tab. Add a product by typing a Group and Code on a new row.
   // MinQty: minimum stock in Unit; at or under it the product is listed in the Low stock tab and warned about in the app.
-  Products: ['ID', 'Group', 'Code', 'Size', 'Unit', 'PackQty', 'Note', 'Hidden', 'UpdatedAt', 'ServerAt', 'MinQty'],
+  // BotLimit: the AI assistant tells a customer "available" only when free stock is above what they ask for plus this.
+  Products: ['ID', 'Group', 'Code', 'Size', 'Unit', 'PackQty', 'Note', 'Hidden', 'UpdatedAt', 'ServerAt', 'MinQty', 'BotLimit'],
   // Undo and delete asked by users, and the admin's answer.
   Requests: ['ID', 'Kind', 'Target', 'Summary', 'Reason', 'RequestedBy', 'Device', 'RequestedAt', 'Status', 'DecidedBy',
              'DecidedAt', 'Note', 'UpdatedAt', 'ServerAt', 'Payload'],
@@ -74,12 +76,18 @@ function setup() {
     props.setProperty('ZINAX_TOKEN', token);
   }
   const adminCode = adminCode_();
+  let botToken = props.getProperty('ZINAX_BOT_TOKEN');
+  if (!botToken) {
+    botToken = 'bot' + Utilities.getUuid().replace(/-/g, '').slice(0, 24);
+    props.setProperty('ZINAX_BOT_TOKEN', botToken);
+  }
   ScriptApp.getProjectTriggers()
     .filter(function (t) { return ['weeklyBackup', 'nightlyBackup'].indexOf(t.getHandlerFunction()) >= 0; })
     .forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('nightlyBackup').timeBased().everyDays(1).atHour(BACKUP_HOUR).create();
   Logger.log('Token for the app: ' + token);
   Logger.log('Admin code (to create the first admin or reset a PIN): ' + adminCode);
+  Logger.log('Token for the AI assistant (read-only stock): ' + botToken);
   Logger.log('Sheet: ' + ss.getUrl());
 }
 
@@ -95,6 +103,12 @@ function doPost(e) {
     return json_({ ok: false, error: 'Bad request' });
   }
   const props = PropertiesService.getScriptProperties();
+  // The AI assistant has its own token and can only read stock.
+  if (req.action === 'botStock') {
+    const botToken = props.getProperty('ZINAX_BOT_TOKEN');
+    if (!botToken || req.token !== botToken) return json_({ ok: false, error: 'Wrong bot token' });
+    return json_(botStock_(req));
+  }
   const token = props.getProperty('ZINAX_TOKEN');
   if (!token || req.token !== token) return json_({ ok: false, error: 'Wrong token. Copy it again from the Apps Script log.' });
   // Asked every few seconds by open apps: answers without touching the sheet.
@@ -161,12 +175,12 @@ function sync_(req) {
   }, 12, function (old) { return old[8] && old[8] !== 'PENDING'; });
 
   upsert_('Groups', req.groups || [], function (g) {
-    return [g.id, g.name, g.unit, g.pack, Number(g.order) || 0, g.hidden ? true : false, g.updatedAt, now];
-  }, 6);
+    return [g.id, g.name, g.unit, g.pack, Number(g.order) || 0, g.hidden ? true : false, g.updatedAt, now, ''];
+  }, 6, null, [8]);
   upsert_('Products', req.products || [], function (p) {
     return [p.id, p.groupId, p.code, p.size || '', p.unit, Number(p.packQty) || '', p.note || '', p.hidden ? true : false, p.updatedAt, now,
-            Number(p.minQty) || ''];
-  }, 8);
+            Number(p.minQty) || '', ''];
+  }, 8, null, [11]);
 
   appendNew_('Counts', req.counts || [], function (c) {
     return [c.id, c.place || '', date_(c.at), c.user || '', c.device || '', Number(c.expected) || 0, Number(c.found) || 0,
@@ -535,7 +549,8 @@ function readAll_(name) {
  * Insert or replace rows by ID. A row is replaced only when the incoming UpdatedAt is not older,
  * and never when [keep] says the existing row must stay.
  */
-function upsert_(name, objects, toRow, updatedIdx, keep) {
+/** [carry]: columns kept only in the sheet (typed there by hand); a row sent by a phone keeps their old values. */
+function upsert_(name, objects, toRow, updatedIdx, keep, carry) {
   if (!objects.length) return;
   const sh = sheet_(name);
   const width = SHEETS[name].length;
@@ -551,6 +566,7 @@ function upsert_(name, objects, toRow, updatedIdx, keep) {
       data.push(row);
       changed = true;
     } else if (Number(data[i][updatedIdx]) <= Number(row[updatedIdx]) && !(keep && keep(data[i], row))) {
+      (carry || []).forEach(function (c) { row[c] = data[i][c]; });
       data[i] = row;
       changed = true;
     }
@@ -750,6 +766,103 @@ function cutsSheet_() {
   });
   writeSummary_(ss, 'Cuts', 3, ['Date', 'Type', 'Customer / reason', 'Invoice', 'Code', 'Size', 'Length', 'Unit', 'Roll', 'By'], rows,
     'Updated ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm'));
+}
+
+// ---------- stock for the AI assistant ----------
+
+/** Sizes written in different ways match: "0.30*1400", "0.30 x 1400", "0.30×1400". */
+function sizeKey_(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, '').replace(/[x×]/g, '*');
+}
+
+/**
+ * Can the assistant tell a customer that [req.code] is available? Free stock (in stock, not reserved) must be
+ * above the quantity asked plus the BotLimit. Without a size every size of the code counts and the limits add up;
+ * with a size only that size counts. A quantity in rolls or cartons is turned into the stock unit with PackQty;
+ * when that is unknown the answer is "not available" so a person checks. The real figures are returned for the
+ * message to the sales manager; the assistant itself is only told yes or no.
+ */
+function botStock_(req) {
+  const code = String(req.code || '').trim().toLowerCase();
+  if (!code) return { ok: false, error: 'No code' };
+  const ss = SpreadsheetApp.getActive();
+  const groupName = {};
+  const groupLimit = {};
+  if (ss.getSheetByName('Groups')) readAll_('Groups').forEach(function (g) {
+    if (!g[0]) return;
+    groupName[String(g[0])] = String(g[1] || g[0]);
+    if (Number(g[8]) > 0) groupLimit[String(g[0])] = Number(g[8]);
+  });
+  const wantCat = String(req.category || '').trim().toLowerCase();
+  const catOk = function (id) {
+    return !wantCat || String(id).toLowerCase() === wantCat || String(groupName[id] || '').toLowerCase() === wantCat;
+  };
+  const wantSize = req.size ? sizeKey_(req.size) : '';
+
+  const products = (ss.getSheetByName('Products') ? readAll_('Products') : []).filter(function (p) {
+    return String(p[2]).trim().toLowerCase() === code && !yes_(p[7]) && catOk(String(p[1]));
+  });
+  const items = readAll_('Items').filter(function (r) {
+    return r[7] === 'IN_STOCK' && String(r[2]).trim().toLowerCase() === code && catOk(String(r[1]));
+  });
+  const cats = {};
+  products.forEach(function (p) { cats[String(p[1])] = true; });
+  items.forEach(function (r) { cats[String(r[1])] = true; });
+  const catList = Object.keys(cats);
+  if (!catList.length) return { ok: true, found: false, code: req.code };
+  if (catList.length > 1) {
+    return { ok: true, found: true, ambiguous: true, categories: catList.map(function (c) { return groupName[c] || c; }) };
+  }
+  const cat = catList[0];
+
+  const sizeItems = items.filter(function (r) { return !wantSize || sizeKey_(r[3]) === wantSize; });
+  const sizeProducts = products.filter(function (p) { return !wantSize || sizeKey_(p[3]) === wantSize; });
+  if (wantSize && !sizeItems.length && !sizeProducts.length) {
+    return { ok: true, found: true, sizeFound: false, code: req.code, size: req.size, category: groupName[cat] || cat,
+             sizes: Object.keys(items.reduce(function (m, r) { m[String(r[3])] = true; return m; }, {})) };
+  }
+  const unit = String((sizeItems[0] || [])[6] || (sizeProducts[0] || [])[4] || '');
+  const free = sizeItems.filter(function (r) { return !String(r[18] || '').trim(); });
+  const reserved = sizeItems.filter(function (r) { return String(r[18] || '').trim(); });
+  const sum = function (list) { return Math.round(list.reduce(function (s, r) { return s + (Number(r[5]) || 0); }, 0) * 100) / 100; };
+
+  // One limit per size; a size with no product row of its own takes the group's limit.
+  const sizes = {};
+  sizeItems.forEach(function (r) { sizes[sizeKey_(r[3])] = String(r[3]); });
+  sizeProducts.forEach(function (p) { sizes[sizeKey_(p[3])] = String(p[3]); });
+  const limitOf = function (k) {
+    const p = sizeProducts.filter(function (x) { return sizeKey_(x[3]) === k; })[0];
+    return p && Number(p[11]) > 0 ? Number(p[11]) : (groupLimit[cat] || 0);
+  };
+  const limit = Object.keys(sizes).reduce(function (s, k) { return s + limitOf(k); }, 0);
+
+  let asked = Number(req.qty) > 0 ? Number(req.qty) : 0;
+  let qtyChecked = true;
+  const qtyUnit = String(req.qtyUnit || '').trim().toLowerCase();
+  if (asked && qtyUnit && qtyUnit !== String(unit).toLowerCase()) {
+    // Rolls, cartons or packs: PackQty says how much one holds.
+    const packs = sizeProducts.map(function (p) { return Number(p[5]) || 0; }).filter(function (q) { return q > 0; });
+    if (packs.length && packs.every(function (q) { return q === packs[0]; })) asked = asked * packs[0];
+    else qtyChecked = false;
+  }
+  const freeQty = sum(free);
+  const available = qtyChecked && freeQty > asked + limit + 1e-6;
+
+  const bySize = Object.keys(sizes).sort().map(function (k) {
+    const list = free.filter(function (r) { return sizeKey_(r[3]) === k; });
+    const open = list.filter(function (r) { return (Number(r[5]) || 0) < (Number(r[4]) || 0) - 1e-6; }).length;
+    return { size: sizes[k], free: sum(list), packages: list.length, open: open, limit: limitOf(k) };
+  });
+  const where = {};
+  free.forEach(function (r) { const l = String(r[13] || '').trim() || 'No location'; where[l] = (where[l] || 0) + 1; });
+  return {
+    ok: true, found: true, code: String((sizeItems[0] || sizeProducts[0] || [])[2] || req.code), category: groupName[cat] || cat,
+    size: req.size || '', unit: unit, available: available, qtyChecked: qtyChecked,
+    asked: Number(req.qty) || 0, askedUnit: qtyUnit || unit, askedInUnit: asked,
+    free: freeQty, reserved: sum(reserved), limit: limit, sizes: bySize,
+    locations: Object.keys(where).map(function (l) { return l + ': ' + where[l]; }),
+    note: (sizeProducts[0] || [])[6] || '',
+  };
 }
 
 // ---------- nightly backup ----------

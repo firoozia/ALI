@@ -1,0 +1,11 @@
+{
+  "name": "aryak-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ARYAK customer assistant for WhatsApp groups: stock check against Zinax Stock",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test"
+  }
+}

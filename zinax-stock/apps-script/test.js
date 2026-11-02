@@ -203,6 +203,40 @@ r=post({token:'tok',action:'sync',since:0,items:[{...item,id:'ZX-251009-H0002',c
 // Stock tab: full / open / min / status columns
 assert.deepEqual(sheets.Stock.cells[0].slice(0,11),['Category','Code','Size','Unit','Packages','Total','Locations','Full','Open','Min','Status']);
 assert.ok(sheets.Stock.cells.some(x=>x[1]==='M-18' && x[9]===20 && x[10]==='LOW'));
+// AI assistant: read-only stock check with its own token
+{
+  props.ZINAX_BOT_TOKEN='bottok';
+  const bot=b=>post({token:'bottok',action:'botStock',...b});
+  assert.equal(post({token:'tok',action:'botStock',code:'101'}).ok,false);
+  assert.equal(bot({code:'NOPE-1'}).found,false);
+  // code B305 in PVC: two sizes, BotLimit 50 each; code B305 also in edge banding to test ambiguity
+  post({token:'tok',action:'sync',since:0,
+    groups:[{id:'EDGE_BANDING',name:'Edge banding',unit:'m',pack:'roll',order:1,hidden:false,updatedAt:1}],
+    products:[{id:'PB1',groupId:'PVC',code:'B305',size:'0.30*1400',unit:'m',packQty:100,note:'White gloss',hidden:false,updatedAt:1},
+              {id:'PB2',groupId:'PVC',code:'B305',size:'0.30*1220',unit:'m',packQty:100,note:'White gloss',hidden:false,updatedAt:1},
+              {id:'PB3',groupId:'EDGE_BANDING',code:'B305',size:'0.8*22',unit:'m',packQty:200,note:'',hidden:false,updatedAt:1}],
+    items:[{...item,id:'ZX-B-1',category:'PVC',code:'B305',size:'0.30*1400',qty:100,remaining:100,location:'A',updatedAt:1},
+           {...item,id:'ZX-B-2',category:'PVC',code:'B305',size:'0.30*1400',qty:100,remaining:100,location:'A',updatedAt:1},
+           {...item,id:'ZX-B-3',category:'PVC',code:'B305',size:'0.30*1400',qty:100,remaining:40,location:'B',updatedAt:1,reservedFor:'Bahar Design'},
+           {...item,id:'ZX-B-4',category:'PVC',code:'B305',size:'0.30*1220',qty:100,remaining:30,location:'B',updatedAt:1}]});
+  const ps=sheets.Products, row=id=>ps.cells.findIndex(x=>x[0]===id);
+  ps.cells[row('PB1')][11]=50; ps.cells[row('PB2')][11]=50;
+  // a phone saving the product again keeps the BotLimit typed in the sheet
+  post({token:'tok',action:'sync',since:0,products:[{id:'PB1',groupId:'PVC',code:'B305',size:'0.30*1400',unit:'m',packQty:100,note:'White gloss',hidden:false,updatedAt:99}]});
+  assert.equal(ps.cells[row('PB1')][11],50);
+  let a=bot({code:'b305'}); assert.ok(a.ambiguous); assert.equal(a.categories.length,2);
+  a=bot({code:'B305',category:'PVC film'});
+  assert.equal(a.free,230); assert.equal(a.reserved,40); assert.equal(a.limit,100); assert.equal(a.available,true);
+  a=bot({code:'B305',category:'PVC',qty:150}); assert.equal(a.available,false);       // 230 > 150+100 is false
+  a=bot({code:'B305',category:'PVC',size:'0.30 x 1400',qty:100}); assert.equal(a.free,200); assert.equal(a.available,true); // 200 > 150
+  a=bot({code:'B305',category:'PVC',size:'0.30x1400',qty:2,qtyUnit:'roll'}); assert.equal(a.askedInUnit,200); assert.equal(a.available,false);
+  a=bot({code:'B305',category:'PVC',size:'0.30*1220'}); assert.equal(a.free,30); assert.equal(a.available,false); // under its limit
+  a=bot({code:'B305',category:'PVC',size:'0.40*1400'}); assert.equal(a.sizeFound,false);
+  assert.equal(bot({code:'B305',category:'PVC'}).sizes.length,2);
+  // group default limit when the product has none: edge banding B305 has 0 stock
+  sheets.Groups.cells[sheets.Groups.cells.findIndex(x=>x[0]==='EDGE_BANDING')][8]=3;
+  a=bot({code:'B305',category:'Edge banding'}); assert.equal(a.limit,3); assert.equal(a.free,0); assert.equal(a.available,false);
+}
 // nightly backup retention: last 30 days all, then the first of each month for 12 months
 {
   const fmt=ctx.Utilities.formatDate; ctx.Utilities.formatDate=(d,tz,f)=>f==='yyyy-MM'?d.toISOString().slice(0,7):fmt(d,tz,f);
