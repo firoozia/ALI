@@ -28,7 +28,7 @@ test('low stock: silent in the group, manager told once with the real figures', 
   const recent = new Map();
   const r = await runCheckStock({ code: '305', quantity: 300 }, ctx, config, { fetchImpl: answer(low), recent, now: 1000 });
   assert.equal(r.silent, true);
-  assert.equal(r.forModel.status, 'handled_by_team');
+  assert.equal(r.forModel.status, 'team_will_confirm');
   assert.ok(!JSON.stringify(r.forModel).includes('230'));
   assert.ok(r.managerText.includes('Master Wood'));
   assert.ok(r.managerText.includes('230 m'));

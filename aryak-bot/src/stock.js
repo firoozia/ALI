@@ -1,7 +1,7 @@
 // Stock check for the ARYAK assistant, against the Zinax Stock sheet.
 //
 // The model never sees a quantity: it calls the check_stock tool and is told only "available", "ask which
-// product", "unknown code" or "handled by the team". When stock is at or under the limit the bot stays silent
+// product", "unknown code" or "a colleague will confirm". When stock is at or under the limit the bot stays silent
 // in the group and the real figures go privately to the sales manager.
 
 /** Tool given to Claude. */
@@ -106,7 +106,12 @@ export async function runCheckStock(input, ctx, config, { fetchImpl = fetch, rec
   const notify = !(last && now - last < windowMs);
   if (notify) recent.set(key, now);
   return {
-    forModel: { status: 'handled_by_team', instruction: 'Do not reply to this message.' },
+    // The message is not answered when every code asked about is like this (see assistant.js); when other
+    // codes are available the reply covers those and says a colleague will confirm this one.
+    forModel: {
+      status: 'team_will_confirm',
+      instruction: 'Do not say it is unavailable and give no quantity. If this was the only thing asked, reply exactly NO_REPLY; otherwise say a colleague will confirm this code.',
+    },
     silent: true,
     managerText: notify ? managerMessage(result, ctx, input) : null,
   };

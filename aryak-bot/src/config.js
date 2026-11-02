@@ -1,0 +1,30 @@
+// Settings from the environment (or a .env file loaded by the process manager).
+
+const list = (s) => String(s || '').split(',').map((x) => x.trim()).filter(Boolean);
+
+export function loadConfig(env = process.env) {
+  const team = env.TEAM_TAGS ? JSON.parse(env.TEAM_TAGS) : {};
+  const config = {
+    // Claude
+    model: env.CLAUDE_MODEL || 'claude-opus-5-5',
+    effort: env.CLAUDE_EFFORT || 'medium',
+    // Zinax Stock web app and the assistant's read-only token
+    sheetUrl: env.SHEET_URL || '',
+    botToken: env.ZINAX_BOT_TOKEN || '',
+    dedupeMinutes: Number(env.MANAGER_DEDUPE_MINUTES || 60),
+    // WhatsApp
+    salesManager: env.SALES_MANAGER_JID || '',
+    staffNumbers: list(env.STAFF_NUMBERS),
+    team, // { sales: [...], accounts: [...], logistics: [...], complaints: [...], team: [...] }
+    allowedGroups: list(env.ALLOWED_GROUPS), // empty: every group the number is in
+    waitMinutes: Number(env.WAIT_MINUTES || 5),
+    pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
+    authDir: env.AUTH_DIR || './auth',
+    kbDir: env.KB_DIR || './kb',
+    // "Master Wood – ARYAK" -> "Master Wood"
+    groupSuffix: env.GROUP_SUFFIX ? new RegExp(env.GROUP_SUFFIX, 'i') : /\s*[-–|:]\s*aryak.*$/i,
+  };
+  const missing = ['sheetUrl', 'botToken', 'salesManager'].filter((k) => !config[k]);
+  if (!config.staffNumbers.length) missing.push('staffNumbers');
+  return { config, missing };
+}

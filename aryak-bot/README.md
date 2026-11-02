@@ -1,34 +1,38 @@
-# ARYAK assistant — stock check
+# ARYAK Assistant
 
-Part of the ARYAK WhatsApp assistant (Node.js + Baileys + Claude API). This folder holds the stock check against
-Zinax Stock; the rest of the bot (knowledge base, FAQ, system prompt, WhatsApp wiring) is added once the open
-questions about products and delivery are answered.
+AI assistant for ARYAK customer groups on WhatsApp: Node.js + Baileys + Claude API, connected to Zinax Stock.
 
-## How it behaves
-- A customer asks whether a code is available. The model calls the `check_stock` tool (`src/stock.js`).
-- The sheet (`botStock` action in `zinax-stock/apps-script/Code.gs`) adds up **free** stock of the code:
-  in stock and not reserved. With no size, all sizes count and their limits add up; with a size, only that size.
-- **Available** only when free stock > quantity asked + `BotLimit`. A quantity in rolls or cartons is turned into
-  metres or pieces with the product's PackQty; when that is unknown the answer is "not available".
-- Available: the model is told `available` and says so, **never a quantity**.
-- Otherwise: the bot says **nothing** in the group and sends the sales manager a private message with the
-  real figures (free, reserved, limit, per size, places, the customer's words). The same code in the same group
-  is reported at most once an hour.
-- Unknown code, a code in two product groups, or a size we do not carry: the model asks or hands over.
+## What it does
+- Answers **customer** messages only, in the customer's language (Arabic, English, Urdu, Persian).
+- Waits `WAIT_MINUTES` (default 5). If a colleague writes in the group meanwhile, it stays silent.
+- Prices, discounts, orders, delivery dates and complaints are handed over with a mention of the right colleagues
+  (`TEAM_TAGS`); anything it is not sure of is handed over too.
+- **Photos:** reads product codes handwritten on paper or in a catalogue photo and treats them as typed.
+  Unreadable photo: no reply. Some codes unclear: answers the clear ones and asks for the rest to be typed.
+  A code read from a photo that is not in the catalogue is treated as misread.
+- **Stock** (`check_stock` tool, `src/stock.js`): "available" only when free stock (not reserved) is above the
+  quantity asked plus `BotLimit`. Otherwise nothing is said about that code; the sales manager gets a private
+  message with the real figures (once an hour per code and group). If every code asked about is low, the bot
+  does not reply at all. Claude never sees a quantity.
+
+## Files
+- `src/index.js` WhatsApp connection and message handling
+- `src/gate.js` who is staff, the waiting time, the recent conversation
+- `src/assistant.js` one answer: Claude call, photos, tool loop, silence rules
+- `src/stock.js` stock check against the sheet and the manager message
+- `src/prompt.js` the system prompt (rules); product knowledge and FAQ from `kb/*.md`
+- `src/tags.js` `[TAG:sales]` etc. to WhatsApp mentions
 
 ## Setup
-1. Replace `Code.gs` in Apps Script, run `setup` once, copy **Token for the AI assistant** from the log,
-   then Deploy → Manage deployments → New version.
-2. In the sheet, fill **BotLimit** in the **Products** tab (per code and size, in the product's unit), and
-   optionally in the **Groups** tab as the default for products of that group with no BotLimit.
-3. Bot settings: `SHEET_URL` (the web app URL ending in /exec), `ZINAX_BOT_TOKEN`, `SALES_MANAGER_JID`
-   (the manager's WhatsApp, e.g. `9715XXXXXXXX@s.whatsapp.net`).
+1. Zinax Stock: replace `Code.gs`, run `setup` once, copy **Token for the AI assistant**, deploy a new version,
+   fill **BotLimit** in the Products tab (and per group in the Groups tab).
+2. On a server with Node 18+: `npm install`, copy `.env.example` to `.env` and fill it.
+3. `node --env-file=.env src/index.js`. The first time it prints a pairing code: on the bot's phone open
+   WhatsApp → Linked devices → Link with phone number and enter it. The login is kept in `auth/`.
+4. Add the bot's number to the customer groups.
 
-## Wiring in the bot
-When the model returns a `tool_use` for `check_stock`, call
-`runCheckStock(input, { groupId, groupName, customer, messageText }, config, { recent })`
-with one shared `recent` Map, send `result.forModel` back as the tool result, then:
-- if `result.managerText`, send it to `SALES_MANAGER_JID`;
-- if `result.silent`, do **not** post the model's reply in the group.
+`npm test` runs the tests (no network, no WhatsApp, no API key).
 
-`npm test` runs the tests (Node 18+, no dependencies).
+## Note
+Baileys is not an official WhatsApp API; WhatsApp may block a number it treats as automated. Use a separate
+SIM, keep volume low, and keep the bot to the groups it serves (`ALLOWED_GROUPS`).
