@@ -93,7 +93,7 @@ async function start() {
   if (!state.creds.registered && config.pairPhone) {
     setTimeout(async () => {
       const code = await sock.requestPairingCode(config.pairPhone.replace(/\D/g, ''));
-      console.log(`On the bot's phone: WhatsApp > Linked devices > Link with phone number, then enter ${code}`);
+      console.log(`PAIRING CODE: ${code}  (on the bot phone: WhatsApp > Linked devices > Link a device > Link with phone number)`);
     }, 3000);
   }
   sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {

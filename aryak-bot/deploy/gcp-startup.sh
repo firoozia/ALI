@@ -1,0 +1,52 @@
+#!/bin/bash
+# Runs as root on every boot of the Google Cloud VM: installs or updates the ARYAK Assistant and starts it.
+set -u
+md() { curl -sf -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1"; }
+BRANCH="$(md BOT_BRANCH || echo claude/zinax-warehouse-barcode-6sv8m6)"
+
+if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
+  apt-get update -y && apt-get install -y curl git ca-certificates
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y nodejs
+fi
+command -v git >/dev/null || apt-get install -y git
+
+if [ -d /opt/ALI/.git ]; then
+  git -C /opt/ALI fetch --depth 1 origin "$BRANCH" && git -C /opt/ALI reset --hard FETCH_HEAD
+else
+  git clone --depth 1 -b "$BRANCH" https://github.com/firoozia/ALI.git /opt/ALI
+fi
+cd /opt/ALI/aryak-bot && npm ci --omit=dev
+
+# Settings come from the VM's metadata (Compute Engine > VM > Edit > Metadata), never from the repository.
+: > .env
+for k in ANTHROPIC_API_KEY CLAUDE_MODEL CLAUDE_EFFORT SHEET_URL ZINAX_BOT_TOKEN PAIR_PHONE SALES_MANAGER_JID \
+         STAFF_NUMBERS TEAM_TAGS ALLOWED_GROUP_NAMES ALLOWED_GROUPS WAIT_MINUTES MANAGER_DEDUPE_MINUTES; do
+  v="$(md "$k" || true)"
+  [ -n "$v" ] && printf '%s=%s\n' "$k" "$v" >> .env
+done
+echo 'AUTH_DIR=/opt/aryak-auth' >> .env
+chmod 600 .env
+mkdir -p /opt/aryak-auth
+
+cat > /etc/systemd/system/aryak-bot.service <<'UNIT'
+[Unit]
+Description=ARYAK Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/ALI/aryak-bot
+ExecStart=/usr/bin/node --env-file=.env src/index.js
+Restart=always
+RestartSec=10
+# The pairing code is printed here too, so it can be read from the serial port in the Cloud Console.
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable aryak-bot
+systemctl restart aryak-bot
