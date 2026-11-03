@@ -6,6 +6,7 @@ import pino from 'pino';
 import { answer } from './assistant.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
+import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -90,18 +91,25 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
   sock = makeWASocket({ auth: state, logger: logger.child({ module: 'baileys' }, { level: 'warn' }) });
   sock.ev.on('creds.update', saveCreds);
-  if (!state.creds.registered && config.pairPhone) {
-    setTimeout(async () => {
-      const code = await sock.requestPairingCode(config.pairPhone.replace(/\D/g, ''));
-      console.log(`PAIRING CODE: ${code}  (on the bot phone: WhatsApp > Linked devices > Link a device > Link with phone number)`);
-    }, 3000);
-  }
-  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+  const onQr = pairingOnce({
+    registered: () => !!state.creds.registered,
+    phone: config.pairPhone,
+    request: (digits) => sock.requestPairingCode(digits),
+    show: (code) => console.log(`PAIRING CODE: ${code}  (on the bot phone: WhatsApp > Linked devices > Link a device > Link with phone number)`),
+    log: (s) => logger.warn(s),
+  });
+  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    if (qr) onQr();
     if (connection === 'open') logger.info('connected to WhatsApp');
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
-      if (code === DisconnectReason.loggedOut) logger.error('logged out: delete the auth folder and link again');
-      else setTimeout(start, 3000);
+      const next = afterClose({ loggedOut: code === DisconnectReason.loggedOut, registered: !!state.creds.registered });
+      if (next === 'reconnect') setTimeout(start, 3000);
+      else if (next === 'reset-and-wait') {
+        logger.warn('logged out before pairing: clearing the old login, a new pairing code follows in a minute');
+        clearAuth(config.authDir);
+        setTimeout(start, 60000);
+      } else logger.error('logged out: delete the auth folder and link again');
     }
   });
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
