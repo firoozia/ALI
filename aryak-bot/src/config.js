@@ -26,6 +26,7 @@ export function loadConfig(env = process.env) {
     invoiceGroupName: (env.INVOICE_GROUP_NAME || '').trim().toLowerCase(),
     infoGroupName: (env.INFO_GROUP_NAME || '').trim().toLowerCase(),
     requestsDir: env.REQUESTS_DIR || '/opt/aryak-auth/requests',
+    helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
     authDir: env.AUTH_DIR || './auth',

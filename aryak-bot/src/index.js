@@ -9,6 +9,7 @@ import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staffWarning } from './invoice.js';
+import { helloOnce } from './hello.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -169,6 +170,9 @@ async function start() {
     if (qr) onQr();
     if (connection === 'open') {
       logger.info('connected to WhatsApp');
+      helloOnce({ value: config.helloOnce, phone: config.pairPhone, dir: config.authDir, send: (jid, text) => sock.sendMessage(jid, { text }) })
+        .then((sent) => sent && logger.info('greeting sent to the own number'))
+        .catch((e) => logger.warn(`greeting failed: ${e.message}`));
       // Names only, so the right words can be put in the group settings.
       sock.groupFetchAllParticipating()
         .then((all) => logger.info(`GROUPS (${Object.keys(all).length}): ${Object.values(all).map((g) => `"${g.subject}"`).join(', ')}`))
