@@ -42,6 +42,15 @@ test('a colleague replying within the wait keeps the assistant silent', async ()
   assert.equal(calls.length, 0);
 });
 
+test('a reply typed from the bot\'s own number also keeps it silent', async () => {
+  const t = fakeTimers(); const calls = [];
+  const gate = new GroupGate({ waitMs: 1, isStaff: (m) => m.staff, answer: async (x) => calls.push(x), ...t });
+  gate.onMessage({ groupId: 'g', staff: false, text: 'is 305 available?' });
+  gate.onMessage({ groupId: 'g', fromMe: true, text: 'Yes' });
+  await t.runAll();
+  assert.equal(calls.length, 0);
+});
+
 test('own messages and unknown senders are never answered', async () => {
   const t = fakeTimers(); const calls = [];
   const gate = new GroupGate({ waitMs: 1, isStaff: (m) => m.staff, answer: async (x) => calls.push(x), ...t });

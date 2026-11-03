@@ -19,6 +19,10 @@ const BACKUP_DAYS = 30;
 const BACKUP_MONTHS = 12;
 const BACKUP_FOLDER = 'Zinax Stock Backups';
 
+// AI assistant: default BotLimit per product group (group ID -> amount in the group's unit), used when neither the
+// Products tab nor the Groups tab has one. Below or at this the assistant stays silent and tells the sales manager.
+const BOT_LIMIT_DEFAULTS = { PVC: 200 };
+
 // Column order of each sheet. The first column is the row ID; ServerAt is set by this script.
 const SHEETS = {
   Items: ['ID', 'Category', 'Code', 'Size', 'Qty', 'Remaining', 'Unit', 'Status', 'Shipment', 'Pallet', 'NetKg', 'GrossKg',
@@ -793,6 +797,7 @@ function botStock_(req) {
     groupName[String(g[0])] = String(g[1] || g[0]);
     if (Number(g[8]) > 0) groupLimit[String(g[0])] = Number(g[8]);
   });
+  Object.keys(BOT_LIMIT_DEFAULTS).forEach(function (id) { if (!groupLimit[id]) groupLimit[id] = BOT_LIMIT_DEFAULTS[id]; });
   const wantCat = String(req.category || '').trim().toLowerCase();
   const catOk = function (id) {
     return !wantCat || String(id).toLowerCase() === wantCat || String(groupName[id] || '').toLowerCase() === wantCat;
@@ -826,15 +831,18 @@ function botStock_(req) {
   const reserved = sizeItems.filter(function (r) { return String(r[18] || '').trim(); });
   const sum = function (list) { return Math.round(list.reduce(function (s, r) { return s + (Number(r[5]) || 0); }, 0) * 100) / 100; };
 
-  // One limit per size; a size with no product row of its own takes the group's limit.
+  // A BotLimit typed on a product (code and size) counts per size and they add up; with none, the group's limit
+  // applies once to the whole code.
   const sizes = {};
   sizeItems.forEach(function (r) { sizes[sizeKey_(r[3])] = String(r[3]); });
   sizeProducts.forEach(function (p) { sizes[sizeKey_(p[3])] = String(p[3]); });
-  const limitOf = function (k) {
+  const own = function (k) {
     const p = sizeProducts.filter(function (x) { return sizeKey_(x[3]) === k; })[0];
-    return p && Number(p[11]) > 0 ? Number(p[11]) : (groupLimit[cat] || 0);
+    return p && Number(p[11]) > 0 ? Number(p[11]) : 0;
   };
-  const limit = Object.keys(sizes).reduce(function (s, k) { return s + limitOf(k); }, 0);
+  const limitOf = function (k) { return own(k) || groupLimit[cat] || 0; };
+  const owned = Object.keys(sizes).filter(function (k) { return own(k) > 0; });
+  const limit = owned.length ? owned.reduce(function (s, k) { return s + own(k); }, 0) : (groupLimit[cat] || 0);
 
   let asked = Number(req.qty) > 0 ? Number(req.qty) : 0;
   let qtyChecked = true;

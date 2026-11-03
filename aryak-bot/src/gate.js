@@ -17,14 +17,20 @@ export class GroupGate {
   /** [m]: { groupId, senderName, text, hasImage, fromMe, ... } in the order WhatsApp delivered them. */
   onMessage(m) {
     const staff = m.fromMe ? true : this.isStaff(m);
-    const who = m.fromMe ? 'ARYAK Assistant' : staff ? `Staff ${m.senderName || ''}`.trim() : `Customer ${m.senderName || ''}`.trim();
+    const who = m.fromMe ? 'ARYAK' : staff ? `Staff ${m.senderName || ''}`.trim() : `Customer ${m.senderName || ''}`.trim();
     const line = `[${who}] ${m.text || ''}${m.hasImage ? ' (photo)' : ''}`.trim();
     const lines = this.transcripts.get(m.groupId) || [];
     const before = lines.slice();
     lines.push(line);
     this.transcripts.set(m.groupId, lines.slice(-this.keep));
 
-    if (m.fromMe) return 'own';
+    // Sent from the bot's own number: its replies, or a person using the same number (as when testing on a
+    // personal number). Either way the customer has an answer, so nothing waits any more.
+    if (m.fromMe) {
+      const p = this.pending.get(m.groupId);
+      if (p) { this.clearTimer(p.timer); this.pending.delete(m.groupId); }
+      return 'own';
+    }
     if (staff === null) { this.log(`unknown sender in ${m.groupId}, not answered`); return 'unknown'; }
     if (staff) {
       // A colleague is on it: drop what was waiting.

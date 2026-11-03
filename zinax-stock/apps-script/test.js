@@ -236,6 +236,13 @@ assert.ok(sheets.Stock.cells.some(x=>x[1]==='M-18' && x[9]===20 && x[10]==='LOW'
   // group default limit when the product has none: edge banding B305 has 0 stock
   sheets.Groups.cells[sheets.Groups.cells.findIndex(x=>x[0]==='EDGE_BANDING')][8]=3;
   a=bot({code:'B305',category:'Edge banding'}); assert.equal(a.limit,3); assert.equal(a.free,0); assert.equal(a.available,false);
+  // PVC film with no BotLimit anywhere: the 200 m default, once for the whole code
+  post({token:'tok',action:'sync',since:0,items:[
+    {...item,id:'ZX-D-1',category:'PVC',code:'D-1',size:'0.30*1400',qty:150,remaining:150,location:'A',updatedAt:1},
+    {...item,id:'ZX-D-2',category:'PVC',code:'D-1',size:'0.30*1220',qty:100,remaining:100,location:'A',updatedAt:1}]});
+  a=bot({code:'D-1'}); assert.equal(a.limit,200); assert.equal(a.free,250); assert.equal(a.available,true);
+  a=bot({code:'D-1',qty:60}); assert.equal(a.available,false);              // 250 > 60+200 is false
+  a=bot({code:'D-1',size:'0.30*1400'}); assert.equal(a.limit,200); assert.equal(a.available,false); // 150 <= 200
 }
 // nightly backup retention: last 30 days all, then the first of each month for 12 months
 {
