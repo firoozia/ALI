@@ -21,7 +21,7 @@ cd /opt/ALI/aryak-bot && npm ci --omit=dev
 # Settings come from the VM's metadata (Compute Engine > VM > Edit > Metadata), never from the repository.
 : > .env
 for k in ANTHROPIC_API_KEY CLAUDE_MODEL CLAUDE_EFFORT SHEET_URL ZINAX_BOT_TOKEN PAIR_PHONE SALES_MANAGER_JID \
-         STAFF_NUMBERS TEAM_TAGS ALLOWED_GROUP_NAMES ALLOWED_GROUPS WAIT_MINUTES MANAGER_DEDUPE_MINUTES; do
+         STAFF_NUMBERS TEAM_TAGS ALLOWED_GROUP_NAMES ALLOWED_GROUPS WATCH_GROUP_NAMES INFO_GROUP_NAME WAIT_MINUTES MANAGER_DEDUPE_MINUTES; do
   v="$(md "$k" || true)"
   [ -n "$v" ] && printf '%s=%s\n' "$k" "$v" >> .env
 done

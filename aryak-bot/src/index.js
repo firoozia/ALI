@@ -3,10 +3,12 @@
 import makeWASocket, { DisconnectReason, downloadMediaMessage, isJidGroup, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
+import { createHash } from 'node:crypto';
 import { answer } from './assistant.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
+import { InvoiceDesk, checkInvoice, reportText } from './invoice.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -23,6 +25,7 @@ const system = buildSystemPrompt(config.kbDir);
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const recent = new Map(); // manager alerts already sent
 const groups = new Map(); // group JID -> { subject, lidToPhone, at }
+const desk = new InvoiceDesk(); // latest customer request per watched group
 const lastRaw = new Map(); // group JID -> last customer message, quoted by the reply
 let sock;
 
@@ -58,9 +61,45 @@ const gate = new GroupGate({
   },
 });
 
+async function findGroupJid(word) {
+  const all = await sock.groupFetchAllParticipating();
+  return Object.values(all).find((g) => (g.subject || '').toLowerCase().includes(word))?.id || null;
+}
+
+/** A watched group: PDFs only. Staff PDF = invoice, other PDF = request. The bot never writes in this group. */
+async function watchGroup(raw, groupId) {
+  if (raw.key.fromMe) return;
+  const content = normalizeMessageContent(raw.message);
+  const file = content?.documentMessage;
+  if (!file || !String(file.mimetype || '').includes('pdf')) return;
+  let info = await groupInfo(groupId);
+  const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+  let staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender);
+  if (staff === null) { info = await groupInfo(groupId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender); }
+  if (staff === null) { logger.info(`pdf from unknown sender in ${groupId}, ignored`); return; }
+  const buf = await downloadMediaMessage(raw, 'buffer', {});
+  if (buf.length > 20 * 1024 * 1024) { logger.warn(`pdf too large in ${groupId}`); return; }
+  const doc = { hash: createHash('sha256').update(buf).digest('hex'), base64: buf.toString('base64'), fileName: file.fileName || '', senderName: raw.pushName || '', staff };
+  const got = desk.take(groupId, doc);
+  if (typeof got === 'string') { logger.info(`${groupId}: pdf ${got}`); return; }
+  if (!config.infoGroupName) { logger.warn('INFO_GROUP_NAME is not set: invoice check skipped'); return; }
+  const verdict = await checkInvoice({ client, config, request: got.request, invoice: doc });
+  const customer = info.subject.replace(config.groupSuffix, '').trim() || info.subject;
+  const text = reportText(verdict, { groupName: info.subject, customer, invoiceFile: doc.fileName, invoiceSender: doc.senderName });
+  logger.info(`${groupId}: invoice ${verdict.verdict}`);
+  if (!text) return;
+  const infoJid = await findGroupJid(config.infoGroupName);
+  if (!infoJid) { logger.error(`information group "${config.infoGroupName}" not found`); return; }
+  await sock.sendMessage(infoJid, { text });
+}
+
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) return;
+  if (config.watchGroupNames.length) {
+    const subject = (await groupInfo(groupId)).subject.toLowerCase();
+    if (config.watchGroupNames.some((w) => subject.includes(w))) return watchGroup(raw, groupId);
+  }
   if (!config.allowedGroups.includes(groupId)) {
     const subject = config.allowedGroupNames.length ? (await groupInfo(groupId)).subject.toLowerCase() : '';
     if (!config.allowedGroupNames.some((w) => subject.includes(w))) return;

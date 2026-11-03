@@ -19,6 +19,10 @@ export function loadConfig(env = process.env) {
     // Groups the assistant works in, by JID or by a word in the group name. With neither set it answers nowhere.
     allowedGroups: list(env.ALLOWED_GROUPS),
     allowedGroupNames: list(env.ALLOWED_GROUP_NAMES).map((s) => s.toLowerCase()),
+    // Invoice check: groups watched for a customer's PDF request and a colleague's PDF invoice (never answered in),
+    // and the information group that gets the mismatch reports (a word in its name).
+    watchGroupNames: list(env.WATCH_GROUP_NAMES).map((x) => x.toLowerCase()),
+    infoGroupName: (env.INFO_GROUP_NAME || '').trim().toLowerCase(),
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
     authDir: env.AUTH_DIR || './auth',
