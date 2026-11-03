@@ -19,10 +19,13 @@ export function loadConfig(env = process.env) {
     // Groups the assistant works in, by JID or by a word in the group name. With neither set it answers nowhere.
     allowedGroups: list(env.ALLOWED_GROUPS),
     allowedGroupNames: list(env.ALLOWED_GROUP_NAMES).map((s) => s.toLowerCase()),
-    // Invoice check: groups watched for a customer's PDF request and a colleague's PDF invoice (never answered in),
-    // and the information group that gets the mismatch reports (a word in its name).
+    // Invoice check (report only, never answers in these groups): customers' purchase orders arrive as PDFs in the
+    // request groups; a colleague's PDF in the invoice group is checked against its order; mismatches go to the
+    // information group and a short warning to the invoice group. Words in the group names, any case.
     watchGroupNames: list(env.WATCH_GROUP_NAMES).map((x) => x.toLowerCase()),
+    invoiceGroupName: (env.INVOICE_GROUP_NAME || '').trim().toLowerCase(),
     infoGroupName: (env.INFO_GROUP_NAME || '').trim().toLowerCase(),
+    requestsDir: env.REQUESTS_DIR || '/opt/aryak-auth/requests',
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
     authDir: env.AUTH_DIR || './auth',

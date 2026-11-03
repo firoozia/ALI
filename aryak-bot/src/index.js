@@ -8,7 +8,7 @@ import { answer } from './assistant.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
-import { InvoiceDesk, checkInvoice, reportText } from './invoice.js';
+import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staffWarning } from './invoice.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -25,7 +25,7 @@ const system = buildSystemPrompt(config.kbDir);
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const recent = new Map(); // manager alerts already sent
 const groups = new Map(); // group JID -> { subject, lidToPhone, at }
-const desk = new InvoiceDesk(); // latest customer request per watched group
+const desk = new InvoiceDesk({ dir: config.requestsDir }); // customers' purchase orders
 const lastRaw = new Map(); // group JID -> last customer message, quoted by the reply
 let sock;
 
@@ -66,39 +66,67 @@ async function findGroupJid(word) {
   return Object.values(all).find((g) => (g.subject || '').toLowerCase().includes(word))?.id || null;
 }
 
-/** A watched group: PDFs only. Staff PDF = invoice, other PDF = request. The bot never writes in this group. */
-async function watchGroup(raw, groupId) {
-  if (raw.key.fromMe) return;
-  const content = normalizeMessageContent(raw.message);
-  const file = content?.documentMessage;
-  if (!file || !String(file.mimetype || '').includes('pdf')) return;
+const sendTo = async (word, text) => {
+  const jid = await findGroupJid(word);
+  if (!jid) { logger.error(`group "${word}" not found (is the bot a member?)`); return; }
+  await sock.sendMessage(jid, { text });
+};
+
+/** The PDF of a message as a document, or null for anything else. */
+async function pdfOf(raw, groupId) {
+  const file = normalizeMessageContent(raw.message)?.documentMessage;
+  if (!file || !String(file.mimetype || '').includes('pdf')) return null;
   let info = await groupInfo(groupId);
   const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
   let staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender);
   if (staff === null) { info = await groupInfo(groupId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender); }
-  if (staff === null) { logger.info(`pdf from unknown sender in ${groupId}, ignored`); return; }
+  if (staff === null) { logger.info(`pdf from unknown sender in ${groupId}, ignored`); return null; }
   const buf = await downloadMediaMessage(raw, 'buffer', {});
-  if (buf.length > 20 * 1024 * 1024) { logger.warn(`pdf too large in ${groupId}`); return; }
-  const doc = { hash: createHash('sha256').update(buf).digest('hex'), base64: buf.toString('base64'), fileName: file.fileName || '', senderName: raw.pushName || '', staff };
-  const got = desk.take(groupId, doc);
-  if (typeof got === 'string') { logger.info(`${groupId}: pdf ${got}`); return; }
+  if (buf.length > 20 * 1024 * 1024) { logger.warn(`pdf too large in ${groupId}`); return null; }
+  return { info, doc: { hash: createHash('sha256').update(buf).digest('hex'), base64: buf.toString('base64'), fileName: file.fileName || '', senderName: raw.pushName || '', staff } };
+}
+
+/**
+ * Request group: a customer's PDF is a purchase order, remembered with its customer and PO number.
+ * Invoice group: a colleague's PDF is an invoice, checked against its order before it goes to the customer.
+ * The bot never answers a customer here.
+ */
+async function watchGroup(raw, groupId, role) {
+  if (raw.key.fromMe) return;
+  const got = await pdfOf(raw, groupId);
+  if (!got) return;
+  const { info, doc } = got;
+  if (role === 'request') {
+    if (doc.staff) return; // a colleague's PDF in the customer group is the forwarded invoice
+    const meta = await extractMeta({ client, config, doc });
+    if (desk.addRequest(doc, meta, info.subject)) logger.info(`${groupId}: purchase order ${meta.po || '(no number)'} of ${meta.customer || '?'} kept`);
+    return;
+  }
+  if (!doc.staff || !desk.firstTime(doc.hash)) return;
   if (!config.infoGroupName) { logger.warn('INFO_GROUP_NAME is not set: invoice check skipped'); return; }
-  const verdict = await checkInvoice({ client, config, request: got.request, invoice: doc });
-  const customer = info.subject.replace(config.groupSuffix, '').trim() || info.subject;
-  const text = reportText(verdict, { groupName: info.subject, customer, invoiceFile: doc.fileName, invoiceSender: doc.senderName });
+  const meta = await extractMeta({ client, config, doc });
+  const found = desk.find(meta);
+  const ctx = { groupName: info.subject, customer: meta.customer, invoiceFile: doc.fileName, invoiceSender: doc.senderName };
+  if (!found.request) {
+    logger.info(`${groupId}: no purchase order for invoice (PO ${meta.po || '?'})`);
+    await sendTo(config.infoGroupName, noRequestText(meta, { ...ctx, ambiguous: found.ambiguous }));
+    return;
+  }
+  const verdict = await checkInvoice({ client, config, request: found.request, invoice: doc });
   logger.info(`${groupId}: invoice ${verdict.verdict}`);
-  if (!text) return;
-  const infoJid = await findGroupJid(config.infoGroupName);
-  if (!infoJid) { logger.error(`information group "${config.infoGroupName}" not found`); return; }
-  await sock.sendMessage(infoJid, { text });
+  const text = reportText(verdict, ctx);
+  if (text) await sendTo(config.infoGroupName, text);
+  const warn = staffWarning(verdict);
+  if (warn) await sock.sendMessage(groupId, { text: warn });
 }
 
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) return;
-  if (config.watchGroupNames.length) {
+  if (config.watchGroupNames.length || config.invoiceGroupName) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();
-    if (config.watchGroupNames.some((w) => subject.includes(w))) return watchGroup(raw, groupId);
+    if (config.invoiceGroupName && subject.includes(config.invoiceGroupName)) return watchGroup(raw, groupId, 'invoice');
+    if (config.watchGroupNames.some((w) => subject.includes(w))) return watchGroup(raw, groupId, 'request');
   }
   if (!config.allowedGroups.includes(groupId)) {
     const subject = config.allowedGroupNames.length ? (await groupInfo(groupId)).subject.toLowerCase() : '';

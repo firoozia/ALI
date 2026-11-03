@@ -1,6 +1,9 @@
-// Invoice check: a customer's request (PDF) against the invoice a colleague sends (PDF) in the same group.
+// Invoice check: a customer's purchase order (PDF) against the invoice a colleague sends (PDF) in the same group.
 // Claude reads both files (text or scanned) and lists the differences; the report goes to the information group.
 // The bot only reports. It never writes to the customer, the sheet or the invoice.
+
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const INVOICE_RULES = `You check an ARYAK invoice against what the customer asked for. You get two PDF files: first the customer's request (an order or a list of wanted items), then the invoice issued by ARYAK. Both may be scans or photos; read them carefully.
 
@@ -94,24 +97,117 @@ export function reportText(v, ctx) {
   return lines.join('\n').trim();
 }
 
+const META_RULES = `Read this PDF (a customer's purchase order, LPO, or an ARYAK invoice) and answer with ONE JSON object and nothing else: {"customer":string,"po_number":string}. "customer" is the customer's company name as written. "po_number" is the purchase order / LPO number (on an invoice, the customer's PO or LPO reference), digits and letters only as written, or "" if there is none. Never guess.`;
+
+/** Cheap first read of a PDF: who the customer is and which purchase order number it carries. */
+export async function extractMeta({ client, config, doc }) {
+  try {
+    const res = await client.beta.messages.create({
+      model: config.model,
+      max_tokens: 400,
+      system: META_RULES,
+      messages: [{ role: 'user', content: [pdfBlock(doc), { type: 'text', text: `File name: ${doc.fileName || '—'}` }] }],
+      output_config: { effort: 'low' },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+    });
+    const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+    const a = s.indexOf('{');
+    const b = s.lastIndexOf('}');
+    const v = JSON.parse(s.slice(a, b + 1));
+    return { customer: String(v.customer || ''), po: normPo(v.po_number) };
+  } catch { return { customer: '', po: '' }; }
+}
+
+/** "LPO 615", "615" and "lpo-0615" all become "615". */
+export const normPo = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/^(lpo|po)/, '').replace(/^0+(?=\d)/, '');
+
+const normName = (s) => String(s || '').toLowerCase().replace(/\b(llc|l\.l\.c|co|company|ltd|fze|trading|est)\b/g, '').replace(/[^a-z0-9؀-ۿ]/g, '');
+
 /**
- * Per-group memory of the latest customer request, and the rule for which PDF is which.
- * A PDF from staff is an invoice; any other PDF is a request. The same file is never checked twice.
+ * The customers' purchase orders seen so far (from the request groups). Kept on disk when [dir] is given, so a
+ * restart of the bot does not lose them. An invoice is matched to its order by PO number, else by customer name.
  */
 export class InvoiceDesk {
-  constructor({ maxAgeMs = 7 * 24 * 3600 * 1000 } = {}) {
-    this.maxAgeMs = maxAgeMs;
-    this.requests = new Map(); // groupId -> { doc, at }
-    this.seen = new Set(); // file hashes already handled
+  constructor({ dir = '', maxAgeMs = 45 * 24 * 3600 * 1000, keep = 200 } = {}) {
+    Object.assign(this, { dir, maxAgeMs, keep });
+    this.requests = []; // { hash, at, meta, doc (base64 loaded lazily when from disk), groupName }
+    this.seen = new Set(); // invoice hashes already handled
+    if (dir) this.load();
   }
 
-  /** [doc]: { hash, base64, fileName, senderName, staff }. Returns 'request' | 'duplicate' | 'no-request' | { request }. */
-  take(groupId, doc, now = Date.now()) {
-    if (this.seen.has(doc.hash)) return 'duplicate';
-    this.seen.add(doc.hash);
-    if (!doc.staff) { this.requests.set(groupId, { doc, at: now }); return 'request'; }
-    const r = this.requests.get(groupId);
-    if (!r || now - r.at > this.maxAgeMs) return 'no-request';
-    return { request: r.doc };
+  addRequest(doc, meta, groupName = '', now = Date.now()) {
+    if (this.requests.some((r) => r.hash === doc.hash)) return false;
+    this.requests.push({ hash: doc.hash, at: now, meta, groupName, doc });
+    this.requests = this.requests.slice(-this.keep);
+    this.save(doc.hash, doc);
+    return true;
   }
+
+  /** [meta]: { customer, po } of the invoice. Returns { request } | { none: true } | { ambiguous: [..] }. */
+  find(meta, now = Date.now()) {
+    const live = this.requests.filter((r) => now - r.at <= this.maxAgeMs);
+    if (meta.po) {
+      const byPo = live.filter((r) => r.meta.po && r.meta.po === meta.po);
+      if (byPo.length === 1) return { request: this.docOf(byPo[0]) };
+      if (byPo.length > 1) {
+        const n = normName(meta.customer);
+        const same = n ? byPo.filter((r) => normName(r.meta.customer) === n) : [];
+        if (same.length === 1) return { request: this.docOf(same[0]) };
+        return { ambiguous: byPo.map((r) => r.groupName || r.meta.customer) };
+      }
+      return { none: true };
+    }
+    const n = normName(meta.customer);
+    const byName = n ? live.filter((r) => normName(r.meta.customer) === n) : [];
+    if (byName.length) return { request: this.docOf(byName[byName.length - 1]) };
+    return { none: true };
+  }
+
+  /** True the first time a given invoice file is seen. */
+  firstTime(hash) {
+    if (this.seen.has(hash)) return false;
+    this.seen.add(hash);
+    return true;
+  }
+
+  docOf(r) {
+    if (!r.doc && this.dir) r.doc = { ...r.docMeta, base64: fs.readFileSync(path.join(this.dir, `${r.hash}.pdf`)).toString('base64') };
+    return r.doc;
+  }
+
+  save(hash, doc) {
+    if (!this.dir) return;
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      fs.writeFileSync(path.join(this.dir, `${hash}.pdf`), Buffer.from(doc.base64, 'base64'));
+      fs.writeFileSync(path.join(this.dir, 'index.json'), JSON.stringify(this.requests.map((r) => ({
+        hash: r.hash, at: r.at, meta: r.meta, groupName: r.groupName, docMeta: { hash: r.hash, fileName: r.doc?.fileName ?? r.docMeta?.fileName, senderName: r.doc?.senderName ?? r.docMeta?.senderName },
+      }))));
+    } catch { /* a full disk must not stop the check */ }
+  }
+
+  load() {
+    try {
+      const items = JSON.parse(fs.readFileSync(path.join(this.dir, 'index.json'), 'utf8'));
+      this.requests = items.map((i) => ({ hash: i.hash, at: i.at, meta: i.meta, groupName: i.groupName, docMeta: i.docMeta, doc: null }));
+    } catch { this.requests = []; }
+  }
+}
+
+/** Short warning for the staff group, so a wrong invoice is not forwarded to the customer. */
+export function staffWarning(v) {
+  if (v.verdict === 'match' || v.verdict === 'error') return null;
+  return `⚠️ این فاکتور با سفارش مشتری نمی‌خواند (${v.problems.length} مورد). لطفاً پیش از ارسال به مشتری، گزارش گروه اطلاعات را ببینید.`;
+}
+
+/** Report when no purchase order matches the invoice. */
+export function noRequestText(meta, ctx) {
+  const lines = ['⚠️ سفارش مشتری برای این فاکتور پیدا نشد، بررسی انجام نشد'];
+  lines.push(`فاکتور: ${ctx.invoiceFile || '—'}`);
+  if (ctx.invoiceSender) lines.push(`فرستاد: ${ctx.invoiceSender}`);
+  lines.push(`مشتری روی فاکتور: ${meta.customer || '—'}`);
+  lines.push(`شمارهٔ سفارش روی فاکتور: ${meta.po || '—'}`);
+  if (ctx.ambiguous) lines.push(`چند سفارش با این شماره هست: ${ctx.ambiguous.join('، ')}`);
+  return lines.join('\n');
 }
