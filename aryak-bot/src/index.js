@@ -14,6 +14,9 @@ if (missing.length) {
   console.error(`Missing settings: ${missing.join(', ')}. See README.md.`);
   process.exit(1);
 }
+if (!config.allowedGroups.length && !config.allowedGroupNames.length) {
+  console.error('Set ALLOWED_GROUP_NAMES (a word in the group names) or ALLOWED_GROUPS; otherwise the assistant answers nowhere.');
+}
 const client = new Anthropic();
 const system = buildSystemPrompt(config.kbDir);
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -57,7 +60,10 @@ const gate = new GroupGate({
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) return;
-  if (config.allowedGroups.length && !config.allowedGroups.includes(groupId)) return;
+  if (!config.allowedGroups.includes(groupId)) {
+    const subject = config.allowedGroupNames.length ? (await groupInfo(groupId)).subject.toLowerCase() : '';
+    if (!config.allowedGroupNames.some((w) => subject.includes(w))) return;
+  }
   const content = normalizeMessageContent(raw.message);
   if (!content || content.protocolMessage || content.reactionMessage) return;
   const text = content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || '';

@@ -16,7 +16,9 @@ export function loadConfig(env = process.env) {
     salesManager: env.SALES_MANAGER_JID || '',
     staffNumbers: list(env.STAFF_NUMBERS),
     team, // { sales: [...], accounts: [...], logistics: [...], complaints: [...], team: [...] }
-    allowedGroups: list(env.ALLOWED_GROUPS), // empty: every group the number is in
+    // Groups the assistant works in, by JID or by a word in the group name. With neither set it answers nowhere.
+    allowedGroups: list(env.ALLOWED_GROUPS),
+    allowedGroupNames: list(env.ALLOWED_GROUP_NAMES).map((s) => s.toLowerCase()),
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
     authDir: env.AUTH_DIR || './auth',
