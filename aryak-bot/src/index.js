@@ -1,6 +1,6 @@
 // ARYAK Assistant: WhatsApp (Baileys) + Claude + Zinax Stock.
 
-import makeWASocket, { DisconnectReason, downloadMediaMessage, isJidGroup, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
+import makeWASocket, { DisconnectReason, downloadMediaMessage, isJidGroup, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
@@ -170,9 +170,15 @@ async function start() {
     if (qr) onQr();
     if (connection === 'open') {
       logger.info('connected to WhatsApp');
-      helloOnce({ value: config.helloOnce, phone: config.pairPhone, dir: config.authDir, send: (jid, text) => sock.sendMessage(jid, { text }) })
-        .then((sent) => sent && logger.info('greeting sent to the own number'))
-        .catch((e) => logger.warn(`greeting failed: ${e.message}`));
+      // A few seconds after opening, so the session keys are ready; sent to the account's own chat only.
+      setTimeout(() => {
+        helloOnce({
+          value: config.helloOnce, phone: config.pairPhone, dir: config.authDir,
+          jid: sock.user?.id ? jidNormalizedUser(sock.user.id) : '',
+          send: (jid, text) => sock.sendMessage(jid, { text }),
+          log: (m) => logger.info(m),
+        }).catch((e) => logger.warn(`greeting failed: ${e.message}`));
+      }, 5000);
       // Names only, so the right words can be put in the group settings.
       sock.groupFetchAllParticipating()
         .then((all) => logger.info(`GROUPS (${Object.keys(all).length}): ${Object.values(all).map((g) => `"${g.subject}"`).join(', ')}`))

@@ -27,3 +27,16 @@ test('a failed send is not remembered, so it is tried again', async () => {
   await assert.rejects(helloOnce({ value: 'x', phone: '9715', dir, send: async () => { throw new Error('down'); } }));
   assert.equal(await helloOnce({ value: 'x', phone: '9715', dir, send: async () => {} }), true);
 });
+
+test('the socket\'s own jid wins, every outcome is logged, a silent socket times out', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hello-'));
+  const logs = [];
+  const sent = [];
+  const log = (m) => logs.push(m);
+  assert.equal(await helloOnce({ value: '', phone: '9715', dir, send: async () => {}, log }), false);
+  assert.equal(await helloOnce({ value: 'a', phone: '9715', jid: '971@s.whatsapp.net', dir, send: async (j) => sent.push(j), log }), true);
+  assert.deepEqual(sent, ['971@s.whatsapp.net']);
+  assert.equal(await helloOnce({ value: 'a', phone: '9715', dir, send: async () => {}, log }), false);
+  assert.ok(logs.some((l) => /empty/.test(l)) && logs.some((l) => /sent$/.test(l)) && logs.some((l) => /already/.test(l)));
+  await assert.rejects(helloOnce({ value: 'b', phone: '9715', dir, send: () => new Promise(() => {}), timeoutMs: 20 }), /no answer/);
+});
