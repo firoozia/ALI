@@ -4,6 +4,7 @@
 # Then:  ... gcp.sh code      show the WhatsApp pairing code again
 #        ... gcp.sh restart   restart the bot (also updates it to the latest version)
 #        ... gcp.sh logs      last lines the bot printed
+#        ... gcp.sh relink    forget the WhatsApp login and link again (e.g. the new SIM; change PAIR_PHONE first)
 set -euo pipefail
 NAME=aryak-bot
 ZONE=us-central1-a   # e2-micro in us-central1 is in Google Cloud's free tier
@@ -38,6 +39,9 @@ case "${1:-install}" in
   code) show_code; exit ;;
   logs) serial | grep -a 'aryak\|node\|PAIRING\|connected\|Missing\|ERROR\|answered\|low-stock\|no-reply' | tail -40; exit ;;
   restart) gcloud compute instances reset "$NAME" --zone "$ZONE" --quiet; show_code; exit ;;
+  relink)
+    gcloud compute instances add-metadata "$NAME" --zone "$ZONE" --metadata RESET_AUTH="$(date +%s)"
+    gcloud compute instances reset "$NAME" --zone "$ZONE" --quiet; show_code; exit ;;
 esac
 
 echo "ARYAK Assistant: setting up a server in project $project"

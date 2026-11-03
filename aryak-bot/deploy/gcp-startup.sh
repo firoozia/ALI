@@ -27,6 +27,11 @@ for k in ANTHROPIC_API_KEY CLAUDE_MODEL CLAUDE_EFFORT SHEET_URL ZINAX_BOT_TOKEN 
 done
 echo 'AUTH_DIR=/opt/aryak-auth' >> .env
 chmod 600 .env
+# "gcp.sh relink" changes RESET_AUTH: forget the WhatsApp login once, so a new number can be linked.
+reset="$(md RESET_AUTH || true)"
+if [ -n "$reset" ] && [ "$reset" != "$(cat /opt/.aryak-reset 2>/dev/null)" ]; then
+  rm -rf /opt/aryak-auth && echo "$reset" > /opt/.aryak-reset
+fi
 mkdir -p /opt/aryak-auth
 
 cat > /etc/systemd/system/aryak-bot.service <<'UNIT'
