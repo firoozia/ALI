@@ -167,7 +167,13 @@ async function start() {
   });
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) onQr();
-    if (connection === 'open') logger.info('connected to WhatsApp');
+    if (connection === 'open') {
+      logger.info('connected to WhatsApp');
+      // Names only, so the right words can be put in the group settings.
+      sock.groupFetchAllParticipating()
+        .then((all) => logger.info(`GROUPS (${Object.keys(all).length}): ${Object.values(all).map((g) => `"${g.subject}"`).join(', ')}`))
+        .catch((e) => logger.warn(`group list failed: ${e.message}`));
+    }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       const next = afterClose({ loggedOut: code === DisconnectReason.loggedOut, registered: !!state.creds.registered });
