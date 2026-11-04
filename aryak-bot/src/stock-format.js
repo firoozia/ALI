@@ -37,6 +37,11 @@ const L = {
     ambiguous: (code, list) => `کد ${code} در چند گروه هست:\n${list}\nکدام را می‌خواهید؟ (نام یا شماره را بنویسید)`,
     noSize: (code, size, list) => `کد ${code} با اندازهٔ ${size} نیست. اندازه‌های موجود: ${list}`,
     stale: (n) => `(آخرین بروزرسانی: ${n} دقیقه پیش، برگه الان پاسخ نداد)`,
+    asked: (q, u, f) => `- درخواست: ${q} ${u}، آزاد: ${f}`,
+    enough: 'کافی است',
+    shortBy: (n, u) => `کافی نیست؛ کمبود ${n} ${u}`,
+    tight: 'کافی است ولی از حداقل موجودی کمتر می‌ماند',
+    noConv: 'تبدیل واحد ممکن نشد؛ مقدار قابل مقایسه نیست',
   },
   ar: {
     head: (code, cat, v) => `مخزون الكود ${code} (${cat}) ${v}`,
@@ -50,6 +55,11 @@ const L = {
     ambiguous: (code, list) => `الكود ${code} موجود في عدة مجموعات:\n${list}\nأيها تقصد؟ (اكتب الاسم أو الرقم)`,
     noSize: (code, size, list) => `الكود ${code} غير مسجل بالحجم ${size}. الأحجام المتوفرة: ${list}`,
     stale: (n) => `(آخر تحديث: قبل ${n} دقيقة، الجدول لم يستجب الآن)`,
+    asked: (q, u, f) => `- المطلوب: ${q} ${u}، المتاح: ${f}`,
+    enough: 'كافٍ',
+    shortBy: (n, u) => `غير كافٍ؛ النقص ${n} ${u}`,
+    tight: 'كافٍ لكن يبقى أقل من الحد الأدنى للمخزون',
+    noConv: 'تعذّر تحويل الوحدة؛ لا يمكن المقارنة',
   },
   en: {
     head: (code, cat, v) => `Stock of code ${code} (${cat}) ${v}`,
@@ -63,6 +73,11 @@ const L = {
     ambiguous: (code, list) => `Code ${code} is in several groups:\n${list}\nWhich one do you mean? (write the name or the number)`,
     noSize: (code, size, list) => `Code ${code} has no size ${size}. Sizes on record: ${list}`,
     stale: (n) => `(Last updated ${n} minutes ago, the sheet did not answer just now)`,
+    asked: (q, u, f) => `- Requested: ${q} ${u}, free: ${f}`,
+    enough: 'enough',
+    shortBy: (n, u) => `NOT enough; short by ${n} ${u}`,
+    tight: 'enough, but it leaves less than the minimum stock',
+    noConv: 'the unit could not be converted; cannot compare',
   },
   ur: {
     head: (code, cat, v) => `کوڈ ${code} (${cat}) کا اسٹاک ${v}`,
@@ -76,6 +91,11 @@ const L = {
     ambiguous: (code, list) => `کوڈ ${code} کئی گروپس میں ہے:\n${list}\nآپ کون سا چاہتے ہیں؟ (نام یا نمبر لکھیں)`,
     noSize: (code, size, list) => `کوڈ ${code} میں سائز ${size} نہیں ہے۔ موجود سائز: ${list}`,
     stale: (n) => `(آخری اپڈیٹ: ${n} منٹ پہلے، شیٹ نے ابھی جواب نہیں دیا)`,
+    asked: (q, u, f) => `- درخواست: ${q} ${u}، دستیاب: ${f}`,
+    enough: 'کافی ہے',
+    shortBy: (n, u) => `کافی نہیں؛ کمی ${n} ${u}`,
+    tight: 'کافی ہے مگر کم از کم اسٹاک سے کم بچے گا',
+    noConv: 'یونٹ تبدیل نہ ہو سکا؛ موازنہ ممکن نہیں',
   },
 };
 
@@ -138,8 +158,27 @@ export function aggregate(rows, result) {
   };
 }
 
+/**
+ * A requested quantity against the free stock: the request, what is free and a clear verdict (enough / short by N / enough but
+ * under the minimum). [want] is { quantity, unit } as asked; the sheet's own conversion (askedInUnit) wins when it has one.
+ */
+function askedLine(result, a, want, t, unit) {
+  const q = Number(want?.quantity);
+  if (!(q > 0)) return null;
+  const shown = `${num(q)}`;
+  const shownUnit = want.unit || unit;
+  const line = t.asked(shown, shownUnit, `${num(a.free)} ${unit}`);
+  let inUnit = Number(result.askedInUnit) || 0;
+  if (!inUnit && (!want.unit || want.unit === unit)) inUnit = q;
+  if (result.qtyChecked === false || !inUnit) return ['', line, `→ ${t.noConv}`];
+  const free = a.free;
+  const verdict = inUnit > free + 1e-6 ? t.shortBy(num(inUnit - free), unit)
+    : a.limit > 0 && free - inUnit < a.limit - 1e-6 ? t.tight : t.enough;
+  return ['', line, `→ ${verdict}`];
+}
+
 /** The one block of a botStock result, in [lang]. */
-export function stockBlocks(result, lang = 'fa') {
+export function stockBlocks(result, lang = 'fa', want = null) {
   const t = wordsOf(lang);
   const unit = result.unit || '';
   const cat = groupsOf(lang)[String(result.category || '').toLowerCase()] || result.category || '';
@@ -160,6 +199,8 @@ export function stockBlocks(result, lang = 'fa') {
     `- ${t.packages}: ${a.packs ? packsLine(a, unit, a.free + a.reserved, t) : packagesLine(a.packages, a.open, t)}`,
     `- ${t.place}: ${a.places.length ? a.places.join(`${t.comma} `) : '—'}`,
   ];
+  const ask = askedLine(result, a, want, t, unit);
+  if (ask) lines.push(...ask);
   if (low) lines.push('', t.warning(num(a.limit), unit));
   return [lines.join('\n')];
 }
@@ -168,11 +209,11 @@ export function stockBlocks(result, lang = 'fa') {
  * The whole answer for a botStock result in [lang]. [note]: a line put first (for example "the size you named is not
  * registered, this is the whole code").
  */
-export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa') {
+export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa', want = null) {
   const t = wordsOf(lang);
   if (!result.found) return t.notFound(result.code || askedCode);
   if (result.ambiguous) return t.ambiguous(askedCode, result.categories.map((c, i) => `${i + 1}) ${c}`).join('\n'));
   if (result.sizeFound === false) return t.noSize(result.code, result.size, (result.sizes || []).join(`${t.comma} `) || '—');
   const old = result.stale ? t.stale(result.ageMinutes) : '';
-  return [note, old, ...stockBlocks(result, lang)].filter(Boolean).join('\n\n');
+  return [note, old, ...stockBlocks(result, lang, want)].filter(Boolean).join('\n\n');
 }

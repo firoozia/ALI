@@ -40,6 +40,8 @@ export const STAFF_TOOLS = [
         code: { type: 'string', description: 'Product code, e.g. "305" or "KG10-300".' },
         category: { type: 'string', description: 'Product group if known, e.g. "PVC film".' },
         size: { type: 'string', description: 'Thickness x width if known, e.g. "0.30*1400".' },
+        quantity: { type: 'number', description: 'The quantity that was REQUESTED for this code (an order line, a confirmed photo or voice request), if any. Always pass it when a quantity is known: the answer then says whether the free stock covers it.' },
+        quantity_unit: { type: 'string', description: 'Unit of the requested quantity: m, roll, sheet, piece. Empty if not said.' },
       },
       required: ['code'],
     },

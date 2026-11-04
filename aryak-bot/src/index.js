@@ -490,17 +490,19 @@ const textOf = (content) => content?.conversation || content?.extendedTextMessag
 const staffHandlersFor = (key, lang = 'fa') => ({
   staff_stock: async (i) => {
     try {
-      let found = await fetchStock(config, { code: i.code, category: i.category, size: i.size });
+      const want = Number(i.quantity) > 0 ? { quantity: Number(i.quantity), unit: i.quantity_unit || '' } : null;
+      const ask = want ? { quantity: want.quantity, quantity_unit: want.unit } : {};
+      let found = await fetchStock(config, { code: i.code, category: i.category, size: i.size, ...ask });
       let note = '';
       if (found.sizeFound === false) {
         // The named size is not registered: answer for the whole code and say so.
         note = sizeNote(lang, i.size);
-        found = await fetchStock(config, { code: i.code, category: i.category, size: '' });
+        found = await fetchStock(config, { code: i.code, category: i.category, size: '', ...ask });
       }
       // Which group was meant? The next message of the same person answers, even without the name.
       if (found.ambiguous) followDesk.set(key, { code: i.code, size: i.size || '', options: found.categories, lang });
       return {
-        formatted: formatStaffStock(found, i.code, note, lang),
+        formatted: formatStaffStock(found, i.code, note, lang, want),
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     } catch (e) {
