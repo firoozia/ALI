@@ -61,13 +61,10 @@ export function stockBlocks(result) {
   });
   const lows = info.filter((i) => i.low);
   const grouped = lows.length > 1;
-  const blocks = info.map((i) => (i.low && !grouped ? [...i.lines, '', warning(i.limit, unit)].join('
-') : i.lines.join('
-')));
+  const blocks = info.map((i) => (i.low && !grouped ? [...i.lines, '', warning(i.limit, unit)].join('\n') : i.lines.join('\n')));
   if (grouped) {
     blocks.push(['⚠️  موجودی آزاد این اندازه‌ها زیر حداقل موجودی است:',
-      ...lows.map((i) => `- ${i.s.size || '—'}: ${num(i.free)} ${unit} (حداقل ${num(i.limit)} ${unit})`)].join('
-'));
+      ...lows.map((i) => `- ${i.s.size || '—'}: ${num(i.free)} ${unit} (حداقل ${num(i.limit)} ${unit})`)].join('\n'));
   }
   return blocks;
 }

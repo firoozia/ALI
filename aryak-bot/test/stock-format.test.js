@@ -108,11 +108,7 @@ test('several sizes below the minimum: one grouped warning at the end', () => {
     ],
   }, '408');
   assert.equal((t.match(/⚠️/g) || []).length, 1);
-  assert.match(t, /
-
-⚠️  موجودی آزاد این اندازه‌ها زیر حداقل موجودی است:
-- 0.30\*1400: 0 m \(حداقل 200 m\)
-- 0.35\*1400: 50 m \(حداقل 200 m\)$/);
+  assert.match(t, /\n\n⚠️  موجودی آزاد این اندازه‌ها زیر حداقل موجودی است:\n- 0.30\*1400: 0 m \(حداقل 200 m\)\n- 0.35\*1400: 50 m \(حداقل 200 m\)$/);
   assert.equal((t.match(/خیلی کم است/g) || []).length, 2);
 });
 
