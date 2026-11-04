@@ -20,7 +20,7 @@ test('greeting goes once per value, only to the own number', async () => {
   assert.equal(await run('1'), false);
   assert.equal(await run('2'), true);
   assert.deepEqual(sent, [['971557699100@s.whatsapp.net', helloText()], ['971557699100@s.whatsapp.net', helloText()]]);
-  assert.match(helloText('عسل'), /من عسل هستم/);
+  assert.match(helloText('آتوسا'), /من آتوسا هستم/);
 });
 
 test('a failed send is not remembered, so it is tried again', async () => {

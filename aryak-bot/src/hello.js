@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const helloText = (name = 'عسل') => `سلام! من ${name} هستم، دستیار آریاک. روشنم و کار می‌کنم ✅`;
+export const helloText = (name = 'آتوسا') => `سلام! من ${name} هستم، دستیار آریاک. روشنم و کار می‌کنم ✅`;
 
 /** The bot's own chat from PAIR_PHONE digits, nothing else. */
 export const ownJid = (phone) => {

@@ -32,8 +32,8 @@ export function loadConfig(env = process.env) {
     staffGroupNames: list(env.STAFF_GROUP_NAMES).map((x) => x.toLowerCase()),
     commandGroupNames: list(env.COMMAND_GROUP_NAMES).map((x) => x.toLowerCase()),
     // The assistant's name: how she introduces herself and signs, and the first word colleagues call her by.
-    displayName: (env.BOT_DISPLAY_NAME || 'عسل').trim(),
-    botNames: (env.BOT_NAMES ? list(env.BOT_NAMES) : [env.BOT_DISPLAY_NAME || 'عسل', 'asal', 'دستیار']).map((x) => x.toLowerCase()),
+    displayName: (env.BOT_DISPLAY_NAME || 'آتوسا').trim(),
+    botNames: (env.BOT_NAMES ? list(env.BOT_NAMES) : [env.BOT_DISPLAY_NAME || 'آتوسا', 'atossa', 'دستیار']).map((x) => x.toLowerCase()),
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
