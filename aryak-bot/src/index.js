@@ -13,6 +13,8 @@ import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
+import { metadataToken, speechTranscriber } from './speech.js';
+import { NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand } from './voice.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -33,6 +35,8 @@ const desk = new InvoiceDesk({ dir: config.requestsDir }); // customers' purchas
 const botState = new BotState(config.authDir); // pause switch
 const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
+const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
+const transcribe = speechTranscriber({ languages: config.speechLanguages, token: metadataToken() });
 const lastRaw = new Map(); // group JID -> last customer message, quoted by the reply
 let sock;
 
@@ -51,8 +55,14 @@ const gate = new GroupGate({
   waitMs: config.waitMinutes * 60 * 1000,
   isStaff: (m) => m.staff,
   log: (s) => logger.info(s),
-  answer: async ({ groupId, messages, transcript }) => {
+  answer: async ({ groupId, messages: incoming, transcript }) => {
     if (botState.paused) return;
+    let messages = incoming;
+    if (config.voiceEnabled) {
+      const step = await customerVoiceStep(groupId, messages);
+      if (step.done) return;
+      messages = step.messages;
+    }
     const info = await groupInfo(groupId);
     const customer = info.subject.replace(config.groupSuffix, '').trim() || info.subject;
     const images = [];
@@ -130,6 +140,39 @@ async function watchGroup(raw, groupId, role) {
   if (warn) await sock.sendMessage(groupId, { text: warn });
 }
 
+/** Reads one voice note: download, speech to text, intent. Never throws. */
+async function understandAudio(load, seconds) {
+  try { return await understand({ buffer: await load(), seconds, config, client, transcribe, log: (s) => logger.info(s) }); }
+  catch (e) { logger.warn(`voice failed: ${e.message}`); return { ok: false, reason: 'error' }; }
+}
+
+/**
+ * Customers' voice notes. A voice note is never acted on: it is answered with a question ("did I understand...?").
+ * Only the customer's next written message counts: a clear yes lets the request go on as typed text.
+ * Returns { done: true } when a message was sent here, else { messages } for the normal answer.
+ */
+async function customerVoiceStep(groupId, messages) {
+  const key = `g:${groupId}`;
+  const quoted = { quoted: lastRaw.get(groupId) };
+  const voice = messages.filter((x) => x.isVoice).at(-1);
+  if (voice) {
+    const u = await understandAudio(voice.loadAudio, voice.seconds);
+    if (!u.ok) { voiceDesk.clear(key); await sock.sendMessage(groupId, { text: NOT_UNDERSTOOD_CUSTOMER }, quoted); return { done: true }; }
+    voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
+    await sock.sendMessage(groupId, { text: u.confirmText }, quoted);
+    return { done: true };
+  }
+  const pend = voiceDesk.get(key);
+  const last = pend && messages.filter((x) => x.text && !x.hasImage && x.text !== '(voice note, sticker or file)').at(-1);
+  if (last) {
+    const kind = answerKind(last.text);
+    voiceDesk.clear(key);
+    if (kind === 'no') { await sock.sendMessage(groupId, { text: retryText(pend.lang) }, quoted); return { done: true }; }
+    if (kind === 'yes') return { messages: [{ ...last, text: pend.requestText, hasImage: false, loadImage: null }] };
+  }
+  return { messages };
+}
+
 const jidDigits = (j) => String(j || '').replace(/@.*$/, '').replace(/:\d+$/, '').replace(/\D/g, '');
 const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
 const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
@@ -151,8 +194,9 @@ const staffHandlers = {
  */
 async function handleStaffChat(raw, chatId, group) {
   const content = normalizeMessageContent(raw.message);
+  const audio = config.voiceEnabled ? content?.audioMessage : null;
   const text = textOf(content);
-  if (!text) return false;
+  if (!text && !audio) return false;
   if (sent.has(raw.key.id) || text.startsWith('🤖')) return true; // the bot's own message coming back
   const own = ownIds();
   const isSelf = own.some((o) => jidDigits(o) === jidDigits(chatId));
@@ -169,13 +213,33 @@ async function handleStaffChat(raw, chatId, group) {
   const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
   const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
   if (cmd) { await reply(runCommand(cmd, { name: config.displayName, state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
-  const ctx = content.extendedTextMessage?.contextInfo || {};
-  if (group && !isAddressed({
+  const ctx = (content.extendedTextMessage || audio)?.contextInfo || {};
+  const addressed = !group || isAddressed({
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
     ownIds: own, names: config.botNames,
-  })) return false;
+  });
+  // A voice note is only answered with a question; the request goes on after the same person says yes.
+  const key = `s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
+  if (audio) {
+    if (!addressed) return false;
+    const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0);
+    if (!u.ok) { voiceDesk.clear(key); await reply(NOT_UNDERSTOOD_FA); return true; }
+    voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
+    await reply(u.confirmText);
+    return true;
+  }
+  let asked = text;
+  let confirmed = false;
+  const pend = config.voiceEnabled ? voiceDesk.get(key) : null;
+  if (pend) {
+    const kind = answerKind(text);
+    voiceDesk.clear(key);
+    if (kind === 'no') { await reply(retryText(pend.lang)); return true; }
+    if (kind === 'yes') { asked = pend.requestText; confirmed = true; }
+  }
+  if (!addressed && !confirmed) return false;
   const answerText = await staffAnswer({
-    client, config, text, quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlers,
+    client, config, text: asked, quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlers,
   });
   logger.info(`${chatId}: staff question ${answerText ? 'answered' : 'no reply'}`);
   if (answerText) await reply(answerText);
@@ -206,6 +270,8 @@ async function onMessage(raw) {
   const m = {
     groupId, fromMe: !!raw.key.fromMe, sender: raw.key.participant, senderAlt: raw.key.participantAlt,
     senderName: raw.pushName || '', text, hasImage: !!image,
+    isVoice: !!content.audioMessage, seconds: content.audioMessage?.seconds || 0,
+    loadAudio: content.audioMessage ? () => downloadMediaMessage(raw, 'buffer', {}) : null,
     loadImage: image ? async () => ({
       base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'),
       mimeType: image.mimetype?.split(';')[0] || 'image/jpeg',

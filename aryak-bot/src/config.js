@@ -34,6 +34,11 @@ export function loadConfig(env = process.env) {
     // The assistant's name: how she introduces herself and signs, and the first word colleagues call her by.
     displayName: (env.BOT_DISPLAY_NAME || 'آتوسا').trim(),
     botNames: (env.BOT_NAMES ? list(env.BOT_NAMES) : [env.BOT_DISPLAY_NAME || 'آتوسا', 'atossa', 'دستیار']).map((x) => x.toLowerCase()),
+    // Voice notes: speech-to-text languages (the first is the main one, up to three more are alternatives), the lowest
+    // confidence accepted, and a switch (VOICE=off keeps the old behaviour: voice notes are ignored).
+    voiceEnabled: (env.VOICE || 'on').toLowerCase() !== 'off',
+    speechLanguages: env.SPEECH_LANGUAGES ? list(env.SPEECH_LANGUAGES) : ['fa-IR', 'ar-AE', 'en-IN', 'ur-PK'],
+    speechMinConfidence: Number(env.SPEECH_MIN_CONFIDENCE || 0.5),
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
