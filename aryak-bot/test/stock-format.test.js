@@ -39,21 +39,6 @@ test('free exactly at the limit is enough; mixed open and closed packages', () =
   assert.match(t, /- بسته: 4 بسته، 1 باز شده/);
 });
 
-test('several size rows give one block each, separated by a blank line; per-row places and reserved', () => {
-  const t = formatStaffStock({
-    ...low,
-    sizes: [
-      { size: '0.30*1400', free: 2.5, packages: 1, open: 1, limit: 200, reserved: 0, locations: ['Showroom'] },
-      { size: '0.35*1400', free: 500, packages: 5, open: 0, limit: 200, reserved: 40, locations: ['Warehouse A', 'Warehouse B'] },
-    ],
-  }, '408');
-  const blocks = t.split('\n\n');
-  assert.equal(blocks.length, 3); // the first block carries its own blank line before the warning
-  assert.match(t, /خیلی کم است[\s\S]*⚠️[\s\S]*موجودی کد 408 \(فیلم PVC\) کافی است/);
-  assert.match(t, /- رزرو: 40 m/);
-  assert.match(t, /- محل: Warehouse A، Warehouse B/);
-});
-
 test('odd cases are short Persian lines', () => {
   assert.match(formatStaffStock({ found: false, code: '999' }), /پیدا نشد/);
   assert.match(formatStaffStock({ found: true, ambiguous: true, categories: ['A', 'B'] }, '12'), /چند گروه/);
@@ -82,36 +67,83 @@ test('the staff never see the old words; the label and the warning use "حداق
   assert.match(formatStaffStock(low, '408'), /- حداقل موجودی: 200 m/);
 });
 
-test('empty placeholder rows are skipped; a real size with no stock stays', () => {
-  const t = formatStaffStock({
-    ...low, code: '229',
-    sizes: [
-      { size: '', free: 0, packages: 0, open: 0, limit: 200 },
-      { size: '0.30*1400', free: 0, packages: 0, open: 0, limit: 200 },
-      { size: '0.35*1400', free: 1257.9, packages: 23, open: 14, limit: 200 },
-    ],
-  }, '229');
-  assert.ok(!t.includes('- سایز: —'));
-  assert.match(t, /- سایز: 0.30\*1400/);
-  assert.match(t, /- سایز: 0.35\*1400/);
-  assert.equal((t.match(/موجودی کد 229/g) || []).length, 2);
-  assert.equal((t.match(/⚠️/g) || []).length, 1); // only the one below the minimum, under its own block
-});
-
-test('several sizes below the minimum: one grouped warning at the end', () => {
-  const t = formatStaffStock({
-    ...low,
-    sizes: [
-      { size: '0.30*1400', free: 0, packages: 0, open: 0, limit: 200 },
-      { size: '0.35*1400', free: 50, packages: 1, open: 1, limit: 200 },
-      { size: '0.40*1400', free: 900, packages: 8, open: 0, limit: 200 },
-    ],
-  }, '408');
-  assert.equal((t.match(/⚠️/g) || []).length, 1);
-  assert.match(t, /\n\n⚠️  موجودی آزاد این اندازه‌ها زیر حداقل موجودی است:\n- 0.30\*1400: 0 m \(حداقل 200 m\)\n- 0.35\*1400: 50 m \(حداقل 200 m\)$/);
-  assert.equal((t.match(/خیلی کم است/g) || []).length, 2);
-});
-
 test('all rows empty: the answer still says something', () => {
   assert.match(formatStaffStock({ ...low, sizes: [{ size: '', free: 0, packages: 0, open: 0, limit: 200 }] }, '408'), /موجودی کد 408/);
+});
+
+// ---- a code with several sizes: one verdict on the total, a block per size with stock, zero sizes in one line ----
+const pieces229 = [35, 45, ...Array(11).fill(8), 9.9]; // 14 open pieces, 177.9 m; with 9 packs of 120 m = 1257.9 m
+const sheet229 = {
+  ...low, code: '229', free: 1257.9, reserved: 0, limit: 200, locations: ['Showroom: 20', 'Warehouse 2: 3'],
+  sizes: [
+    { size: '', free: 0, packages: 0, open: 0, limit: 200, packs: [], pieces: [] },
+    { size: '0.30*1400', free: 0, packages: 0, open: 0, limit: 200, packs: [], pieces: [] },
+    { size: '0.35*1400', free: 1257.9, packages: 23, open: 14, limit: 200, packs: [{ qty: 120, count: 9 }], pieces: pieces229 },
+  ],
+};
+
+test('code 229 from the sheet: one verdict with the total, one block, the empty size in one line', () => {
+  assert.equal(formatStaffStock(sheet229, '229'), [
+    'موجودی کد 229 (فیلم PVC) کافی است (کل آزاد: 1257.9 m)',
+    '',
+    '- سایز: 0.35*1400',
+    '- آزاد: 1257.9 m',
+    '- رزرو: 0 m',
+    '- حداقل موجودی: 200 m',
+    '- بسته: 9 بسته 120 m + باز: 35 m و 45 m و 8 m و 8 m و 8 m و 8 m و 8 قطعهٔ دیگر (کل 1257.9 m)',
+    '- محل: Showroom، Warehouse 2',
+    '',
+    'بدون موجودی: 0.30*1400',
+  ].join('\n'));
+});
+
+test('several sizes: blocks only for sizes with stock or a reservation; reserved-only counts; zero sizes are comma-separated', () => {
+  const t = formatStaffStock({
+    ...low, limit: 200,
+    sizes: [
+      { size: 'a', free: 500, packages: 5, open: 0, limit: 200, reserved: 0 },
+      { size: 'b', free: 0, packages: 0, open: 0, limit: 200, reserved: 30 },
+      { size: 'c', free: 0, packages: 0, open: 0, limit: 200 },
+      { size: 'd', free: 0, packages: 0, open: 0, limit: 200 },
+    ],
+  }, '408');
+  assert.equal((t.match(/- سایز:/g) || []).length, 2);
+  assert.match(t, /- سایز: b[\s\S]*- رزرو: 30 m/);
+  assert.match(t, /\n\nبدون موجودی: c، d$/);
+  assert.match(t, /کافی است \(کل آزاد: 500 m\)/);
+  assert.ok(!t.includes('⚠️'));
+});
+
+test('several sizes: the code total decides; a size below the minimum is flagged only when the total is low too', () => {
+  const sizes = (a, b) => [
+    { size: 'a', free: a, packages: 1, open: 1, limit: 200, reserved: 0 },
+    { size: 'b', free: b, packages: 1, open: 1, limit: 200, reserved: 0 },
+  ];
+  const high = formatStaffStock({ ...low, limit: 200, sizes: sizes(50, 900) }, '408');
+  assert.match(high, /کافی است \(کل آزاد: 950 m\)/);
+  assert.ok(!high.includes('⚠️'), 'no warning when the total is above the minimum');
+  const lowT = formatStaffStock({ ...low, limit: 200, sizes: sizes(50, 60) }, '408');
+  assert.match(lowT, /^موجودی کد 408 \(فیلم PVC\) خیلی کم است \(کل آزاد: 110 m\)/);
+  assert.equal((lowT.match(/این اندازه زیر حداقل موجودی \(200 m\) است/g) || []).length, 2);
+  assert.match(lowT, /\n\n⚠️  موجودی آزاد زیر حداقل موجودی \(200 m\) است$/);
+});
+
+test('several sizes, every one empty: a short block with the sizes, no repeated blocks', () => {
+  const t = formatStaffStock({
+    ...low,
+    sizes: [{ size: '0.30*1400', free: 0, limit: 200 }, { size: '0.35*1400', free: 0, limit: 200 }],
+  }, '408');
+  assert.equal(t, ['موجودی کد 408 (فیلم PVC) ندارد', '- سایزها: 0.30*1400، 0.35*1400'].join('\n'));
+});
+
+test('a single real size keeps the original block, even beside a placeholder row', () => {
+  const t = formatStaffStock({ ...low, sizes: [{ size: '', free: 0, packages: 0, open: 0, limit: 200 }, ...low.sizes] }, '408');
+  assert.equal(t, formatStaffStock(low, '408'));
+});
+
+test('open pieces: up to six are listed, more are counted, the total stays', () => {
+  const one = (pieces) => formatStaffStock({ ...low, sizes: [{ size: 's', free: 100, packages: pieces.length, open: pieces.length, limit: 50, packs: [], pieces }] }, '408');
+  assert.match(one([1, 2, 3, 4, 5, 6]), /- بسته: باز: 1 m و 2 m و 3 m و 4 m و 5 m و 6 m \(کل 100 m\)/);
+  assert.match(one([1, 2, 3, 4, 5, 6, 7]), /باز: 1 m و 2 m و 3 m و 4 m و 5 m و 6 m و 1 قطعهٔ دیگر \(کل 100 m\)/);
+  assert.match(one(Array(20).fill(1)), /و 14 قطعهٔ دیگر \(کل 100 m\)/);
 });
