@@ -83,3 +83,47 @@ export const sizeNote = (lang, size) => {
     ur: `سائز ${size} اس کوڈ کے لیے رجسٹرڈ نہیں؛ نتیجہ پورے کوڈ کا ہے۔`,
   }[l];
 };
+
+const itemText = (lang, i) => {
+  const q = i.quantity ? ` (${i.quantity}${i.unit ? ` ${i.unit}` : ''})` : '';
+  return `${{ fa: 'کد', ar: 'الكود', en: 'code', ur: 'کوڈ' }[lang]} ${i.code}${q}`;
+};
+const joinItems = (lang, items) => items.map((i) => itemText(lang, i)).join({ fa: ' و ', ar: ' و ', en: ' and ', ur: ' اور ' }[lang]);
+const textLang = (lang) => (lang === 'hi' ? 'en' : langOf(lang) || 'fa');
+
+/** "Did I understand correctly? Stock of code 408 (200 m) and code 229?" for the codes read from a photo. */
+export const confirmItems = (lang, intent, items, unclear = 0) => {
+  const l = textLang(lang);
+  const list = joinItems(l, items);
+  const stock = intent !== 'order';
+  const more = unclear
+    ? { fa: ` (${unclear} مورد خوانا نبود)`, ar: ` (تعذرت قراءة ${unclear})`, en: ` (${unclear} could not be read)`, ur: ` (${unclear} پڑھے نہیں جا سکے)` }[l]
+    : '';
+  return {
+    fa: `آیا درست متوجه شدم؟ ${stock ? 'موجودی' : 'سفارش'} ${list}؟${more}`,
+    ar: `هل فهمت بشكل صحيح؟ ${stock ? 'مخزون' : 'طلب'} ${list}؟${more}`,
+    en: `Did I understand correctly? ${stock ? 'Stock of' : 'Order of'} ${list}?${more}`,
+    ur: `کیا میں نے صحیح سمجھا؟ ${list} کا ${stock ? 'اسٹاک' : 'آرڈر'}؟${more}`,
+  }[l];
+};
+
+/** The request as the person would have typed it, for the normal flow after a yes. */
+export const requestFromItems = (lang, intent, items) => {
+  const l = textLang(lang);
+  const list = joinItems(l, items);
+  const stock = intent !== 'order';
+  return {
+    fa: stock ? `موجودی ${list} چقدر است؟` : `سفارش: ${list}`,
+    ar: stock ? `هل ${list} متوفر؟` : `طلب: ${list}`,
+    en: stock ? `Is ${list} available?` : `Order: ${list}`,
+    ur: stock ? `کیا ${list} دستیاب ہے؟` : `آرڈر: ${list}`,
+  }[l];
+};
+
+/** Said when a photo cannot be used: unreadable, or no code in it. */
+export const photoUnclear = (lang) => ({
+  fa: 'عکس خوانا نیست یا کدی در آن ندیدم؛ لطفاً درخواست را بنویسید یا عکس واضح‌تری بفرستید',
+  ar: 'الصورة غير واضحة أو لم أجد فيها كودًا؛ يرجى كتابة الطلب أو إرسال صورة أوضح',
+  en: 'I could not read the photo or find a code in it. Please write your request or send a clearer photo.',
+  ur: 'تصویر پڑھی نہیں جا سکی یا اس میں کوئی کوڈ نظر نہیں آیا؛ براہِ کرم درخواست لکھیں یا زیادہ واضح تصویر بھیجیں',
+}[textLang(lang)]);

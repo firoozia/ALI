@@ -8,7 +8,8 @@ import { answer } from './assistant.js';
 import { SheetCache, fetchReport, fetchStock, isTimeout, warmSheet } from './stock.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
-import { detectLang, noVoice, notUnderstood, sheetFailed, sizeNote } from './lang.js';
+import { detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
+import { imageAction, understandImages } from './image.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
@@ -172,6 +173,16 @@ async function watchGroup(raw, groupId, role) {
   if (warn) await sock.sendMessage(groupId, { text: warn });
 }
 
+/** Reads the photos of a message with Claude's vision. Never throws. */
+async function understandPhotos(messagesWithImages, caption, fallbackLang) {
+  const images = [];
+  for (const m of messagesWithImages.slice(-3)) {
+    try { images.push(await m.loadImage()); } catch (e) { logger.warn(`photo download failed: ${e.message}`); }
+  }
+  if (!images.length) return { ok: false, reason: 'error' };
+  return understandImages({ images, caption, config, client, fallbackLang, log: (s) => logger.info(s) });
+}
+
 /** Reads one voice note: download, speech to text, intent. Never throws. */
 async function understandAudio(load, seconds) {
   // A long note is not even downloaded.
@@ -199,6 +210,24 @@ async function customerVoiceStep(groupId, messages) {
     voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
     await sock.sendMessage(groupId, { text: u.confirmText }, quoted);
     return { done: true };
+  }
+  // A photo: read it, ask back, and act only after a yes. A picture of something else goes on to the normal answer.
+  const photo = config.imageConfirm ? messages.filter((x) => x.loadImage).at(-1) : null;
+  if (photo) {
+    const u = await understandPhotos(messages.filter((x) => x.loadImage), photo.text, 'en');
+    if (u.ok) {
+      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
+      logger.info(`photo understood (${u.intent}), reply language ${u.lang}: asking for confirmation`);
+      await sock.sendMessage(groupId, { text: u.confirmText }, quoted);
+      return { done: true };
+    }
+    if (u.reason === 'unreadable' || u.reason === 'too big') {
+      voiceDesk.clear(key);
+      logger.info(`photo not usable (${u.reason}): the sender is asked for a clearer one`);
+      await sock.sendMessage(groupId, { text: `${photoUnclear('fa')}\n${photoUnclear('en')}` }, quoted);
+      return { done: true };
+    }
+    logger.info(`photo is not an order or stock request (${u.reason}): left to the normal answer`);
   }
   const pend = voiceDesk.get(key);
   const last = pend && messages.filter((x) => x.text && !x.hasImage && x.text !== '(voice note, sticker or file)').at(-1);
@@ -264,8 +293,9 @@ const staffHandlersFor = (key, lang = 'fa') => ({
 async function handleStaffChat(raw, chatId, group) {
   const content = normalizeMessageContent(raw.message);
   const audio = config.voiceEnabled ? content?.audioMessage : null;
-  const text = textOf(content);
-  if (!text && !audio) return false;
+  const image = config.imageConfirm ? content?.imageMessage : null;
+  const text = textOf(content) || image?.caption || '';
+  if (!text && !audio && !image) return false;
   if (sent.has(raw.key.id) || text.startsWith('🤖')) return true; // the bot's own message coming back
   const where = group ? `group "${(await groupInfo(chatId)).subject}"` : 'private';
   const own = ownIds();
@@ -284,7 +314,7 @@ async function handleStaffChat(raw, chatId, group) {
   const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
   const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
   if (cmd) { trace(where, role, `command ${cmd}`); await reply(runCommand(cmd, { name: config.displayName, state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
-  const ctx = (content.extendedTextMessage || audio)?.contextInfo || {};
+  const ctx = (content.extendedTextMessage || audio || image)?.contextInfo || {};
   const addressed = !group || isAddressed({
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
     ownIds: own, names: config.botNames,
@@ -315,6 +345,28 @@ async function handleStaffChat(raw, chatId, group) {
       await reply(notUnderstood(spoken));
     } else {
       trace(where, role, `ignored: voice note not understood (${u.reason}) and not addressed to the assistant`);
+    }
+    return true;
+  }
+  if (image) {
+    // A colleague's photo is always read (no name is written on a photo); what is in it decides.
+    const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
+    const written = detectLang(text, 'fa');
+    const u = await understandPhotos([{ loadImage: async () => ({
+      base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'),
+      mimeType: image.mimetype?.split(';')[0] || 'image/jpeg',
+    }) }], text, written);
+    const action = imageAction({ u, explicit });
+    if (action === 'confirm') {
+      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
+      trace(where, role, `photo understood (${u.intent}, ${u.items.length} code(s)), reply language ${u.lang}: asking for confirmation`);
+      await reply(u.confirmText);
+    } else if (action === 'tell') {
+      voiceDesk.clear(key);
+      trace(where, role, `photo not usable (${u.reason}): told so`);
+      await reply(photoUnclear(written));
+    } else {
+      trace(where, role, `ignored: photo is not a stock or order request (${u.reason}) and not addressed to the assistant`);
     }
     return true;
   }

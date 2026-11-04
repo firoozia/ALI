@@ -113,7 +113,7 @@ export function formatReport(result, lang = 'fa', { maxCodes = 8 } = {}) {
     `- ${t.out}: ${qty(c.total, c.unit)}`,
     `- ${t.ops}: ${c.operations}`,
     `- ${t.packages}: ${c.packages}`,
-    `- ${t.mainCustomers}: ${c.customers.map((x) => `${who(x)} ${qty(x.qty, c.unit)}`).join(`${t.comma} `)}`,
+    ...(c.customers.length ? [`- ${t.mainCustomers}: ${c.customers.map((x) => `${who(x)} ${qty(x.qty, c.unit)}`).join(`${t.comma} `)}`] : []),
   ].join('\n'));
   const rest = result.byCode.length - blocks.length;
   const parts = [lines.join('\n'), ...blocks];
