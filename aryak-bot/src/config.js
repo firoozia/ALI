@@ -54,6 +54,8 @@ export function loadConfig(env = process.env) {
     cutGroupName: (env.CUT_GROUP_NAME || '').trim().toLowerCase(),
     deliveryGroupName: (env.DELIVERY_GROUP_NAME || '').trim().toLowerCase(),
     confirmGroupName: (env.CONFIRM_GROUP_NAME || '').trim().toLowerCase(),
+    // groups of countable goods (accessories, saw blades, glue): a word of each name, comma separated
+    goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),
     statementDay: Number(env.STATEMENT_DAY || 1),

@@ -22,7 +22,7 @@ export function splitNumber(number) {
  * never seen (at most 20 ahead of the highest known) is only a note, because the missing ones may simply not have been
  * posted in this group.
  */
-export function checkNumber(number, seen) {
+export function checkNumber(number, seen, deleted = new Set()) {
   const cur = splitNumber(number);
   if (!cur) return [];
   const same = seen.map(splitNumber).filter((s) => s && s.prefix === cur.prefix);
@@ -31,7 +31,8 @@ export function checkNumber(number, seen) {
   }
   const max = same.reduce((m, s) => Math.max(m, s.n), 0);
   if (max && cur.n > max + 1 && cur.n - max <= 20) {
-    const missing = Array.from({ length: cur.n - max - 1 }, (_, i) => `${cur.prefix}${max + 1 + i}`);
+    const missing = Array.from({ length: cur.n - max - 1 }, (_, i) => `${cur.prefix}${max + 1 + i}`).filter((m) => !deleted.has(m)); // a number deleted on purpose is a legitimate gap
+    if (!missing.length) return [];
     return [{ kind: 'gap', item: String(number), requested: missing.slice(0, 5).join('، '), invoiced: '', note: `شماره‌های ${missing.length} فاکتور بین این و فاکتور قبلی دیده نشد`, severity: 'info' }];
   }
   return [];

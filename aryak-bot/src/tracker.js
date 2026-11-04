@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeLetters } from './text.js';
+import { matchCod } from './captions.js';
 
 const DAY = 24 * 3600 * 1000;
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -32,6 +33,7 @@ export class Tracker {
     this.holds = new Map(); // normalised customer -> display name
     this.nagged = new Set();
     this.statements = new Set(); // "yyyy-mm|customer" the statement reminder was sent for
+    this.deleted = new Set(); // invoice numbers the office deleted on purpose: a gap there is not an error
     this.load();
   }
 
@@ -42,6 +44,17 @@ export class Tracker {
     this.persist('events');
     return true;
   }
+
+  /** Change fields of the event with [ref] (a payment that was cleared). */
+  update(ref, patch) {
+    const e = this.events.find((x) => x.ref === ref);
+    if (!e) return false;
+    Object.assign(e, patch);
+    this.persist('events');
+    return true;
+  }
+
+  markDeleted(number) { if (number && !this.deleted.has(number)) { this.deleted.add(number); this.persist('state'); } }
 
   of(type, customer, { since = 0, until = Infinity } = {}) {
     return this.events.filter((e) => e.type === type && e.at >= since && e.at <= until && (!customer || sameCustomer(e.customer, customer)));
@@ -65,7 +78,7 @@ export class Tracker {
     try {
       fs.mkdirSync(this.dir, { recursive: true });
       if (what === 'events') fs.writeFileSync(path.join(this.dir, 'events.json'), JSON.stringify(this.events));
-      else fs.writeFileSync(path.join(this.dir, 'state.json'), JSON.stringify({ holds: [...this.holds.values()], nagged: [...this.nagged].slice(-2000), statements: [...this.statements] }));
+      else fs.writeFileSync(path.join(this.dir, 'state.json'), JSON.stringify({ holds: [...this.holds.values()], nagged: [...this.nagged].slice(-2000), statements: [...this.statements], deleted: [...this.deleted] }));
     } catch { /* best effort */ }
   }
 
@@ -77,6 +90,7 @@ export class Tracker {
       (s.holds || []).forEach((n) => this.holds.set(normName(n), n));
       this.nagged = new Set(s.nagged || []);
       this.statements = new Set(s.statements || []);
+      this.deleted = new Set(s.deleted || []);
     } catch { /* first start */ }
   }
 }
@@ -126,7 +140,7 @@ export async function extractEvent({ client, config, role, caption = '', images 
 
 const sumByCode = (events) => {
   const m = new Map();
-  for (const e of events) for (const l of e.lines || []) {
+  for (const e of events) for (const l of e.internal ? [] : e.lines || []) { // an opened roll or a damaged piece is not a sale
     if (!l.code || !l.quantity) continue;
     const k = `${normCode(l.code)}|${normUnit(l.unit) || 'm'}`;
     m.set(k, (m.get(k) || 0) + l.quantity);
@@ -140,7 +154,7 @@ const qty = (n) => String(round2(n));
  * invoiced for a code. Photos of cuts are not always posted, so these are notes to look at, not errors.
  */
 export function checkInvoiceAgainstCuts(tracker, inv, { windowDays = 21 } = {}) {
-  const cuts = tracker.of('cut', inv.customer, { since: inv.at - windowDays * DAY, until: inv.at });
+  const cuts = tracker.of('cut', inv.customer, { since: inv.at - windowDays * DAY, until: inv.at }).filter((e) => !e.internal);
   if (!cuts.length) return [`برای ${inv.customer || 'این مشتری'} در ${windowDays} روز پیش از این فاکتور برشی در گروه برش ثبت نشده است.`];
   const cut = sumByCode(cuts);
   const out = [];
@@ -172,6 +186,28 @@ export function checkDelivery(tracker, del, { windowDays = 30 } = {}) {
     else if (total > inv + 1e-6) out.push(`کد ${code}: تحویل ${qty(total)} ${unit} است و فاکتور ${qty(inv)} ${unit}.`);
   }
   return out;
+}
+
+/** Money items nobody has closed yet ("CLEARED" is the office's reply): cash, receipts, cheques and transfers, oldest first. */
+export function unclearedPayments(tracker, { now = Date.now(), minHours = 0 } = {}) {
+  return tracker.events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared && (!minHours || now - e.at >= minHours * 3600000));
+}
+
+/** The office replied "CLEARED": to the item replied to ([ref]), else to the oldest open item. Returns the event or null. */
+export function markCleared(tracker, ref = '') {
+  const open = unclearedPayments(tracker);
+  const target = (ref && open.find((e) => e.ref === ref)) || open[0];
+  if (!target) return null;
+  tracker.update(target.ref, { cleared: true });
+  return target;
+}
+
+/** A cash-on-delivery amount against the customer's invoices of the last [windowDays]: a note when it matches none of them. */
+export function checkCod(tracker, del, { windowDays = 60, tol = 0.05 } = {}) {
+  if (!(Number(del.cod) > 0)) return [];
+  const totals = tracker.of('invoice', del.customer, { since: del.at - windowDays * DAY, until: del.at }).map((e) => Number(e.total) || 0).filter(Boolean);
+  if (!totals.length) return [];
+  return matchCod(del.cod, totals, tol) ? [] : ['مبلغ دریافتی هنگام تحویل با فاکتور یا مجموع فاکتورهای ثبت‌شدهٔ این مشتری نمی‌خواند.'];
 }
 
 /** What the customer still owes: the invoices' totals minus the payments recorded since the tracker started. */

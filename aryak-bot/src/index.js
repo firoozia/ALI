@@ -13,10 +13,12 @@ import { auditInvoice, checkNumber } from './audit.js';
 import { parseOnBehalf } from './onbehalf.js';
 import { Aliases, parseAliasCommand } from './aliases.js';
 import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
+import { eventsFromCaption } from './captionevents.js';
+import { deletedInvoice } from './captions.js';
 import { customerFromMessages } from './codes.js';
 import { orderLinesOf } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
-import { Tracker, balanceOf, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
+import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
@@ -284,6 +286,7 @@ async function trackedRole(groupId) {
   if (has(config.cutGroupName)) return 'cut';
   if (has(config.deliveryGroupName)) return 'delivery';
   if (has(config.confirmGroupName)) return 'payment';
+  if (config.goodsGroupNames.some(has)) return 'goods';
   return null;
 }
 
@@ -299,6 +302,28 @@ async function trackGroup(raw, groupId, role) {
   const image = imageOf(content);
   const text = textOf(content) || image?.caption || '';
   if (!text && !image) return;
+  const quotedId = (content.extendedTextMessage || image)?.contextInfo?.stanzaId || '';
+  const refOf = (id, i = 0) => createHash('sha256').update(`${groupId}|${id}${i ? `|${i}` : ''}`).digest('hex').slice(0, 24);
+  // The shapes the groups really use are read here without a model (and without downloading the photo).
+  const det = text ? eventsFromCaption(role, text) : null;
+  if (det) {
+    const whereDet = `group "${(await groupInfo(groupId)).subject}"`;
+    if (det.cleared) { const done = markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', done ? 'a money item was cleared' : 'cleared, but no open money item'); return; }
+    if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
+    if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    for (const [i, ev] of det.events.entries()) {
+      const event = { ...ev, customer: canon(ev.customer), at: Date.now(), ref: refOf(raw.key.id, i) };
+      if (!tracker.add(event)) continue;
+      trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
+      if (role === 'delivery' && config.infoGroupName) {
+        const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
+        if (findings.length) await sendTo(config.infoGroupName, `ℹ️ تحویل ${event.customer || ''}:\n${findings.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
+        if (tracker.isHeld(event.customer)) await sock.sendMessage(groupId, { text: `⛔ ${tracker.isHeld(event.customer)}: تحویل تا تأیید نقدی نباید انجام شود. — ${config.displayName}` }, { quoted: raw });
+      }
+    }
+    return;
+  }
+  if (role === 'goods') return; // only the shapes above are read there
   if (!image && !/\d/.test(text) && text.length < 12) return; // a greeting or a thanks
   const images = [];
   if (image) {
@@ -312,7 +337,7 @@ async function trackGroup(raw, groupId, role) {
   trace(where, 'tracker', `${role} recorded (${event.lines?.length || 0} line(s)${event.amount ? ', an amount' : ''})`);
   if (!config.infoGroupName) return;
   if (role === 'delivery') {
-    const findings = checkDelivery(tracker, event);
+    const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
     if (findings.length) await sendTo(config.infoGroupName, `ℹ️ تحویل ${event.customer || ''}:\n${findings.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
     if (tracker.isHeld(event.customer)) await sock.sendMessage(groupId, { text: `⛔ ${tracker.isHeld(event.customer)}: تحویل تا تأیید نقدی نباید انجام شود. — ${config.displayName}` }, { quoted: raw });
   } else if (role === 'payment' && event.kind !== 'statement' && event.customer && event.amount) {
@@ -392,7 +417,7 @@ async function watchGroup(raw, groupId, role) {
   const own = (verdict.problems || []).map((p) => ({ severity: 'urgent', ...p }));
   const extra = [
     ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer, sheetUnits }) : []),
-    ...(number ? checkNumber(number, desk.numbers()) : []),
+    ...(number ? checkNumber(number, desk.numbers(), tracker.deleted) : []),
   ];
   const problems = [...own, ...extra];
   for (const p of problems) experience.bump(`ie|${p.kind}`);
@@ -814,6 +839,9 @@ async function onMessage(raw) {
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
   observe(raw, groupId).catch((e) => logger.warn(`experience: ${e.message}`));
   const trackRole = await trackedRole(groupId);
+  // "Invoice inv-9910 delete this one": a deleted number is a legitimate gap in the numbering
+  const delNo = deletedInvoice(textOf(normalizeMessageContent(raw.message)));
+  if (delNo) tracker.markDeleted(delNo);
   if (trackRole) trackGroup(raw, groupId, trackRole).catch((e) => logger.warn(`tracker failed: ${e.message}`));
   const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...config.commandGroupNames].filter(Boolean);
   if (staffWords.length) {
