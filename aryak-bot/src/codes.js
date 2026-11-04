@@ -59,7 +59,7 @@ const ZENA = '(?:zen+a+h?|zeina+h?|zaina+b?|zeyna+h?|زين[ةه]|زینه|زي�
 const ZENA_WORD = new RegExp(`(^|[\\s,،:;!؟?.(])${ZENA}(?=$|[\\s,،:;!؟?.)])`, 'giu');
 
 /** The line without the attention word. */
-export const dropAttention = (line) => String(line || '').replace(ZENA_WORD, '$1').replace(/\s+/g, ' ').trim();
+export const dropAttention = (line) => String(line || '').replace(ZENA_WORD, '$1').replace(/^[\s,،:;!]+/u, '').replace(/\s+/g, ' ').trim();
 
 /** A message that is only a call for an answer: "?", "??", "Zena", "زينه ؟". It says someone is waiting. */
 export const isNudge = (text) => {
