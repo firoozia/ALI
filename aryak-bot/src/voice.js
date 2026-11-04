@@ -8,6 +8,11 @@ export const NOT_UNDERSTOOD_FA = 'صدای شما مفهوم نیست، لطفا
 /** Customers get the Persian sentence and its English twin (their language is unknown when the audio is unclear). */
 export const NOT_UNDERSTOOD_CUSTOMER = `${NOT_UNDERSTOOD_FA}\nSorry, we could not understand the voice note. Please send your request in writing.`;
 
+/** Said when the speech service itself fails (for example no permission yet): the voice note cannot be heard. */
+export const NO_VOICE_FA = 'الان امکان شنیدن صدا فعال نیست، لطفاً کتبی بنویسید';
+export const NO_VOICE_CUSTOMER = `${NO_VOICE_FA}
+Sorry, voice notes cannot be heard right now. Please write your request.`;
+
 const RETRY = {
   fa: 'باشه. لطفاً درخواست را دوباره بفرستید یا بنویسید.',
   ar: 'حسناً. يرجى إعادة إرسال طلبك أو كتابته.',
@@ -101,11 +106,14 @@ export async function understand({ buffer, seconds = 0, config, client, transcri
 
 /**
  * What to do with a colleague's voice note after it was read ([u]: the result of understand()).
- * 'confirm': a clear stock or order request, ask back. 'tell': say it was not understood. 'silent': not for us.
+ * 'confirm': a clear stock or order request, ask back. 'tell': say it was not understood. 'unavailable': the speech
+ * service failed, say voice cannot be heard now. 'silent': not for us.
  * [explicit]: addressed by a mention, a reply to the assistant, a private chat, or answering its last question.
  * [namedInTranscript]: the assistant's name was spoken in the note.
  */
-export function voiceAction({ u, explicit, namedInTranscript }) {
+export function voiceAction({ u, explicit, namedInTranscript, noticeDue = false }) {
   if (u.ok) return 'confirm';
+  // The service failed: say so politely when addressed, otherwise at most once in a while per chat.
+  if (u.reason === 'speech error') return explicit || noticeDue ? 'unavailable' : 'silent';
   return explicit || namedInTranscript ? 'tell' : 'silent';
 }

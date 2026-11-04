@@ -14,7 +14,7 @@ import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staf
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { metadataToken, speechTranscriber } from './speech.js';
-import { MAX_SECONDS, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand, voiceAction } from './voice.js';
+import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand, voiceAction } from './voice.js';
 import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
 import { shouldProcess } from './intake.js';
@@ -52,6 +52,7 @@ const GATE_WORDS = {
   unknown: 'sender not recognised: not answered',
 };
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
+const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
 const transcribe = speechTranscriber({ languages: config.speechLanguages, token: metadataToken() });
 const handled = new Set(); // ids of messages already taken in
@@ -177,7 +178,11 @@ async function customerVoiceStep(groupId, messages) {
   const voice = messages.filter((x) => x.isVoice).at(-1);
   if (voice) {
     const u = await understandAudio(voice.loadAudio, voice.seconds);
-    if (!u.ok) { voiceDesk.clear(key); await sock.sendMessage(groupId, { text: NOT_UNDERSTOOD_CUSTOMER }, quoted); return { done: true }; }
+    if (!u.ok) {
+      voiceDesk.clear(key);
+      await sock.sendMessage(groupId, { text: u.reason === 'speech error' ? NO_VOICE_CUSTOMER : NOT_UNDERSTOOD_CUSTOMER }, quoted);
+      return { done: true };
+    }
     voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
     await sock.sendMessage(groupId, { text: u.confirmText }, quoted);
     return { done: true };
@@ -269,11 +274,16 @@ async function handleStaffChat(raw, chatId, group) {
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
     const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0);
     const named = !u.ok && !!u.transcript && isAddressed({ text: u.transcript, ownIds: [], names: config.botNames });
-    const action = voiceAction({ u, explicit, namedInTranscript: named });
+    const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
+    const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
     if (action === 'confirm') {
       voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
       trace(where, role, `voice note understood (${u.intent}, ${u.language}): asking for confirmation`);
       await reply(u.confirmText);
+    } else if (action === 'unavailable') {
+      sttNotice.set(chatId, Date.now());
+      trace(where, role, 'voice note: the speech service failed, told that voice cannot be heard now');
+      await reply(NO_VOICE_FA);
     } else if (action === 'tell') {
       voiceDesk.clear(key);
       trace(where, role, `voice note not understood (${u.reason}): told so`);

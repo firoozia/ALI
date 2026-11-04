@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { metadataToken, speechTranscriber } from '../src/speech.js';
-import { MAX_SECONDS, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, extractIntent, retryText, understand, voiceAction } from '../src/voice.js';
+import { NO_VOICE_CUSTOMER, NO_VOICE_FA, MAX_SECONDS, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, extractIntent, retryText, understand, voiceAction } from '../src/voice.js';
 
 const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body });
 
@@ -132,4 +132,23 @@ test('a colleague\'s voice note: a clear request is confirmed, anything else is 
   assert.equal(voiceAction({ u: bad, explicit: false, namedInTranscript: false }), 'silent');
   assert.equal(voiceAction({ u: bad, explicit: true, namedInTranscript: false }), 'tell');
   assert.equal(voiceAction({ u: bad, explicit: false, namedInTranscript: true }), 'tell');
+});
+
+test('when the speech service fails the person is told politely (a group is told at most once in a while)', () => {
+  const failed = { ok: false, reason: 'speech error' };
+  assert.equal(voiceAction({ u: failed, explicit: true, namedInTranscript: false }), 'unavailable');
+  assert.equal(voiceAction({ u: failed, explicit: false, namedInTranscript: false, noticeDue: true }), 'unavailable');
+  assert.equal(voiceAction({ u: failed, explicit: false, namedInTranscript: false, noticeDue: false }), 'silent');
+  assert.equal(NO_VOICE_FA, 'الان امکان شنیدن صدا فعال نیست، لطفاً کتبی بنویسید');
+  assert.ok(NO_VOICE_CUSTOMER.startsWith(NO_VOICE_FA));
+});
+
+test('understand: a refused speech call gives the reason "speech error" and logs Google\'s code and words', async () => {
+  const logs = [];
+  const r = await understand({
+    buffer: Buffer.from('x'), seconds: 5, config: { model: 'm' }, client: claudeSaying(intentJson), log: (s) => logs.push(s),
+    transcribe: async () => { throw new Error('speech answered 403 PERMISSION_DENIED: caller lacks permission'); },
+  });
+  assert.equal(r.reason, 'speech error');
+  assert.match(logs.join('\n'), /403 PERMISSION_DENIED: caller lacks permission/);
 });
