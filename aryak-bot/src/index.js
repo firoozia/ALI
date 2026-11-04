@@ -14,7 +14,7 @@ import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staf
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { metadataToken, speechTranscriber } from './speech.js';
-import { NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand } from './voice.js';
+import { MAX_SECONDS, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand, voiceAction } from './voice.js';
 import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
 import { shouldProcess } from './intake.js';
@@ -160,6 +160,8 @@ async function watchGroup(raw, groupId, role) {
 
 /** Reads one voice note: download, speech to text, intent. Never throws. */
 async function understandAudio(load, seconds) {
+  // A long note is not even downloaded.
+  if (seconds > MAX_SECONDS) { logger.info(`voice: ${seconds} s is too long, skipped`); return { ok: false, reason: 'too long' }; }
   try { return await understand({ buffer: await load(), seconds, config, client, transcribe, log: (s) => logger.info(s) }); }
   catch (e) { logger.warn(`voice failed: ${e.message}`); return { ok: false, reason: 'error' }; }
 }
@@ -261,12 +263,24 @@ async function handleStaffChat(raw, chatId, group) {
   // A voice note is only answered with a question; the request goes on after the same person says yes.
   const key = `s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   if (audio) {
-    if (!addressed) { trace(where, role, 'ignored: voice note not addressed to the assistant'); return false; }
-    trace(where, role, 'voice note: asking for confirmation');
+    // Nobody says the assistant's name outside the audio, so a colleague's voice note is always read; the words
+    // in it decide. Addressed anyway: a mention, a reply to the assistant, a private chat, or a note that
+    // follows its question.
+    const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
     const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0);
-    if (!u.ok) { voiceDesk.clear(key); await reply(NOT_UNDERSTOOD_FA); return true; }
-    voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
-    await reply(u.confirmText);
+    const named = !u.ok && !!u.transcript && isAddressed({ text: u.transcript, ownIds: [], names: config.botNames });
+    const action = voiceAction({ u, explicit, namedInTranscript: named });
+    if (action === 'confirm') {
+      voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
+      trace(where, role, `voice note understood (${u.intent}, ${u.language}): asking for confirmation`);
+      await reply(u.confirmText);
+    } else if (action === 'tell') {
+      voiceDesk.clear(key);
+      trace(where, role, `voice note not understood (${u.reason}): told so`);
+      await reply(NOT_UNDERSTOOD_FA);
+    } else {
+      trace(where, role, `ignored: voice note not understood (${u.reason}) and not addressed to the assistant`);
+    }
     return true;
   }
   let asked = text;

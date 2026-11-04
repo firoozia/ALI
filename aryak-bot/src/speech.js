@@ -36,10 +36,11 @@ export function speechTranscriber({ languages, token, fetchImpl = fetch, sampleR
       }),
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(`speech answered ${res.status}: ${body.error?.message || 'no message'}`);
+    if (!res.ok) throw new Error(`speech answered ${res.status}${body.error?.status ? ` ${body.error.status}` : ''}: ${body.error?.message || 'no message'}`);
     const parts = (body.results || []).map((r) => r.alternatives?.[0]).filter((a) => a?.transcript);
-    if (!parts.length) return { text: '', confidence: 0 };
+    if (!parts.length) return { text: '', confidence: 0, language: '' };
     const confidences = parts.map((a) => (typeof a.confidence === 'number' ? a.confidence : 0));
-    return { text: parts.map((a) => a.transcript.trim()).join(' ').trim(), confidence: Math.min(...confidences) };
+    const language = (body.results || []).find((r) => r.languageCode)?.languageCode || '';
+    return { text: parts.map((a) => a.transcript.trim()).join(' ').trim(), confidence: Math.min(...confidences), language };
   };
 }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { metadataToken, speechTranscriber } from '../src/speech.js';
-import { NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, extractIntent, retryText, understand } from '../src/voice.js';
+import { MAX_SECONDS, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, extractIntent, retryText, understand, voiceAction } from '../src/voice.js';
 
 const json = (body, ok = true, status = 200) => ({ ok, status, json: async () => body });
 
@@ -25,7 +25,7 @@ test('speech request: ogg opus, main language plus alternatives; text and the lo
   };
   const tr = speechTranscriber({ languages: ['fa-IR', 'ar-AE', 'en-IN', 'ur-PK', 'hi-IN'], token: async () => 'T', fetchImpl });
   const r = await tr(Buffer.from('audio'));
-  assert.deepEqual(r, { text: 'کد 408 موجوده ممنون', confidence: 0.7 });
+  assert.deepEqual(r, { text: 'کد 408 موجوده ممنون', confidence: 0.7, language: '' });
   assert.match(sent.url, /speech\.googleapis\.com\/v1\/speech:recognize/);
   assert.equal(sent.opts.headers.Authorization, 'Bearer T');
   assert.equal(sent.body.config.encoding, 'OGG_OPUS');
@@ -36,7 +36,7 @@ test('speech request: ogg opus, main language plus alternatives; text and the lo
 
 test('speech: nothing recognised is empty; a refusal throws with Google\'s words', async () => {
   const empty = speechTranscriber({ languages: ['fa-IR'], token: async () => 'T', fetchImpl: async () => json({}) });
-  assert.deepEqual(await empty(Buffer.from('x')), { text: '', confidence: 0 });
+  assert.deepEqual(await empty(Buffer.from('x')), { text: '', confidence: 0, language: '' });
   const denied = speechTranscriber({ languages: ['fa-IR'], token: async () => 'T', fetchImpl: async () => json({ error: { message: 'Permission denied' } }, false, 403) });
   await assert.rejects(denied(Buffer.from('x')), /403.*Permission denied/);
 });
@@ -94,4 +94,42 @@ test('texts: the owner\'s sentence, its customer twin, and retry in the speaker\
   assert.match(retryText('ar'), /حسناً/);
   assert.match(retryText('fa-IR'), /باشه/);
   assert.match(retryText('xx'), /OK/);
+});
+
+test('speech: the language comes back and a refusal carries Google\'s status', async () => {
+  const tr = speechTranscriber({ languages: ['fa-IR'], token: async () => 'T', fetchImpl: async () => json({ results: [{ languageCode: 'ar-ae', alternatives: [{ transcript: 'x', confidence: 0.9 }] }] }) });
+  assert.equal((await tr(Buffer.from('a'))).language, 'ar-ae');
+  const denied = speechTranscriber({ languages: ['fa-IR'], token: async () => 'T', fetchImpl: async () => json({ error: { status: 'PERMISSION_DENIED', message: 'caller lacks permission' } }, false, 403) });
+  await assert.rejects(denied(Buffer.from('a')), /403 PERMISSION_DENIED: caller lacks permission/);
+});
+
+test('understand: logs length, confidence and language but never the words; keeps the transcript when no request is found', async () => {
+  const logs = [];
+  const base = { buffer: Buffer.from('ogg'), seconds: 5, config: { model: 'm', speechMinConfidence: 0.5 }, log: (s) => logs.push(s) };
+  const secret = 'words nobody should log';
+  const r = await understand({ ...base, client: claudeSaying('{"intent":"other"}'), transcribe: async () => ({ text: secret, confidence: 0.9, language: 'fa-ir' }) });
+  assert.equal(r.ok, false);
+  assert.equal(r.transcript, secret);
+  assert.ok(logs.some((l) => /transcript 23 characters, confidence 0.9, language fa-ir/.test(l)));
+  assert.ok(!logs.join('\n').includes(secret));
+  const good = await understand({ ...base, client: claudeSaying(intentJson), transcribe: async () => ({ text: 'x y', confidence: 0.9 }) });
+  assert.equal(good.ok, true);
+  assert.ok(logs.some((l) => /understood as stock, language fa/.test(l)));
+});
+
+test('voice notes longer than a minute are not read', async () => {
+  assert.equal(MAX_SECONDS, 60);
+  let called = false;
+  const r = await understand({ buffer: Buffer.from('x'), seconds: 61, config: { model: 'm' }, client: claudeSaying(intentJson), transcribe: async () => { called = true; return {}; } });
+  assert.equal(r.reason, 'too long');
+  assert.equal(called, false);
+  assert.equal((await understand({ buffer: Buffer.from('x'), seconds: 60, config: { model: 'm' }, client: claudeSaying(intentJson), transcribe: async () => ({ text: 'a', confidence: 0.9 }) })).ok, true);
+});
+
+test('a colleague\'s voice note: a clear request is confirmed, anything else is silent unless addressed or named', () => {
+  const bad = { ok: false, reason: 'no intent' };
+  assert.equal(voiceAction({ u: { ok: true }, explicit: false, namedInTranscript: false }), 'confirm');
+  assert.equal(voiceAction({ u: bad, explicit: false, namedInTranscript: false }), 'silent');
+  assert.equal(voiceAction({ u: bad, explicit: true, namedInTranscript: false }), 'tell');
+  assert.equal(voiceAction({ u: bad, explicit: false, namedInTranscript: true }), 'tell');
 });

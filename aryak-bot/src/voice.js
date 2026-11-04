@@ -1,6 +1,9 @@
 // Voice notes: transcribe, work out what was asked, ask the person to confirm, and only after a clear yes let the
 // request go on as if it had been typed. Nothing is ever acted on from a voice note without that confirmation.
 
+/** Longer voice notes are not transcribed (cost). */
+export const MAX_SECONDS = 60;
+
 export const NOT_UNDERSTOOD_FA = 'صدای شما مفهوم نیست، لطفاً درخواست خود را به صورت کتبی بفرستید';
 /** Customers get the Persian sentence and its English twin (their language is unknown when the audio is unclear). */
 export const NOT_UNDERSTOOD_CUSTOMER = `${NOT_UNDERSTOOD_FA}\nSorry, we could not understand the voice note. Please send your request in writing.`;
@@ -84,13 +87,25 @@ export async function extractIntent({ client, config, transcript }) {
  */
 export async function understand({ buffer, seconds = 0, config, client, transcribe, log = () => {} }) {
   if (!buffer?.length) return { ok: false, reason: 'empty' };
-  if (buffer.length > 9 * 1024 * 1024 || seconds > 58) return { ok: false, reason: 'too long' };
+  if (buffer.length > 9 * 1024 * 1024 || seconds > MAX_SECONDS) return { ok: false, reason: 'too long' };
   let t;
   try { t = await transcribe(buffer); } catch (e) { log(`voice: speech-to-text failed: ${e.message}`); return { ok: false, reason: 'speech error' }; }
-  log(`voice: transcript ${t.text.length} characters, confidence ${Math.round(t.confidence * 100) / 100}`);
-  if (!t.text.trim() || t.confidence < (config.speechMinConfidence ?? 0.5)) return { ok: false, reason: 'unclear' };
+  log(`voice: transcript ${t.text.length} characters, confidence ${Math.round(t.confidence * 100) / 100}${t.language ? `, language ${t.language}` : ''}`);
+  if (!t.text.trim() || t.confidence < (config.speechMinConfidence ?? 0.5)) return { ok: false, reason: 'unclear', transcript: t.text };
   let i;
   try { i = await extractIntent({ client, config, transcript: t.text }); } catch (e) { log(`voice: intent failed: ${e.message}`); return { ok: false, reason: 'intent error' }; }
-  if (!i) return { ok: false, reason: 'no intent' };
+  if (!i) { log('voice: no stock or order request found'); return { ok: false, reason: 'no intent', transcript: t.text }; }
+  log(`voice: understood as ${i.intent}, language ${i.language}`);
   return { ok: true, ...i, transcript: t.text };
+}
+
+/**
+ * What to do with a colleague's voice note after it was read ([u]: the result of understand()).
+ * 'confirm': a clear stock or order request, ask back. 'tell': say it was not understood. 'silent': not for us.
+ * [explicit]: addressed by a mention, a reply to the assistant, a private chat, or answering its last question.
+ * [namedInTranscript]: the assistant's name was spoken in the note.
+ */
+export function voiceAction({ u, explicit, namedInTranscript }) {
+  if (u.ok) return 'confirm';
+  return explicit || namedInTranscript ? 'tell' : 'silent';
 }
