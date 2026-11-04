@@ -4,31 +4,38 @@
 // The result is a hint for the answering model and a test target; it never answers anything by itself.
 
 import { normalizeDigits, normalizeLetters } from './text.js';
+import { UNIT_RE, dropBrandWord, tailName, unitOf } from './codes.js';
 
 const UNIT_WORDS = {
   m: 'm', mtr: 'm', mtrs: 'm', meter: 'm', meters: 'm', metre: 'm', metres: 'm',
   roll: 'roll', rolls: 'roll', pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs', carton: 'carton', cartons: 'carton', ctn: 'carton',
 };
-const UNIT = '(m|mtrs?|meters?|metres?|rolls?|pcs?|pieces?|cartons?|ctn)';
+const UNIT = UNIT_RE;
 const CODE = '(?:[a-z]{1,4}-?\\d+(?:-\\d+)?|\\d{2,5})';
 const NUM = '(\\d+(?:\\.\\d+)?)';
 
 // "119-6 MTR", "603 - 15 mtr", "KG10-300 - 5 m", "201:15 m"
-const WITH_SEPARATOR = new RegExp(`^(${CODE})\\s*[-:=x]\\s*${NUM}\\s*${UNIT}\\b`);
+const WITH_SEPARATOR = new RegExp(`^(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${UNIT}\\b`);
 // "701 25 meter"
-const WITH_SPACE = new RegExp(`^(${CODE})\\s+${NUM}\\s*${UNIT}\\b`);
+const WITH_SPACE = new RegExp(`^(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}\\b`);
+// the unit in front of the number: "101-- roll 2"
+const UNIT_FIRST = new RegExp(`^(${CODE})\\s*[-:=]*\\s*${UNIT}\\s*${NUM}\\b`);
 // the unit is required: "119-6" alone is a code, not 6 of 119.
 
-const cleanLine = (line) => normalizeDigits(line).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
+const cleanLine = (line) => dropBrandWord(normalizeDigits(line)).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
 
 /** One line -> { code, quantity, unit, addOn } or null. */
 function parseOrderLine(raw) {
   let s = cleanLine(raw).replace(/[?؟!.]+$/g, '').trim();
   const addOn = /^(please\s+)?add\b/.test(s) || /\balso\b/.test(s);
   s = s.replace(/^(please\s+)?(add\s+)?/, '').replace(/\s+also$/, '').trim();
-  const m = WITH_SEPARATOR.exec(s) || WITH_SPACE.exec(s);
-  if (!m) return null;
-  return { code: m[1].toUpperCase(), quantity: Number(m[2]), unit: UNIT_WORDS[m[3]] || m[3], addOn };
+  let m = WITH_SEPARATOR.exec(s) || WITH_SPACE.exec(s);
+  let q;
+  let u;
+  if (m) { q = m[2]; u = m[3]; } else if ((m = UNIT_FIRST.exec(s))) { q = m[3]; u = m[2]; } else return null;
+  // the words after the line ("al ebda", "nuqoosh") name the billing customer
+  const customer = tailName(s.slice(m[0].length));
+  return { code: m[1].toUpperCase(), quantity: Number(q), unit: UNIT_WORDS[u] || unitOf(u), addOn, ...(customer ? { customer } : {}) };
 }
 
 // The words around a code in an availability question, in the languages of the customers.
@@ -51,6 +58,10 @@ function parseAvailability(raw) {
 /**
  * @returns {{ kind: 'order'|'availability'|'other', lines: Array<{code:string, quantity:number, unit:string, addOn:boolean}>, codes: string[] }}
  */
+export function orderLinesOf(text) {
+  return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map(parseOrderLine).filter(Boolean);
+}
+
 export function parseCustomerText(text) {
   const rows = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const lines = rows.map(parseOrderLine).filter(Boolean);

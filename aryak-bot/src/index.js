@@ -12,6 +12,9 @@ import { PriceBook, formatBook, formatCodePrice, formatParsed, parsePriceCommand
 import { auditInvoice, checkNumber } from './audit.js';
 import { parseOnBehalf } from './onbehalf.js';
 import { Aliases, parseAliasCommand } from './aliases.js';
+import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
+import { customerFromMessages } from './codes.js';
+import { orderLinesOf } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { Tracker, balanceOf, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
@@ -49,8 +52,9 @@ const client = new Anthropic();
 // The prompt: the rules and knowledge files, plus what the owner approved from the experience store (rebuilt when it changes).
 let systemCache = { version: -1, text: '' };
 const systemPrompt = () => {
-  if (systemCache.version !== experience.version) {
-    systemCache = { version: experience.version, text: [buildSystemPrompt(config.kbDir, config.displayName), experience.promptText()].filter(Boolean).join('\n\n') };
+  const version = `${experience.version}:${rules.version}`;
+  if (systemCache.version !== version) {
+    systemCache = { version, text: [buildSystemPrompt(config.kbDir, config.displayName), rules.promptText(), experience.promptText()].filter(Boolean).join('\n\n') };
   }
   return systemCache.text;
 };
@@ -83,7 +87,7 @@ const GATE_WORDS = {
 };
 const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
 const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
-const aliases = new Aliases(path.join(config.authDir, 'aliases')); // other spellings of a customer's name, added by the owner
+const rules = new Rules(config.authDir); // rules the owner taught in words: durable, listed, removable\nconst aliases = new Aliases(path.join(config.authDir, 'aliases')); // other spellings of a customer's name, added by the owner
 const experience = new Experience({ dir: path.join(config.authDir, 'experience') }); // counters and anonymous shapes; never messages
 const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
 const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availability') }); // questions to the sales manager that wait for his answer
@@ -122,7 +126,9 @@ const gate = new GroupGate({
       messages = step.messages;
     }
     const info = await groupInfo(groupId);
-    const customer = info.subject.replace(config.groupSuffix, '').trim() || info.subject;
+    // One group can hold several billing customers: the name after an order line or beside a handwritten photo wins.
+    const named = customerFromMessages(messages, orderLinesOf);
+    const customer = (named ? canon(named) : '') || info.subject.replace(config.groupSuffix, '').trim() || info.subject;
     // Availability: ask for the quantity, answer when it is comfortably in stock, otherwise ask the sales manager.
     if (config.availabilityFlow) {
       const flow = await runAvailability({
@@ -684,6 +690,13 @@ async function handleStaffChat(raw, chatId, group) {
       else if (tc.type === 'orders') { await reply(openOrders(tracker, desk.requests)); }
       return true;
     }
+  }
+  // The owner teaches in words: kept at once as a durable rule (not sent to the review list), confirmed in one line.
+  if (admin && addressed && !audio && !image) {
+    const rc = parseRuleCommand(text);
+    if (rc) { await reply(rc.list ? rules.list() : rules.remove(rc.remove) ? `قانون ${rc.remove} برداشته شد.` : 'قانونی با این شماره نبود.'); return true; }
+    const rule = ruleFrom(text, config.botNames);
+    if (rule) { const r = rules.add(rule); trace(where, role, `owner rule ${r.id} stored`); await reply(`ثبت شد (قانون ${r.id}): ${r.text}`); return true; }
   }
   if (admin && (!group || group.command)) {
     const lc = parseLearnCommand(text);

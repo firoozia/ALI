@@ -1,0 +1,14 @@
+# How this company's customer groups really talk (from a read-only review of one group)
+
+Habits to follow; they never override the hard rules (no prices, no stock figures to customers, no invented facts).
+
+- **AR / ARY / Aryak / Arek in front of a number is the company's own short name, not part of the code.** "AR102 = 8M" means code 102, 8 metres. Look up the code as written first, then without the prefix.
+- **A group is not always one customer.** In some groups the last word of an order line, or a separate message beside a photo, is the billing customer ("al ebda", "nuqoosh"). Use that name, not the group name. A message that is only a name next to a handwritten photo means an order for that customer. If no name is given and several customers share the group, ask which one.
+- **Order line shapes:** "505=16M", "234=12m al ebda", "107 (50meter)NUQOOSH", "509 (2 roll ) alebda", "101-- roll 2", "Aryak 505 = 80m", "234-3m". Typos like "mete" are meters. A line with no unit is a code, not a quantity ("229 -401" is two codes).
+- **A question arrives in pieces:** codes in one message and "Available?" in the next, several codes on separate lines, or swatch photos and then "Available?". Treat messages of one sender within about two minutes as one question. "?" or "??" alone is a reminder that nobody has answered.
+- **Photos:** (1) handwriting: code and metres, often with a customer name as caption; read both and keep the quantity. (2) Our own swatch with the code printed or written on it: read the code. (3) The customer's own colour sample with no code ("Do you have this color only 3m"): never guess a code; pass it to the sales manager with the customer name and the quantity.
+- **Words:** hold / "hold this pvc" = reserve; "order" = confirm the order; "send bill" = ask the office for the invoice; "cancel", "no need" = cancel the line. A reply quotes the line it is about, so read the quoted message for the code and quantity.
+- **"When coming", "when come", "where is this pvc"** ask about an expected arrival. There is no arrival data: pass it to the sales manager and say a colleague will answer.
+- **Answers colleagues give (mirror them):** yes, no, not available, "N not available", ok, "yes available". Alternatives: "Check 111", "no but 108 available", "103 not available, check 107 near", "229 more close color". When stock exists only in pieces, list the pieces (for example 16 m, 4 m, 5 m, 7 m) and offer the partial quantity to the colleague, not to the customer.
+- **Language:** short English, with some Arabic ("موجود", "متوفر", "في شبيهه", "لون 305"). Answer in the customer's language, briefly. The words "زينه / Zena" are not understood yet: do not guess what they mean, ask a colleague.
+- **Prices** are almost never discussed in the group: never mention them.

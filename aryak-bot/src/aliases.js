@@ -7,7 +7,15 @@ import path from 'node:path';
 import { normalizeLetters } from './text.js';
 
 const norm = (s) => normalizeLetters(String(s || '')).replace(/\b(llc|l\.l\.c|co|company|ltd|fze|trading|est)\b/g, '').replace(/[^a-z0-9؀-ۿ]/g, '');
-const same = (a, b) => { const x = norm(a); const y = norm(b); return !!x && !!y && (x === y || (Math.min(x.length, y.length) >= 4 && (x.includes(y) || y.includes(x)))); };
+// "al ebda", "alebda", "ebdaa" are one name: drop a leading "al" and doubled letters
+const fold = (s) => norm(s).replace(/^al(?=.{4})/, '').replace(/(.)\1+/g, '$1');
+const same = (a, b) => {
+  const x = norm(a); const y = norm(b);
+  if (!x || !y) return false;
+  if (x === y || (Math.min(x.length, y.length) >= 4 && (x.includes(y) || y.includes(x)))) return true;
+  const fx = fold(a); const fy = fold(b);
+  return Math.min(fx.length, fy.length) >= 4 && fx === fy;
+};
 
 export class Aliases {
   constructor(dir = '') {

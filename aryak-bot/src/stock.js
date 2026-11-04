@@ -4,6 +4,8 @@
 // product", "unknown code" or "a colleague will confirm". When stock is at or under the limit the bot stays silent
 // in the group and the real figures go privately to the sales manager.
 
+import { stripBrand } from './codes.js';
+
 /** Tool given to Claude. */
 export const checkStockTool = {
   name: 'check_stock',
@@ -109,6 +111,17 @@ const seconds = (ms) => (ms / 1000).toFixed(1);
  * when every try fails an answer up to a quarter of an hour old is returned with { stale: true, ageMinutes }.
  */
 export async function fetchStock(config, input, fetchImpl = fetch, opts = {}) {
+  const first = await fetchStockOnce(config, input, fetchImpl, opts);
+  // "AR102": AR is ARYAK's own short prefix. When the exact code is not in the sheet, try it without the prefix.
+  const bare = stripBrand(input.code);
+  if (first && first.found === false && bare && bare.toUpperCase() !== String(input.code).toUpperCase().trim()) {
+    const second = await fetchStockOnce(config, { ...input, code: bare }, fetchImpl, opts);
+    if (second?.found) return second;
+  }
+  return first;
+}
+
+async function fetchStockOnce(config, input, fetchImpl = fetch, opts = {}) {
   const { cache = config.sheetCache, log = config.log || (() => {}) } = opts;
   const cached = cache?.get(input);
   if (cached && cached.ageMs <= cache.freshMs) return cached.data;

@@ -3,17 +3,18 @@
 // who it is for and what is asked. The customer's name is then matched against the known names (see aliases.js).
 
 import { normalizeDigits } from './text.js';
+import { UNIT_RE, dropBrandWord, tailName, unitOf } from './codes.js';
 
 const UNIT_WORDS = { m: 'm', mtr: 'm', mtrs: 'm', meter: 'm', meters: 'm', metre: 'm', metres: 'm', roll: 'roll', rolls: 'roll', pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs', carton: 'carton', cartons: 'carton', ctn: 'carton' };
-const UNIT = '(m|mtrs?|meters?|metres?|rolls?|pcs?|pieces?|cartons?|ctn)';
+const UNIT = UNIT_RE;
 const CODE = '(?:[a-z]{1,4}-?\\d+(?:-\\d+)?|\\d{2,5})';
 const NUM = '(\\d+(?:\\.\\d+)?)';
 const START = '(?:^|[\\s:،,])';
 
-const SEPARATED = new RegExp(`${START}(${CODE})\\s*[-:=x]\\s*${NUM}\\s*${UNIT}\\b`, 'g'); // "603 - 15 mtr", "119-6 MTR"
-const SPACED = new RegExp(`${START}(${CODE})\\s+${NUM}\\s*${UNIT}\\b`, 'g'); // "229 20 m"
+const SEPARATED = new RegExp(`${START}(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${UNIT}\\b`, 'g'); // "603 - 15 mtr", "119-6 MTR"
+const SPACED = new RegExp(`${START}(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}\\b`, 'g'); // "229 20 m"
 
-const clean = (s) => normalizeDigits(s).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
+const clean = (s) => dropBrandWord(normalizeDigits(s)).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
 const STOP = new Set(['hi', 'hello', 'please', 'pls', 'add', 'also', 'code', 'ok', 'yes', 'no', 'new', 'order', 'thanks', 'send', 'check', 'لطفا', 'سلام']);
 
 /** The words in front of the first order line, as a customer name; '' when they are not a name. */
@@ -29,7 +30,7 @@ function linesOf(row) {
   for (const re of [SEPARATED, SPACED]) {
     re.lastIndex = 0;
     let m;
-    while ((m = re.exec(row))) found.push({ at: m.index + m[0].indexOf(m[1]), end: re.lastIndex, code: m[1].toUpperCase(), quantity: Number(m[2]), unit: UNIT_WORDS[m[3]] || m[3] });
+    while ((m = re.exec(row))) found.push({ at: m.index + m[0].indexOf(m[1]), end: re.lastIndex, code: m[1].toUpperCase(), quantity: Number(m[2]), unit: UNIT_WORDS[m[3]] || unitOf(m[3]) });
   }
   found.sort((a, b) => a.at - b.at);
   const out = [];
@@ -58,5 +59,10 @@ export function parseOnBehalf(text) {
     for (const f of found) lines.push({ code: f.code, quantity: f.quantity, unit: f.unit, addOn });
   }
   if (!customer) customer = nameOnly;
+  // "505=16M al ebda": the customer after the last line
+  if (!customer && lines.length) {
+    const last = rows.filter((r) => linesOf(r).length).at(-1);
+    customer = tailName(last.slice(linesOf(last).at(-1).end));
+  }
   return customer && lines.length ? { customer, lines } : null;
 }
