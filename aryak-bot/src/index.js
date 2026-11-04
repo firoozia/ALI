@@ -35,7 +35,7 @@ import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, rep
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
-import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, nameHeard, retryText, understand, voiceAction } from './voice.js';
+import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
 import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
 import { shouldProcess } from './intake.js';
@@ -90,7 +90,8 @@ const GATE_WORDS = {
 };
 const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
 const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
-const rules = new Rules(config.authDir); // rules the owner taught in words: durable, listed, removable\nconst aliases = new Aliases(path.join(config.authDir, 'aliases')); // other spellings of a customer's name, added by the owner
+const rules = new Rules(config.authDir); // rules the owner taught in words: durable, listed, removable
+const aliases = new Aliases(path.join(config.authDir, 'aliases')); // other spellings of a customer's name, added by the owner
 const experience = new Experience({ dir: path.join(config.authDir, 'experience') }); // counters and anonymous shapes; never messages
 const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
 // The test groups keep their own memory: nothing said there reaches the real tracker, digest or reports.
@@ -681,7 +682,18 @@ async function handleOnBehalf({ ob, raw, reply, role, where, lang, test = false 
  * and the order memory of the customer) and answered in that chat. Nothing goes to the Information group, nothing is recorded
  * for the digest. In a test group the order memory is the test one.
  */
-async function onDemandInvoice({ doc, reply, where, role, test, hint = '' }) {
+const INVOICE_FAILED = 'بررسی فاکتور با خطا روبه‌رو شد؛ دوباره بفرستید یا به مدیر خبر بدهید.';
+const ORDER_FAILED = 'ثبت یا بررسی این سفارش با خطا روبه‌رو شد؛ دوباره بفرستید یا به مدیر خبر بدهید.';
+
+async function onDemandInvoice(args) {
+  try { await onDemandInvoiceRun(args); } catch (e) {
+    // an internal failure is said as one, never blamed on the photo; the cause goes to the log
+    logger.error(`invoice check failed: ${e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e.message}`);
+    await args.reply(INVOICE_FAILED);
+  }
+}
+
+async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '' }) {
   const T = trackerOf(test);
   const read = await readInvoice({ client, config, invoice: doc });
   const rows = Array.isArray(read?.invoice?.lines) ? read.invoice.lines : [];
@@ -787,7 +799,13 @@ async function handleStaffChat(raw, chatId, group) {
   // A customer's request posted by a colleague on his behalf (not in the groups that only record: cut, delivery, money).
   if (text && !audio && !image && !pdf && !group?.tracked) {
     const ob = parseOnBehalf(text);
-    if (ob) { await handleOnBehalf({ ob, raw, reply, role, where, lang: detectLang(text, 'fa'), test: !!group?.test }); return true; }
+    if (ob) {
+      try { await handleOnBehalf({ ob, raw, reply, role, where, lang: detectLang(text, 'fa'), test: !!group?.test }); } catch (e) {
+        logger.error(`order on behalf failed: ${e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e.message}`);
+        await reply(ORDER_FAILED);
+      }
+      return true;
+    }
   }
   if (pdf) {
     // An invoice shown to the assistant is checked on the spot (any PDF in a test group; elsewhere when the caption or the file
@@ -854,12 +872,12 @@ async function handleStaffChat(raw, chatId, group) {
     const mayCheck = explicit || !group || !!group?.test;
     // A caption that says invoice (or asks to compare or check): the invoice checker, not the order flow.
     if (looksLikeInvoice(text) && mayCheck) {
-      try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test, hint: customerFromMessages([{ text, hasImage: true }], orderLinesOf) }); } catch (e) { logger.warn(`invoice check failed: ${e.message}`); await reply(photoUnclear(written)); }
+      try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test, hint: customerFromMessages([{ text, hasImage: true }], orderLinesOf) }); } catch (e) { logger.error(`invoice check failed: ${e.message}`); await reply(INVOICE_FAILED); }
       return true;
     }
     const u = await understandPhotos([{ loadImage: loadPhoto }], text, written);
     if (u.reason === 'invoice' && mayCheck) {
-      try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test }); } catch (e) { logger.warn(`invoice check failed: ${e.message}`); await reply(photoUnclear(written)); }
+      try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test }); } catch (e) { logger.error(`invoice check failed: ${e.message}`); await reply(INVOICE_FAILED); }
       return true;
     }
     const action = imageAction({ u, explicit });
