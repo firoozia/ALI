@@ -15,11 +15,11 @@ test('the owner\'s example, exactly', () => {
     '- سایز: 0.30*1400',
     '- آزاد: 2.5 m',
     '- رزرو: 0 m',
-    '- حد ربات: 200 m',
+    '- حداقل موجودی: 200 m',
     '- بسته: 1 بسته، باز شده',
     '- محل: Showroom',
     '',
-    '⚠️  موجودی آزاد زیر حد 200 m است',
+    '⚠️  موجودی آزاد زیر حداقل موجودی (200 m) است',
   ].join('\n'));
 });
 
@@ -75,4 +75,47 @@ test('packages line: reserved counts in the total; only packs; only pieces; two 
   assert.match(row({ free: 80, packs: [], pieces: [35, 45] }), /- بسته: باز: 35 m و 45 m \(کل 80 m\)/);
   assert.match(row({ free: 220, packs: [{ qty: 120, count: 1 }, { qty: 100, count: 1 }], pieces: [] }), /- بسته: 1 بسته 120 m \+ 1 بسته 100 m \(کل 220 m\)/);
   assert.match(row({ free: 0, packs: [], pieces: [] }), /- بسته: بدون بسته \(کل 0 m\)/);
+});
+
+test('the staff never see the old words; the label and the warning use "حداقل موجودی"', () => {
+  assert.ok(!formatStaffStock(low, '408').includes('حد ربات'));
+  assert.match(formatStaffStock(low, '408'), /- حداقل موجودی: 200 m/);
+});
+
+test('empty placeholder rows are skipped; a real size with no stock stays', () => {
+  const t = formatStaffStock({
+    ...low, code: '229',
+    sizes: [
+      { size: '', free: 0, packages: 0, open: 0, limit: 200 },
+      { size: '0.30*1400', free: 0, packages: 0, open: 0, limit: 200 },
+      { size: '0.35*1400', free: 1257.9, packages: 23, open: 14, limit: 200 },
+    ],
+  }, '229');
+  assert.ok(!t.includes('- سایز: —'));
+  assert.match(t, /- سایز: 0.30\*1400/);
+  assert.match(t, /- سایز: 0.35\*1400/);
+  assert.equal((t.match(/موجودی کد 229/g) || []).length, 2);
+  assert.equal((t.match(/⚠️/g) || []).length, 1); // only the one below the minimum, under its own block
+});
+
+test('several sizes below the minimum: one grouped warning at the end', () => {
+  const t = formatStaffStock({
+    ...low,
+    sizes: [
+      { size: '0.30*1400', free: 0, packages: 0, open: 0, limit: 200 },
+      { size: '0.35*1400', free: 50, packages: 1, open: 1, limit: 200 },
+      { size: '0.40*1400', free: 900, packages: 8, open: 0, limit: 200 },
+    ],
+  }, '408');
+  assert.equal((t.match(/⚠️/g) || []).length, 1);
+  assert.match(t, /
+
+⚠️  موجودی آزاد این اندازه‌ها زیر حداقل موجودی است:
+- 0.30\*1400: 0 m \(حداقل 200 m\)
+- 0.35\*1400: 50 m \(حداقل 200 m\)$/);
+  assert.equal((t.match(/خیلی کم است/g) || []).length, 2);
+});
+
+test('all rows empty: the answer still says something', () => {
+  assert.match(formatStaffStock({ ...low, sizes: [{ size: '', free: 0, packages: 0, open: 0, limit: 200 }] }, '408'), /موجودی کد 408/);
 });

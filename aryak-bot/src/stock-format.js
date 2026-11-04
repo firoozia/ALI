@@ -25,12 +25,22 @@ const packagesLine = (packages, open) => {
 
 const placeNames = (locations) => (locations || []).map((l) => String(l).replace(/:\s*\d+\s*$/, '').trim()).filter(Boolean);
 
-/** One block per size row of a botStock result. */
+/** An empty row of the sheet: no size, no stock, no packages. It tells the team nothing. */
+const isPlaceholder = (s) => !String(s.size || '').trim() && !(Number(s.free) || 0) && !(Number(s.reserved) || 0) && !(Number(s.packages) || 0);
+
+const warning = (limit, unit) => `⚠️  موجودی آزاد زیر حداقل موجودی (${num(limit)} ${unit}) است`;
+
+/**
+ * One block per real size row of a botStock result. A block below its minimum carries the warning under it; when
+ * several sizes are below their minimum the warning is written once, at the end, listing them.
+ */
 export function stockBlocks(result) {
   const unit = result.unit || '';
   const cat = GROUPS_FA[String(result.category || '').toLowerCase()] || result.category || '';
-  const rows = (result.sizes && result.sizes.length ? result.sizes : [{ size: result.size || '', free: result.free, packages: 0, open: 0, limit: result.limit }]);
-  return rows.map((s) => {
+  let rows = (result.sizes && result.sizes.length ? result.sizes : [{ size: result.size || '', free: result.free, packages: 0, open: 0, limit: result.limit }]);
+  const real = rows.filter((s) => !isPlaceholder(s));
+  if (real.length) rows = real;
+  const info = rows.map((s) => {
     const free = Number(s.free) || 0;
     const limit = Number(s.limit) || 0;
     const low = limit > 0 && free < limit;
@@ -41,15 +51,25 @@ export function stockBlocks(result) {
       `- سایز: ${s.size || '—'}`,
       `- آزاد: ${num(free)} ${unit}`,
       `- رزرو: ${num(reserved)} ${unit}`,
-      `- حد ربات: ${num(limit)} ${unit}`,
+      `- حداقل موجودی: ${num(limit)} ${unit}`,
       `- بسته: ${Array.isArray(s.packs) && Array.isArray(s.pieces)
         ? packsLine(s, unit, free + (Number(reserved) || 0))
         : packagesLine(Number(s.packages) || 0, Number(s.open) || 0)}`,
       `- محل: ${places.length ? places.join('، ') : '—'}`,
     ];
-    if (low) lines.push('', `⚠️  موجودی آزاد زیر حد ${num(limit)} ${unit} است`);
-    return lines.join('\n');
+    return { s, free, limit, low, lines };
   });
+  const lows = info.filter((i) => i.low);
+  const grouped = lows.length > 1;
+  const blocks = info.map((i) => (i.low && !grouped ? [...i.lines, '', warning(i.limit, unit)].join('
+') : i.lines.join('
+')));
+  if (grouped) {
+    blocks.push(['⚠️  موجودی آزاد این اندازه‌ها زیر حداقل موجودی است:',
+      ...lows.map((i) => `- ${i.s.size || '—'}: ${num(i.free)} ${unit} (حداقل ${num(i.limit)} ${unit})`)].join('
+'));
+  }
+  return blocks;
 }
 
 /** The whole answer for a botStock result: blocks separated by a blank line, or a short line for the odd cases. */
