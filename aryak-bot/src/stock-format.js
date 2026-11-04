@@ -104,7 +104,7 @@ function multiSizeBlocks(result, rows, unit, cat) {
 /** The whole answer for a botStock result: blocks separated by a blank line, or a short line for the odd cases. */
 export function formatStaffStock(result, askedCode = '') {
   if (!result.found) return `کد ${result.code || askedCode} در فهرست پیدا نشد.`;
-  if (result.ambiguous) return `کد ${askedCode} در چند گروه هست: ${result.categories.join('، ')}. کدام را می‌خواهید؟`;
+  if (result.ambiguous) return `کد ${askedCode} در چند گروه هست:\n${result.categories.map((c, i) => `${i + 1}) ${c}`).join('\n')}\nکدام را می‌خواهید؟ (نام یا شماره را بنویسید)`;
   if (result.sizeFound === false) return `کد ${result.code} با اندازهٔ ${result.size} نیست. اندازه‌های موجود: ${(result.sizes || []).join('، ') || '—'}`;
   return stockBlocks(result).join('\n\n');
 }

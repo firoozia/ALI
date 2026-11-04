@@ -16,6 +16,7 @@ import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './
 import { metadataToken, speechTranscriber } from './speech.js';
 import { NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand } from './voice.js';
 import { normalizeDigits } from './text.js';
+import { matchOption } from './choice.js';
 import { shouldProcess } from './intake.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
@@ -41,6 +42,16 @@ const desk = new InvoiceDesk({ dir: config.requestsDir }); // customers' purchas
 const botState = new BotState(config.authDir); // pause switch
 const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
+// What the customer-flow gate did with a message, in words (the gate also watches staff messages: a colleague's
+// message cancels the answer that was waiting for a customer, it is not itself answered).
+const GATE_WORDS = {
+  own: 'typed on the bot phone: any answer waiting for a customer is cancelled',
+  staff: 'colleague message, nothing was waiting',
+  'staff-replied': 'colleague replied: the answer waiting for the customer is cancelled',
+  waiting: 'customer message: waiting for a colleague to answer first',
+  unknown: 'sender not recognised: not answered',
+};
+const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
 const transcribe = speechTranscriber({ languages: config.speechLanguages, token: metadataToken() });
 const handled = new Set(); // ids of messages already taken in
@@ -184,11 +195,14 @@ const jidDigits = (j) => String(j || '').replace(/@.*$/, '').replace(/:\d+$/, ''
 const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
 const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
 
-const staffHandlers = {
+const staffHandlersFor = (key) => ({
   staff_stock: async (i) => {
     try {
+      const found = await fetchStock(config, { code: i.code, category: i.category, size: i.size });
+      // Which group was meant? The next message of the same person answers, even without the name.
+      if (found.ambiguous) followDesk.set(key, { code: i.code, size: i.size || '', options: found.categories });
       return {
-        formatted: formatStaffStock(await fetchStock(config, { code: i.code, category: i.category, size: i.size }), i.code),
+        formatted: formatStaffStock(found, i.code),
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     } catch (e) {
@@ -202,7 +216,7 @@ const staffHandlers = {
   },
   recent_checks: (i) => desk.lastChecks(i.count),
   find_order: (i) => desk.listOrders(i),
-};
+});
 
 /**
  * The team's side. [group] is null for a private chat, else { command: true if it is the command group }.
@@ -258,9 +272,20 @@ async function handleStaffChat(raw, chatId, group) {
     if (kind === 'no') { await reply(retryText(pend.lang)); return true; }
     if (kind === 'yes') { asked = pend.requestText; confirmed = true; }
   }
+  // An answer to a question the assistant just asked ("which group?") needs no name or mention.
+  const follow = audio ? null : followDesk.get(key);
+  if (follow) {
+    followDesk.clear(key);
+    const pick = matchOption(text, follow.options);
+    if (pick >= 0) {
+      asked = `Stock of code ${follow.code}${follow.size ? ` size ${follow.size}` : ''} in the group "${follow.options[pick]}"`;
+      confirmed = true;
+      trace(where, role, 'follow-up: answered the assistant\'s question');
+    }
+  }
   if (!addressed && !confirmed) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
-    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlers,
+    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key),
   });
   trace(where, role, answerText ? 'answered' : 'no reply (the model chose silence)');
   if (answerText) await reply(answerText);
@@ -306,7 +331,7 @@ async function onMessage(raw) {
   }
   if (!m.text && !m.hasImage && !m.fromMe) m.text = '(voice note, sticker or file)';
   const decision = gate.onMessage(m);
-  trace(`group "${(await groupInfo(groupId)).subject}"`, m.fromMe ? 'own-number' : m.staff === true ? 'staff' : m.staff === false ? 'customer' : 'unknown', `customer flow: ${decision}`);
+  trace(`group "${(await groupInfo(groupId)).subject}"`, m.fromMe ? 'owner' : m.staff === true ? 'staff' : m.staff === false ? 'customer' : 'unknown', GATE_WORDS[decision] || `customer flow: ${decision}`);
 }
 
 async function start() {

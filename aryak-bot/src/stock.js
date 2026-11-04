@@ -66,7 +66,7 @@ async function requestOnce(config, body, fetchImpl, timeoutMs) {
  * Asks the sheet. A timeout of [timeoutMs] on every request and ONE more try after [retryDelayMs] when the first fails
  * (network error, timeout or a 5xx); every failure is logged with its real cause and the HTTP status.
  */
-export async function fetchStock(config, input, fetchImpl = fetch, { log = config.log || (() => {}), timeoutMs = 25000, retryDelayMs = 1500 } = {}) {
+export async function fetchStock(config, input, fetchImpl = fetch, { log = config.log || (() => {}), timeoutMs = [40000, 30000], retryDelayMs = 1500 } = {}) {
   const body = JSON.stringify({
     action: 'botStock',
     token: config.botToken,
@@ -79,7 +79,8 @@ export async function fetchStock(config, input, fetchImpl = fetch, { log = confi
   let lastError;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const res = await requestOnce(config, body, fetchImpl, timeoutMs);
+      // The sheet usually answers in about five seconds but sometimes takes much longer: a generous first wait.
+      const res = await requestOnce(config, body, fetchImpl, Array.isArray(timeoutMs) ? timeoutMs[attempt - 1] ?? timeoutMs.at(-1) : timeoutMs);
       if (!res.ok) {
         const err = new Error(`Sheet answered ${res.status}`);
         err.status = res.status;
