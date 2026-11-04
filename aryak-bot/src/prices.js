@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeDigits, normalizeLetters } from './text.js';
+import { productCode } from './codes.js';
 
 const UNIT_ALIASES = { m: 'm', mtr: 'm', meter: 'm', metre: 'm', meters: 'm', متر: 'm', roll: 'roll', رول: 'roll', pcs: 'pcs', pc: 'pcs', piece: 'pcs', عدد: 'pcs', carton: 'carton', کارتن: 'carton' };
 
@@ -58,12 +59,15 @@ export class PriceBook {
 
   /** The price a customer should pay for [code] on [day] (yyyy-mm-dd): { price, unit, source: 'exception'|'list' } or null. */
   priceOf(code, customer = '', day = '') {
-    const c = normCode(code);
-    const item = this.data.items[c];
+    // the code as printed first; then the bare product code ("PVC FILM511" -> "511"), so a price below the list is never missed
+    const exact = normCode(code);
+    const bare = productCode(code);
+    const c = this.data.items[exact] || !this.data.items[bare] ? exact : bare;
+    const item = this.data.items[c] || this.data.items[bare];
     const who = normName(customer);
     const fits = (e) => who && normName(e.customer) && (who.includes(normName(e.customer)) || normName(e.customer).includes(who))
       && (!e.from || !day || day >= e.from) && (!e.to || !day || day <= e.to);
-    const byCode = this.data.exceptions.find((e) => fits(e) && e.code && normCode(e.code) === c);
+    const byCode = this.data.exceptions.find((e) => fits(e) && e.code && (normCode(e.code) === c || normCode(e.code) === bare));
     if (byCode) return { price: byCode.price, unit: byCode.unit || item?.unit || '', source: 'exception' };
     const cat = String(item?.category || '').toLowerCase();
     const byCat = cat && this.data.exceptions.find((e) => fits(e) && !e.code && e.category && String(e.category).toLowerCase() === cat);

@@ -9,13 +9,13 @@ import path from 'node:path';
 import { answer } from './assistant.js';
 import { SheetCache, fetchReport, fetchStock, isTimeout, managerMessage, warmSheet } from './stock.js';
 import { PriceBook, formatBook, formatCodePrice, formatParsed, parsePriceCommand, parsePriceDocument, parsePriceText } from './prices.js';
-import { auditInvoice, checkNumber } from './audit.js';
+import { auditInvoice, checkNumber, mergeProblems } from './audit.js';
 import { parseOnBehalf } from './onbehalf.js';
 import { Aliases, parseAliasCommand } from './aliases.js';
 import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
 import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
-import { customerFromMessages } from './codes.js';
+import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
@@ -357,14 +357,17 @@ const sendTo = async (word, text) => {
 };
 
 /** The PDF of a message as a document, or null for anything else. */
-async function pdfOf(raw, groupId) {
+async function pdfOf(raw, groupId, { internal = false } = {}) {
   const file = normalizeMessageContent(raw.message)?.documentMessage;
   if (!file || !String(file.mimetype || '').includes('pdf')) return null;
   let info = await groupInfo(groupId);
   const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
   let staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender);
   if (staff === null) { info = await groupInfo(groupId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender); }
-  if (staff === null) { logger.info(`pdf from unknown sender in ${groupId}, ignored`); return null; }
+  // The Invoices group is an internal group: whoever posts a PDF there is the office, even when the number is not in the list.
+  if (staff === null && internal) staff = true;
+  logger.info(`pdf in "${info.subject}": sender ${raw.key.fromMe ? 'is this account' : staff === null ? 'unknown' : staff ? 'office' : 'customer'}${internal && staff ? ' (internal group)' : ''}, size ${file.fileLength || '?'}`);
+  if (staff === null) { logger.info(`pdf from unknown sender in ${groupId}, ignored (not in STAFF_NUMBERS)`); return null; }
   const buf = await downloadMediaMessage(raw, 'buffer', {});
   if (buf.length > 20 * 1024 * 1024) { logger.warn(`pdf too large in ${groupId}`); return null; }
   return { info, doc: { hash: createHash('sha256').update(buf).digest('hex'), base64: buf.toString('base64'), fileName: file.fileName || '', senderName: raw.pushName || '', staff } };
@@ -376,8 +379,9 @@ async function pdfOf(raw, groupId) {
  * The bot never answers a customer here.
  */
 async function watchGroup(raw, groupId, role) {
-  if (raw.key.fromMe) return;
-  const got = await pdfOf(raw, groupId);
+  // An invoice posted from this very account (the owner tests from it) is checked in the Invoices group: the bot never posts a PDF itself.
+  if (raw.key.fromMe && role !== 'invoice') return;
+  const got = await pdfOf(raw, groupId, { internal: role === 'invoice' });
   if (!got) return;
   const { info, doc } = got;
   if (role === 'request') {
@@ -386,7 +390,9 @@ async function watchGroup(raw, groupId, role) {
     if (desk.addRequest(doc, meta, info.subject)) logger.info(`${groupId}: purchase order ${meta.po || '(no number)'} of ${meta.customer || '?'} kept`);
     return;
   }
-  if (!doc.staff || botState.paused || !desk.firstTime(doc.hash)) return;
+  if (!doc.staff) { logger.info(`invoice pdf not checked: sender is not the office`); return; }
+  if (botState.paused) { logger.info('invoice pdf not checked: the assistant is paused'); return; }
+  if (!desk.firstTime(doc.hash)) { logger.info('invoice pdf not checked: this file was already checked'); return; }
   if (!config.infoGroupName) { logger.warn('INFO_GROUP_NAME is not set: invoice check skipped'); return; }
   const meta = await extractMeta({ client, config, doc });
   const found = desk.find(meta);
@@ -407,6 +413,8 @@ async function watchGroup(raw, groupId, role) {
     return;
   }
   // The arithmetic, the prices against the owner's list and the invoice number: plain checks on what was read.
+  // The codes as the sheet and the list know them: "PVC FILM511" is 511 (the printed wording is kept as the description).
+  if (verdict.invoice?.lines) verdict.invoice.lines = verdict.invoice.lines.map((l) => ({ ...l, code: productCode(l.code), printedCode: l.code }));
   const number = verdict.invoice_number || verdict.invoice?.number || '';
   const day = new Date().toISOString().slice(0, 10);
   // The item's own unit from the stock sheet for every code on the invoice (metres for film, pieces for hardware).
@@ -419,7 +427,7 @@ async function watchGroup(raw, groupId, role) {
     ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer, sheetUnits }) : []),
     ...(number ? checkNumber(number, desk.numbers(), tracker.deleted) : []),
   ];
-  const problems = [...own, ...extra];
+  const problems = mergeProblems(own, extra);
   for (const p of problems) experience.bump(`ie|${p.kind}`);
   const urgent = problems.filter((p) => p.severity !== 'info').length;
   const priceUrgent = extra.filter((p) => p.kind === 'price-below' && p.severity !== 'info').length;

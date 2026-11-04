@@ -8,11 +8,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeLetters } from './text.js';
 import { matchCod } from './captions.js';
+import { productCode } from './codes.js';
 
 const DAY = 24 * 3600 * 1000;
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 const normName = (s) => normalizeLetters(String(s || '')).replace(/\b(llc|l\.l\.c|co|company|ltd|fze|trading|est)\b/g, '').replace(/[^a-z0-9؀-ۿ]/g, '');
-const normCode = (c) => String(c || '').trim().toUpperCase();
+const normCode = (c) => productCode(c) || String(c || '').trim().toUpperCase();
 const normUnit = (u) => ({ m: 'm', mtr: 'm', meter: 'm', meters: 'm', metre: 'm', metres: 'm', متر: 'm', roll: 'roll', rolls: 'roll', رول: 'roll' }[normalizeLetters(String(u || '')).trim()] || normalizeLetters(String(u || '')).trim());
 
 /** The same customer when one normalised name contains the other (the groups write short names, the papers long ones). */

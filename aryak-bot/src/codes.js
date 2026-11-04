@@ -66,3 +66,18 @@ export const isNudge = (text) => {
   const s = dropAttention(String(text || '')).replace(/[\s?؟!.،,]+/g, '');
   return String(text || '').trim() !== '' && s === '';
 };
+
+/**
+ * The bare product code of an invoice or list line: "PVC FILM511", "PVC FILM 511", "FILM511", "511 ARYAK", "AR511" -> "511".
+ * Real codes that carry letters stay whole: "108 C", "702 A", "E 1803", "TS 840", "KG10-300", "ACCESSORIES-0453".
+ * The filler words (PVC, FILM, EDGE, BAND, ARYAK) are removed only as words or glued in front of digits.
+ */
+export function productCode(item) {
+  const raw = normalizeDigits(String(item || '')).toUpperCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
+  if (!raw) return '';
+  let s = raw.replace(/\b(?:PVC|FILM|EDGE|BANDING|BAND|ARYAK|ARY)(?=\d)/g, ' ').replace(/\b(?:PVC|FILM|EDGE|BANDING|BAND|ARYAK|ARY)\b/g, ' ').replace(/^AR\s?(?=\d)/, '').replace(/\s+/g, ' ').trim();
+  if (!s) return raw;
+  if (/^[A-Z]{1,12}-\d+(?:-\d+)?$/.test(s) || /^[A-Z]{1,4}\s?-?\d+(?:-\d+)?(?:\s[A-Z])?$/.test(s) || /^\d+(?:-\d+)?(?:\s?[A-Z])?$/.test(s)) return s;
+  const m = /[A-Z]{0,4}\s?-?\d{2,5}(?:-\d+)?(?:\s[A-Z](?![A-Z]))?/.exec(s);
+  return m ? m[0].trim() : s;
+}

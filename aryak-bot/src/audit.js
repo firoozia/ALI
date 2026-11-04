@@ -4,6 +4,7 @@
 
 import { compareLine, normUnit } from './prices.js';
 import { normalizeDigits } from './text.js';
+import { productCode } from './codes.js';
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 const has = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
@@ -39,6 +40,17 @@ export function checkNumber(number, seen, deleted = new Set()) {
 }
 
 /**
+ * The model's own problems and the plain checks' problems as one list: a figure problem the plain check also found (or whose
+ * root cause it found, a wrong line or VAT) is dropped from the model's side, so one mistake is reported once.
+ */
+export function mergeProblems(own, extra) {
+  const kinds = new Set(extra.map((p) => p.kind));
+  const rooted = ['line-total', 'subtotal', 'vat'].some((k) => kinds.has(k));
+  const keep = own.filter((p) => !(['total', 'vat', 'subtotal', 'line-total'].includes(p.kind) && (kinds.has(p.kind) || (p.kind === 'total' && rooted))));
+  return [...keep, ...extra];
+}
+
+/**
  * [invoice]: { number, customer, lines: [{ code, quantity, unit, unit_price, line_total }], subtotal, vat, total }.
  * [book]: the PriceBook (may be empty), [day]: the invoice day, [vatRate]: percent, [tol]: money tolerance for rounding.
  */
@@ -59,7 +71,7 @@ export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05,
       }
     }
     // The unit of the line against the item's own unit in the stock sheet: metres for film, pieces for hardware.
-    const own = sheetUnits[code.toUpperCase()] || '';
+    const own = sheetUnits[code.toUpperCase()] || sheetUnits[productCode(code)] || '';
     if (own && l.unit && normUnit(own) !== normUnit(l.unit)) {
       problems.push({ kind: 'unit-sheet', item: code, requested: String(own), invoiced: String(l.unit), note: 'واحد این ردیف با واحد کالا در برگه موجودی فرق دارد (مثلاً متر به جای عدد)', severity: 'urgent' });
     }
@@ -74,13 +86,21 @@ export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05,
         problems.push({ kind: 'unit', item: code, requested: `${money(c.expected)} / ${c.expectedUnit}`, invoiced: `${l.unit_price} / ${l.unit || '—'}`, note: 'واحد قیمت با لیست فرق دارد', severity: 'urgent' });
       } else if (c.status === 'missing') {
         problems.push({ kind: 'price-missing', item: code, requested: money(c.expected), invoiced: '', note: 'قیمتی روی این ردیف چاپ نشده است', severity: 'info' });
+      } else if (c.status === 'no-price') {
+        problems.push({ kind: 'price-unknown', item: code, requested: '', invoiced: '', note: 'قیمت این کد در لیست نیست، سنجیده نشد', severity: 'info' });
       }
     }
+  }
+  if (!book?.loaded && lines.some((l) => String(l.code || '').trim())) {
+    problems.push({ kind: 'prices-unchecked', item: '', requested: '', invoiced: '', note: 'لیست قیمت بارگذاری نشده است؛ قیمت‌های این فاکتور سنجیده نشد', severity: 'info' });
   }
   const withTotals = lines.filter((l) => has(l.line_total));
   if (has(invoice?.subtotal) && withTotals.length && withTotals.length === lines.length) {
     const sum = round2(withTotals.reduce((s, l) => s + Number(l.line_total), 0));
-    if (Math.abs(sum - Number(invoice.subtotal)) > tol) problems.push({ kind: 'subtotal', item: '', requested: money(sum), invoiced: money(invoice.subtotal), note: 'جمع ردیف‌ها با جمع جزء فاکتور نمی‌خواند', severity: 'urgent' });
+    // one wrong line total makes the sum wrong too: that is the same mistake, reported once (at the line)
+    const rowsAdd = round2(lines.reduce((s, l) => s + (has(l.quantity) && has(l.unit_price) ? round2(Number(l.quantity) * Number(l.unit_price)) : Number(l.line_total)), 0));
+    const explainedByLine = problems.some((p) => p.kind === 'line-total') && Math.abs(rowsAdd - Number(invoice.subtotal)) <= tol;
+    if (Math.abs(sum - Number(invoice.subtotal)) > tol && !explainedByLine) problems.push({ kind: 'subtotal', item: '', requested: money(sum), invoiced: money(invoice.subtotal), note: 'جمع ردیف‌ها با جمع جزء فاکتور نمی‌خواند', severity: 'urgent' });
   }
   if (has(invoice?.vat) && has(invoice?.subtotal)) {
     if (invoice.prices_include_vat === true) {
@@ -95,7 +115,9 @@ export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05,
       if (Math.abs(expected - Number(invoice.vat)) > tol) problems.push({ kind: 'vat', item: '', requested: money(expected), invoiced: money(invoice.vat), note: `مالیات ${vatRate} درصد از جمع جزء نمی‌شود`, severity: 'urgent' });
       if (has(invoice?.total)) {
         const total = round2(Number(invoice.subtotal) + Number(invoice.vat));
-        if (Math.abs(total - Number(invoice.total)) > tol) problems.push({ kind: 'total', item: '', requested: money(total), invoiced: money(invoice.total), note: 'جمع کل با جمع جزء به‌اضافهٔ مالیات نمی‌خواند', severity: 'urgent' });
+        // a wrong VAT figure with a total that is right for the right VAT is one mistake, reported once (at the VAT)
+        const rightForRightVat = problems.some((p) => p.kind === 'vat') && Math.abs(round2(Number(invoice.subtotal) + expected) - Number(invoice.total)) <= tol;
+        if (Math.abs(total - Number(invoice.total)) > tol && !rightForRightVat) problems.push({ kind: 'total', item: '', requested: money(total), invoiced: money(invoice.total), note: 'جمع کل با جمع جزء به‌اضافهٔ مالیات نمی‌خواند', severity: 'urgent' });
       }
     }
   }

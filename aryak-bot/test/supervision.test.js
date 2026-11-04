@@ -170,10 +170,10 @@ test('prices: below the list is urgent, above is a note, the unit is checked, th
   assert.equal(run([line('408', 10, 12.5, 125)], 'Someone').length, 0);
   assert.equal(run([line('408', 10, 12.5, 125, 'roll')], 'Someone')[0].kind, 'unit');
   assert.equal(run([line('408', 10, null, null)], 'Someone')[0].kind, 'price-missing');
-  assert.equal(run([line('777', 10, 5, 50)], 'Someone').length, 0); // no price for this code: nothing to compare
+  assert.deepEqual(run([line('777', 10, 5, 50)], 'Someone').map((p) => [p.kind, p.severity]), [['price-unknown', 'info']]); // no price for this code: said, not silent
   assert.match(run([line('229', 10, 5, 50)], 'Someone')[0].note, /فاصله غیرعادی/);
   // without a stored list only the arithmetic is checked
-  assert.deepEqual(auditInvoice({ lines: [line('229', 10, 8.5, 85)] }, { book: new PriceBook(''), customer: 'x' }), []);
+  assert.deepEqual(auditInvoice({ lines: [line('229', 10, 8.5, 85)] }, { book: new PriceBook(''), customer: 'x' }).map((p) => p.kind), ['prices-unchecked']);
 });
 
 test('invoice numbers: a repeat is urgent, a jump is a note, order and other series are left alone', () => {
@@ -282,6 +282,8 @@ test('the model is told same_roll only for an available code with a quantity, an
   assert.ok(!('same_roll' in noQty.forModel));
 });
 
+const arith = (inv) => auditInvoice(inv, { book: new PriceBook(''), customer: 'x' }).filter((p) => p.kind !== 'prices-unchecked'); // the plain arithmetic only
+
 test('dirhams with two decimals; another currency is a mistake; prices that already hold the VAT are checked the other way round', () => {
   const book = sample();
   const base = { lines: [line('229', 10, 9, 90)], subtotal: 90, vat: 4.5, total: 94.5 };
@@ -290,14 +292,14 @@ test('dirhams with two decimals; another currency is a mistake; prices that alre
   const usd = auditInvoice({ ...base, currency: 'USD' }, { book, customer: 'x' });
   assert.deepEqual(usd.map((p) => [p.kind, p.severity, p.requested, p.invoiced]), [['currency', 'urgent', 'AED', 'USD']]);
   // two decimals everywhere, the way a UAE invoice shows them
-  const off = auditInvoice({ lines: [line('229', 3, 9.1, 28)], subtotal: 28, vat: 1.4, total: 29.4 }, { book: new PriceBook(''), customer: 'x' });
+  const off = arith({ lines: [line('229', 3, 9.1, 28)], subtotal: 28, vat: 1.4, total: 29.4 });
   assert.deepEqual(off.map((p) => [p.kind, p.requested, p.invoiced]), [['line-total', '3 × 9.1 = 27.30', '28.00']]);
   // prices include VAT: the lines add up to the total; the VAT is the 5/105 inside it
   const inc = { prices_include_vat: true, lines: [line('229', 10, 10.5, 105)], subtotal: 105, vat: 5, total: 105 };
-  assert.deepEqual(auditInvoice(inc, { book: new PriceBook(''), customer: 'x' }), []);
-  const wrong = auditInvoice({ ...inc, vat: 7 }, { book: new PriceBook(''), customer: 'x' });
+  assert.deepEqual(arith(inc), []);
+  const wrong = arith({ ...inc, vat: 7 });
   assert.deepEqual(wrong.map((p) => [p.kind, p.requested, p.invoiced]), [['vat', '5.00', '7.00']]);
-  const notEqual = auditInvoice({ ...inc, total: 110, vat: 5.24 }, { book: new PriceBook(''), customer: 'x' });
+  const notEqual = arith({ ...inc, total: 110, vat: 5.24 });
   assert.ok(notEqual.some((p) => p.kind === 'total'));
 });
 

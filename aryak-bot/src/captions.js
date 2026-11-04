@@ -4,7 +4,7 @@
 // plain data (never a name of a courier, never a bank detail). What they cannot read they return as null, and the model reads it.
 
 import { normalizeDigits } from './text.js';
-import { dropAttention, stripBrand } from './codes.js';
+import { dropAttention, productCode } from './codes.js';
 
 const clean = (s) => dropAttention(normalizeDigits(String(s || ''))).replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
 const num = (s) => Number(String(s).replace(/,/g, ''));
@@ -148,12 +148,7 @@ export function parseGoodsCaption(text) {
  * The product code of an invoice line item: "PVC FILM107" -> "107", "PVC 1806" -> "1806", "KG10-300" stays, a letter variant
  * ("108 C") stays whole. Also the ARYAK prefix ("108 ARYAK", "AR102") is removed.
  */
-export function codeFromItem(item) {
-  const s = clean(item).toUpperCase().replace(/\bARYAK\b|\bARY\b/g, ' ').replace(/\s+/g, ' ').trim();
-  if ((/^[A-Z]{1,12}-\d+(?:-\d+)?$/.test(s) || /^[A-Z]{1,4}\d+(?:-\d+)?$/.test(s)) && !/^(?:PVC|AR|ARY)\d/.test(s)) return s;
-  const m = /(?:^|[^\d])(\d{2,5})(?:\s?([A-Z])(?![A-Z]))?\s*$/.exec(s) || /(\d{2,5})(?:\s?([A-Z])(?![A-Z]))?/.exec(s);
-  return m ? (m[2] ? `${m[1]} ${m[2]}` : m[1]) : stripBrand(s);
-}
+export const codeFromItem = (item) => productCode(item);
 
 /** "108 C" -> { base: '108', letter: 'C' }: a variant of 108, to be confirmed with a colleague, never a hard error. */
 export function variantOf(code) {
