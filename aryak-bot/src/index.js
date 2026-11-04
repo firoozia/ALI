@@ -9,6 +9,7 @@ import { answer } from './assistant.js';
 import { SheetCache, fetchReport, fetchStock, isTimeout, warmSheet } from './stock.js';
 import { PriceBook, formatBook, formatCodePrice, formatParsed, parsePriceCommand, parsePriceDocument, parsePriceText } from './prices.js';
 import { auditInvoice, checkNumber } from './audit.js';
+import { Tracker, balanceOf, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
@@ -71,6 +72,7 @@ const GATE_WORDS = {
 };
 const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
 const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
+const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
 const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availability') }); // questions to the sales manager that wait for his answer
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
@@ -144,13 +146,25 @@ setInterval(async () => {
   } catch (e) { logger.warn(`reminder failed: ${e.message}`); }
 }, 60 * 1000).unref();
 
+// Once an hour: the polite single reminders (an order without an invoice, an invoice without a delivery), and on the
+// statement day the customers whose monthly statement was not recorded. Report-only, to the information group.
+setInterval(async () => {
+  try {
+    if (!sock?.user || !config.infoGroupName || botState.paused || !config.trackerEnabled) return;
+    const lines = dueNags(tracker, desk.requests, { orderHours: config.orderNagHours, deliveryHours: config.deliveryNagHours });
+    if (lines.length) await sendTo(config.infoGroupName, `یادآوری:\n${lines.slice(0, 12).map((l) => `- ${l}`).join('\n')}\n— ${config.displayName}`);
+    const due = statementsDue(tracker, { timeZone: config.timezone, day: config.statementDay });
+    if (due.length) await sendTo(config.infoGroupName, `صورت‌حساب ماهانهٔ این مشتری‌ها هنوز ثبت نشده است:\n${due.slice(0, 20).map((n) => `- ${n}`).join('\n')}\n— ${config.displayName}`);
+  } catch (e) { logger.warn(`reminders failed: ${e.message}`); }
+}, 60 * 60 * 1000).unref();
+
 // The daily summary for the information group, once a day after the set hour (counts only).
 setInterval(async () => {
   try {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -167,6 +181,50 @@ async function translateTo(text, lang) {
     });
     return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim() || text;
   } catch { return text; }
+}
+
+/** Which supervised group a chat is: 'cut' | 'delivery' | 'payment' | null (by a word of its name). */
+async function trackedRole(groupId) {
+  if (!config.trackerEnabled) return null;
+  const subject = (await groupInfo(groupId)).subject.toLowerCase();
+  const has = (w) => w && subject.includes(w);
+  if (has(config.cutGroupName)) return 'cut';
+  if (has(config.deliveryGroupName)) return 'delivery';
+  if (has(config.confirmGroupName)) return 'payment';
+  return null;
+}
+
+/**
+ * The watching of the cutting, delivery and confirmation groups. It reads each message (and its photo, in memory only),
+ * keeps what it means as an event (customer, codes, quantities, amounts: no photo, no text, no bank detail), and
+ * compares it with the steps before it. Anything found goes to the information group; nothing is ever written to the
+ * group watched or to a customer, except the hold reminder in the delivery group.
+ */
+async function trackGroup(raw, groupId, role) {
+  if (sent.has(raw.key.id) || botState.paused) return;
+  const content = normalizeMessageContent(raw.message);
+  const image = imageOf(content);
+  const text = textOf(content) || image?.caption || '';
+  if (!text && !image) return;
+  if (!image && !/\d/.test(text) && text.length < 12) return; // a greeting or a thanks
+  const images = [];
+  if (image) {
+    try { images.push({ base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: String(image.mimetype || 'image/jpeg').split(';')[0] }); } catch (e) { logger.warn(`tracker: photo download failed: ${e.message}`); }
+  }
+  const ev = await extractEvent({ client, config, role, caption: text, images });
+  const where = `group "${(await groupInfo(groupId)).subject}"`;
+  if (!ev) { trace(where, 'tracker', `${role}: nothing to record`); return; }
+  const event = { ...ev, at: Date.now(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24) };
+  if (!tracker.add(event)) return;
+  trace(where, 'tracker', `${role} recorded (${event.lines?.length || 0} line(s)${event.amount ? ', an amount' : ''})`);
+  if (!config.infoGroupName) return;
+  if (role === 'delivery') {
+    const findings = checkDelivery(tracker, event);
+    if (findings.length) await sendTo(config.infoGroupName, `ℹ️ تحویل ${event.customer || ''}:\n${findings.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
+    if (tracker.isHeld(event.customer)) await sock.sendMessage(groupId, { text: `⛔ ${tracker.isHeld(event.customer)}: تحویل تا تأیید نقدی نباید انجام شود. — ${config.displayName}` }, { quoted: raw });
+  } else if (role === 'payment' && event.kind !== 'statement' && event.customer && event.amount) {
+    await sendTo(config.infoGroupName, `ℹ️ پرداخت ثبت شد: ${event.customer}، ${event.amount} ${event.currency || ''}\n${formatBalance(event.customer, balanceOf(tracker, event.customer))}\n— ${config.displayName}`);
+  }
 }
 
 async function findGroupJid(word) {
@@ -243,6 +301,16 @@ async function watchGroup(raw, groupId, role) {
   const priceUrgent = extra.filter((p) => p.kind === 'price-below' && p.severity !== 'info').length;
   const final = { ...verdict, problems, verdict: verdict.verdict === 'no-order' ? 'no-order' : urgent && verdict.verdict === 'match' ? 'mismatch' : verdict.verdict };
   logger.info(`${groupId}: invoice ${final.verdict}, ${problems.length} point(s), ${urgent} urgent${book.loaded ? '' : ', no price list stored'}`);
+  if (config.trackerEnabled && final.verdict !== 'error') {
+    const invoiceEvent = {
+      type: 'invoice', at: Date.now(), ref: doc.hash, customer: verdict.request_customer || verdict.invoice_customer || meta.customer || '', number,
+      total: verdict.invoice?.total ?? null, lines: (verdict.invoice?.lines || []).map((l) => ({ code: String(l.code || '').toUpperCase(), quantity: l.quantity, unit: l.unit })),
+    };
+    if (tracker.add(invoiceEvent) && config.cutGroupName) {
+      const notes = checkInvoiceAgainstCuts(tracker, invoiceEvent);
+      if (notes.length) await sendTo(config.infoGroupName, `ℹ️ مقایسهٔ فاکتور ${number} با گروه برش:\n${notes.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
+    }
+  }
   desk.record({ verdict: final.verdict, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, po: meta.po, file: doc.fileName, problems: problems.length, urgent, priceUrgent, number });
   if (verdict.verdict !== 'no-order') {
     const text = reportText(final, { ...ctx, name: config.displayName });
@@ -479,6 +547,17 @@ async function handleStaffChat(raw, chatId, group) {
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
     ownIds: own, names: config.botNames,
   });
+  // The pipeline commands of the owner: a hold on delivery until cash is confirmed, the balance of a customer, the open orders.
+  if (admin && (!group || group.command)) {
+    const tc = parseTrackerCommand(text);
+    if (tc) {
+      if (tc.type === 'hold') { tracker.setHold(tc.customer); trace(where, role, 'delivery hold set'); await reply(`ثبت شد: تحویل به ${tc.customer} تا تأیید نقدی ممنوع است و در گروه تحویل یادآوری می‌شود.`); }
+      else if (tc.type === 'release') { await reply(tracker.clearHold(tc.customer) ? `ممنوعیت تحویل ${tc.customer} برداشته شد.` : `برای ${tc.customer} ممنوعیتی ثبت نبود.`); }
+      else if (tc.type === 'balance') { await reply(formatBalance(tc.customer, balanceOf(tracker, tc.customer))); }
+      else if (tc.type === 'orders') { await reply(openOrders(tracker, desk.requests)); }
+      return true;
+    }
+  }
   // The owner's price list and special prices (admins, in a private chat or the command group).
   if (admin && (!group || group.command)) {
     if (await handlePriceFlow({ raw, content, text, key: `p:${chatId}`, reply, role, where, image, pdf })) return true;
@@ -580,7 +659,9 @@ async function handleStaffChat(raw, chatId, group) {
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
-  const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, ...config.commandGroupNames].filter(Boolean);
+  const trackRole = await trackedRole(groupId);
+  if (trackRole) trackGroup(raw, groupId, trackRole).catch((e) => logger.warn(`tracker failed: ${e.message}`));
+  const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...config.commandGroupNames].filter(Boolean);
   if (staffWords.length) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();
     if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)) })) return;

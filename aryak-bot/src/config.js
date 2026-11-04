@@ -49,6 +49,14 @@ export function loadConfig(env = process.env) {
     digestHour: Number(env.DIGEST_HOUR || 18),
     // The customer availability flow (ask the quantity, answer or ask the sales manager); AVAILABILITY_FLOW=off keeps the old answer.
     availabilityFlow: (env.AVAILABILITY_FLOW || 'on').toLowerCase() !== 'off',
+    // The supervised pipeline: where goods are cut, where they are delivered, and the money side (a word of each group's name).
+    trackerEnabled: (env.TRACKER || 'on').toLowerCase() !== 'off',
+    cutGroupName: (env.CUT_GROUP_NAME || '').trim().toLowerCase(),
+    deliveryGroupName: (env.DELIVERY_GROUP_NAME || '').trim().toLowerCase(),
+    confirmGroupName: (env.CONFIRM_GROUP_NAME || '').trim().toLowerCase(),
+    orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
+    deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),
+    statementDay: Number(env.STATEMENT_DAY || 1),
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR

@@ -18,7 +18,7 @@ export const readLastDigest = (dir) => { try { return JSON.parse(fs.readFileSync
 export const writeLastDigest = (dir, day) => { try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file(dir), JSON.stringify({ day })); } catch { /* best effort */ } };
 
 /** [history]: the finished checks ({ at, verdict, urgent, priceUrgent }), [requests]: the orders kept ({ at }). */
-export function buildDigest({ history, requests, day, timeZone = 'Asia/Dubai' }) {
+export function buildDigest({ history, requests, day, timeZone = 'Asia/Dubai', events = [] }) {
   const checks = history.filter((h) => dayOf(h.at, timeZone) === day);
   const orders = requests.filter((r) => dayOf(r.at, timeZone) === day);
   const noOrder = checks.filter((h) => h.verdict === 'no-order').length;
@@ -33,6 +33,9 @@ export function buildDigest({ history, requests, day, timeZone = 'Asia/Dubai' })
     `- دارای ایراد: ${wrong}${priceAlerts ? ` (هشدار قیمت: ${priceAlerts})` : ''}`,
   ];
   if (noOrder) lines.push(`- فاکتور بدون سفارش پیدا شده: ${noOrder}`);
+  const today = events.filter((e) => dayOf(e.at, timeZone) === day);
+  const count = (type) => today.filter((e) => e.type === type).length;
+  if (count('cut') || count('delivery') || count('payment')) lines.push(`- برش‌های ثبت‌شده: ${count('cut')}`, `- تحویل‌ها: ${count('delivery')}`, `- پرداخت‌های ثبت‌شده: ${count('payment')}`);
   if (!orders.length && !checks.length) lines.push('امروز سفارش یا فاکتوری ثبت نشد.');
   return lines.join('\n');
 }
