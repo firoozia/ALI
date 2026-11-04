@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const HELLO_TEXT = 'سلام! دستیار آریاک روشن است و کار می‌کند ✅';
+export const helloText = (name = 'عسل') => `سلام! من ${name} هستم، دستیار آریاک. روشنم و کار می‌کنم ✅`;
 
 /** The bot's own chat from PAIR_PHONE digits, nothing else. */
 export const ownJid = (phone) => {
@@ -19,7 +19,7 @@ const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeo
  * [jid] is the account's own chat as the socket knows it; [phone] is the fallback. [send](jid, text) does the
  * sending, and the value is stored only after it worked. Every outcome is logged through [log].
  */
-export async function helloOnce({ value, phone, jid: given, dir, send, log = () => {}, timeoutMs = 30000 }) {
+export async function helloOnce({ value, phone, name, jid: given, dir, send, log = () => {}, timeoutMs = 30000 }) {
   const jid = given || ownJid(phone);
   if (!value) { log('greeting: HELLO_ONCE is empty, nothing to send'); return false; }
   if (!jid) { log('greeting: no own number (PAIR_PHONE and socket user are empty)'); return false; }
@@ -28,7 +28,7 @@ export async function helloOnce({ value, phone, jid: given, dir, send, log = () 
   try { last = fs.readFileSync(file, 'utf8'); } catch { /* never sent */ }
   if (last === value) { log('greeting: already sent for this HELLO_ONCE value'); return false; }
   log(`greeting: sending to ${jid}`);
-  await withTimeout(send(jid, HELLO_TEXT), timeoutMs);
+  await withTimeout(send(jid, helloText(name)), timeoutMs);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(file, value);
   log('greeting: sent');

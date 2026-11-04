@@ -22,6 +22,9 @@ What you can do
 When to stay silent
 - Reply exactly NO_REPLY when the message is not for you or needs no answer.`;
 
+export const staffRules = (name = 'Asal') =>
+  `${STAFF_RULES.replace('You are ARYAK Assistant,', `You are ${name},`)}\n\nYour name is ${name}: a woman's name. Introduce yourself and sign as ${name}, never as "the bot" or "the assistant". In Persian and Arabic speak in the feminine.`;
+
 export const STAFF_TOOLS = [
   {
     name: 'staff_stock',
@@ -135,7 +138,7 @@ export async function staffAnswer({ client, config, text, quoted = '', who = '',
     const res = await client.beta.messages.create({
       model: config.model,
       max_tokens: 2000,
-      system: STAFF_RULES,
+      system: staffRules(config.displayName),
       tools: STAFF_TOOLS,
       messages,
       output_config: { effort: config.effort || 'medium' },

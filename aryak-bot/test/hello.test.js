@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HELLO_TEXT, helloOnce, ownJid } from '../src/hello.js';
+import { helloOnce, helloText, ownJid } from '../src/hello.js';
 
 test('own chat is the bot number only', () => {
   assert.equal(ownJid('+971 55 769 9100'), '971557699100@s.whatsapp.net');
@@ -19,7 +19,8 @@ test('greeting goes once per value, only to the own number', async () => {
   assert.equal(await run('1'), true);
   assert.equal(await run('1'), false);
   assert.equal(await run('2'), true);
-  assert.deepEqual(sent, [['971557699100@s.whatsapp.net', HELLO_TEXT], ['971557699100@s.whatsapp.net', HELLO_TEXT]]);
+  assert.deepEqual(sent, [['971557699100@s.whatsapp.net', helloText()], ['971557699100@s.whatsapp.net', helloText()]]);
+  assert.match(helloText('عسل'), /من عسل هستم/);
 });
 
 test('a failed send is not remembered, so it is tried again', async () => {

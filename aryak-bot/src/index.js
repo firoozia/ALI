@@ -24,7 +24,7 @@ if (!config.allowedGroups.length && !config.allowedGroupNames.length) {
   console.error('Set ALLOWED_GROUP_NAMES (a word in the group names) or ALLOWED_GROUPS; otherwise the assistant answers nowhere.');
 }
 const client = new Anthropic();
-const system = buildSystemPrompt(config.kbDir);
+const system = buildSystemPrompt(config.kbDir, config.displayName);
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const recent = new Map(); // manager alerts already sent
 const groups = new Map(); // group JID -> { subject, lidToPhone, at }
@@ -117,15 +117,15 @@ async function watchGroup(raw, groupId, role) {
   if (!found.request) {
     logger.info(`${groupId}: no purchase order for invoice (PO ${meta.po || '?'})`);
     desk.record({ verdict: 'no-order', customer: meta.customer, po: meta.po, file: doc.fileName });
-    await sendTo(config.infoGroupName, noRequestText(meta, { ...ctx, ambiguous: found.ambiguous }));
+    await sendTo(config.infoGroupName, noRequestText(meta, { ...ctx, ambiguous: found.ambiguous, name: config.displayName }));
     return;
   }
   const verdict = await checkInvoice({ client, config, request: found.request, invoice: doc });
   logger.info(`${groupId}: invoice ${verdict.verdict}`);
   desk.record({ verdict: verdict.verdict, customer: verdict.request_customer || meta.customer, po: meta.po, file: doc.fileName, problems: verdict.problems?.length || 0 });
-  const text = reportText(verdict, ctx);
+  const text = reportText(verdict, { ...ctx, name: config.displayName });
   if (text) await sendTo(config.infoGroupName, text);
-  const warn = staffWarning(verdict);
+  const warn = staffWarning(verdict, config.displayName);
   if (warn) await sock.sendMessage(groupId, { text: warn });
 }
 
@@ -237,7 +237,7 @@ async function start() {
       // A few seconds after opening, so the session keys are ready; sent to the account's own chat only.
       setTimeout(() => {
         helloOnce({
-          value: config.helloOnce, phone: config.pairPhone, dir: config.authDir,
+          name: config.displayName, value: config.helloOnce, phone: config.pairPhone, dir: config.authDir,
           jid: sock.user?.id ? jidNormalizedUser(sock.user.id) : '',
           send: (jid, text) => sock.sendMessage(jid, { text }),
           log: (m) => logger.info(m),

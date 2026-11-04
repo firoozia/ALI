@@ -75,6 +75,11 @@ const KIND = {
 /** The message for the information group, or null when the invoice matches (nothing is posted for a match). */
 export function reportText(v, ctx) {
   if (v.verdict === 'match') return null;
+  const text = reportBody(v, ctx);
+  return ctx.name ? `${text}\n— ${ctx.name}` : text;
+}
+
+function reportBody(v, ctx) {
   const lines = [];
   if (v.verdict === 'error') {
     lines.push('⚠️ بررسی فاکتور انجام نشد');
@@ -224,9 +229,9 @@ export class InvoiceDesk {
 }
 
 /** Short warning for the staff group, so a wrong invoice is not forwarded to the customer. */
-export function staffWarning(v) {
+export function staffWarning(v, name = '') {
   if (v.verdict === 'match' || v.verdict === 'error') return null;
-  return `⚠️ این فاکتور با سفارش مشتری نمی‌خواند (${v.problems.length} مورد). لطفاً پیش از ارسال به مشتری، گزارش گروه اطلاعات را ببینید.`;
+  return `⚠️ این فاکتور با سفارش مشتری نمی‌خواند (${v.problems.length} مورد). لطفاً پیش از ارسال به مشتری، گزارش گروه اطلاعات را ببینید.${name ? `\n— ${name}` : ''}`;
 }
 
 /** Report when no purchase order matches the invoice. */
@@ -237,5 +242,6 @@ export function noRequestText(meta, ctx) {
   lines.push(`مشتری روی فاکتور: ${meta.customer || '—'}`);
   lines.push(`شمارهٔ سفارش روی فاکتور: ${meta.po || '—'}`);
   if (ctx.ambiguous) lines.push(`چند سفارش با این شماره هست: ${ctx.ambiguous.join('، ')}`);
+  if (ctx.name) lines.push(`— ${ctx.name}`);
   return lines.join('\n');
 }
