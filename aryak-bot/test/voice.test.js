@@ -17,7 +17,7 @@ test('token comes from the metadata server and is cached until it nearly expires
   await assert.rejects(metadataToken({ fetchImpl: async () => json({}, false, 404) })(), /404/);
 });
 
-test('speech request: ogg opus, main language plus alternatives; text and the lowest confidence come back', async () => {
+test('speech request: ogg opus, the main language; text and the lowest confidence come back', async () => {
   let sent;
   const fetchImpl = async (url, opts) => {
     sent = { url, opts, body: JSON.parse(opts.body) };
@@ -25,12 +25,12 @@ test('speech request: ogg opus, main language plus alternatives; text and the lo
   };
   const tr = speechTranscriber({ languages: ['fa-IR', 'ar-AE', 'en-IN', 'ur-PK', 'hi-IN'], token: async () => 'T', fetchImpl });
   const r = await tr(Buffer.from('audio'));
-  assert.deepEqual(r, { text: 'کد 408 موجوده ممنون', confidence: 0.7, language: '' });
+  assert.deepEqual(r, { text: 'کد 408 موجوده ممنون', confidence: 0.7, language: 'fa-IR' });
   assert.match(sent.url, /speech\.googleapis\.com\/v1\/speech:recognize/);
   assert.equal(sent.opts.headers.Authorization, 'Bearer T');
   assert.equal(sent.body.config.encoding, 'OGG_OPUS');
   assert.equal(sent.body.config.languageCode, 'fa-IR');
-  assert.deepEqual(sent.body.config.alternativeLanguageCodes, ['ar-AE', 'en-IN', 'ur-PK']);
+  assert.ok(!('alternativeLanguageCodes' in sent.body.config), 'the main language is sent alone');
   assert.equal(sent.body.audio.content, Buffer.from('audio').toString('base64'));
 });
 
@@ -151,4 +151,68 @@ test('understand: a refused speech call gives the reason "speech error" and logs
   });
   assert.equal(r.reason, 'speech error');
   assert.match(logs.join('\n'), /403 PERMISSION_DENIED: caller lacks permission/);
+});
+
+// ---- the owner's real voice note: "آتوسا موجودی کد 408 چقدره" heard as "آدرس موجودی کد ۴۰۸ چقدره" ----
+import { nameHeard, normalizeSpokenNumbers } from '../src/voice.js';
+import { DEFAULT_PHRASES, opusInputRate } from '../src/speech.js';
+
+test('the real transcript: the name was heard as "آدرس" before موجودی, and that counts as the name', () => {
+  const heard = 'آدرس موجودی کد ۴۰۸ چقدره';
+  assert.equal(nameHeard(heard, ['آتوسا']), true);
+  assert.equal(nameHeard('آدرس مغازه کجاست', ['آتوسا']), false); // an address in its normal sense
+  for (const n of ['آتوسا موجودی', 'اتوسا موجودی', 'اتوصا کد', 'آتوسه کد', 'Atossa stock']) assert.equal(nameHeard(n, ['آتوسا']), true, n);
+  assert.equal(nameHeard('موجودی کد ۴۰۸', ['آتوسا']), false);
+});
+
+test('the real transcript reaches the model with the code in Latin digits and the question repeated back', async () => {
+  let sentText = '';
+  const client = { beta: { messages: { create: async (req) => { sentText = req.messages[0].content; return { content: [{ type: 'text', text: JSON.stringify({ intent: 'stock', language: 'fa', codes: ['408'], request_text: 'موجودی کد 408؟', confirm_text: 'آیا درست متوجه شدم؟ موجودی کد 408؟' }) }] }; } } } };
+  const r = await understand({ buffer: Buffer.from('ogg'), seconds: 4, config: { model: 'm', speechMinConfidence: 0.5 }, client, transcribe: async () => ({ text: 'آدرس موجودی کد ۴۰۸ چقدره', confidence: 0.87, language: 'fa-ir' }) });
+  assert.equal(r.ok, true);
+  assert.equal(r.confirmText, 'آیا درست متوجه شدم؟ موجودی کد 408؟');
+  assert.deepEqual(r.codes, ['408']);
+  assert.match(sentText, /آدرس موجودی کد 408 چقدره/);
+});
+
+test('numbers spoken in words become digits', () => {
+  assert.equal(normalizeSpokenNumbers('آتوسا موجودی کد چهارصد و هشت چقدره'), 'آتوسا موجودی کد 408 چقدره');
+  assert.equal(normalizeSpokenNumbers('بیست و پنج'), '25');
+  assert.equal(normalizeSpokenNumbers('کد دویست و بیست و نه'), 'کد 229');
+  assert.equal(normalizeSpokenNumbers('هزار و هشتصد و ده'), '1810');
+  assert.equal(normalizeSpokenNumbers('دو هزار و پانصد'), '2500');
+  assert.equal(normalizeSpokenNumbers('سیصد'), '300');
+  assert.equal(normalizeSpokenNumbers('نه'), 'نه'); // "no"
+  assert.equal(normalizeSpokenNumbers('نه من دویست می‌خوام'), 'نه من 200 میخوام');
+  assert.equal(normalizeSpokenNumbers('موجودی کد 305'), 'موجودی کد 305');
+});
+
+test('speech: Opus at 48000, the main language alone first, the others only when it gives nothing usable, with phrase hints', async () => {
+  const bodies = [];
+  const answers = [{}, { results: [{ languageCode: 'ar-ae', alternatives: [{ transcript: 'junk', confidence: 0.3 }] }] }, { results: [{ languageCode: 'en-in', alternatives: [{ transcript: 'stock 408', confidence: 0.8 }] }] }];
+  const fetchImpl = async (url, opts) => { bodies.push(JSON.parse(opts.body)); return json(answers.shift() || {}); };
+  const tr = speechTranscriber({ languages: ['fa-IR', 'ar-AE', 'en-IN'], token: async () => 'T', fetchImpl, minConfidence: 0.5 });
+  const r = await tr(Buffer.from('x'));
+  assert.equal(r.text, 'stock 408');
+  assert.deepEqual(bodies.map((b) => b.config.languageCode), ['fa-IR', 'ar-AE', 'en-IN']);
+  assert.ok(bodies.every((b) => b.config.sampleRateHertz === 48000 && !('alternativeLanguageCodes' in b.config)));
+  assert.deepEqual(bodies[0].config.speechContexts, [{ phrases: DEFAULT_PHRASES, boost: 15 }]);
+  assert.ok(DEFAULT_PHRASES.includes('آتوسا') && DEFAULT_PHRASES.includes('اتوسا') && DEFAULT_PHRASES.includes('موجودی'));
+});
+
+test('speech: a good first answer stops there; nothing usable anywhere gives the best weak one, else empty', async () => {
+  let calls = 0;
+  const good = speechTranscriber({ languages: ['fa-IR', 'ar-AE'], token: async () => 'T', fetchImpl: async () => { calls++; return json({ results: [{ alternatives: [{ transcript: 'ok', confidence: 0.87 }] }] }); }, minConfidence: 0.5 });
+  assert.equal((await good(Buffer.from('x'))).text, 'ok');
+  assert.equal(calls, 1);
+  const weak = speechTranscriber({ languages: ['fa-IR', 'ar-AE'], token: async () => 'T', fetchImpl: async () => json({ results: [{ alternatives: [{ transcript: 'meh', confidence: 0.2 }] }] }), minConfidence: 0.5 });
+  assert.equal((await weak(Buffer.from('x'))).confidence, 0.2);
+  const none = speechTranscriber({ languages: ['fa-IR', 'ar-AE'], token: async () => 'T', fetchImpl: async () => json({}), minConfidence: 0.5 });
+  assert.equal((await none(Buffer.from('x'))).text, '');
+});
+
+test('the declared input rate is read from the Opus header', () => {
+  const head = Buffer.concat([Buffer.from('OggS....'), Buffer.from('OpusHead'), Buffer.from([1, 1, 0, 0]), Buffer.from([0x80, 0x3e, 0, 0]), Buffer.alloc(4)]);
+  assert.equal(opusInputRate(head), 16000);
+  assert.equal(opusInputRate(Buffer.from('not opus at all')), 0);
 });

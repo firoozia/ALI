@@ -13,8 +13,8 @@ import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
-import { metadataToken, speechTranscriber } from './speech.js';
-import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand, voiceAction } from './voice.js';
+import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
+import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, nameHeard, retryText, understand, voiceAction } from './voice.js';
 import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
 import { shouldProcess } from './intake.js';
@@ -54,7 +54,10 @@ const GATE_WORDS = {
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
-const transcribe = speechTranscriber({ languages: config.speechLanguages, token: metadataToken() });
+const transcribe = speechTranscriber({
+  languages: config.speechLanguages, token: metadataToken(), minConfidence: config.speechMinConfidence,
+  phrases: [...new Set([config.displayName, ...DEFAULT_PHRASES])],
+});
 const handled = new Set(); // ids of messages already taken in
 const lastRaw = new Map(); // group JID -> last customer message, quoted by the reply
 let sock;
@@ -273,7 +276,7 @@ async function handleStaffChat(raw, chatId, group) {
     // follows its question.
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
     const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0);
-    const named = !u.ok && !!u.transcript && isAddressed({ text: u.transcript, ownIds: [], names: config.botNames });
+    const named = !u.ok && !!u.transcript && nameHeard(u.transcript, config.botNames);
     const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
     const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
     if (action === 'confirm') {
