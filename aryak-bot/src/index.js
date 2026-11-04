@@ -10,6 +10,7 @@ import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate,
 import { formatStaffStock } from './stock-format.js';
 import { detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
 import { imageAction, understandImages } from './image.js';
+import { ignoredKind, imageOf } from './media.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
@@ -293,9 +294,14 @@ const staffHandlersFor = (key, lang = 'fa') => ({
 async function handleStaffChat(raw, chatId, group) {
   const content = normalizeMessageContent(raw.message);
   const audio = config.voiceEnabled ? content?.audioMessage : null;
-  const image = config.imageConfirm ? content?.imageMessage : null;
+  const image = config.imageConfirm ? imageOf(content) : null;
   const text = textOf(content) || image?.caption || '';
-  if (!text && !audio && !image) return false;
+  if (!text && !audio && !image) {
+    // Never silent: say which kind of message was left alone (its kind only, never its content).
+    const kind = ignoredKind(content);
+    if (kind) trace(group ? `group "${(await groupInfo(chatId)).subject}"` : 'private', raw.key.fromMe ? 'owner' : 'unknown', `ignored: a ${kind} is not a text, voice note or photo`);
+    return false;
+  }
   if (sent.has(raw.key.id) || text.startsWith('🤖')) return true; // the bot's own message coming back
   const where = group ? `group "${(await groupInfo(chatId)).subject}"` : 'private';
   const own = ownIds();
@@ -352,6 +358,7 @@ async function handleStaffChat(raw, chatId, group) {
     // A colleague's photo is always read (no name is written on a photo); what is in it decides.
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
     const written = detectLang(text, 'fa');
+    trace(where, role, `photo received${image.mimetype ? ` (${String(image.mimetype).split(';')[0]})` : ''}: reading it`);
     const u = await understandPhotos([{ loadImage: async () => ({
       base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'),
       mimeType: image.mimetype?.split(';')[0] || 'image/jpeg',
@@ -421,7 +428,7 @@ async function onMessage(raw) {
   const content = normalizeMessageContent(raw.message);
   if (!content || content.protocolMessage || content.reactionMessage) return;
   const text = normalizeDigits(content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || '');
-  const image = content.imageMessage;
+  const image = imageOf(content);
   const m = {
     groupId, fromMe: !!raw.key.fromMe, sender: raw.key.participant, senderAlt: raw.key.participantAlt,
     senderName: raw.pushName || '', text, hasImage: !!image,
