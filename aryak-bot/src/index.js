@@ -6,6 +6,7 @@ import pino from 'pino';
 import { createHash } from 'node:crypto';
 import { answer } from './assistant.js';
 import { fetchStock } from './stock.js';
+import { formatStaffStock } from './stock-format.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
@@ -134,7 +135,10 @@ const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNorm
 const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
 
 const staffHandlers = {
-  staff_stock: (i) => fetchStock(config, { code: i.code, category: i.category, size: i.size }),
+  staff_stock: async (i) => ({
+    formatted: formatStaffStock(await fetchStock(config, { code: i.code, category: i.category, size: i.size }), i.code),
+    instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
+  }),
   recent_checks: (i) => desk.lastChecks(i.count),
   find_order: (i) => desk.listOrders(i),
 };
@@ -164,7 +168,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
   const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
-  if (cmd) { await reply(runCommand(cmd, { state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
+  if (cmd) { await reply(runCommand(cmd, { name: config.displayName, state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
   const ctx = content.extendedTextMessage?.contextInfo || {};
   if (group && !isAddressed({
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',

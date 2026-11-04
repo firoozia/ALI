@@ -859,7 +859,10 @@ function botStock_(req) {
   const bySize = Object.keys(sizes).sort().map(function (k) {
     const list = free.filter(function (r) { return sizeKey_(r[3]) === k; });
     const open = list.filter(function (r) { return (Number(r[5]) || 0) < (Number(r[4]) || 0) - 1e-6; }).length;
-    return { size: sizes[k], free: sum(list), packages: list.length, open: open, limit: limitOf(k) };
+    const places = {};
+    list.forEach(function (r) { places[String(r[13] || '').trim() || 'No location'] = true; });
+    return { size: sizes[k], free: sum(list), packages: list.length, open: open, limit: limitOf(k),
+             reserved: sum(reserved.filter(function (r) { return sizeKey_(r[3]) === k; })), locations: Object.keys(places) };
   });
   const where = {};
   free.forEach(function (r) { const l = String(r[13] || '').trim() || 'No location'; where[l] = (where[l] || 0) + 1; });

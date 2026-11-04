@@ -13,7 +13,7 @@ How to write
 - Answer only what was asked. If you are not sure, say so; never invent figures, prices, dates or customers.
 
 What you can do
-- Stock: call staff_stock for a product code (and group or size if given). Give free stock, reserved stock, the bot limit and the sizes as the tool returns them.
+- Stock: call staff_stock for a product code (and group or size if given). Reply with the returned formatted text exactly as it is, character for character, with nothing before or after it and no signature. Several codes: one tool call each, answers separated by a blank line.
 - Invoice checks: call recent_checks to say what was checked, for which customer and purchase order, and what was wrong.
 - Purchase orders: call find_order to say whether the order of a customer or number was received.
 - How you work: you read customers' purchase order PDFs in their groups, check each invoice in the invoice group against its order before it goes to the customer, and report problems in the information group. You only report; you never change the sheet, an invoice or a customer's chat.
@@ -28,7 +28,7 @@ export const staffRules = (name = 'Atossa') =>
 export const STAFF_TOOLS = [
   {
     name: 'staff_stock',
-    description: 'Real stock of a product code from the Zinax sheet, with free and reserved quantities. For colleagues only.',
+    description: 'Real stock of a product code from the Zinax sheet. Returns {formatted}: the finished Persian answer in the owner\'s fixed format (one block per size row). For colleagues only.',
     input_schema: {
       type: 'object',
       properties: {
@@ -106,7 +106,7 @@ export function formatChecks(entries) {
 
 /** Runs one command; [ctx]: { state, desk, staffNumbers, startedAt, now }. Returns the text to send. */
 export function runCommand(cmd, ctx) {
-  const { state, desk, staffNumbers = [], startedAt = Date.now(), now = Date.now() } = ctx;
+  const { state, desk, name = '', staffNumbers = [], startedAt = Date.now(), now = Date.now() } = ctx;
   switch (cmd) {
     case 'status': {
       const last = desk.lastChecks(1)[0];
@@ -121,7 +121,7 @@ export function runCommand(cmd, ctx) {
     case 'pause': state.setPaused(true); return '⏸ متوقف شد: به مشتری پاسخ نمی‌دهم و فاکتور بررسی نمی‌کنم. برای ادامه: ادامه';
     case 'resume': state.setPaused(false); return '▶️ ادامه یافت.';
     case 'staff': return staffNumbers.length ? `کارکنان شناخته‌شده:\n${staffNumbers.join('\n')}` : 'شماره‌ای ثبت نشده است.';
-    default: return 'دستورها (با / یا بدون آن در گفتگوی خصوصی): وضعیت، آخرین، توقف، ادامه، کارکنان، راهنما';
+    default: return `${name ? `من ${name} هستم، دستیار آریاک. ` : ''}دستورها (با / یا بدون آن در گفتگوی خصوصی): وضعیت، آخرین، توقف، ادامه، کارکنان، راهنما${name ? `\n— ${name}` : ''}`;
   }
 }
 

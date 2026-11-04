@@ -68,6 +68,7 @@ test('commands produce Persian text and change the state', () => {
   assert.match(runCommand('staff', ctx), /9715/);
   assert.match(runCommand('last', ctx), /ثبت نشده/);
   assert.match(runCommand('help', ctx), /راهنما/);
+  assert.match(runCommand('help', { ...ctx, name: 'آتوسا' }), /من آتوسا هستم[\s\S]*— آتوسا$/);
   assert.match(formatChecks([{ verdict: 'mismatch', customer: 'B', po: '2', file: 'b.pdf', problems: 2 }]), /ناهماهنگ.*2 مورد/);
 });
 
