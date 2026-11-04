@@ -8,9 +8,10 @@ import { answer } from './assistant.js';
 import { SheetCache, fetchReport, fetchStock, isTimeout, warmSheet } from './stock.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
-import { detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
+import { correctionSaved, detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
 import { imageAction, understandImages } from './image.js';
 import { ignoredKind, imageOf } from './media.js';
+import { appendCorrection, parseCorrection, readCorrections } from './corrections.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
@@ -319,12 +320,22 @@ async function handleStaffChat(raw, chatId, group) {
   const role = admin ? 'admin' : 'staff';
   const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
   const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
-  if (cmd) { trace(where, role, `command ${cmd}`); await reply(runCommand(cmd, { name: config.displayName, state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
+  if (cmd) { trace(where, role, `command ${cmd}`); await reply(runCommand(cmd, { name: config.displayName, state: botState, corrections: () => readCorrections(config.authDir), desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
   const ctx = (content.extendedTextMessage || audio || image)?.contextInfo || {};
   const addressed = !group || isAddressed({
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
     ownIds: own, names: config.botNames,
   });
+  // "Wrong, <the right answer>" as a reply to one of the assistant's messages: stored for the owner, nothing more.
+  const quotedText = textOf(normalizeMessageContent(ctx.quotedMessage));
+  const quotedFromBot = !!ctx.participant && own.includes(jidNormalizedUser(ctx.participant));
+  const fix = quotedFromBot && quotedText && !audio && !image ? parseCorrection(text) : null;
+  if (fix) {
+    appendCorrection(config.authDir, { at: new Date().toISOString(), where, role, wrong: quotedText, right: fix.right });
+    trace(where, role, 'correction of an answer stored for the owner');
+    await reply(correctionSaved(detectLang(text, 'fa')));
+    return true;
+  }
   // A voice note is only answered with a question; the request goes on after the same person says yes.
   const key = `s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   if (audio) {

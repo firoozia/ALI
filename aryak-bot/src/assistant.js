@@ -1,6 +1,7 @@
 // One answer of the ARYAK assistant: Claude reads the customer's message (text and photos), checks stock with
 // the check_stock tool and writes the reply. Returns null when the assistant must stay silent.
 
+import { hintFor, parseCustomerText } from './orderlines.js';
 import { checkStockTool, runCheckStock } from './stock.js';
 
 export const NO_REPLY = 'NO_REPLY';
@@ -20,6 +21,9 @@ export function buildContent({ groupName, customer, transcript = [], messages, i
     `New message${messages.length > 1 ? 's' : ''} from the customer to answer:`,
     ...messages.map((m) => `[${m.senderName || 'Customer'}] ${m.text || ''}${m.hasImage ? ' (photo attached above)' : ''}`.trim()),
   ];
+  // What the message looks like (order lines, a bare availability question), as a hint for checking every code.
+  const hint = hintFor(parseCustomerText(messages.map((m) => m.text || '').join('\n')));
+  if (hint) lines.push('', hint);
   content.push({ type: 'text', text: lines.join('\n') });
   return content;
 }

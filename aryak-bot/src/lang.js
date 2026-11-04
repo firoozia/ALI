@@ -127,3 +127,11 @@ export const photoUnclear = (lang) => ({
   en: 'I could not read the photo or find a code in it. Please write your request or send a clearer photo.',
   ur: 'تصویر پڑھی نہیں جا سکی یا اس میں کوئی کوڈ نظر نہیں آیا؛ براہِ کرم درخواست لکھیں یا زیادہ واضح تصویر بھیجیں',
 }[textLang(lang)]);
+
+/** Said after a colleague corrected the assistant's answer. */
+export const correctionSaved = (lang) => ({
+  fa: 'ممنون، اصلاح شما ثبت شد و مالک آن را بررسی می‌کند.',
+  ar: 'شكرًا، تم تسجيل تصحيحك وسيراجعه المالك.',
+  en: 'Thank you, your correction is saved and the owner will review it.',
+  ur: 'شکریہ، آپ کی اصلاح محفوظ ہو گئی ہے اور مالک اسے دیکھیں گے۔',
+}[lang === 'hi' ? 'en' : langOf(lang) || 'fa']);

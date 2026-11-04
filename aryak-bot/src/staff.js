@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { formatCorrections } from './corrections.js';
 import { LANG_NAME } from './lang.js';
 import { normalizeLetters } from './text.js';
 
@@ -88,7 +89,7 @@ export function isAddressed({ text, mentioned = [], quotedFrom = '', ownIds = []
 
 const COMMANDS = {
   status: ['status', 'وضعیت'], last: ['last', 'آخرین', 'آخرین‌ها'], pause: ['pause', 'توقف'],
-  resume: ['resume', 'ادامه'], staff: ['staff', 'کارکنان'], help: ['help', 'راهنما'],
+  resume: ['resume', 'ادامه'], staff: ['staff', 'کارکنان'], help: ['help', 'راهنما'], corrections: ['corrections', 'اصلاحات'],
 };
 
 /** "/status", "!وضعیت", or (where [bare]) just "وضعیت". Returns the command name or null. */
@@ -140,8 +141,9 @@ export function runCommand(cmd, ctx) {
     case 'last': return formatChecks(desk.lastChecks(5));
     case 'pause': state.setPaused(true); return '⏸ متوقف شد: به مشتری پاسخ نمی‌دهم و فاکتور بررسی نمی‌کنم. برای ادامه: ادامه';
     case 'resume': state.setPaused(false); return '▶️ ادامه یافت.';
+    case 'corrections': return formatCorrections(ctx.corrections ? ctx.corrections() : []);
     case 'staff': return staffNumbers.length ? `کارکنان شناخته‌شده:\n${staffNumbers.join('\n')}` : 'شماره‌ای ثبت نشده است.';
-    default: return `${name ? `من ${name} هستم، دستیار آریاک. ` : ''}دستورها (با / یا بدون آن در گفتگوی خصوصی): وضعیت، آخرین، توقف، ادامه، کارکنان، راهنما${name ? `\n— ${name}` : ''}`;
+    default: return `${name ? `من ${name} هستم، دستیار آریاک. ` : ''}دستورها (با / یا بدون آن در گفتگوی خصوصی): وضعیت، آخرین، توقف، ادامه، کارکنان، اصلاحات، راهنما${name ? `\n— ${name}` : ''}`;
   }
 }
 
