@@ -9,6 +9,7 @@ import { answer } from './assistant.js';
 import { SheetCache, fetchReport, fetchStock, isTimeout, warmSheet } from './stock.js';
 import { PriceBook, formatBook, formatCodePrice, formatParsed, parsePriceCommand, parsePriceDocument, parsePriceText } from './prices.js';
 import { auditInvoice, checkNumber } from './audit.js';
+import { Experience, describeCandidate, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { Tracker, balanceOf, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
@@ -42,7 +43,14 @@ if (!config.allowedGroups.length && !config.allowedGroupNames.length) {
   console.error('Set ALLOWED_GROUP_NAMES (a word in the group names) or ALLOWED_GROUPS; otherwise the assistant answers nowhere.');
 }
 const client = new Anthropic();
-const system = buildSystemPrompt(config.kbDir, config.displayName);
+// The prompt: the rules and knowledge files, plus what the owner approved from the experience store (rebuilt when it changes).
+let systemCache = { version: -1, text: '' };
+const systemPrompt = () => {
+  if (systemCache.version !== experience.version) {
+    systemCache = { version: experience.version, text: [buildSystemPrompt(config.kbDir, config.displayName), experience.promptText()].filter(Boolean).join('\n\n') };
+  }
+  return systemCache.text;
+};
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 config.log = (s) => logger.warn(s);
 config.logInfo = (s) => logger.info(s);
@@ -72,6 +80,7 @@ const GATE_WORDS = {
 };
 const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
 const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
+const experience = new Experience({ dir: path.join(config.authDir, 'experience') }); // counters and anonymous shapes; never messages
 const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
 const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availability') }); // questions to the sales manager that wait for his answer
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
@@ -129,7 +138,7 @@ const gate = new GroupGate({
       try { images.push(await m.loadImage()); } catch (e) { logger.warn(`image download failed: ${e.message}`); }
     }
     const ctx = { groupId, groupName: info.subject, customer, messageText: messages.map((m) => m.text).filter(Boolean).join(' / ') };
-    const result = await answer({ client, config, system, input: { groupName: info.subject, customer, transcript, messages, images }, ctx, recent });
+    const result = await answer({ client, config, system: systemPrompt(), input: { groupName: info.subject, customer, transcript, messages, images }, ctx, recent });
     for (const text of result.managerTexts) await sock.sendMessage(config.salesManager, { text });
     logger.info(`${groupId}: ${result.why}`);
     if (!result.reply) return;
@@ -158,6 +167,23 @@ setInterval(async () => {
   } catch (e) { logger.warn(`reminders failed: ${e.message}`); }
 }, 60 * 60 * 1000).unref();
 
+// The experience store: saved every five minutes (and old entries dropped once a day); on Monday after the summary hour
+// the weekly "what I learned" report goes to the information group. Behaviour never changes without the owner's approval.
+let lastPurge = '';
+setInterval(async () => {
+  try {
+    experience.save();
+    const today = new Date().toISOString().slice(0, 10);
+    if (lastPurge !== today) { lastPurge = today; experience.purge(); experience.save(); }
+    if (!sock?.user || !config.infoGroupName || !config.learning || !experience.on) return;
+    const day = reportDue({ timeZone: config.timezone, weekday: config.learnReportWeekday, hour: config.digestHour, last: experience.lastReport });
+    if (!day) return;
+    await sendTo(config.infoGroupName, `${learnedReport(experience, { errors: errorKinds() })}\n— ${config.displayName}`);
+    experience.lastReport = day; experience.dirty = true; experience.save();
+    logger.info(`weekly learning report for ${day} sent`);
+  } catch (e) { logger.warn(`experience timer failed: ${e.message}`); }
+}, 5 * 60 * 1000).unref();
+
 // The daily summary for the information group, once a day after the set hour (counts only).
 setInterval(async () => {
   try {
@@ -182,6 +208,49 @@ async function translateTo(text, lang) {
     return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim() || text;
   } catch { return text; }
 }
+
+/** The label of a customer group for the experience store: the customer's name part of the group name. */
+const groupLabel = (subject) => String(subject || '').replace(config.groupSuffix, '').trim() || String(subject || '');
+
+/**
+ * Passive watching of the customer groups for the experience store: only kinds, languages, delays and shapes are kept,
+ * never the message, a name, a number, a photo or a voice note. It changes nothing she does.
+ */
+async function observe(raw, groupId) {
+  if (!config.learning || !experience.on || sent.has(raw.key.id)) return;
+  const info = await groupInfo(groupId);
+  const subject = info.subject.toLowerCase();
+  const customerGroup = config.allowedGroupNames.some((w) => subject.includes(w)) || config.watchGroupNames.some((w) => subject.includes(w));
+  if (!customerGroup) return;
+  const content = normalizeMessageContent(raw.message);
+  if (!content || content.protocolMessage || content.reactionMessage) return;
+  const image = imageOf(content);
+  const text = textOf(content) || image?.caption || '';
+  const media = image ? 'photo' : content.audioMessage ? 'voice' : '';
+  if (!text && !media) return;
+  let staff = !!raw.key.fromMe;
+  if (!staff) {
+    staff = staffChecker(config.staffNumbers, info.lidToPhone)({ sender: raw.key.participant, senderAlt: raw.key.participantAlt });
+    if (staff === null) return;
+  }
+  const label = groupLabel(info.subject);
+  if (staff) experience.staff(label, text, { media: !!media });
+  else experience.customer(label, text, { media });
+}
+
+/** The experience store's commands (the owner, in a private chat or the command group). */
+async function learnCommand(c, reply) {
+  if (c.type === 'status') return reply(formatStatus(experience));
+  if (c.type === 'off' || c.type === 'on') { experience.on = c.type === 'on'; experience.dirty = true; experience.save(); return reply(`یادگیری ${experience.on ? 'روشن' : 'خاموش'} شد.`); }
+  if (c.type === 'list') { const l = experience.review(10); return reply(l.length ? [...l.map(describeCandidate), 'پاسخ: «بپذیر ۳» یا «رد ۳»'].join('\n') : 'پیشنهادی در انتظار نیست.'); }
+  if (c.type === 'report') return reply(learnedReport(experience, { errors: errorKinds() }));
+  if (c.type === 'rollback') { const ok = experience.rollback(); experience.save(); return reply(ok ? `به نسخهٔ ${experience.version} بازگشت داده شد.` : 'نسخهٔ تأییدشده‌ای نیست که بازگردانده شود.'); }
+  const done = experience.decide(c.id, c.type === 'approve');
+  experience.save();
+  return reply(done ? (c.type === 'approve' ? `پذیرفته شد (نسخهٔ ${experience.version}); از پیام بعدی در پرسش‌ها به کار می‌رود.` : 'رد شد.') : `پیشنهاد ${c.id} در فهرست نیست.`);
+}
+
+const errorKinds = () => Object.fromEntries([...experience.keysOf('ie|', 1)].map(([k, v]) => [k.slice(3), v]));
 
 /** Which supervised group a chat is: 'cut' | 'delivery' | 'payment' | null (by a word of its name). */
 async function trackedRole(groupId) {
@@ -297,6 +366,7 @@ async function watchGroup(raw, groupId, role) {
     ...(number ? checkNumber(number, desk.numbers()) : []),
   ];
   const problems = [...own, ...extra];
+  for (const p of problems) experience.bump(`ie|${p.kind}`);
   const urgent = problems.filter((p) => p.severity !== 'info').length;
   const priceUrgent = extra.filter((p) => p.kind === 'price-below' && p.severity !== 'info').length;
   const final = { ...verdict, problems, verdict: verdict.verdict === 'no-order' ? 'no-order' : urgent && verdict.verdict === 'match' ? 'mismatch' : verdict.verdict };
@@ -558,6 +628,10 @@ async function handleStaffChat(raw, chatId, group) {
       return true;
     }
   }
+  if (admin && (!group || group.command)) {
+    const lc = parseLearnCommand(text);
+    if (lc) { await learnCommand(lc, reply); return true; }
+  }
   // The owner's price list and special prices (admins, in a private chat or the command group).
   if (admin && (!group || group.command)) {
     if (await handlePriceFlow({ raw, content, text, key: `p:${chatId}`, reply, role, where, image, pdf })) return true;
@@ -569,6 +643,8 @@ async function handleStaffChat(raw, chatId, group) {
   const fix = quotedFromBot && quotedText && !audio && !image ? parseCorrection(text) : null;
   if (fix) {
     appendCorrection(config.authDir, { at: new Date().toISOString(), where, role, wrong: quotedText, right: fix.right });
+    experience.candidate({ kind: 'correction', wrong: quotedText.slice(0, 200), right: fix.right.slice(0, 300) });
+    if (group) experience.corrected(groupLabel(where.replace(/^group "|"$/g, '')), detectLang(text, 'fa'));
     trace(where, role, 'correction of an answer stored for the owner');
     await reply(correctionSaved(detectLang(text, 'fa')));
     return true;
@@ -659,6 +735,7 @@ async function handleStaffChat(raw, chatId, group) {
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
+  observe(raw, groupId).catch((e) => logger.warn(`experience: ${e.message}`));
   const trackRole = await trackedRole(groupId);
   if (trackRole) trackGroup(raw, groupId, trackRole).catch((e) => logger.warn(`tracker failed: ${e.message}`));
   const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...config.commandGroupNames].filter(Boolean);
@@ -704,7 +781,7 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
   sock = makeWASocket({ auth: state, logger: logger.child({ module: 'baileys' }, { level: 'warn' }) });
   const rawSend = sock.sendMessage.bind(sock);
-  sock.sendMessage = async (...a) => { const r = await rawSend(...a); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
+  sock.sendMessage = async (...a) => { const r = await rawSend(...a); if (isJidGroup(a[0]) && groups.get(a[0])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
   sock.ev.on('creds.update', saveCreds);
   const onQr = pairingOnce({
     registered: () => !!state.creds.registered,

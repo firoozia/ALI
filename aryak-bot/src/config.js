@@ -57,6 +57,9 @@ export function loadConfig(env = process.env) {
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),
     statementDay: Number(env.STATEMENT_DAY || 1),
+    // Learning from the groups (counters and anonymous shapes only); LEARNING=off, or the owner's command, stops it.
+    learning: (env.LEARNING || 'on').toLowerCase() !== 'off',
+    learnReportWeekday: Number(env.LEARN_REPORT_WEEKDAY ?? 1), // 0 = Sunday, 1 = Monday
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
