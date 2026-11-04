@@ -861,7 +861,13 @@ function botStock_(req) {
     const open = list.filter(function (r) { return (Number(r[5]) || 0) < (Number(r[4]) || 0) - 1e-6; }).length;
     const places = {};
     list.forEach(function (r) { places[String(r[13] || '').trim() || 'No location'] = true; });
-    return { size: sizes[k], free: sum(list), packages: list.length, open: open, limit: limitOf(k),
+    // Full packages grouped by their size, and the remaining amount of every opened package.
+    const isOpen = function (r) { return (Number(r[5]) || 0) < (Number(r[4]) || 0) - 1e-6; };
+    const packMap = {};
+    list.filter(function (r) { return !isOpen(r); }).forEach(function (r) { const q = Number(r[4]) || 0; packMap[q] = (packMap[q] || 0) + 1; });
+    const packs = Object.keys(packMap).map(Number).sort(function (a, b) { return b - a; }).map(function (q) { return { qty: q, count: packMap[q] }; });
+    const pieces = list.filter(isOpen).map(function (r) { return Math.round((Number(r[5]) || 0) * 100) / 100; });
+    return { size: sizes[k], free: sum(list), packages: list.length, open: open, limit: limitOf(k), packs: packs, pieces: pieces,
              reserved: sum(reserved.filter(function (r) { return sizeKey_(r[3]) === k; })), locations: Object.keys(places) };
   });
   const where = {};

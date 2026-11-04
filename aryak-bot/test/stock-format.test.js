@@ -59,3 +59,20 @@ test('odd cases are short Persian lines', () => {
   assert.match(formatStaffStock({ found: true, ambiguous: true, categories: ['A', 'B'] }, '12'), /چند گروه/);
   assert.match(formatStaffStock({ found: true, sizeFound: false, code: '12', size: '1*1', sizes: ['2*2'] }), /2\*2/);
 });
+
+test('packages line: closed packs + open pieces, total = free + reserved', () => {
+  const r = {
+    ...low,
+    sizes: [{ size: '0.30*1400', free: 680, packages: 7, open: 2, limit: 200, reserved: 0, locations: ['Showroom'], packs: [{ qty: 120, count: 5 }], pieces: [35, 45] }],
+  };
+  assert.match(formatStaffStock(r, '408'), /- بسته: 5 بسته 120 m \+ باز: 35 m و 45 m \(کل 680 m\)\n/);
+  assert.match(formatStaffStock(r, '408'), /کافی است/);
+});
+
+test('packages line: reserved counts in the total; only packs; only pieces; two pack sizes; nothing', () => {
+  const row = (extra) => formatStaffStock({ ...low, sizes: [{ size: 's', free: 240, packages: 2, open: 0, limit: 200, ...extra }] }, '408');
+  assert.match(row({ reserved: 120, packs: [{ qty: 120, count: 2 }], pieces: [] }), /- بسته: 2 بسته 120 m \(کل 360 m\)/);
+  assert.match(row({ free: 80, packs: [], pieces: [35, 45] }), /- بسته: باز: 35 m و 45 m \(کل 80 m\)/);
+  assert.match(row({ free: 220, packs: [{ qty: 120, count: 1 }, { qty: 100, count: 1 }], pieces: [] }), /- بسته: 1 بسته 120 m \+ 1 بسته 100 m \(کل 220 m\)/);
+  assert.match(row({ free: 0, packs: [], pieces: [] }), /- بسته: بدون بسته \(کل 0 m\)/);
+});

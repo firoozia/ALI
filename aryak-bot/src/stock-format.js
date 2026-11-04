@@ -8,6 +8,14 @@ const GROUPS_FA = {
 /** Figures as the sheet shows them: Latin digits, "." as the decimal point, at most two decimals. */
 export const num = (n) => (Math.round(Number(n) * 100) / 100).toString();
 
+/** "5 بسته 120 m + باز: 35 m و 45 m (کل 680 m)": full packs, the open pieces one by one, and free plus reserved. */
+const packsLine = (s, unit, total) => {
+  const parts = [];
+  if (s.packs.length) parts.push(s.packs.map((p) => `${p.count} بسته ${num(p.qty)} ${unit}`).join(' + '));
+  if (s.pieces.length) parts.push(`باز: ${s.pieces.map((q) => `${num(q)} ${unit}`).join(' و ')}`);
+  return `${parts.length ? parts.join(' + ') : 'بدون بسته'} (کل ${num(total)} ${unit})`;
+};
+
 const packagesLine = (packages, open) => {
   if (!packages) return 'بدون بسته';
   if (open === packages) return `${packages} بسته، باز شده`;
@@ -26,14 +34,17 @@ export function stockBlocks(result) {
     const free = Number(s.free) || 0;
     const limit = Number(s.limit) || 0;
     const low = limit > 0 && free < limit;
+    const reserved = s.reserved ?? (rows.length === 1 ? result.reserved : 0);
     const places = placeNames(s.locations && s.locations.length ? s.locations : result.locations);
     const lines = [
       `موجودی کد ${result.code} (${cat}) ${low ? 'خیلی کم است' : 'کافی است'}`,
       `- سایز: ${s.size || '—'}`,
       `- آزاد: ${num(free)} ${unit}`,
-      `- رزرو: ${num(s.reserved ?? (rows.length === 1 ? result.reserved : 0))} ${unit}`,
+      `- رزرو: ${num(reserved)} ${unit}`,
       `- حد ربات: ${num(limit)} ${unit}`,
-      `- بسته: ${packagesLine(Number(s.packages) || 0, Number(s.open) || 0)}`,
+      `- بسته: ${Array.isArray(s.packs) && Array.isArray(s.pieces)
+        ? packsLine(s, unit, free + (Number(reserved) || 0))
+        : packagesLine(Number(s.packages) || 0, Number(s.open) || 0)}`,
       `- محل: ${places.length ? places.join('، ') : '—'}`,
     ];
     if (low) lines.push('', `⚠️  موجودی آزاد زیر حد ${num(limit)} ${unit} است`);
