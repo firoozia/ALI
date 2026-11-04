@@ -133,6 +133,7 @@ export class InvoiceDesk {
     Object.assign(this, { dir, maxAgeMs, keep });
     this.requests = []; // { hash, at, meta, doc (base64 loaded lazily when from disk), groupName }
     this.seen = new Set(); // invoice hashes already handled
+    this.history = []; // finished checks, see record()
     if (dir) this.load();
   }
 
@@ -192,6 +193,33 @@ export class InvoiceDesk {
       const items = JSON.parse(fs.readFileSync(path.join(this.dir, 'index.json'), 'utf8'));
       this.requests = items.map((i) => ({ hash: i.hash, at: i.at, meta: i.meta, groupName: i.groupName, docMeta: i.docMeta, doc: null }));
     } catch { this.requests = []; }
+    try { this.history = JSON.parse(fs.readFileSync(path.join(this.dir, 'history.json'), 'utf8')); } catch { this.history = []; }
+  }
+
+  /** Remembers one finished check: { verdict, customer, po, file, problems }. Newest last, the last 50 are kept. */
+  record(entry, now = Date.now()) {
+    this.history.push({ at: now, ...entry });
+    this.history = this.history.slice(-50);
+    if (!this.dir) return;
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      fs.writeFileSync(path.join(this.dir, 'history.json'), JSON.stringify(this.history));
+    } catch { /* best effort */ }
+  }
+
+  /** The latest [n] checks, newest first. */
+  lastChecks(n = 5) {
+    return this.history.slice(-Math.min(Math.max(1, Number(n) || 5), 20)).reverse();
+  }
+
+  /** Orders received, found by PO number and/or customer name (no files). */
+  listOrders({ po = '', customer = '' } = {}) {
+    const p = normPo(po);
+    const n = normName(customer);
+    return this.requests
+      .filter((r) => (!p || r.meta.po === p) && (!n || normName(r.meta.customer).includes(n)))
+      .slice(-10).reverse()
+      .map((r) => ({ customer: r.meta.customer, po: r.meta.po, group: r.groupName, at: new Date(r.at).toISOString(), file: r.doc?.fileName ?? r.docMeta?.fileName ?? '' }));
   }
 }
 

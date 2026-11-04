@@ -26,6 +26,12 @@ export function loadConfig(env = process.env) {
     invoiceGroupName: (env.INVOICE_GROUP_NAME || '').trim().toLowerCase(),
     infoGroupName: (env.INFO_GROUP_NAME || '').trim().toLowerCase(),
     requestsDir: env.REQUESTS_DIR || '/opt/aryak-auth/requests',
+    // The team: numbers allowed to give commands (the bot's own phone always may), groups where colleagues are answered
+    // when they address the bot (words in the group names; never customer groups), the command group, and the bot's names.
+    adminNumbers: list(env.ADMIN_NUMBERS),
+    staffGroupNames: list(env.STAFF_GROUP_NAMES).map((x) => x.toLowerCase()),
+    commandGroupNames: list(env.COMMAND_GROUP_NAMES).map((x) => x.toLowerCase()),
+    botNames: (env.BOT_NAMES ? list(env.BOT_NAMES) : ['bot', 'aryak bot', 'assistant', 'بات', 'ربات', 'دستیار']).map((x) => x.toLowerCase()),
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR

@@ -5,11 +5,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
 import { answer } from './assistant.js';
+import { fetchStock } from './stock.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
+import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -27,6 +29,9 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const recent = new Map(); // manager alerts already sent
 const groups = new Map(); // group JID -> { subject, lidToPhone, at }
 const desk = new InvoiceDesk({ dir: config.requestsDir }); // customers' purchase orders
+const botState = new BotState(config.authDir); // pause switch
+const startedAt = Date.now();
+const sent = new Set(); // ids of messages the bot sent, so they are not read again
 const lastRaw = new Map(); // group JID -> last customer message, quoted by the reply
 let sock;
 
@@ -46,6 +51,7 @@ const gate = new GroupGate({
   isStaff: (m) => m.staff,
   log: (s) => logger.info(s),
   answer: async ({ groupId, messages, transcript }) => {
+    if (botState.paused) return;
     const info = await groupInfo(groupId);
     const customer = info.subject.replace(config.groupSuffix, '').trim() || info.subject;
     const images = [];
@@ -103,27 +109,83 @@ async function watchGroup(raw, groupId, role) {
     if (desk.addRequest(doc, meta, info.subject)) logger.info(`${groupId}: purchase order ${meta.po || '(no number)'} of ${meta.customer || '?'} kept`);
     return;
   }
-  if (!doc.staff || !desk.firstTime(doc.hash)) return;
+  if (!doc.staff || botState.paused || !desk.firstTime(doc.hash)) return;
   if (!config.infoGroupName) { logger.warn('INFO_GROUP_NAME is not set: invoice check skipped'); return; }
   const meta = await extractMeta({ client, config, doc });
   const found = desk.find(meta);
   const ctx = { groupName: info.subject, customer: meta.customer, invoiceFile: doc.fileName, invoiceSender: doc.senderName };
   if (!found.request) {
     logger.info(`${groupId}: no purchase order for invoice (PO ${meta.po || '?'})`);
+    desk.record({ verdict: 'no-order', customer: meta.customer, po: meta.po, file: doc.fileName });
     await sendTo(config.infoGroupName, noRequestText(meta, { ...ctx, ambiguous: found.ambiguous }));
     return;
   }
   const verdict = await checkInvoice({ client, config, request: found.request, invoice: doc });
   logger.info(`${groupId}: invoice ${verdict.verdict}`);
+  desk.record({ verdict: verdict.verdict, customer: verdict.request_customer || meta.customer, po: meta.po, file: doc.fileName, problems: verdict.problems?.length || 0 });
   const text = reportText(verdict, ctx);
   if (text) await sendTo(config.infoGroupName, text);
   const warn = staffWarning(verdict);
   if (warn) await sock.sendMessage(groupId, { text: warn });
 }
 
+const jidDigits = (j) => String(j || '').replace(/@.*$/, '').replace(/:\d+$/, '').replace(/\D/g, '');
+const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
+const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
+
+const staffHandlers = {
+  staff_stock: (i) => fetchStock(config, { code: i.code, category: i.category, size: i.size }),
+  recent_checks: (i) => desk.lastChecks(i.count),
+  find_order: (i) => desk.listOrders(i),
+};
+
+/**
+ * The team's side. [group] is null for a private chat, else { command: true if it is the command group }.
+ * Staff are answered in private chats, in the staff/invoice/information/command groups when addressed (mention, a
+ * reply to the bot, or its name), and the owner's commands run in a private chat or the command group. Messages typed
+ * on the bot's own phone count as the owner. Returns true when the message was dealt with here.
+ */
+async function handleStaffChat(raw, chatId, group) {
+  const content = normalizeMessageContent(raw.message);
+  const text = textOf(content);
+  if (!text) return false;
+  if (sent.has(raw.key.id) || text.startsWith('🤖')) return true; // the bot's own message coming back
+  const own = ownIds();
+  const isSelf = own.some((o) => jidDigits(o) === jidDigits(chatId));
+  if (!group && raw.key.fromMe && !isSelf) return false; // the owner talking to someone else from the bot's phone
+  let admin = !!raw.key.fromMe;
+  if (!raw.key.fromMe) {
+    let info = group ? await groupInfo(chatId) : { lidToPhone: new Map() };
+    const who = group ? { sender: raw.key.participant, senderAlt: raw.key.participantAlt } : { sender: chatId, senderAlt: raw.key.remoteJidAlt };
+    let staff = staffChecker(config.staffNumbers, info.lidToPhone)(who);
+    if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(who); }
+    if (!staff) return false;
+    admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
+  }
+  const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
+  const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
+  if (cmd) { await reply(runCommand(cmd, { state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
+  const ctx = content.extendedTextMessage?.contextInfo || {};
+  if (group && !isAddressed({
+    text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
+    ownIds: own, names: config.botNames,
+  })) return false;
+  const answerText = await staffAnswer({
+    client, config, text, quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlers,
+  });
+  logger.info(`${chatId}: staff question ${answerText ? 'answered' : 'no reply'}`);
+  if (answerText) await reply(answerText);
+  return true;
+}
+
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
-  if (!isJidGroup(groupId)) return;
+  if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
+  const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, ...config.commandGroupNames].filter(Boolean);
+  if (staffWords.length) {
+    const subject = (await groupInfo(groupId)).subject.toLowerCase();
+    if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)) })) return;
+  }
   if (config.watchGroupNames.length || config.invoiceGroupName) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();
     if (config.invoiceGroupName && subject.includes(config.invoiceGroupName)) return watchGroup(raw, groupId, 'invoice');
@@ -158,6 +220,8 @@ async function onMessage(raw) {
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
   sock = makeWASocket({ auth: state, logger: logger.child({ module: 'baileys' }, { level: 'warn' }) });
+  const rawSend = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (...a) => { const r = await rawSend(...a); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
   sock.ev.on('creds.update', saveCreds);
   const onQr = pairingOnce({
     registered: () => !!state.creds.registered,
