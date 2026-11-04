@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { answer } from './assistant.js';
 import { SheetCache, fetchStock, isTimeout, warmSheet } from './stock.js';
 import { formatStaffStock } from './stock-format.js';
+import { detectLang, noVoice, notUnderstood, sheetFailed, sizeNote } from './lang.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
@@ -194,7 +195,7 @@ async function customerVoiceStep(groupId, messages) {
       await sock.sendMessage(groupId, { text: u.reason === 'speech error' ? NO_VOICE_CUSTOMER : NOT_UNDERSTOOD_CUSTOMER }, quoted);
       return { done: true };
     }
-    voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
+    voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
     await sock.sendMessage(groupId, { text: u.confirmText }, quoted);
     return { done: true };
   }
@@ -213,27 +214,26 @@ const jidDigits = (j) => String(j || '').replace(/@.*$/, '').replace(/:\d+$/, ''
 const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
 const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
 
-const staffHandlersFor = (key) => ({
+const staffHandlersFor = (key, lang = 'fa') => ({
   staff_stock: async (i) => {
     try {
       let found = await fetchStock(config, { code: i.code, category: i.category, size: i.size });
       let note = '';
       if (found.sizeFound === false) {
         // The named size is not registered: answer for the whole code and say so.
-        note = `اندازهٔ ${i.size} برای این کد ثبت نشده؛ نتیجه برای کل کد است.`;
+        note = sizeNote(lang, i.size);
         found = await fetchStock(config, { code: i.code, category: i.category, size: '' });
       }
       // Which group was meant? The next message of the same person answers, even without the name.
-      if (found.ambiguous) followDesk.set(key, { code: i.code, size: i.size || '', options: found.categories });
+      if (found.ambiguous) followDesk.set(key, { code: i.code, size: i.size || '', options: found.categories, lang });
       return {
-        formatted: formatStaffStock(found, i.code, note),
+        formatted: formatStaffStock(found, i.code, note, lang),
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     } catch (e) {
       // fetchStock has already logged the real cause and tried twice; the colleague gets a plain sentence.
-      const why = isTimeout(e) ? 'پاسخ برگه دیر رسید' : 'ارتباط با برگه برقرار نشد';
       return {
-        formatted: `دریافت موجودی کد ${i.code} ناموفق بود (${why}). سه بار تلاش شد. لطفاً یکی دو دقیقه بعد دوباره بپرسید.`,
+        formatted: sheetFailed(lang, i.code, isTimeout(e)),
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     }
@@ -287,18 +287,19 @@ async function handleStaffChat(raw, chatId, group) {
     const named = !u.ok && !!u.transcript && nameHeard(u.transcript, config.botNames);
     const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
     const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
+    const spoken = u.lang || (u.transcript ? detectLang(u.transcript) : 'fa');
     if (action === 'confirm') {
-      voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
-      trace(where, role, `voice note understood (${u.intent}, ${u.language}): asking for confirmation`);
+      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
+      trace(where, role, `voice note understood (${u.intent}), reply language ${u.lang}: asking for confirmation`);
       await reply(u.confirmText);
     } else if (action === 'unavailable') {
       sttNotice.set(chatId, Date.now());
       trace(where, role, 'voice note: the speech service failed, told that voice cannot be heard now');
-      await reply(NO_VOICE_FA);
+      await reply(noVoice(spoken));
     } else if (action === 'tell') {
       voiceDesk.clear(key);
       trace(where, role, `voice note not understood (${u.reason}): told so`);
-      await reply(NOT_UNDERSTOOD_FA);
+      await reply(notUnderstood(spoken));
     } else {
       trace(where, role, `ignored: voice note not understood (${u.reason}) and not addressed to the assistant`);
     }
@@ -306,12 +307,13 @@ async function handleStaffChat(raw, chatId, group) {
   }
   let asked = text;
   let confirmed = false;
+  let lang = detectLang(text, 'fa'); // the language the answer is written in
   const pend = config.voiceEnabled ? voiceDesk.get(key) : null;
   if (pend) {
     const kind = answerKind(text);
     voiceDesk.clear(key);
     if (kind === 'no') { await reply(retryText(pend.lang)); return true; }
-    if (kind === 'yes') { asked = pend.requestText; confirmed = true; }
+    if (kind === 'yes') { asked = pend.requestText; confirmed = true; lang = pend.lang || lang; }
   }
   // An answer to a question the assistant just asked ("which group?") needs no name or mention.
   const follow = audio ? null : followDesk.get(key);
@@ -321,14 +323,15 @@ async function handleStaffChat(raw, chatId, group) {
     if (pick >= 0) {
       asked = `Stock of code ${follow.code}${follow.size ? ` size ${follow.size}` : ''} in the group "${follow.options[pick]}"`;
       confirmed = true;
+      lang = follow.lang || lang;
       trace(where, role, 'follow-up: answered the assistant\'s question');
     }
   }
   if (!addressed && !confirmed) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
-    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key),
+    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key, lang), lang,
   });
-  trace(where, role, answerText ? 'answered' : 'no reply (the model chose silence)');
+  trace(where, role, `${answerText ? 'answered' : 'no reply (the model chose silence)'}, reply language ${lang}`);
   if (answerText) await reply(answerText);
   return true;
 }

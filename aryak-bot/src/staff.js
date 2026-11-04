@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { LANG_NAME } from './lang.js';
 import { normalizeLetters } from './text.js';
 
 export const NO_REPLY = 'NO_REPLY';
@@ -131,9 +132,10 @@ export function runCommand(cmd, ctx) {
  * One staff answer: Claude with the three staff tools. [handlers]: { staff_stock, recent_checks, find_order }, each
  * (input) -> object. Returns the text, or null for silence.
  */
-export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers, log = () => {} }) {
+export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers, log = () => {}, lang = '' }) {
   const lines = [];
   if (quoted) lines.push(`The colleague is replying to this message: "${quoted.slice(0, 600)}"`, '');
+  if (lang) lines.push(`Reply language: ${LANG_NAME[lang] || lang} (the stock tool already writes its text in it).`, '');
   lines.push(`Message from ${who || 'a colleague'}:`, text);
   const messages = [{ role: 'user', content: lines.join('\n') }];
   for (let round = 0; round < 6; round++) {

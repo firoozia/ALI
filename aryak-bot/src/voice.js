@@ -1,3 +1,4 @@
+import { confirmStock, detectLang, langOf } from './lang.js';
 import { normalizeDigits, normalizeLetters } from './text.js';
 
 // Voice notes: transcribe, work out what was asked, ask the person to confirm, and only after a clear yes let the
@@ -23,16 +24,20 @@ const RETRY = {
 };
 export const retryText = (lang) => RETRY[String(lang || '').slice(0, 2).toLowerCase()] || RETRY.en;
 
-const YES = ['بله', 'بلی', 'آره', 'اره', 'درسته', 'درست', 'صحیح', 'اوکی', 'تایید', 'تأیید', 'نعم', 'اي', 'ايوه', 'ایوه', 'صح', 'صحيح', 'تمام', 'ہاں', 'جی', 'جی ہاں', 'yes', 'yeah', 'yep', 'y', 'ok', 'okay', 'correct', 'right', 'sure', '👍', '✅'];
-const NO = ['نه', 'نخیر', 'خیر', 'نه اشتباه', 'غلطه', 'اشتباه', 'لا', 'خطأ', 'غلط', 'نہیں', 'no', 'nope', 'wrong', 'n', '👎', '❌'];
-const clean = (s) => String(s || '').toLowerCase().replace(/[‌‏.!،؟?,]/g, ' ').replace(/\s+/g, ' ').trim();
+const YES = ['بله', 'بلی', 'آره', 'اره', 'درسته', 'درست', 'صحیح', 'اوکی', 'تایید', 'تأیید', 'نعم', 'ايوه', 'ايوا', 'أيوه', 'أيوا', 'اجل', 'أجل', 'صح', 'صحيح', 'تمام', 'اي', 'ای',
+  'ہاں', 'ہاں جی', 'جی', 'جی ہاں', 'جی ہاں', 'ٹھیک', 'ٹھیک ہے', 'صحیح ہے', 'हाँ', 'हां', 'जी', 'जी हाँ', 'ठीक',
+  'yes', 'yeah', 'yep', 'y', 'ok', 'okay', 'correct', 'right', 'sure', 'ja', '👍', '✅'];
+const NO = ['نه', 'نخیر', 'خیر', 'نه اشتباه', 'غلطه', 'اشتباه', 'لا', 'لأ', 'خطأ', 'غلط', 'كلا', 'نہیں', 'نہی', 'نا', 'غلط ہے', 'नहीं', 'ना', 'no', 'nope', 'wrong', 'n', '👎', '❌'];
+const key = (s) => normalizeLetters(String(s || '')).replace(/[.!،؟?,]/g, ' ').replace(/\s+/g, ' ').trim();
+const YES_KEYS = new Set(YES.map(key));
+const NO_KEYS = new Set(NO.map(key));
 
 /** 'yes' | 'no' | 'other' for the reply to a confirmation question. Only a short, clear answer counts. */
 export function answerKind(text) {
-  const t = clean(text);
+  const t = key(text);
   if (!t) return 'other';
-  if (YES.includes(t)) return 'yes';
-  if (NO.includes(t)) return 'no';
+  if (YES_KEYS.has(t)) return 'yes';
+  if (NO_KEYS.has(t)) return 'no';
   return 'other';
 }
 
@@ -63,6 +68,7 @@ Decide what the speaker wants and answer with ONE JSON object and nothing else:
 - Numbers spoken as words (Persian, Arabic or English, e.g. "چهارصد و هشت") are written as digits ("408") in "codes" and in both texts.
 - The speaker usually begins with the assistant's name (Atossa, آتوسا). Speech recognition often garbles it ("آدرس", "اتوسا", "اتوصا"): ignore it and take the request after it.
 - "confirm_text" repeats what you understood, for example Persian: "آیا درست متوجه شدم؟ موجودی کد 408؟".
+- "language" is the language of the words themselves, not of the script they were written in (an Urdu or Hindi voice note may arrive in Persian letters).
 - If a code or a quantity is doubtful, use "other".`;
 
 const field = (v, d) => (typeof v === 'string' ? v : d);
@@ -88,7 +94,7 @@ export async function extractIntent({ client, config, transcript }) {
   const requestText = field(v.request_text, '').trim();
   const confirmText = field(v.confirm_text, '').trim();
   if (!['stock', 'order'].includes(intent) || !requestText || !confirmText) return null;
-  return { intent, language: field(v.language, 'en'), codes: Array.isArray(v.codes) ? v.codes.map(String) : [], requestText, confirmText };
+  return { intent, language: field(v.language, ''), codes: Array.isArray(v.codes) ? v.codes.map(String) : [], requestText, confirmText };
 }
 
 /**
@@ -152,8 +158,12 @@ export async function understand({ buffer, seconds = 0, config, client, transcri
   let i;
   try { i = await extractIntent({ client, config, transcript: normalizeSpokenNumbers(t.text) }); } catch (e) { log(`voice: intent failed: ${e.message}`); return { ok: false, reason: 'intent error' }; }
   if (!i) { log('voice: no stock or order request found'); return { ok: false, reason: 'no intent', transcript: t.text }; }
-  log(`voice: understood as ${i.intent}, language ${i.language}`);
-  return { ok: true, ...i, transcript: t.text };
+  // The language of the person: what the model heard in the words, else what the speech service said, else the letters.
+  const lang = langOf(i.language) || langOf(t.language) || detectLang(t.text);
+  // A stock question is confirmed with a sentence built here, so it is always in the speaker's language.
+  const confirmText = i.intent === 'stock' && i.codes.length ? confirmStock(lang, i.codes) : i.confirmText;
+  log(`voice: understood as ${i.intent}, reply language ${lang}`);
+  return { ok: true, ...i, confirmText, lang, transcript: t.text };
 }
 
 /**

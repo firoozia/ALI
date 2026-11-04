@@ -114,7 +114,7 @@ test('understand: logs length, confidence and language but never the words; keep
   assert.ok(!logs.join('\n').includes(secret));
   const good = await understand({ ...base, client: claudeSaying(intentJson), transcribe: async () => ({ text: 'x y', confidence: 0.9 }) });
   assert.equal(good.ok, true);
-  assert.ok(logs.some((l) => /understood as stock, language fa/.test(l)));
+  assert.ok(logs.some((l) => /understood as stock, reply language fa/.test(l)));
 });
 
 test('voice notes longer than a minute are not read', async () => {
