@@ -2,7 +2,7 @@
 // (and a customer's special price), the invoice number (a repeat, a gap). The model only READS the invoice into lines
 // and totals; every comparison here is plain arithmetic. The result is a list of problems; nothing is ever changed.
 
-import { compareLine } from './prices.js';
+import { compareLine, normUnit } from './prices.js';
 import { normalizeDigits } from './text.js';
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -41,7 +41,7 @@ export function checkNumber(number, seen) {
  * [invoice]: { number, customer, lines: [{ code, quantity, unit, unit_price, line_total }], subtotal, vat, total }.
  * [book]: the PriceBook (may be empty), [day]: the invoice day, [vatRate]: percent, [tol]: money tolerance for rounding.
  */
-export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05, customer = '' } = {}) {
+export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05, customer = '', sheetUnits = {} } = {}) {
   const problems = [];
   const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
   // The currency is always the dirham: anything else printed is a mistake.
@@ -57,8 +57,13 @@ export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05,
         problems.push({ kind: 'line-total', item: code, requested: `${l.quantity} × ${l.unit_price} = ${money(expected)}`, invoiced: money(l.line_total), note: 'مبلغ ردیف با مقدار ضربدر قیمت نمی‌خواند', severity: 'urgent' });
       }
     }
+    // The unit of the line against the item's own unit in the stock sheet: metres for film, pieces for hardware.
+    const own = sheetUnits[code.toUpperCase()] || '';
+    if (own && l.unit && normUnit(own) !== normUnit(l.unit)) {
+      problems.push({ kind: 'unit-sheet', item: code, requested: String(own), invoiced: String(l.unit), note: 'واحد این ردیف با واحد کالا در برگه موجودی فرق دارد (مثلاً متر به جای عدد)', severity: 'urgent' });
+    }
     if (book?.loaded) {
-      const c = compareLine(book, l, who, day);
+      const c = compareLine(book, l, who, day, { sheetUnit: own });
       const seen = c.source === 'exception' ? ' (قیمت استثنای مشتری)' : '';
       if (c.status === 'below') {
         problems.push({ kind: 'price-below', item: code, requested: money(c.expected), invoiced: money(l.unit_price), note: `قیمت ${Math.abs(c.pct)} درصد کمتر از لیست است${seen}${c.anomaly ? '، فاصله غیرعادی' : ''}`, severity: 'urgent' });

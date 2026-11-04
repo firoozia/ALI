@@ -308,3 +308,36 @@ test('the balance and the payment note are in dirhams with two decimals', async 
   tr.add({ type: 'payment', at: 2, kind: 'cash', customer: 'Bahar', amount: 50.5 });
   assert.equal(fb('Bahar', bal(tr, 'Bahar')), 'مانده Bahar: فاکتورها 105.00 درهم، پرداخت‌ها 50.50 درهم، مانده 54.50 درهم\n(از آغاز ثبت در ربات، نه حساب کامل؛ فاکتورها با مالیات)');
 });
+
+test('the unit of a line is held against the item own unit in the stock sheet, and against the list', () => {
+  const book = sample();
+  const run = (lines, sheetUnits, customer = 'Someone') => auditInvoice({ lines }, { book, day: '2026-11-10', customer, sheetUnits });
+  // film is sold by the metre: a count on the invoice is a unit error
+  const wrong = run([line('408', 10, 12.5, 125, 'pcs')], { 408: 'm' });
+  assert.deepEqual(wrong.map((p) => [p.kind, p.severity, p.requested, p.invoiced]).slice(0, 1), [['unit-sheet', 'urgent', 'm', 'pcs']]);
+  assert.ok(wrong.some((p) => p.kind === 'unit')); // and the list price is per metre, not per piece
+  // hardware is sold by the piece: metres on the invoice is the reverse error
+  const hinge = run([line('H1', 5, 3, 15, 'm')], { H1: 'pcs' });
+  assert.ok(hinge.some((p) => p.kind === 'unit-sheet' && p.requested === 'pcs' && p.invoiced === 'm'));
+  assert.ok(hinge.some((p) => p.kind === 'unit' && p.requested.includes('pcs')));
+  // the right units: nothing
+  assert.deepEqual(run([line('408', 10, 12.5, 125, 'MTR'), line('H1', 5, 3, 15, 'pcs')], { 408: 'm', H1: 'pcs' }), []);
+  // a list row without a unit is priced in the item's own unit from the sheet
+  const bare = new PriceBook('');
+  bare.save({ items: { 777: { price: 4, unit: '', category: '' } }, exceptions: [] }, 'a');
+  const check = (unit) => auditInvoice({ lines: [line('777', 2, 4, 8, unit)] }, { book: bare, customer: 'x', sheetUnits: { 777: 'roll' } }).map((p) => p.kind);
+  assert.deepEqual(check('roll'), []);
+  assert.deepEqual(check('m'), ['unit-sheet', 'unit']);
+  // no unit known from the sheet: only the list is used, as before
+  assert.deepEqual(auditInvoice({ lines: [line('408', 10, 12.5, 125, 'm')] }, { book, customer: 'x' }), []);
+});
+
+test('the price list intake shows the unit of every row and says which rows have none', () => {
+  const parsed = { currency: 'AED', items: { 408: { price: 12.5, unit: 'm', category: '' }, H1: { price: 3, unit: 'pcs', category: '' }, 999: { price: 7, unit: '', category: '' } }, exceptions: [] };
+  const t = formatParsed(parsed);
+  assert.match(t, /408: 12\.50 \/ m/);
+  assert.match(t, /H1: 3\.00 \/ pcs/);
+  assert.match(t, /999: 7\.00 \/ ؟/);
+  assert.match(t, /بدون واحد \(1 کد\): 999\nبرای این‌ها واحد کالا در برگه موجودی/);
+  assert.ok(!formatParsed({ ...parsed, items: { 408: parsed.items[408] } }).includes('بدون واحد'));
+});

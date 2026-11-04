@@ -73,7 +73,7 @@ const KIND = {
   missing: 'قلم جاافتاده', extra: 'قلم اضافه', code: 'کد اشتباه', size: 'اندازه اشتباه', quantity: 'مقدار اشتباه',
   price: 'قیمت اشتباه', total: 'جمع کل اشتباه', customer: 'نام مشتری', unreadable: 'ناخوانا',
   'line-total': 'مبلغ ردیف', subtotal: 'جمع جزء', vat: 'مالیات', 'price-below': 'قیمت کمتر از لیست', 'price-above': 'قیمت بیشتر از لیست',
-  'price-missing': 'قیمت چاپ نشده', unit: 'واحد قیمت', currency: 'واحد پول', duplicate: 'شمارهٔ تکراری', gap: 'شمارهٔ جاافتاده',
+  'price-missing': 'قیمت چاپ نشده', unit: 'واحد قیمت', 'unit-sheet': 'واحد کالا', currency: 'واحد پول', duplicate: 'شمارهٔ تکراری', gap: 'شمارهٔ جاافتاده',
 };
 
 /** The message for the information group, or null when the invoice matches (nothing is posted for a match). */

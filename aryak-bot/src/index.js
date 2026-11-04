@@ -360,9 +360,14 @@ async function watchGroup(raw, groupId, role) {
   // The arithmetic, the prices against the owner's list and the invoice number: plain checks on what was read.
   const number = verdict.invoice_number || verdict.invoice?.number || '';
   const day = new Date().toISOString().slice(0, 10);
+  // The item's own unit from the stock sheet for every code on the invoice (metres for film, pieces for hardware).
+  const sheetUnits = {};
+  for (const code of [...new Set((verdict.invoice?.lines || []).map((l) => String(l.code || '').trim()).filter(Boolean))].slice(0, 20)) {
+    try { const r = await fetchStock(config, { code }); if (r.found && !r.ambiguous && r.unit) sheetUnits[code.toUpperCase()] = r.unit; } catch { /* the check goes on without it */ }
+  }
   const own = (verdict.problems || []).map((p) => ({ severity: 'urgent', ...p }));
   const extra = [
-    ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer }) : []),
+    ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer, sheetUnits }) : []),
     ...(number ? checkNumber(number, desk.numbers()) : []),
   ];
   const problems = [...own, ...extra];
