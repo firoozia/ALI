@@ -258,6 +258,30 @@ assert.ok(sheets.Stock.cells.some(x=>x[1]==='M-18' && x[9]===20 && x[10]==='LOW'
   assert.ok(del.has(499));
   ctx.Utilities.formatDate=fmt;
 }
+// Report of goods sent out (read-only, bot token): days, filters, undone ones left out
+{
+  const fmt=ctx.Utilities.formatDate; ctx.Utilities.formatDate=(d,tz,f)=>f==='yyyy-MM-dd'?d.toISOString().slice(0,10):fmt(d,tz,f);
+  const rep=b=>post({token:'bottok',action:'botReport',...b});
+  assert.equal(post({token:'tok',action:'botReport',from:'2026-10-10',to:'2026-10-11'}).ok,false); // the sync token is not the bot's
+  assert.equal(rep({from:'10/10/2026',to:'2026-10-11'}).ok,false);
+  assert.equal(rep({from:'2026-10-12',to:'2026-10-11'}).ok,false);
+  let a=rep({from:'2026-10-10',to:'2026-10-11'});
+  // o2 (90 m, 10 Oct) and the cut c1 (12.5 m, 11 Oct) of code 101; o1 (30 m) was undone
+  assert.equal(a.operations,2); assert.deepEqual(a.totals,[{unit:'m',qty:102.5}]);
+  assert.equal(a.byCode.length,1); assert.equal(a.byCode[0].code,'101'); assert.equal(a.byCode[0].total,102.5); assert.equal(a.byCode[0].operations,2);
+  assert.deepEqual(a.byCode[0].customers.map(x=>x.customer+':'+x.qty),['-:90','Bahar:12.5']);
+  assert.equal(rep({from:'2026-10-10',to:'2026-10-10'}).operations,1);
+  assert.equal(rep({from:'2026-10-01',to:'2026-10-09'}).operations,0);
+  assert.equal(rep({from:'2026-10-10',to:'2026-10-11',customer:'bah'}).byCode[0].total,12.5);
+  assert.equal(rep({from:'2026-10-10',to:'2026-10-11',code:'999'}).operations,0);
+  assert.equal(rep({from:'2026-10-10',to:'2026-10-11',code:'101'}).operations,2);
+  assert.equal(rep({from:'2026-10-10',to:'2026-10-11',category:'PVC'}).operations,2);
+  assert.equal(rep({from:'2026-10-10',to:'2026-10-11',category:'G_MDF'}).operations,0);
+  assert.equal(a.rows,undefined);
+  a=rep({from:'2026-10-10',to:'2026-10-11',detail:true});
+  assert.equal(a.rowsTotal,2); assert.equal(a.rows[0].day,'2026-10-11'); assert.equal(a.rows[0].invoice,'F-12'); assert.equal(a.rows[0].type,'CUT');
+  ctx.Utilities.formatDate=fmt;
+}
 props.ZINAX_LAST_BACKUP='1234';
 assert.equal(post({token:'tok',action:'sync',since:0}).lastBackup,1234);
 console.log('APPS_SCRIPT_TESTS_OK');

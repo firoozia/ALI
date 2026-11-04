@@ -107,11 +107,11 @@ function doPost(e) {
     return json_({ ok: false, error: 'Bad request' });
   }
   const props = PropertiesService.getScriptProperties();
-  // The AI assistant has its own token and can only read stock.
-  if (req.action === 'botStock') {
+  // The AI assistant has its own token and can only read: stock and the report of goods sent out.
+  if (req.action === 'botStock' || req.action === 'botReport') {
     const botToken = props.getProperty('ZINAX_BOT_TOKEN');
     if (!botToken || req.token !== botToken) return json_({ ok: false, error: 'Wrong bot token' });
-    return json_(botStock_(req));
+    return json_(req.action === 'botReport' ? botReport_(req) : botStock_(req));
   }
   const token = props.getProperty('ZINAX_TOKEN');
   if (!token || req.token !== token) return json_({ ok: false, error: 'Wrong token. Copy it again from the Apps Script log.' });
@@ -880,6 +880,84 @@ function botStock_(req) {
     locations: Object.keys(where).map(function (l) { return l + ': ' + where[l]; }),
     note: (sizeProducts[0] || [])[6] || '',
   };
+}
+
+/**
+ * Goods that left the warehouse between two days (shipped and cut, undone ones left out), for the AI assistant's
+ * staff. Read-only. Request: from and to as yyyy-MM-dd (both days included, in the sheet's time zone), and optionally
+ * code, category (a group ID or name), customer (part of the name) and detail (also return the operations).
+ * Answer: the totals per unit, one entry per code (total, operations, packages, main customers) and the main
+ * customers overall; with detail, the latest operations.
+ */
+function botReport_(req) {
+  const ss = SpreadsheetApp.getActive();
+  const tz = ss.getSpreadsheetTimeZone();
+  const from = String(req.from || '').trim(), to = String(req.to || '').trim();
+  const isDay = function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); };
+  if (!isDay(from) || !isDay(to)) return { ok: false, error: 'from and to must be days like 2026-10-31' };
+  if (from > to) return { ok: false, error: 'from is after to' };
+  const wantCode = String(req.code || '').trim().toLowerCase();
+  const wantCat = String(req.category || '').trim().toLowerCase();
+  const wantCustomer = String(req.customer || '').trim().toLowerCase();
+
+  const groupName = {};
+  if (ss.getSheetByName('Groups')) readAll_('Groups').forEach(function (g) { if (g[0]) groupName[String(g[0])] = String(g[1] || g[0]); });
+  const catOfCode = {};
+  readAll_('Items').forEach(function (r) {
+    const k = String(r[2]).trim().toLowerCase();
+    if (k && !catOfCode[k]) catOfCode[k] = { id: String(r[1]), name: groupName[String(r[1])] || String(r[1]) };
+  });
+
+  const moves = readAll_('Movements');
+  const undone = undone_(moves);
+  const totals = {}, codes = {}, customers = {}, rows = [];
+  let operations = 0;
+  moves.forEach(function (r) {
+    if ((r[2] !== 'OUT' && r[2] !== 'CUT') || undone[String(r[0])]) return;
+    const day = Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd');
+    if (day < from || day > to) return;
+    const code = String(r[5]).trim(), codeKey = code.toLowerCase();
+    if (wantCode && codeKey !== wantCode) return;
+    const cat = catOfCode[codeKey] || { id: '', name: '' };
+    if (wantCat && cat.id.toLowerCase() !== wantCat && cat.name.toLowerCase() !== wantCat) return;
+    const customer = String(r[12] || '').trim();
+    if (wantCustomer && customer.toLowerCase().indexOf(wantCustomer) < 0) return;
+    const qty = Number(r[3]) || 0, unit = String(r[4]);
+    operations++;
+    totals[unit] = (totals[unit] || 0) + qty;
+    const ck = codeKey + '|' + unit;
+    if (!codes[ck]) codes[ck] = { code: code, category: cat.name, unit: unit, total: 0, operations: 0, items: {}, customers: {} };
+    const c = codes[ck];
+    c.total += qty; c.operations++; c.items[String(r[1])] = true;
+    const who = customer || '-';
+    c.customers[who] = (c.customers[who] || 0) + qty;
+    const ok = who + '|' + unit;
+    if (!customers[ok]) customers[ok] = { customer: who, unit: unit, total: 0, operations: 0 };
+    customers[ok].total += qty; customers[ok].operations++;
+    if (req.detail) rows.push({ day: day, at: ms_(r[8]), type: String(r[2]), code: code, size: String(r[6]), qty: qty, unit: unit, customer: customer, invoice: String(r[13] || '').trim() || String(r[7] || '').trim() });
+  });
+  const round = function (n) { return Math.round(n * 100) / 100; };
+  const top = function (map, n) {
+    return Object.keys(map).map(function (k) { return { customer: k, qty: round(map[k]) }; })
+      .sort(function (a, b) { return b.qty - a.qty; }).slice(0, n);
+  };
+  const out = {
+    ok: true, from: from, to: to, operations: operations,
+    totals: Object.keys(totals).map(function (u) { return { unit: u, qty: round(totals[u]) }; }),
+    byCode: Object.keys(codes).map(function (k) {
+      const c = codes[k];
+      return { code: c.code, category: c.category, unit: c.unit, total: round(c.total), operations: c.operations,
+               packages: Object.keys(c.items).length, customers: top(c.customers, 3) };
+    }).sort(function (a, b) { return b.total - a.total; }),
+    byCustomer: Object.keys(customers).map(function (k) {
+      const c = customers[k]; return { customer: c.customer, unit: c.unit, total: round(c.total), operations: c.operations };
+    }).sort(function (a, b) { return b.total - a.total; }).slice(0, 10),
+  };
+  if (req.detail) {
+    out.rows = rows.sort(function (a, b) { return b.at - a.at; }).slice(0, 60);
+    out.rowsTotal = rows.length;
+  }
+  return out;
 }
 
 // ---------- nightly backup ----------

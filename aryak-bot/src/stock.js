@@ -95,10 +95,8 @@ const seconds = (ms) => (ms / 1000).toFixed(1);
  * how long it took and, when it failed, its real cause and HTTP status. With a [cache]: a fresh answer is reused, and
  * when every try fails an answer up to a quarter of an hour old is returned with { stale: true, ageMinutes }.
  */
-export async function fetchStock(config, input, fetchImpl = fetch, {
-  log = config.log || (() => {}), info = config.logInfo || log, timeoutMs = [45000, 30000, 30000], retryDelayMs = 1500, tries = 3,
-  cache = config.sheetCache, now = Date.now,
-} = {}) {
+export async function fetchStock(config, input, fetchImpl = fetch, opts = {}) {
+  const { cache = config.sheetCache, log = config.log || (() => {}) } = opts;
   const cached = cache?.get(input);
   if (cached && cached.ageMs <= cache.freshMs) return cached.data;
   const body = JSON.stringify({
@@ -111,6 +109,38 @@ export async function fetchStock(config, input, fetchImpl = fetch, {
     qtyUnit: input.quantity_unit || '',
   });
   const name = `stock lookup for "${String(input.code).slice(0, 30)}"`;
+  try {
+    const data = await askSheet(config, body, name, fetchImpl, opts);
+    cache?.set(input, data);
+    return data;
+  } catch (lastError) {
+    if (cached && cached.ageMs <= cache.staleMs && !lastError.final) {
+      log(`${name}: the sheet did not answer, using the answer from ${Math.round(cached.ageMs / 60000)} minute(s) ago`);
+      return { ...cached.data, stale: true, ageMinutes: Math.round(cached.ageMs / 60000) };
+    }
+    throw lastError;
+  }
+}
+
+/** The report of goods sent out between two days (yyyy-MM-dd); [params]: { from, to, code, category, customer, detail }. */
+export async function fetchReport(config, params, fetchImpl = fetch, opts = {}) {
+  const body = JSON.stringify({
+    action: 'botReport',
+    token: config.botToken,
+    from: params.from,
+    to: params.to,
+    code: params.code || '',
+    category: params.category || '',
+    customer: params.customer || '',
+    detail: !!params.detail,
+  });
+  return askSheet(config, body, `outgoing report ${params.from}..${params.to}`, fetchImpl, opts);
+}
+
+/** One question to the sheet with the tries, timeouts and logging described at fetchStock. */
+async function askSheet(config, body, name, fetchImpl, {
+  log = config.log || (() => {}), info = config.logInfo || log, timeoutMs = [45000, 30000, 30000], retryDelayMs = 1500, tries = 3, now = Date.now,
+} = {}) {
   let lastError;
   for (let attempt = 1; attempt <= tries; attempt++) {
     const started = now();
@@ -124,7 +154,6 @@ export async function fetchStock(config, input, fetchImpl = fetch, {
       const data = await res.json();
       if (!data.ok) throw Object.assign(new Error(data.error || 'Sheet refused'), { final: true });
       info(`${name}: try ${attempt} of ${tries} ok in ${seconds(now() - started)} s`);
-      cache?.set(input, data);
       return data;
     } catch (e) {
       lastError = e;
@@ -133,10 +162,6 @@ export async function fetchStock(config, input, fetchImpl = fetch, {
       if (e.final || (e.status && e.status < 500) || attempt === tries) break;
       await new Promise((r) => setTimeout(r, retryDelayMs));
     }
-  }
-  if (cached && cached.ageMs <= cache.staleMs && !lastError.final) {
-    log(`${name}: the sheet did not answer, using the answer from ${Math.round(cached.ageMs / 60000)} minute(s) ago`);
-    return { ...cached.data, stale: true, ageMinutes: Math.round(cached.ageMs / 60000) };
   }
   throw lastError;
 }

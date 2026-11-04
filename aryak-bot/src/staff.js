@@ -17,6 +17,7 @@ How to write
 
 What you can do
 - Stock: call staff_stock for a product code (and the group if given). Availability is by code; pass a size ONLY when the colleague names one explicitly. Reply with the returned formatted text exactly as it is, character for character, with nothing before or after it and no signature. Several codes: one tool call each, answers separated by a blank line.
+- Goods sent out (a report for a period, optionally for one code, group or customer): call report_out with from and to as days (Gregorian 2026-10-31 or Jalali 1405-08-09). Work out the days from "this month", "last week", "since the first" and so on with the date given at the top of the message. Reply with the returned formatted text exactly as it is. If the colleague asks for the details or the list, call it again with detail true.
 - Invoice checks: call recent_checks to say what was checked, for which customer and purchase order, and what was wrong.
 - Purchase orders: call find_order to say whether the order of a customer or number was received.
 - How you work: you read customers' purchase order PDFs in their groups, check each invoice in the invoice group against its order before it goes to the customer, and report problems in the information group. You only report; you never change the sheet, an invoice or a customer's chat.
@@ -40,6 +41,22 @@ export const STAFF_TOOLS = [
         size: { type: 'string', description: 'Thickness x width if known, e.g. "0.30*1400".' },
       },
       required: ['code'],
+    },
+  },
+  {
+    name: 'report_out',
+    description: 'Report of goods that left the warehouse (shipped and cut) between two days, from the Zinax sheet. Returns {formatted}: the finished short answer (a block per code with totals, number of operations and main customers); with detail true, the list of the latest operations instead.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'First day, Gregorian 2026-10-01 or Jalali 1405-07-09.' },
+        to: { type: 'string', description: 'Last day (included), same formats.' },
+        code: { type: 'string', description: 'Only this product code.' },
+        category: { type: 'string', description: 'Only this product group, e.g. "PVC film".' },
+        customer: { type: 'string', description: 'Only this customer (part of the name).' },
+        detail: { type: 'boolean', description: 'True to list the operations themselves.' },
+      },
+      required: ['from', 'to'],
     },
   },
   {
@@ -132,9 +149,10 @@ export function runCommand(cmd, ctx) {
  * One staff answer: Claude with the three staff tools. [handlers]: { staff_stock, recent_checks, find_order }, each
  * (input) -> object. Returns the text, or null for silence.
  */
-export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers, log = () => {}, lang = '' }) {
+export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers, log = () => {}, lang = '', today = '' }) {
   const lines = [];
   if (quoted) lines.push(`The colleague is replying to this message: "${quoted.slice(0, 600)}"`, '');
+  if (today) lines.push(today, '');
   if (lang) lines.push(`Reply language: ${LANG_NAME[lang] || lang} (the stock tool already writes its text in it).`, '');
   lines.push(`Message from ${who || 'a colleague'}:`, text);
   const messages = [{ role: 'user', content: lines.join('\n') }];

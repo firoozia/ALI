@@ -5,7 +5,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
 import { answer } from './assistant.js';
-import { SheetCache, fetchStock, isTimeout, warmSheet } from './stock.js';
+import { SheetCache, fetchReport, fetchStock, isTimeout, warmSheet } from './stock.js';
+import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
 import { detectLang, noVoice, notUnderstood, sheetFailed, sizeNote } from './lang.js';
 import { loadConfig } from './config.js';
@@ -238,6 +239,18 @@ const staffHandlersFor = (key, lang = 'fa') => ({
       };
     }
   },
+  report_out: async (i) => {
+    const instruction = 'Send the formatted text exactly as it is, character for character, with nothing added before or after.';
+    const from = parseDay(i.from);
+    const to = parseDay(i.to);
+    if (!from || !to || from > to) return { formatted: reportInvalidDate(lang), instruction };
+    try {
+      const result = await fetchReport(config, { from, to, code: i.code, category: i.category, customer: i.customer, detail: !!i.detail });
+      return { formatted: i.detail ? formatDetails(result, lang) : formatReport(result, lang), instruction };
+    } catch (e) {
+      return { formatted: reportFailed(lang, isTimeout(e)), instruction };
+    }
+  },
   recent_checks: (i) => desk.lastChecks(i.count),
   find_order: (i) => desk.listOrders(i),
 });
@@ -329,7 +342,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   if (!addressed && !confirmed) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
-    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key, lang), lang,
+    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key, lang), lang, today: todayLine(new Date(), config.timezone),
   });
   trace(where, role, `${answerText ? 'answered' : 'no reply (the model chose silence)'}, reply language ${lang}`);
   if (answerText) await reply(answerText);

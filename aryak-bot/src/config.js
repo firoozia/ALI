@@ -39,6 +39,7 @@ export function loadConfig(env = process.env) {
     voiceEnabled: (env.VOICE || 'on').toLowerCase() !== 'off',
     speechLanguages: env.SPEECH_LANGUAGES ? list(env.SPEECH_LANGUAGES) : ['fa-IR', 'ar-AE', 'en-IN', 'ur-PK'],
     speechMinConfidence: Number(env.SPEECH_MIN_CONFIDENCE || 0.5),
+    timezone: env.TIMEZONE || 'Asia/Dubai', // the day boundaries the team means by "today"
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
