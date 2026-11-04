@@ -4,6 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { normalizeLetters } from './text.js';
+
 export const NO_REPLY = 'NO_REPLY';
 
 export const STAFF_RULES = `You are ARYAK Assistant, the AI office assistant of ARYAK (PVC film, edge banding, glues, cabinet hardware; UAE, Oman, Iran). You are talking with a colleague of the ARYAK team, never with a customer, so you may state real stock figures.
@@ -61,9 +63,9 @@ export function isAddressed({ text, mentioned = [], quotedFrom = '', ownIds = []
   const own = ownIds.filter(Boolean);
   if (mentioned.some((m) => own.includes(m))) return true;
   if (quotedFrom && own.includes(quotedFrom)) return true;
-  const t = String(text || '').toLowerCase().replace(/[‌‏]/g, ' ');
-  const w = new Set(words(text));
-  return names.some((n) => (/\s/.test(n) ? t.includes(n) : w.has(n)));
+  const t = normalizeLetters(text);
+  const w = new Set(words(t));
+  return names.map(normalizeLetters).some((n) => (/\s/.test(n) ? t.includes(n) : w.has(n)));
 }
 
 const COMMANDS = {
@@ -129,7 +131,7 @@ export function runCommand(cmd, ctx) {
  * One staff answer: Claude with the three staff tools. [handlers]: { staff_stock, recent_checks, find_order }, each
  * (input) -> object. Returns the text, or null for silence.
  */
-export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers }) {
+export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers, log = () => {} }) {
   const lines = [];
   if (quoted) lines.push(`The colleague is replying to this message: "${quoted.slice(0, 600)}"`, '');
   lines.push(`Message from ${who || 'a colleague'}:`, text);
@@ -156,7 +158,7 @@ export async function staffAnswer({ client, config, text, quoted = '', who = '',
     const results = [];
     for (const use of uses) {
       let content;
-      try { content = JSON.stringify(await (handlers[use.name] || (() => ({ error: 'Unknown tool' })))(use.input || {})); } catch (e) { content = JSON.stringify({ error: String(e.message || e) }); }
+      try { content = JSON.stringify(await (handlers[use.name] || (() => ({ error: 'Unknown tool' })))(use.input || {})); } catch (e) { log(`tool ${use.name} failed: ${e.message || e}`); content = JSON.stringify({ error: String(e.message || e) }); }
       results.push({ type: 'tool_result', tool_use_id: use.id, content });
     }
     messages.push({ role: 'user', content: results });

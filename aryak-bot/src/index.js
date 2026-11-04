@@ -15,6 +15,7 @@ import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { metadataToken, speechTranscriber } from './speech.js';
 import { NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand } from './voice.js';
+import { normalizeDigits } from './text.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -29,6 +30,8 @@ if (!config.allowedGroups.length && !config.allowedGroupNames.length) {
 const client = new Anthropic();
 const system = buildSystemPrompt(config.kbDir, config.displayName);
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+// One short line per message and what became of it: where, who (a role, never a number), the decision. No text.
+const trace = (where, role, decision) => logger.info(`msg ${where} ${role}: ${decision}`);
 const recent = new Map(); // manager alerts already sent
 const groups = new Map(); // group JID -> { subject, lidToPhone, at }
 const desk = new InvoiceDesk({ dir: config.requestsDir }); // customers' purchase orders
@@ -56,7 +59,7 @@ const gate = new GroupGate({
   isStaff: (m) => m.staff,
   log: (s) => logger.info(s),
   answer: async ({ groupId, messages: incoming, transcript }) => {
-    if (botState.paused) return;
+    if (botState.paused) { logger.info('paused: customer message not answered'); return; }
     let messages = incoming;
     if (config.voiceEnabled) {
       const step = await customerVoiceStep(groupId, messages);
@@ -198,21 +201,23 @@ async function handleStaffChat(raw, chatId, group) {
   const text = textOf(content);
   if (!text && !audio) return false;
   if (sent.has(raw.key.id) || text.startsWith('🤖')) return true; // the bot's own message coming back
+  const where = group ? `group "${(await groupInfo(chatId)).subject}"` : 'private';
   const own = ownIds();
   const isSelf = own.some((o) => jidDigits(o) === jidDigits(chatId));
-  if (!group && raw.key.fromMe && !isSelf) return false; // the owner talking to someone else from the bot's phone
+  if (!group && raw.key.fromMe && !isSelf) { trace(where, 'owner', 'ignored: the owner talking to someone else'); return false; } // from the bot's phone
   let admin = !!raw.key.fromMe;
   if (!raw.key.fromMe) {
     let info = group ? await groupInfo(chatId) : { lidToPhone: new Map() };
     const who = group ? { sender: raw.key.participant, senderAlt: raw.key.participantAlt } : { sender: chatId, senderAlt: raw.key.remoteJidAlt };
     let staff = staffChecker(config.staffNumbers, info.lidToPhone)(who);
     if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(who); }
-    if (!staff) return false;
+    if (!staff) { trace(where, 'not-staff', group ? 'left to the customer flow' : 'ignored: private chat from a number that is not staff'); return false; }
     admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
   }
+  const role = admin ? 'admin' : 'staff';
   const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
   const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
-  if (cmd) { await reply(runCommand(cmd, { name: config.displayName, state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
+  if (cmd) { trace(where, role, `command ${cmd}`); await reply(runCommand(cmd, { name: config.displayName, state: botState, desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
   const ctx = (content.extendedTextMessage || audio)?.contextInfo || {};
   const addressed = !group || isAddressed({
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
@@ -221,7 +226,8 @@ async function handleStaffChat(raw, chatId, group) {
   // A voice note is only answered with a question; the request goes on after the same person says yes.
   const key = `s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   if (audio) {
-    if (!addressed) return false;
+    if (!addressed) { trace(where, role, 'ignored: voice note not addressed to the assistant'); return false; }
+    trace(where, role, 'voice note: asking for confirmation');
     const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0);
     if (!u.ok) { voiceDesk.clear(key); await reply(NOT_UNDERSTOOD_FA); return true; }
     voiceDesk.set(key, { requestText: u.requestText, lang: u.language });
@@ -237,11 +243,11 @@ async function handleStaffChat(raw, chatId, group) {
     if (kind === 'no') { await reply(retryText(pend.lang)); return true; }
     if (kind === 'yes') { asked = pend.requestText; confirmed = true; }
   }
-  if (!addressed && !confirmed) return false;
+  if (!addressed && !confirmed) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
-    client, config, text: asked, quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlers,
+    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlers,
   });
-  logger.info(`${chatId}: staff question ${answerText ? 'answered' : 'no reply'}`);
+  trace(where, role, answerText ? 'answered' : 'no reply (the model chose silence)');
   if (answerText) await reply(answerText);
   return true;
 }
@@ -261,11 +267,11 @@ async function onMessage(raw) {
   }
   if (!config.allowedGroups.includes(groupId)) {
     const subject = config.allowedGroupNames.length ? (await groupInfo(groupId)).subject.toLowerCase() : '';
-    if (!config.allowedGroupNames.some((w) => subject.includes(w))) return;
+    if (!config.allowedGroupNames.some((w) => subject.includes(w))) { trace(`group "${subject}"`, 'unknown', 'ignored: group not allowed'); return; }
   }
   const content = normalizeMessageContent(raw.message);
   if (!content || content.protocolMessage || content.reactionMessage) return;
-  const text = content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || '';
+  const text = normalizeDigits(content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || '');
   const image = content.imageMessage;
   const m = {
     groupId, fromMe: !!raw.key.fromMe, sender: raw.key.participant, senderAlt: raw.key.participantAlt,
@@ -284,7 +290,8 @@ async function onMessage(raw) {
     if (m.staff === false) lastRaw.set(groupId, raw);
   }
   if (!m.text && !m.hasImage && !m.fromMe) m.text = '(voice note, sticker or file)';
-  gate.onMessage(m);
+  const decision = gate.onMessage(m);
+  trace(`group "${(await groupInfo(groupId)).subject}"`, m.fromMe ? 'own-number' : m.staff === true ? 'staff' : m.staff === false ? 'customer' : 'unknown', `customer flow: ${decision}`);
 }
 
 async function start() {
