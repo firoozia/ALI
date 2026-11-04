@@ -292,7 +292,7 @@ async function trackGroup(raw, groupId, role) {
     if (findings.length) await sendTo(config.infoGroupName, `ℹ️ تحویل ${event.customer || ''}:\n${findings.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
     if (tracker.isHeld(event.customer)) await sock.sendMessage(groupId, { text: `⛔ ${tracker.isHeld(event.customer)}: تحویل تا تأیید نقدی نباید انجام شود. — ${config.displayName}` }, { quoted: raw });
   } else if (role === 'payment' && event.kind !== 'statement' && event.customer && event.amount) {
-    await sendTo(config.infoGroupName, `ℹ️ پرداخت ثبت شد: ${event.customer}، ${event.amount} ${event.currency || ''}\n${formatBalance(event.customer, balanceOf(tracker, event.customer))}\n— ${config.displayName}`);
+    await sendTo(config.infoGroupName, `ℹ️ پرداخت ثبت شد: ${event.customer}، ${Number(event.amount).toFixed(2)} درهم\n${formatBalance(event.customer, balanceOf(tracker, event.customer))}\n— ${config.displayName}`);
   }
 }
 
@@ -535,7 +535,7 @@ async function handlePriceFlow({ raw, content, text, key, reply, role, where, im
   if (command?.type === 'exception') {
     const next = book.withException(command.exception);
     priceDesk.set(key, { next });
-    await reply(`استثنای تازه: ${command.exception.customer}، کد ${command.exception.code} = ${command.exception.price}${command.exception.from ? ` از ${command.exception.from}` : ''}${command.exception.to ? ` تا ${command.exception.to}` : ''}\nدرست است؟ (بله / نه)`);
+    await reply(`استثنای تازه: ${command.exception.customer}، کد ${command.exception.code} = ${Number(command.exception.price).toFixed(2)} درهم${command.exception.from ? ` از ${command.exception.from}` : ''}${command.exception.to ? ` تا ${command.exception.to}` : ''}\nدرست است؟ (بله / نه)`);
     return true;
   }
   const looksLikePrice = /قیمت|price/i.test(text);

@@ -7,7 +7,9 @@ import { normalizeDigits } from './text.js';
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 const has = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
-const money = (n) => String(round2(n));
+// Amounts are dirhams with two decimals, as on a UAE invoice.
+const money = (n) => round2(n).toFixed(2);
+const DIRHAM = /^(aed|dhs?|dirhams?|د\.إ|درهم)$/i;
 
 /** "inv-9919" -> { prefix: 'inv-', n: 9919 }; null when there is no trailing number. */
 export function splitNumber(number) {
@@ -42,6 +44,9 @@ export function checkNumber(number, seen) {
 export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05, customer = '' } = {}) {
   const problems = [];
   const lines = Array.isArray(invoice?.lines) ? invoice.lines : [];
+  // The currency is always the dirham: anything else printed is a mistake.
+  const cur = String(invoice?.currency || '').trim();
+  if (cur && !DIRHAM.test(cur)) problems.push({ kind: 'currency', item: '', requested: 'AED', invoiced: cur, note: 'واحد پول فاکتور باید درهم باشد', severity: 'urgent' });
   const who = customer || invoice?.customer || '';
   for (const l of lines) {
     const code = String(l.code || '').trim();
@@ -72,11 +77,20 @@ export function auditInvoice(invoice, { book, day = '', vatRate = 5, tol = 0.05,
     if (Math.abs(sum - Number(invoice.subtotal)) > tol) problems.push({ kind: 'subtotal', item: '', requested: money(sum), invoiced: money(invoice.subtotal), note: 'جمع ردیف‌ها با جمع جزء فاکتور نمی‌خواند', severity: 'urgent' });
   }
   if (has(invoice?.vat) && has(invoice?.subtotal)) {
-    const expected = round2((Number(invoice.subtotal) * vatRate) / 100);
-    if (Math.abs(expected - Number(invoice.vat)) > tol) problems.push({ kind: 'vat', item: '', requested: money(expected), invoiced: money(invoice.vat), note: `مالیات ${vatRate} درصد از جمع جزء نمی‌شود`, severity: 'urgent' });
-    if (has(invoice?.total)) {
-      const total = round2(Number(invoice.subtotal) + Number(invoice.vat));
-      if (Math.abs(total - Number(invoice.total)) > tol) problems.push({ kind: 'total', item: '', requested: money(total), invoiced: money(invoice.total), note: 'جمع کل با جمع جزء به‌اضافهٔ مالیات نمی‌خواند', severity: 'urgent' });
+    if (invoice.prices_include_vat === true) {
+      // The prices on the lines already hold the VAT: the lines add up to the grand total, the VAT is the share inside it.
+      if (has(invoice.total)) {
+        const inside = round2((Number(invoice.total) * vatRate) / (100 + vatRate));
+        if (Math.abs(inside - Number(invoice.vat)) > tol) problems.push({ kind: 'vat', item: '', requested: money(inside), invoiced: money(invoice.vat), note: `مالیات ${vatRate} درصدِ داخل جمع کل نمی‌شود`, severity: 'urgent' });
+        if (Math.abs(Number(invoice.subtotal) - Number(invoice.total)) > tol) problems.push({ kind: 'total', item: '', requested: money(invoice.subtotal), invoiced: money(invoice.total), note: 'قیمت‌ها با مالیات است؛ جمع ردیف‌ها باید برابر جمع کل باشد', severity: 'urgent' });
+      }
+    } else {
+      const expected = round2((Number(invoice.subtotal) * vatRate) / 100);
+      if (Math.abs(expected - Number(invoice.vat)) > tol) problems.push({ kind: 'vat', item: '', requested: money(expected), invoiced: money(invoice.vat), note: `مالیات ${vatRate} درصد از جمع جزء نمی‌شود`, severity: 'urgent' });
+      if (has(invoice?.total)) {
+        const total = round2(Number(invoice.subtotal) + Number(invoice.vat));
+        if (Math.abs(total - Number(invoice.total)) > tol) problems.push({ kind: 'total', item: '', requested: money(total), invoiced: money(invoice.total), note: 'جمع کل با جمع جزء به‌اضافهٔ مالیات نمی‌خواند', severity: 'urgent' });
+      }
     }
   }
   return problems;

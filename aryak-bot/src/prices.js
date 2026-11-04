@@ -126,12 +126,13 @@ export function parsePriceCommand(text) {
 
 // ---- showing it back ----------------------------------------------------------------------------------------------
 
-const money = (n) => (Math.round(Number(n) * 100) / 100).toString();
+// Prices are dirhams with two decimals.
+const money = (n) => (Math.round(Number(n) * 100) / 100).toFixed(2);
 
 /** The parsed list as a table to confirm: the first [max] rows, the exceptions, the counts. */
 export function formatParsed(parsed, { max = 25 } = {}) {
   const codes = Object.keys(parsed.items);
-  const lines = [`لیست قیمت (${codes.length} کد، واحد پول: ${parsed.currency || 'AED'})`];
+  const lines = [`لیست قیمت (${codes.length} کد، قیمت‌ها به درهم و بدون مالیات)`];
   for (const c of codes.slice(0, max)) {
     const it = parsed.items[c];
     lines.push(`${c}: ${money(it.price)}${it.unit ? ` / ${it.unit}` : ''}${it.category ? ` (${it.category})` : ''}`);
@@ -139,7 +140,7 @@ export function formatParsed(parsed, { max = 25 } = {}) {
   if (codes.length > max) lines.push(`و ${codes.length - max} کد دیگر`);
   if (parsed.exceptions?.length) {
     lines.push('', `استثناها (${parsed.exceptions.length}):`);
-    for (const e of parsed.exceptions) lines.push(`${e.customer}: ${e.code ? `کد ${e.code}` : `گروه ${e.category}`} = ${money(e.price)}${e.from ? ` از ${e.from}` : ''}${e.to ? ` تا ${e.to}` : ''}`);
+    for (const e of parsed.exceptions) lines.push(`${e.customer}: ${e.code ? `کد ${e.code}` : `گروه ${e.category}`} = ${money(e.price)} درهم${e.from ? ` از ${e.from}` : ''}${e.to ? ` تا ${e.to}` : ''}`);
   }
   lines.push('', 'درست است؟ (بله / نه)');
   return lines.join('\n');
@@ -156,7 +157,7 @@ export function formatBook(book) {
 export function formatCodePrice(book, code, customer) {
   const ref = book.priceOf(code, customer, new Date().toISOString().slice(0, 10));
   if (!ref) return `برای کد ${code} قیمتی ثبت نشده است.`;
-  return `قیمت کد ${code}${customer ? ` برای ${customer}` : ''}: ${money(ref.price)}${ref.unit ? ` / ${ref.unit}` : ''} (${ref.source === 'exception' ? 'قیمت استثنا' : 'لیست عمومی'})`;
+  return `قیمت کد ${code}${customer ? ` برای ${customer}` : ''}: ${money(ref.price)} درهم${ref.unit ? ` / ${ref.unit}` : ''} (${ref.source === 'exception' ? 'قیمت استثنا' : 'لیست عمومی'})`;
 }
 
 // ---- reading a price document with Claude (a photo, a PDF, or messy text) -----------------------------------------

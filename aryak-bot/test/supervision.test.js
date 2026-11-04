@@ -85,7 +85,7 @@ test('a customer\'s special price wins over the list; a category exception cover
   assert.equal(book.priceOf('229', 'Bahar Design', '').price, 8); // category
   assert.equal(book.priceOf('H1', 'Bahar', '').price, 3); // another category
   assert.equal(book.priceOf('999', 'Bahar', ''), null);
-  assert.match(formatCodePrice(book, '408', 'Master Wood'), /11.*قیمت استثنا/);
+  assert.match(formatCodePrice(book, '408', 'Master Wood'), /11\.00 درهم.*قیمت استثنا/);
   assert.match(formatCodePrice(book, '408', ''), /12\.5.*لیست عمومی/);
   assert.match(formatCodePrice(book, '999', ''), /قیمتی ثبت نشده/);
   const ex = book.withException({ customer: 'Master Wood', code: '408', category: '', price: 10, unit: '', from: '', to: '' });
@@ -111,9 +111,10 @@ test('the parsed table is shown back with a yes/no question and no hidden rows b
   const parsed = { currency: 'AED', items: Object.fromEntries(Array.from({ length: 30 }, (_, i) => [String(100 + i), { price: 10 + i, unit: 'm', category: '' }])), exceptions: [{ customer: 'Bahar', code: '', category: 'PVC film', price: 8, from: '', to: '2026-12-31' }] };
   const t = formatParsed(parsed);
   assert.match(t, /^لیست قیمت \(30 کد/);
-  assert.match(t, /100: 10 \/ m/);
+  assert.match(t, /100: 10\.00 \/ m/);
+  assert.match(t, /به درهم و بدون مالیات/);
   assert.match(t, /و 5 کد دیگر/);
-  assert.match(t, /Bahar: گروه PVC film = 8 تا 2026-12-31/);
+  assert.match(t, /Bahar: گروه PVC film = 8.00 درهم تا 2026-12-31/);
   assert.match(t, /درست است؟ \(بله \/ نه\)$/);
 });
 
@@ -157,7 +158,7 @@ test('prices: below the list is urgent, above is a note, the unit is checked, th
   const book = sample();
   const run = (lines, customer) => auditInvoice({ lines }, { book, day: '2026-11-10', customer });
   const below = run([line('229', 10, 8.5, 85)], 'Someone');
-  assert.deepEqual(below.map((p) => [p.kind, p.severity, p.requested, p.invoiced]), [['price-below', 'urgent', '9', '8.5']]);
+  assert.deepEqual(below.map((p) => [p.kind, p.severity, p.requested, p.invoiced]), [['price-below', 'urgent', '9.00', '8.50']]);
   assert.match(below[0].note, /5\.56 درصد کمتر از لیست/);
   const above = run([line('229', 10, 9.5, 95)], 'Someone');
   assert.deepEqual(above.map((p) => [p.kind, p.severity]), [['price-above', 'info']]);
@@ -279,4 +280,31 @@ test('the model is told same_roll only for an available code with a quantity, an
   assert.match(r.forModel.instruction, /same roll or from separate rolls/);
   const noQty = await runCheckStock({ code: '408' }, { groupId: 'g' }, config, { fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ...data, asked: 0, askedInUnit: 0 }) }) });
   assert.ok(!('same_roll' in noQty.forModel));
+});
+
+test('dirhams with two decimals; another currency is a mistake; prices that already hold the VAT are checked the other way round', () => {
+  const book = sample();
+  const base = { lines: [line('229', 10, 9, 90)], subtotal: 90, vat: 4.5, total: 94.5 };
+  assert.deepEqual(auditInvoice({ ...base, currency: 'AED' }, { book, day: '2026-11-10', customer: 'Someone' }), []);
+  for (const c of ['aed', 'AED', 'Dhs', 'درهم']) assert.deepEqual(auditInvoice({ ...base, currency: c }, { book, customer: 'x' }), [], c);
+  const usd = auditInvoice({ ...base, currency: 'USD' }, { book, customer: 'x' });
+  assert.deepEqual(usd.map((p) => [p.kind, p.severity, p.requested, p.invoiced]), [['currency', 'urgent', 'AED', 'USD']]);
+  // two decimals everywhere, the way a UAE invoice shows them
+  const off = auditInvoice({ lines: [line('229', 3, 9.1, 28)], subtotal: 28, vat: 1.4, total: 29.4 }, { book: new PriceBook(''), customer: 'x' });
+  assert.deepEqual(off.map((p) => [p.kind, p.requested, p.invoiced]), [['line-total', '3 × 9.1 = 27.30', '28.00']]);
+  // prices include VAT: the lines add up to the total; the VAT is the 5/105 inside it
+  const inc = { prices_include_vat: true, lines: [line('229', 10, 10.5, 105)], subtotal: 105, vat: 5, total: 105 };
+  assert.deepEqual(auditInvoice(inc, { book: new PriceBook(''), customer: 'x' }), []);
+  const wrong = auditInvoice({ ...inc, vat: 7 }, { book: new PriceBook(''), customer: 'x' });
+  assert.deepEqual(wrong.map((p) => [p.kind, p.requested, p.invoiced]), [['vat', '5.00', '7.00']]);
+  const notEqual = auditInvoice({ ...inc, total: 110, vat: 5.24 }, { book: new PriceBook(''), customer: 'x' });
+  assert.ok(notEqual.some((p) => p.kind === 'total'));
+});
+
+test('the balance and the payment note are in dirhams with two decimals', async () => {
+  const { balanceOf: bal, formatBalance: fb, Tracker: Trk } = await import('../src/tracker.js');
+  const tr = new Trk();
+  tr.add({ type: 'invoice', at: 1, customer: 'Bahar', total: 105, lines: [], ref: 'a' });
+  tr.add({ type: 'payment', at: 2, kind: 'cash', customer: 'Bahar', amount: 50.5 });
+  assert.equal(fb('Bahar', bal(tr, 'Bahar')), 'مانده Bahar: فاکتورها 105.00 درهم، پرداخت‌ها 50.50 درهم، مانده 54.50 درهم\n(از آغاز ثبت در ربات، نه حساب کامل؛ فاکتورها با مالیات)');
 });

@@ -19,7 +19,7 @@ Rules
 - If the request states no prices, do not report prices as differences; still report invoice arithmetic errors.
 - Answer with ONE JSON object and nothing else:
 {"verdict":"match"|"mismatch"|"unreadable","request_customer":string,"invoice_customer":string,"invoice_number":string,"invoice":INVOICE,"problems":[{"kind":"missing"|"extra"|"code"|"size"|"quantity"|"price"|"total"|"customer"|"unreadable","item":string,"requested":string,"invoiced":string,"note":string}]}
-- INVOICE is the invoice itself, read exactly as printed: {"number":string,"customer":string,"currency":string,"lines":[{"code":string,"quantity":number|null,"unit":string,"unit_price":number|null,"line_total":number|null}],"subtotal":number|null,"vat":number|null,"total":number|null}. Plain numbers (no currency sign, "." as the decimal point), null when not printed. Never calculate a number yourself; arithmetic is checked elsewhere.
+- INVOICE is the invoice itself, read exactly as printed: {"number":string,"customer":string,"currency":string,"prices_include_vat":boolean|null,"lines":[{"code":string,"quantity":number|null,"unit":string,"unit_price":number|null,"line_total":number|null}],"subtotal":number|null,"vat":number|null,"total":number|null}. "prices_include_vat" is true only when the invoice says the line prices include VAT, else false (prices are before VAT). Plain numbers (no currency sign, "." as the decimal point), null when not printed. Never calculate a number yourself; arithmetic is checked elsewhere.
 - "match" has an empty problems list. Write the strings as they appear in the documents; "note" is one short sentence in Persian.`;
 
 const pdfBlock = (doc) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: doc.base64 } });
@@ -73,7 +73,7 @@ const KIND = {
   missing: 'قلم جاافتاده', extra: 'قلم اضافه', code: 'کد اشتباه', size: 'اندازه اشتباه', quantity: 'مقدار اشتباه',
   price: 'قیمت اشتباه', total: 'جمع کل اشتباه', customer: 'نام مشتری', unreadable: 'ناخوانا',
   'line-total': 'مبلغ ردیف', subtotal: 'جمع جزء', vat: 'مالیات', 'price-below': 'قیمت کمتر از لیست', 'price-above': 'قیمت بیشتر از لیست',
-  'price-missing': 'قیمت چاپ نشده', unit: 'واحد قیمت', duplicate: 'شمارهٔ تکراری', gap: 'شمارهٔ جاافتاده',
+  'price-missing': 'قیمت چاپ نشده', unit: 'واحد قیمت', currency: 'واحد پول', duplicate: 'شمارهٔ تکراری', gap: 'شمارهٔ جاافتاده',
 };
 
 /** The message for the information group, or null when the invoice matches (nothing is posted for a match). */

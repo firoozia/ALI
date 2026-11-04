@@ -111,7 +111,7 @@ test('the balance: invoices minus payments received (a statement or an expense i
   t.add({ type: 'payment', at: T0, kind: 'statement', customer: 'Bahar', amount: null });
   t.add(inv('Other', [], { total: 99 }));
   assert.deepEqual(balanceOf(t, 'Bahar'), { billed: 1500.5, paid: 700, open: 800.5 });
-  assert.match(formatBalance('Bahar', balanceOf(t, 'Bahar')), /مانده 800\.5.*نه حساب کامل/s);
+  assert.match(formatBalance('Bahar', balanceOf(t, 'Bahar')), /مانده 800\.50 درهم.*نه حساب کامل/s);
 });
 
 test('polite reminders: an order without an invoice after a day, an invoice without a delivery after two, each once', () => {

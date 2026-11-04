@@ -247,5 +247,6 @@ export function parseTrackerCommand(text) {
 }
 
 export function formatBalance(customer, b) {
-  return `مانده ${customer}: فاکتورها ${b.billed}، پرداخت‌ها ${b.paid}، مانده ${b.open}\n(از آغاز ثبت در ربات، نه حساب کامل)`;
+  const d = (n) => `${Number(n).toFixed(2)} درهم`;
+  return `مانده ${customer}: فاکتورها ${d(b.billed)}، پرداخت‌ها ${d(b.paid)}، مانده ${d(b.open)}\n(از آغاز ثبت در ربات، نه حساب کامل؛ فاکتورها با مالیات)`;
 }
