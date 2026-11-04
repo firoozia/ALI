@@ -15,15 +15,16 @@ import { Aliases, parseAliasCommand } from './aliases.js';
 import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
 import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
+import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
-import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
+import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
 import { AvailabilityDesk, answerRequest, classify, managerQuestion, parseManagerReply, reminderText, runAvailability } from './availability.js';
-import { LANG_NAME, correctionSaved, detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
+import { LANG_NAME, correctionSaved, detectLang, noVoice, notUnderstood, photoNotRequest, photoUnclear, sheetFailed, sizeNote } from './lang.js';
 import { imageAction, understandImages } from './image.js';
 import { ignoredKind, imageOf } from './media.js';
 import { appendCorrection, parseCorrection, readCorrections } from './corrections.js';
@@ -92,6 +93,10 @@ const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or 
 const rules = new Rules(config.authDir); // rules the owner taught in words: durable, listed, removable\nconst aliases = new Aliases(path.join(config.authDir, 'aliases')); // other spellings of a customer's name, added by the owner
 const experience = new Experience({ dir: path.join(config.authDir, 'experience') }); // counters and anonymous shapes; never messages
 const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
+// The test groups keep their own memory: nothing said there reaches the real tracker, digest or reports.
+const testTracker = new Tracker({ dir: path.join(config.authDir, 'tracker-test') });
+const trackerOf = (test) => (test ? testTracker : tracker);
+const isTestSubject = (subject) => config.testGroupNames.some((w) => String(subject || '').toLowerCase().includes(w));
 const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availability') }); // questions to the sales manager that wait for his answer
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
@@ -131,6 +136,13 @@ const gate = new GroupGate({
     // One group can hold several billing customers: the name after an order line or beside a handwritten photo wins.
     const named = customerFromMessages(messages, orderLinesOf);
     const customer = (named ? canon(named) : '') || info.subject.replace(config.groupSuffix, '').trim() || info.subject;
+    // The order lines a customer wrote are kept in the order memory (with their quantities) for the invoice check.
+    if (config.trackerEnabled) {
+      for (const m of messages) {
+        const ls = orderLinesOf(m.text);
+        if (ls.length) tracker.add({ type: 'order', at: Date.now(), customer: canon(ls.find((l) => l.customer)?.customer || customer), lines: ls.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), source: 'customer-text', ref: createHash('sha256').update(`text|${groupId}|${m.raw?.key?.id || m.text}`).digest('hex').slice(0, 24) });
+      }
+    }
     // Availability: ask for the quantity, answer when it is comfortably in stock, otherwise ask the sales manager.
     if (config.availabilityFlow) {
       const flow = await runAvailability({
@@ -423,7 +435,10 @@ async function watchGroup(raw, groupId, role) {
     try { const r = await fetchStock(config, { code }); if (r.found && !r.ambiguous && r.unit) sheetUnits[code.toUpperCase()] = r.unit; } catch { /* the check goes on without it */ }
   }
   const own = (verdict.problems || []).map((p) => ({ severity: 'urgent', ...p }));
+  const memory = !found.request && verdict.invoice
+    ? checkInvoiceAgainstOrders(tracker, { customer: canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), at: Date.now(), lines: verdict.invoice.lines || [] }) : [];
   const extra = [
+    ...memory,
     ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer, sheetUnits }) : []),
     ...(number ? checkNumber(number, desk.numbers(), tracker.deleted) : []),
   ];
@@ -633,7 +648,8 @@ async function handlePriceFlow({ raw, content, text, key, reply, role, where, im
  * the staff format, a request the stock cannot cover comfortably goes to the sales manager with the customer's name, and
  * the order is recorded for the tracker. Nothing is written to the customer.
  */
-async function handleOnBehalf({ ob, raw, reply, role, where, lang }) {
+async function handleOnBehalf({ ob, raw, reply, role, where, lang, test = false }) {
+  const T = trackerOf(test);
   const customer = canon(ob.customer);
   const blocks = [];
   let toManager = 0;
@@ -643,7 +659,7 @@ async function handleOnBehalf({ ob, raw, reply, role, where, lang }) {
     const d = classify(res);
     const verdict = d.kind === 'ok' ? 'کافی است؛ می‌شود به مشتری موجود گفت' : d.kind === 'manager' ? 'کافی نیست یا کمتر از حداقل می‌ماند؛ به مدیر فروش گزارش شد' : 'کد ناشناخته یا در چند گروه است';
     blocks.push(`${formatStaffStock(res, line.code, '', lang)}\n\n→ ${customer}: ${line.quantity} ${line.unit}: ${verdict}`);
-    if (d.kind === 'manager' && config.salesManager) {
+    if (d.kind === 'manager' && config.salesManager && !test) {
       const key = `${customer}|${String(res.code).toLowerCase()}|behalf`;
       const last = recent.get(key);
       if (!(last && Date.now() - last < config.dedupeMinutes * 60000)) {
@@ -654,10 +670,37 @@ async function handleOnBehalf({ ob, raw, reply, role, where, lang }) {
     }
   }
   if (config.trackerEnabled) {
-    tracker.add({ type: 'order', at: Date.now(), customer, lines: ob.lines.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), ref: createHash('sha256').update(`behalf|${raw.key.id}`).digest('hex').slice(0, 24) });
+    T.add({ type: 'order', at: Date.now(), customer, lines: ob.lines.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), ref: createHash('sha256').update(`behalf|${raw.key.id}`).digest('hex').slice(0, 24) });
   }
   trace(where, role, `request on behalf of a customer: ${ob.lines.length} line(s), ${toManager} sent to the sales manager`);
   await reply([`درخواست ${customer}:`, ...blocks].join('\n\n'));
+}
+
+/**
+ * An invoice (a PDF or a photo) shown to the assistant in a colleague's chat: read, checked (arithmetic, VAT, prices, number,
+ * and the order memory of the customer) and answered in that chat. Nothing goes to the Information group, nothing is recorded
+ * for the digest. In a test group the order memory is the test one.
+ */
+async function onDemandInvoice({ doc, reply, where, role, test, hint = '' }) {
+  const T = trackerOf(test);
+  const read = await readInvoice({ client, config, invoice: doc });
+  const rows = Array.isArray(read?.invoice?.lines) ? read.invoice.lines : [];
+  if (!rows.length) { trace(where, role, 'invoice check: nothing readable'); await reply('این را به‌عنوان فاکتور نخواندم؛ خوانا نبود یا ردیفی در آن ندیدم.'); return; }
+  const inv = { ...read.invoice, lines: rows.map((l) => ({ ...l, code: productCode(l.code), printedCode: l.code })) };
+  const customer = canon(read.invoice_customer || inv.customer || hint || '');
+  const number = read.invoice_number || inv.number || '';
+  const sheetUnits = {};
+  for (const code of [...new Set(inv.lines.map((l) => String(l.code || '').trim()).filter(Boolean))].slice(0, 20)) {
+    try { const r = await fetchStock(config, { code }); if (r.found && !r.ambiguous && r.unit) sheetUnits[code.toUpperCase()] = r.unit; } catch { /* the check goes on without it */ }
+  }
+  const day = new Date().toISOString().slice(0, 10);
+  const problems = [
+    ...auditInvoice(inv, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer, sheetUnits }),
+    ...(number ? checkNumber(number, test ? [] : desk.numbers(), T.deleted) : []),
+    ...checkInvoiceAgainstOrders(T, { customer, at: Date.now(), lines: inv.lines }),
+  ];
+  trace(where, role, `invoice check on request: ${problems.length} point(s), ${problems.filter((p) => p.severity !== 'info').length} urgent${book.loaded ? '' : ', no price list stored'}`);
+  await reply(onDemandText({ problems, customer, number, name: '', groupName: where }));
 }
 
 async function handleStaffChat(raw, chatId, group) {
@@ -744,9 +787,22 @@ async function handleStaffChat(raw, chatId, group) {
   // A customer's request posted by a colleague on his behalf (not in the groups that only record: cut, delivery, money).
   if (text && !audio && !image && !pdf && !group?.tracked) {
     const ob = parseOnBehalf(text);
-    if (ob) { await handleOnBehalf({ ob, raw, reply, role, where, lang: detectLang(text, 'fa') }); return true; }
+    if (ob) { await handleOnBehalf({ ob, raw, reply, role, where, lang: detectLang(text, 'fa'), test: !!group?.test }); return true; }
   }
-  if (pdf) return false; // a PDF is for the invoice and purchase-order flows
+  if (pdf) {
+    // An invoice shown to the assistant is checked on the spot (any PDF in a test group; elsewhere when the caption or the file
+    // name says invoice and she is addressed or it is a private chat).
+    const invoiceish = looksLikeInvoice(`${text} ${pdf.fileName || ''}`);
+    if (group?.test || (invoiceish && (addressed || !group))) {
+      let buf;
+      try { buf = await downloadMediaMessage(raw, 'buffer', {}); } catch (e) { logger.warn(`pdf download failed: ${e.message}`); return true; }
+      if (buf.length > 20 * 1024 * 1024) { await reply('این فایل برای بررسی بزرگ است.'); return true; }
+      trace(where, role, 'pdf received: checking it as an invoice');
+      await onDemandInvoice({ doc: { base64: buf.toString('base64'), fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test });
+      return true;
+    }
+    return false; // a PDF is for the invoice and purchase-order flows
+  }
   // "Wrong, <the right answer>" as a reply to one of the assistant's messages: stored for the owner, nothing more.
   const quotedText = textOf(normalizeMessageContent(ctx.quotedMessage));
   const quotedFromBot = !!ctx.participant && own.includes(jidNormalizedUser(ctx.participant));
@@ -793,19 +849,28 @@ async function handleStaffChat(raw, chatId, group) {
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
     const written = detectLang(text, 'fa');
     trace(where, role, `photo received${image.mimetype ? ` (${String(image.mimetype).split(';')[0]})` : ''}: reading it`);
-    const u = await understandPhotos([{ loadImage: async () => ({
-      base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'),
-      mimeType: image.mimetype?.split(';')[0] || 'image/jpeg',
-    }) }], text, written);
+    let photo;
+    const loadPhoto = async () => { photo = photo || { base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: image.mimetype?.split(';')[0] || 'image/jpeg' }; return photo; };
+    const mayCheck = explicit || !group || !!group?.test;
+    // A caption that says invoice (or asks to compare or check): the invoice checker, not the order flow.
+    if (looksLikeInvoice(text) && mayCheck) {
+      try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test, hint: customerFromMessages([{ text, hasImage: true }], orderLinesOf) }); } catch (e) { logger.warn(`invoice check failed: ${e.message}`); await reply(photoUnclear(written)); }
+      return true;
+    }
+    const u = await understandPhotos([{ loadImage: loadPhoto }], text, written);
+    if (u.reason === 'invoice' && mayCheck) {
+      try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test }); } catch (e) { logger.warn(`invoice check failed: ${e.message}`); await reply(photoUnclear(written)); }
+      return true;
+    }
     const action = imageAction({ u, explicit });
     if (action === 'confirm') {
-      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
+      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang, intent: u.intent, items: u.items, customer: customerFromMessages([{ text, hasImage: true }], orderLinesOf), test: !!group?.test });
       trace(where, role, `photo understood (${u.intent}, ${u.items.length} code(s)), reply language ${u.lang}: asking for confirmation`);
       await reply(u.confirmText);
     } else if (action === 'tell') {
       voiceDesk.clear(key);
       trace(where, role, `photo not usable (${u.reason}): told so`);
-      await reply(photoUnclear(written));
+      await reply(u.reason === 'other' ? photoNotRequest(written) : photoUnclear(written));
     } else {
       trace(where, role, `ignored: photo is not a stock or order request (${u.reason}) and not addressed to the assistant`);
     }
@@ -815,11 +880,20 @@ async function handleStaffChat(raw, chatId, group) {
   let confirmed = false;
   let lang = detectLang(text, 'fa'); // the language the answer is written in
   const pend = config.voiceEnabled ? voiceDesk.get(key) : null;
+  let engaged = false; // an answer to the assistant's own question counts as addressed to her
   if (pend) {
     const kind = answerKind(text);
+    const lead = kind === 'other' ? answerLead(text) : '';
     voiceDesk.clear(key);
     if (kind === 'no') { await reply(retryText(pend.lang)); return true; }
-    if (kind === 'yes') { asked = pend.requestText; confirmed = true; lang = pend.lang || lang; }
+    if (kind === 'yes' || lead === 'yes') {
+      asked = pend.requestText; confirmed = true; lang = pend.lang || lang;
+      // a confirmed photo or voice order enters the order memory (with its quantities)
+      if (pend.intent === 'order' && (pend.items || []).length && config.trackerEnabled) {
+        trackerOf(pend.test).add({ type: 'order', at: Date.now(), customer: canon(pend.customer || ''), lines: pend.items.map((i) => ({ code: i.code, quantity: i.quantity, unit: i.unit })), source: 'photo', ref: createHash('sha256').update(`photo|${raw.key.id}`).digest('hex').slice(0, 24) });
+      }
+    } else if (lead === 'no') engaged = true; // "no, this is an invoice, ...": handled as a message to her, not dropped
+    else engaged = true;
   }
   // An answer to a question the assistant just asked ("which group?") needs no name or mention.
   const follow = audio ? null : followDesk.get(key);
@@ -833,7 +907,7 @@ async function handleStaffChat(raw, chatId, group) {
       trace(where, role, 'follow-up: answered the assistant\'s question');
     }
   }
-  if (!addressed && !confirmed) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
+  if (!addressed && !confirmed && !engaged) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
     client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key, lang), lang, today: todayLine(new Date(), config.timezone),
   });
@@ -845,6 +919,14 @@ async function handleStaffChat(raw, chatId, group) {
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
+  const isTest = isTestSubject((await groupInfo(groupId)).subject);
+  if (isTest) {
+    // A test group: the account's own messages run the real paths here; the reports stay in the group and the memory is separate.
+    const delTest = deletedInvoice(textOf(normalizeMessageContent(raw.message)));
+    if (delTest) testTracker.markDeleted(delTest);
+    await handleStaffChat(raw, groupId, { command: false, tracked: false, test: true });
+    return;
+  }
   observe(raw, groupId).catch((e) => logger.warn(`experience: ${e.message}`));
   const trackRole = await trackedRole(groupId);
   // "Invoice inv-9910 delete this one": a deleted number is a legitimate gap in the numbering

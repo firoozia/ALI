@@ -55,6 +55,8 @@ export function loadConfig(env = process.env) {
     deliveryGroupName: (env.DELIVERY_GROUP_NAME || '').trim().toLowerCase(),
     confirmGroupName: (env.CONFIRM_GROUP_NAME || '').trim().toLowerCase(),
     // groups of countable goods (accessories, saw blades, glue): a word of each name, comma separated
+    // groups for live tests: the account's own messages run the real paths there, the reports stay in the group and nothing enters the real tracker
+    testGroupNames: (env.TEST_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),

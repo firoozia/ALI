@@ -41,6 +41,12 @@ export function answerKind(text) {
   return 'other';
 }
 
+/** 'yes' | 'no' | '' for an answer that BEGINS with a clear yes or no and has more words ("نه، این سفارش نیست، فاکتور است"). */
+export function answerLead(text) {
+  const first = key(String(text || '').split(/[\s,،.:;!؟?]+/).find(Boolean) || '');
+  return YES_KEYS.has(first) ? 'yes' : NO_KEYS.has(first) ? 'no' : '';
+}
+
 /** What was understood from each person's last voice note, per chat (and sender), with a short life. */
 export class VoiceDesk {
   constructor({ ttlMs = 10 * 60 * 1000 } = {}) { this.ttlMs = ttlMs; this.map = new Map(); }

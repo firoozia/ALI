@@ -128,6 +128,14 @@ export const photoUnclear = (lang) => ({
   ur: 'تصویر پڑھی نہیں جا سکی یا اس میں کوئی کوڈ نظر نہیں آیا؛ براہِ کرم درخواست لکھیں یا زیادہ واضح تصویر بھیجیں',
 }[textLang(lang)]);
 
+/** The photo could be read, but it holds no stock question and no order (a sample, a finished cabinet, a paper of something else). */
+export const photoNotRequest = (lang) => ({
+  fa: 'عکس را خواندم ولی درخواست موجودی یا سفارشی در آن ندیدم. اگر فاکتور است، بنویسید «فاکتور را بررسی کن».',
+  ar: 'قرأت الصورة لكن لم أجد فيها طلب مخزون أو طلبية. إذا كانت فاتورة فاكتب «افحص الفاتورة».',
+  en: 'I could read the photo but found no stock question or order in it. If it is an invoice, write "check the invoice".',
+  ur: 'تصویر پڑھی گئی مگر اس میں اسٹاک کا سوال یا آرڈر نظر نہیں آیا۔ اگر یہ انوائس ہے تو لکھیں «انوائس چیک کریں»۔',
+}[textLang(lang)]);
+
 /** Said after a colleague corrected the assistant's answer. */
 export const correctionSaved = (lang) => ({
   fa: 'ممنون، اصلاح شما ثبت شد و مالک آن را بررسی می‌کند.',

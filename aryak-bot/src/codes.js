@@ -16,7 +16,7 @@ export function stripBrand(code) {
 /** The brand written as a word before a code ("Aryak 505", "Arek 505") is removed from a whole line; "AR102" stays for the lookup. */
 export const dropBrandWord = (line) => String(line || '').replace(/(^|[\s,:;(])(?:aryak|arek|ary|ارياك|اريك|آریاک|اریاک)\s+(?=\d)/giu, '$1');
 
-const UNIT_KIND = [[/^(m|mt|mtr|mtrs|met\w*|metre\w*|meter\w*)$/i, 'm'], [/^rolls?$/i, 'roll'], [/^(pc|pcs|piece|pieces)$/i, 'pcs'], [/^(carton|cartons|ctn)$/i, 'carton']];
+const UNIT_KIND = [[/^(m|mt|mtr|mtrs|met\w*|metre\w*|meter\w*|متر)$/i, 'm'], [/^(rolls?|رول)$/i, 'roll'], [/^(pc|pcs|piece|pieces|عدد)$/i, 'pcs'], [/^(carton|cartons|ctn|کارتن)$/i, 'carton']];
 /** "mete", "MTR", "Meters" -> "m"; "rolls" -> "roll". */
 export function unitOf(word) {
   const w = String(word || '').trim();
@@ -24,7 +24,7 @@ export function unitOf(word) {
   return w.toLowerCase();
 }
 
-export const UNIT_RE = '(m|mtrs?|met\\w{0,5}|metres?|rolls?|pcs?|pieces?|cartons?|ctn)';
+export const UNIT_RE = '(m|mtrs?|met\\w{0,5}|metres?|rolls?|pcs?|pieces?|cartons?|ctn|متر|رول|عدد|کارتن)';
 
 const NOT_NAMES = new Set(['hi', 'hello', 'please', 'pls', 'add', 'also', 'code', 'ok', 'okay', 'yes', 'no', 'new', 'order', 'thanks', 'thank', 'you', 'send', 'check', 'available', 'avail', 'when', 'coming', 'hold', 'cancel', 'bill', 'need', 'more', 'color', 'colour', 'this', 'that', 'or', 'and', 'the', 'in', 'only', 'pvc', 'سلام', 'لطفا', 'موجود', 'متوفر']);
 

@@ -11,8 +11,8 @@ const CODE = '(?:[a-z]{1,4}-?\\d+(?:-\\d+)?|\\d{2,5})';
 const NUM = '(\\d+(?:\\.\\d+)?)';
 const START = '(?:^|[\\s:،,])';
 
-const SEPARATED = new RegExp(`${START}(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${UNIT}\\b`, 'g'); // "603 - 15 mtr", "119-6 MTR"
-const SPACED = new RegExp(`${START}(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}\\b`, 'g'); // "229 20 m"
+const SEPARATED = new RegExp(`${START}(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${UNIT}(?![A-Za-z\\u0620-\\u06FF])`, 'g'); // "603 - 15 mtr", "119-6 MTR"
+const SPACED = new RegExp(`${START}(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}(?![A-Za-z\\u0620-\\u06FF])`, 'g'); // "229 20 m"
 
 const clean = (s) => dropAttention(dropBrandWord(normalizeDigits(s))).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
 const STOP = new Set(['hi', 'hello', 'please', 'pls', 'add', 'also', 'code', 'ok', 'yes', 'no', 'new', 'order', 'thanks', 'send', 'check', 'لطفا', 'سلام']);
@@ -20,9 +20,13 @@ const STOP = new Set(['hi', 'hello', 'please', 'pls', 'add', 'also', 'code', 'ok
 /** The words in front of the first order line, as a customer name; '' when they are not a name. */
 function nameFrom(prefix) {
   const s = prefix.replace(/^(?:please\s+|pls\s+)?(?:new\s+)?(?:order\s+)?(?:for|to|برای|به)\s+/i, '').replace(/^(?:please\s+|pls\s+)?(?:add\s+)?(?:order\s+)?/i, '').replace(/[\s:،,\-–]+$/u, '').trim();
+  // the assistant's name and the words around "order for customer X" are not part of the customer's name
+  const LEAD = new Set(['آتوسا', 'atossa', 'سفارش', 'مشتری', 'order', 'customer', 'new', 'please', 'pls', 'for', 'برای', 'لطفا']);
   const words = s.split(' ').filter(Boolean);
-  if (!/\p{L}{2,}/u.test(s) || s.length > 60 || words.every((w) => STOP.has(w))) return '';
-  return s;
+  while (words.length > 1 && LEAD.has(words[0])) words.shift();
+  const name = words.join(' ');
+  if (!/\p{L}{2,}/u.test(name) || name.length > 60 || words.every((w) => STOP.has(w) || LEAD.has(w))) return '';
+  return name;
 }
 
 function linesOf(row) {

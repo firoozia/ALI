@@ -40,7 +40,7 @@ test('free exactly at the limit is enough; mixed open and closed packages', () =
 });
 
 test('odd cases are short Persian lines', () => {
-  assert.match(formatStaffStock({ found: false, code: '999' }), /پیدا نشد/);
+  assert.match(formatStaffStock({ found: false, code: '999' }), /موجودی ثبت‌شده‌ای نیست/);
   assert.match(formatStaffStock({ found: true, ambiguous: true, categories: ['A', 'B'] }, '12'), /چند گروه/);
   assert.match(formatStaffStock({ found: true, sizeFound: false, code: '12', size: '1*1', sizes: ['2*2'] }), /2\*2/);
 });

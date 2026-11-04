@@ -15,9 +15,9 @@ const CODE = '(?:[a-z]{1,4}-?\\d+(?:-\\d+)?|\\d{2,5})';
 const NUM = '(\\d+(?:\\.\\d+)?)';
 
 // "119-6 MTR", "603 - 15 mtr", "KG10-300 - 5 m", "201:15 m"
-const WITH_SEPARATOR = new RegExp(`^(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${UNIT}\\b`);
+const WITH_SEPARATOR = new RegExp(`^(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${UNIT}(?![A-Za-z\\u0620-\\u06FF])`);
 // "701 25 meter"
-const WITH_SPACE = new RegExp(`^(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}\\b`);
+const WITH_SPACE = new RegExp(`^(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}(?![A-Za-z\\u0620-\\u06FF])`);
 // the unit in front of the number: "101-- roll 2"
 const UNIT_FIRST = new RegExp(`^(${CODE})\\s*[-:=]*\\s*${UNIT}\\s*${NUM}\\b`);
 // the unit is required: "119-6" alone is a code, not 6 of 119.

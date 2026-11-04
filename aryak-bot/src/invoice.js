@@ -22,7 +22,10 @@ Rules
 - INVOICE is the invoice itself, read exactly as printed: {"number":string,"customer":string,"currency":string,"prices_include_vat":boolean|null,"lines":[{"code":string,"description":string,"quantity":number|null,"unit":string,"unit_price":number|null,"line_total":number|null}],"subtotal":number|null,"vat":number|null,"total":number|null}. "code" is the BARE product code only: "PVC FILM107" is code "107", "PVC 1806" is "1806", "108 ARYAK" is "108"; keep a letter that belongs to the code ("108 C", "E 1803"); put the rest of the wording in "description". "prices_include_vat" is true only when the invoice says the line prices include VAT, else false (prices are before VAT). Plain numbers (no currency sign, "." as the decimal point), null when not printed. Never calculate a number yourself; arithmetic is checked elsewhere.
 - "match" has an empty problems list. Write the strings as they appear in the documents; "note" is one short sentence in Persian.`;
 
-const pdfBlock = (doc) => ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: doc.base64 } });
+// A PDF, or a photo of an invoice (doc.mimeType 'image/...').
+const pdfBlock = (doc) => (String(doc.mimeType || '').startsWith('image/')
+  ? { type: 'image', source: { type: 'base64', media_type: doc.mimeType, data: doc.base64 } }
+  : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: doc.base64 } });
 
 /** The user turn: the request file, then the invoice file. */
 export function buildInvoiceContent(request, invoice) {

@@ -189,6 +189,51 @@ export function checkDelivery(tracker, del, { windowDays = 30 } = {}) {
   return out;
 }
 
+/**
+ * An invoice against the ORDER MEMORY: the order lines kept for the customer (text lines, confirmed photo and voice orders,
+ * lines a colleague posted on his behalf) and, when there are none, the cuts of the cut group. With several open orders the
+ * one that shares the most codes with the invoice is taken (never a guess between equals). A missing order is only a note.
+ * [inv]: { customer, at, lines: [{ code, quantity, unit }] }. Returns problems in the shape of the invoice report.
+ */
+export function checkInvoiceAgainstOrders(tracker, inv, { windowDays = 45 } = {}) {
+  const since = (inv.at || Date.now()) - windowDays * DAY;
+  const withLines = (e) => (e.lines || []).some((l) => l.code);
+  const orders = tracker.of('order', inv.customer, { since }).filter(withLines);
+  const cuts = tracker.of('cut', inv.customer, { since }).filter((e) => !e.internal && withLines(e));
+  const note = (text) => [{ kind: 'order-note', item: '', requested: '', invoiced: '', note: text, severity: 'info' }];
+  const invoiceMap = sumByCode([{ lines: inv.lines || [] }]);
+  const codesOf = (map) => new Set([...map.keys()].map((k) => k.split('|')[0]));
+  let source = 'order';
+  let pool = orders;
+  if (!pool.length) { pool = cuts; source = 'cut'; }
+  if (!pool.length) return note('سفارشی برای این مشتری در حافظهٔ دستیار نیست (شاید فقط در گفتگوی خصوصی آمده)؛ فقط حساب و قیمت سنجیده شد');
+  // the open order that shares the most codes with the invoice; the cuts of one customer are taken together
+  let chosen;
+  if (source === 'cut') chosen = pool;
+  else {
+    const invCodes = codesOf(invoiceMap);
+    const score = (e) => [...codesOf(sumByCode([e]))].filter((c) => invCodes.has(c)).length;
+    const ranked = pool.map((e) => ({ e, s: score(e) })).sort((a, b) => b.s - a.s || b.e.at - a.e.at);
+    if (!ranked[0].s) return note(`برای این مشتری سفارش ثبت شده ولی هیچ‌کدام کد مشترکی با این فاکتور ندارد (${ranked.length} سفارش)`);
+    chosen = [ranked[0].e];
+  }
+  const wanted = sumByCode(chosen);
+  const from = source === 'cut' ? 'سفارش فقط از گروه برش شناخته شد' : 'سفارش ثبت‌شده';
+  const sev = source === 'cut' ? 'info' : 'urgent';
+  const out = [];
+  for (const [key, got] of invoiceMap) {
+    const [code, unit] = key.split('|');
+    const want = wanted.get(key);
+    if (want === undefined) out.push({ kind: 'extra', item: code, requested: '', invoiced: `${qty(got)} ${unit}`, note: `این کد در ${from} نیست`, severity: sev });
+    else if (Math.abs(got - want) > 1e-6) out.push({ kind: 'quantity', item: code, requested: `${qty(want)} ${unit}`, invoiced: `${qty(got)} ${unit}`, note: `مقدار با ${from} فرق دارد`, severity: sev });
+  }
+  for (const [key, want] of wanted) {
+    if (!invoiceMap.has(key)) { const [code, unit] = key.split('|'); out.push({ kind: 'missing', item: code, requested: `${qty(want)} ${unit}`, invoiced: '', note: `در ${from} بود و در فاکتور نیست`, severity: sev }); }
+  }
+  if (source === 'cut') out.unshift(...note('سفارش این مشتری فقط از گروه برش شناخته شد'));
+  return out;
+}
+
 /** Money items nobody has closed yet ("CLEARED" is the office's reply): cash, receipts, cheques and transfers, oldest first. */
 export function unclearedPayments(tracker, { now = Date.now(), minHours = 0 } = {}) {
   return tracker.events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared && (!minHours || now - e.at >= minHours * 3600000));

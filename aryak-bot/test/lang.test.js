@@ -74,7 +74,7 @@ test('the other fixed sentences of the stock answer in each language', () => {
     assert.ok(formatStaffStock({ found: true, sizeFound: false, code: '12', size: '1*1', sizes: ['2*2'] }, '12', '', lang).includes('2*2'));
     assert.ok(sizeNote(lang, '0.40').includes('0.40'));
   }
-  assert.match(formatStaffStock({ found: false, code: '9' }, '9', '', 'en'), /was not found/);
+  assert.match(formatStaffStock({ found: false, code: '9' }, '9', '', 'en'), /has no stock on record/);
   assert.match(formatStaffStock({ ...sheet, stale: true, ageMinutes: 5 }, '229', '', 'en'), /^\(Last updated 5 minutes ago/);
 });
 
