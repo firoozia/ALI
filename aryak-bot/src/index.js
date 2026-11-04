@@ -16,6 +16,7 @@ import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './
 import { metadataToken, speechTranscriber } from './speech.js';
 import { NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, retryText, understand } from './voice.js';
 import { normalizeDigits } from './text.js';
+import { shouldProcess } from './intake.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -40,6 +41,7 @@ const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
 const transcribe = speechTranscriber({ languages: config.speechLanguages, token: metadataToken() });
+const handled = new Set(); // ids of messages already taken in
 const lastRaw = new Map(); // group JID -> last customer message, quoted by the reply
 let sock;
 
@@ -337,10 +339,21 @@ async function start() {
     }
   });
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+    let history = 0;
     for (const raw of messages) {
-      try { await onMessage(raw); } catch (e) { logger.error(`message failed: ${e.message}`); }
+      const verdict = shouldProcess({ type, raw, seen: handled });
+      if (!verdict.ok) {
+        // A refused message is never silent, except bulk history after a restart (counted in one line).
+        if (verdict.reason.startsWith('old message')) { history++; continue; }
+        const jid = raw?.key?.remoteJid || '';
+        const where = isJidGroup(jid) ? `group "${groups.get(jid)?.subject || 'not loaded'}"` : 'private';
+        logger.info(`msg ${where} unknown: ignored: ${verdict.reason}`);
+        continue;
+      }
+      // Each message is handled on its own: a slow answer to one never holds back the next.
+      onMessage(raw).catch((e) => logger.error(`message failed: ${e.message}`));
     }
+    if (history) logger.info(`upsert ${type}: ${history} older message(s) ignored`);
   });
 }
 
