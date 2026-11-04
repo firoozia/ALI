@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
 import { answer } from './assistant.js';
-import { fetchStock } from './stock.js';
+import { fetchStock, isTimeout } from './stock.js';
 import { formatStaffStock } from './stock-format.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
@@ -21,6 +21,7 @@ import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
 const { config, missing } = loadConfig();
+config.log = (s) => console.warn(s); // replaced by the logger below
 if (missing.length) {
   console.error(`Missing settings: ${missing.join(', ')}. See README.md.`);
   process.exit(1);
@@ -31,6 +32,7 @@ if (!config.allowedGroups.length && !config.allowedGroupNames.length) {
 const client = new Anthropic();
 const system = buildSystemPrompt(config.kbDir, config.displayName);
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+config.log = (s) => logger.warn(s);
 // One short line per message and what became of it: where, who (a role, never a number), the decision. No text.
 const trace = (where, role, decision) => logger.info(`msg ${where} ${role}: ${decision}`);
 const recent = new Map(); // manager alerts already sent
@@ -183,10 +185,21 @@ const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNorm
 const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
 
 const staffHandlers = {
-  staff_stock: async (i) => ({
-    formatted: formatStaffStock(await fetchStock(config, { code: i.code, category: i.category, size: i.size }), i.code),
-    instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
-  }),
+  staff_stock: async (i) => {
+    try {
+      return {
+        formatted: formatStaffStock(await fetchStock(config, { code: i.code, category: i.category, size: i.size }), i.code),
+        instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
+      };
+    } catch (e) {
+      // fetchStock has already logged the real cause and tried twice; the colleague gets a plain sentence.
+      const why = isTimeout(e) ? 'پاسخ برگه دیر رسید' : 'ارتباط با برگه برقرار نشد';
+      return {
+        formatted: `دریافت موجودی کد ${i.code} ناموفق بود (${why}). دو بار تلاش شد. لطفاً کمی بعد دوباره بپرسید.`,
+        instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
+      };
+    }
+  },
   recent_checks: (i) => desk.lastChecks(i.count),
   find_order: (i) => desk.listOrders(i),
 };

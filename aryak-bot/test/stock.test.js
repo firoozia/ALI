@@ -62,3 +62,91 @@ test('roll quantity that could not be checked is flagged for the manager', () =>
 test('tool schema needs a code', () => {
   assert.deepEqual(checkStockTool.input_schema.required, ['code']);
 });
+
+// ---- fetchStock: redirects by hand, timeout, one retry, real cause in the log ----
+import { describeError, fetchStock, isTimeout } from '../src/stock.js';
+
+const cfg = { sheetUrl: 'https://script.google.com/macros/s/x/exec', botToken: 'bottok' };
+const okRes = (data) => ({ ok: true, status: 200, json: async () => ({ ok: true, ...data }) });
+const quick = { retryDelayMs: 0 };
+
+test('fetchStock: a failure is retried once and the second answer is used; the cause is logged', async () => {
+  const logs = [];
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls++;
+    if (calls === 1) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET', message: 'read ECONNRESET' } });
+    return okRes({ found: true, code: '229' });
+  };
+  const r = await fetchStock(cfg, { code: '229' }, fetchImpl, { ...quick, log: (m) => logs.push(m) });
+  assert.equal(r.code, '229');
+  assert.equal(calls, 2);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /try 1 of 2/);
+  assert.match(logs[0], /fetch failed \| ECONNRESET read ECONNRESET/);
+});
+
+test('fetchStock: two failures throw the last one, both logged', async () => {
+  const logs = [];
+  const fetchImpl = async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_SOCKET' } }); };
+  await assert.rejects(fetchStock(cfg, { code: '229' }, fetchImpl, { ...quick, log: (m) => logs.push(m) }), /fetch failed/);
+  assert.equal(logs.length, 2);
+  assert.match(logs[1], /try 2 of 2.*UND_ERR_SOCKET/);
+});
+
+test('fetchStock: HTTP 500 is retried and logged with its status; 4xx and the sheet\'s own refusal are not', async () => {
+  const logs = [];
+  let calls = 0;
+  const five = async () => { calls++; return { ok: false, status: 503, json: async () => ({}) }; };
+  await assert.rejects(fetchStock(cfg, { code: '1' }, five, { ...quick, log: (m) => logs.push(m) }), /503/);
+  assert.equal(calls, 2);
+  assert.match(logs[0], /HTTP 503/);
+  calls = 0;
+  const four = async () => { calls++; return { ok: false, status: 403, json: async () => ({}) }; };
+  await assert.rejects(fetchStock(cfg, { code: '1' }, four, { ...quick, log: () => {} }), /403/);
+  assert.equal(calls, 1);
+  calls = 0;
+  const refuse = async () => { calls++; return { ok: true, status: 200, json: async () => ({ ok: false, error: 'Wrong bot token' }) }; };
+  await assert.rejects(fetchStock(cfg, { code: '1' }, refuse, { ...quick, log: () => {} }), /Wrong bot token/);
+  assert.equal(calls, 1);
+});
+
+test('fetchStock: the redirect is followed by hand with GET and no body; the POST body is a string', async () => {
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, method: init.method, body: init.body, redirect: init.redirect, hasSignal: !!init.signal });
+    if (seen.length === 1) return { ok: false, status: 302, headers: new Headers({ location: 'https://script.googleusercontent.com/macros/echo?x=1' }) };
+    return okRes({ found: true, code: '408' });
+  };
+  const r = await fetchStock(cfg, { code: '408' }, fetchImpl, quick);
+  assert.equal(r.code, '408');
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].method, 'POST');
+  assert.equal(typeof seen[0].body, 'string');
+  assert.equal(JSON.parse(seen[0].body).action, 'botStock');
+  assert.equal(seen[1].method, 'GET');
+  assert.equal(seen[1].body, undefined);
+  assert.equal(seen[1].url, 'https://script.googleusercontent.com/macros/echo?x=1');
+  assert.ok(seen.every((s) => s.redirect === 'manual' && s.hasSignal));
+});
+
+test('fetchStock: a redirect without Location or an endless chain is an error', async () => {
+  await assert.rejects(fetchStock(cfg, { code: '1' }, async () => ({ ok: false, status: 302, headers: new Headers() }), { ...quick, log: () => {} }), /without a Location/);
+  await assert.rejects(fetchStock(cfg, { code: '1' }, async () => ({ ok: false, status: 302, headers: new Headers({ location: '/again' }) }), { ...quick, log: () => {} }), /too many times/);
+});
+
+test('error helpers: cause is shown, timeouts are recognised', () => {
+  assert.equal(describeError(Object.assign(new Error('fetch failed'), { cause: { code: 'ETIMEDOUT', message: 'connect ETIMEDOUT' } })), 'fetch failed | ETIMEDOUT connect ETIMEDOUT');
+  const t = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  assert.equal(describeError(t).startsWith('timeout'), true);
+  assert.equal(isTimeout(t), true);
+  assert.equal(isTimeout(new Error('fetch failed')), false);
+  assert.equal(isTimeout(Object.assign(new Error('fetch failed'), { cause: { code: 'ETIMEDOUT' } })), true);
+});
+
+test('runCheckStock: a sheet that cannot be reached is an error result, after one retry', async () => {
+  let calls = 0;
+  const r = await runCheckStock({ code: '229' }, ctx, { ...config, retryDelayMs: 0, log: () => {} }, { fetchImpl: async () => { calls++; throw new Error('fetch failed'); } });
+  assert.equal(calls, 2);
+  assert.equal(r.forModel.status, 'error');
+});

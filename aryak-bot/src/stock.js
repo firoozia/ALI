@@ -27,26 +27,76 @@ export const checkStockTool = {
   },
 };
 
-/** Asks the sheet. Apps Script answers a POST with a redirect to the result, which fetch follows. */
-export async function fetchStock(config, input, fetchImpl = fetch) {
-  const res = await fetchImpl(config.sheetUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'botStock',
-      token: config.botToken,
-      code: input.code,
-      category: input.category || '',
-      size: input.size || '',
-      qty: input.quantity || 0,
-      qtyUnit: input.quantity_unit || '',
-    }),
-    redirect: 'follow',
+/** The real cause of a failed fetch: undici hides it in err.cause (code and message). */
+export function describeError(e) {
+  const c = e?.cause;
+  const bits = [e?.name === 'TimeoutError' ? 'timeout' : e?.message || String(e)];
+  if (c) bits.push([c.code, c.message].filter(Boolean).join(' '));
+  return bits.filter(Boolean).join(' | ');
+}
+
+/** True when the failure is a slow answer, for the short reason given to a colleague. */
+export const isTimeout = (e) => e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timeout|timed out|ETIMEDOUT/i.test(`${e?.message} ${e?.cause?.code}`);
+
+const REDIRECTS = [301, 302, 303, 307, 308];
+
+/**
+ * One request to the Apps Script web app. It answers a POST with a redirect to the result, which must be fetched
+ * with GET and no body, so the redirect is followed here by hand (a string body can always be sent again, but a
+ * redirect that keeps the body can fail inside fetch).
+ */
+async function requestOnce(config, body, fetchImpl, timeoutMs) {
+  let url = config.sheetUrl;
+  let init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, redirect: 'manual' };
+  for (let hop = 0; hop < 6; hop++) {
+    const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    if (REDIRECTS.includes(res.status)) {
+      const where = res.headers?.get?.('location');
+      if (!where) throw new Error(`Sheet redirected (${res.status}) without a Location`);
+      url = new URL(where, url).href;
+      init = { method: 'GET', redirect: 'manual' };
+      continue;
+    }
+    return res;
+  }
+  throw new Error('Sheet redirected too many times');
+}
+
+/**
+ * Asks the sheet. A timeout of [timeoutMs] on every request and ONE more try after [retryDelayMs] when the first fails
+ * (network error, timeout or a 5xx); every failure is logged with its real cause and the HTTP status.
+ */
+export async function fetchStock(config, input, fetchImpl = fetch, { log = config.log || (() => {}), timeoutMs = 25000, retryDelayMs = 1500 } = {}) {
+  const body = JSON.stringify({
+    action: 'botStock',
+    token: config.botToken,
+    code: input.code,
+    category: input.category || '',
+    size: input.size || '',
+    qty: input.quantity || 0,
+    qtyUnit: input.quantity_unit || '',
   });
-  if (!res.ok) throw new Error(`Sheet answered ${res.status}`);
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.error || 'Sheet refused');
-  return data;
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await requestOnce(config, body, fetchImpl, timeoutMs);
+      if (!res.ok) {
+        const err = new Error(`Sheet answered ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      const data = await res.json();
+      if (!data.ok) throw Object.assign(new Error(data.error || 'Sheet refused'), { final: true });
+      return data;
+    } catch (e) {
+      lastError = e;
+      log(`stock lookup for "${String(input.code).slice(0, 30)}" failed (try ${attempt} of 2): ${describeError(e)}${e.status ? ` | HTTP ${e.status}` : ''}`);
+      // The sheet's own refusal (wrong token, no code) and a 4xx are not worth trying again.
+      if (e.final || (e.status && e.status < 500) || attempt === 2) break;
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+    }
+  }
+  throw lastError;
 }
 
 const fmt = (n) => (Math.round(Number(n) * 100) / 100).toString();
@@ -83,7 +133,7 @@ export function managerMessage(result, ctx, input) {
 export async function runCheckStock(input, ctx, config, { fetchImpl = fetch, recent = new Map(), now = Date.now() } = {}) {
   let result;
   try {
-    result = await fetchStock(config, input, fetchImpl);
+    result = await fetchStock(config, input, fetchImpl, { log: config.log, retryDelayMs: config.retryDelayMs, timeoutMs: config.timeoutMs });
   } catch (e) {
     return { forModel: { status: 'error', instruction: 'Say a colleague will confirm availability and tag the team.' }, silent: false, error: String(e.message || e) };
   }
