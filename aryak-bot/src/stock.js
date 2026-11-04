@@ -19,7 +19,7 @@ export const checkStockTool = {
         type: 'string',
         description: 'Product group if the customer made it clear, e.g. "PVC film", "Edge banding", "Rail", "Hinge".',
       },
-      size: { type: 'string', description: 'Thickness × width if the customer gave it, e.g. "0.30*1400".' },
+      size: { type: 'string', description: 'Ignored: availability is by product code, the size typed in the sheet is not reliable.' },
       quantity: { type: 'number', description: 'Quantity the customer asked for, if any.' },
       quantity_unit: { type: 'string', description: 'Unit of that quantity: "m", "roll", "pcs" or "carton".' },
     },
@@ -116,9 +116,8 @@ export function managerMessage(result, ctx, input) {
   if (!result.qtyChecked) lines.push('مقدار هر رول/کارتن در کاتالوگ نیست؛ مقدار درخواستی بررسی نشد.');
   lines.push(`موجودی آزاد: ${fmt(result.free)} ${result.unit}` +
     (result.reserved ? ` · رزرو: ${fmt(result.reserved)} ${result.unit}` : '') + ` · حد: ${fmt(result.limit)} ${result.unit}`);
-  for (const s of result.sizes || []) {
-    lines.push(`  ${s.size || '—'}: ${fmt(s.free)} ${result.unit} (${s.packages} بسته` + (s.open ? `، ${s.open} باز` : '') + `) · حد ${fmt(s.limit)}`);
-  }
+  const sizes = [...new Set((result.sizes || []).map((s) => String(s.size || '').trim()).filter(Boolean))];
+  if (sizes.length > 1) lines.push(`اندازه‌های ثبت‌شده: ${sizes.join(' و ')}`);
   if ((result.locations || []).length) lines.push(`محل: ${result.locations.join(', ')}`);
   if (ctx.messageText) lines.push(`پیام مشتری: «${ctx.messageText.slice(0, 300)}»`);
   void input;
@@ -134,7 +133,9 @@ export function managerMessage(result, ctx, input) {
 export async function runCheckStock(input, ctx, config, { fetchImpl = fetch, recent = new Map(), now = Date.now() } = {}) {
   let result;
   try {
-    result = await fetchStock(config, input, fetchImpl, { log: config.log, retryDelayMs: config.retryDelayMs, timeoutMs: config.timeoutMs });
+    // The code is the product: the size a customer writes is never sent, so a size that is not in the sheet cannot make
+    // an available product look unavailable.
+    result = await fetchStock(config, { ...input, size: '' }, fetchImpl, { log: config.log, retryDelayMs: config.retryDelayMs, timeoutMs: config.timeoutMs });
   } catch (e) {
     return { forModel: { status: 'error', instruction: 'Say a colleague will confirm availability and tag the team.' }, silent: false, error: String(e.message || e) };
   }
@@ -143,9 +144,6 @@ export async function runCheckStock(input, ctx, config, { fetchImpl = fetch, rec
   }
   if (result.ambiguous) {
     return { forModel: { status: 'ask_category', options: result.categories, instruction: 'Ask which of these products the customer means.' }, silent: false };
-  }
-  if (result.sizeFound === false) {
-    return { forModel: { status: 'ask_size', sizes: result.sizes, instruction: 'That size is not in our range; ask which of these sizes they need. Do not mention quantities.' }, silent: false };
   }
   if (result.available) {
     return { forModel: { status: 'available', instruction: 'Tell the customer it is available. Never give a quantity. Price and delivery go to a colleague.' }, silent: false };

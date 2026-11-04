@@ -198,11 +198,17 @@ const textOf = (content) => content?.conversation || content?.extendedTextMessag
 const staffHandlersFor = (key) => ({
   staff_stock: async (i) => {
     try {
-      const found = await fetchStock(config, { code: i.code, category: i.category, size: i.size });
+      let found = await fetchStock(config, { code: i.code, category: i.category, size: i.size });
+      let note = '';
+      if (found.sizeFound === false) {
+        // The named size is not registered: answer for the whole code and say so.
+        note = `اندازهٔ ${i.size} برای این کد ثبت نشده؛ نتیجه برای کل کد است.`;
+        found = await fetchStock(config, { code: i.code, category: i.category, size: '' });
+      }
       // Which group was meant? The next message of the same person answers, even without the name.
       if (found.ambiguous) followDesk.set(key, { code: i.code, size: i.size || '', options: found.categories });
       return {
-        formatted: formatStaffStock(found, i.code),
+        formatted: formatStaffStock(found, i.code, note),
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     } catch (e) {

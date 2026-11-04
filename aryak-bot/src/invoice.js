@@ -12,6 +12,7 @@ Compare
 - Every item: product code, size or thickness and colour, quantity with its unit, and unit price and line total when the request states a price.
 - Items asked for but missing from the invoice, items invoiced that were not asked for, wrong code, wrong size, wrong quantity or unit, wrong price, wrong arithmetic (line totals or the grand total that do not add up).
 - A different wording of the same thing (a code written with or without dashes, "m" and "meter") is NOT a difference.
+- The product CODE identifies an item. When the code is the same, a different size or thickness text is NOT a problem (sizes are often typed inconsistently); report a size only when the code itself is missing or differs.
 
 Rules
 - Report only differences you can see in the documents. If a value is unreadable, say so as a problem of kind "unreadable"; do not guess.

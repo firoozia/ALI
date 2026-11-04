@@ -32,7 +32,8 @@ test('low stock: silent in the group, manager told once with the real figures', 
   assert.ok(!JSON.stringify(r.forModel).includes('230'));
   assert.ok(r.managerText.includes('Master Wood'));
   assert.ok(r.managerText.includes('230 m'));
-  assert.ok(r.managerText.includes('0.30*1220: 30 m'));
+  assert.ok(r.managerText.includes('اندازه‌های ثبت‌شده: 0.30*1400 و 0.30*1220'));
+  assert.ok(!r.managerText.includes('0.30*1220: 30 m'), 'no per-size lines any more');
   const again = await runCheckStock({ code: '305' }, ctx, config, { fetchImpl: answer(low), recent, now: 1000 + 10 * 60 * 1000 });
   assert.equal(again.silent, true);
   assert.equal(again.managerText, null);
@@ -40,12 +41,16 @@ test('low stock: silent in the group, manager told once with the real figures', 
   assert.ok(later.managerText);
 });
 
-test('unknown code, two product groups, unknown size', async () => {
+test('unknown code, two product groups, a written size is ignored', async () => {
   assert.equal((await runCheckStock({ code: 'X' }, ctx, config, { fetchImpl: answer({ found: false }) })).forModel.status, 'unknown_code');
   const amb = await runCheckStock({ code: '305' }, ctx, config, { fetchImpl: answer({ found: true, ambiguous: true, categories: ['PVC film', 'Edge banding'] }) });
   assert.deepEqual(amb.forModel.options, ['PVC film', 'Edge banding']);
-  const size = await runCheckStock({ code: '305', size: '0.40*1400' }, ctx, config, { fetchImpl: answer({ found: true, sizeFound: false, sizes: ['0.30*1400'] }) });
-  assert.equal(size.forModel.status, 'ask_size');
+  // A size the customer writes is never sent: the code decides, so a wrong size cannot make a product unavailable.
+  let sent;
+  const spy = async (url, opts) => { sent = JSON.parse(opts.body); return { ok: true, json: async () => ({ ok: true, ...low, available: true }) }; };
+  const withSize = await runCheckStock({ code: '305', size: '0.40*1400' }, ctx, config, { fetchImpl: spy });
+  assert.equal(sent.size, '');
+  assert.equal(withSize.forModel.status, 'available');
 });
 
 test('sheet unreachable: not silent, model hands over to the team', async () => {
