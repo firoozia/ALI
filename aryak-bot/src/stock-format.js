@@ -104,5 +104,6 @@ export function formatStaffStock(result, askedCode = '', note = '') {
   if (!result.found) return `کد ${result.code || askedCode} در فهرست پیدا نشد.`;
   if (result.ambiguous) return `کد ${askedCode} در چند گروه هست:\n${result.categories.map((c, i) => `${i + 1}) ${c}`).join('\n')}\nکدام را می‌خواهید؟ (نام یا شماره را بنویسید)`;
   if (result.sizeFound === false) return `کد ${result.code} با اندازهٔ ${result.size} نیست. اندازه‌های موجود: ${(result.sizes || []).join('، ') || '—'}`;
-  return [note, ...stockBlocks(result)].filter(Boolean).join('\n\n');
+  const old = result.stale ? `(آخرین بروزرسانی: ${result.ageMinutes} دقیقه پیش، برگه الان پاسخ نداد)` : '';
+  return [note, old, ...stockBlocks(result)].filter(Boolean).join('\n\n');
 }

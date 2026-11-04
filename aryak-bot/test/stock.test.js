@@ -73,7 +73,7 @@ import { describeError, fetchStock, isTimeout } from '../src/stock.js';
 
 const cfg = { sheetUrl: 'https://script.google.com/macros/s/x/exec', botToken: 'bottok' };
 const okRes = (data) => ({ ok: true, status: 200, json: async () => ({ ok: true, ...data }) });
-const quick = { retryDelayMs: 0 };
+const quick = { retryDelayMs: 0, tries: 2 };
 
 test('fetchStock: a failure is retried once and the second answer is used; the cause is logged', async () => {
   const logs = [];
@@ -83,11 +83,12 @@ test('fetchStock: a failure is retried once and the second answer is used; the c
     if (calls === 1) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET', message: 'read ECONNRESET' } });
     return okRes({ found: true, code: '229' });
   };
-  const r = await fetchStock(cfg, { code: '229' }, fetchImpl, { ...quick, log: (m) => logs.push(m) });
+  const r = await fetchStock(cfg, { code: '229' }, fetchImpl, { ...quick, log: (m) => logs.push(m), info: () => {} });
   assert.equal(r.code, '229');
   assert.equal(calls, 2);
   assert.equal(logs.length, 1);
   assert.match(logs[0], /try 1 of 2/);
+  assert.match(logs[0], / failed in \d+\.\d s/);
   assert.match(logs[0], /fetch failed \| ECONNRESET read ECONNRESET/);
 });
 
@@ -152,6 +153,85 @@ test('error helpers: cause is shown, timeouts are recognised', () => {
 test('runCheckStock: a sheet that cannot be reached is an error result, after one retry', async () => {
   let calls = 0;
   const r = await runCheckStock({ code: '229' }, ctx, { ...config, retryDelayMs: 0, log: () => {} }, { fetchImpl: async () => { calls++; throw new Error('fetch failed'); } });
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   assert.equal(r.forModel.status, 'error');
+});
+
+// ---- cache, three tries, keep-warm ----
+import { SheetCache, warmSheet } from '../src/stock.js';
+import { formatStaffStock } from '../src/stock-format.js';
+
+test('three tries by default, each logged with its duration; the third can still succeed', async () => {
+  const logs = [];
+  let calls = 0;
+  let t = 0;
+  const now = () => (t += 1500);
+  const fetchImpl = async () => { calls++; if (calls < 3) throw new Error('fetch failed'); return okRes({ found: true, code: '1810' }); };
+  const r = await fetchStock(cfg, { code: '1810' }, fetchImpl, { retryDelayMs: 0, log: (m) => logs.push(m), info: (m) => logs.push(m), now });
+  assert.equal(r.code, '1810');
+  assert.equal(calls, 3);
+  assert.match(logs[0], /try 1 of 3 failed in 1\.5 s/);
+  assert.match(logs[2], /try 3 of 3 ok in 1\.5 s/);
+});
+
+test('every try gets a timeout signal', async () => {
+  const signals = [];
+  const fetchImpl = async (url, init) => { signals.push(init.signal); throw new Error('x'); };
+  await assert.rejects(fetchStock(cfg, { code: '1' }, fetchImpl, { retryDelayMs: 0, log: () => {} }));
+  assert.equal(signals.length, 3);
+  assert.ok(signals.every((s) => s instanceof AbortSignal));
+});
+
+test('cache: a fresh answer is reused without asking the sheet again', async () => {
+  let now = 0;
+  const cache = new SheetCache({ now: () => now });
+  let calls = 0;
+  const fetchImpl = async () => { calls++; return okRes({ found: true, code: '229', free: calls }); };
+  const c = { ...cfg, sheetCache: cache };
+  assert.equal((await fetchStock(c, { code: '229' }, fetchImpl, { retryDelayMs: 0, info: () => {} })).free, 1);
+  now = 60 * 1000;
+  assert.equal((await fetchStock(c, { code: '229' }, fetchImpl, { retryDelayMs: 0, info: () => {} })).free, 1);
+  assert.equal(calls, 1);
+  now = 90 * 1000; // no longer fresh
+  assert.equal((await fetchStock(c, { code: '229' }, fetchImpl, { retryDelayMs: 0, info: () => {} })).free, 2);
+  assert.equal(calls, 2);
+  await fetchStock(c, { code: '229', quantity: 50 }, fetchImpl, { retryDelayMs: 0, info: () => {} }); // another quantity is another lookup
+  assert.equal(calls, 3);
+});
+
+test('cache: when the sheet does not answer an older answer is used and its age is said; too old is an error', async () => {
+  let now = 0;
+  const cache = new SheetCache({ now: () => now });
+  const c = { ...cfg, sheetCache: cache };
+  const quiet = { retryDelayMs: 0, log: () => {}, info: () => {} };
+  await fetchStock(c, { code: '229' }, async () => okRes({ found: true, code: '229', free: 7 }), quiet);
+  const down = async () => { throw new Error('fetch failed'); };
+  now = 5 * 60 * 1000;
+  const stale = await fetchStock(c, { code: '229' }, down, quiet);
+  assert.equal(stale.free, 7);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.ageMinutes, 5);
+  now = 16 * 60 * 1000;
+  await assert.rejects(fetchStock(c, { code: '229' }, down, quiet), /fetch failed/);
+  // the sheet's own refusal is never answered from memory
+  now = 5 * 60 * 1000;
+  const refuse = async () => ({ ok: true, status: 200, json: async () => ({ ok: false, error: 'Wrong bot token' }) });
+  await assert.rejects(fetchStock(c, { code: '229' }, refuse, quiet), /Wrong bot token/);
+});
+
+test('the staff answer says how old a fallback answer is', () => {
+  const t = formatStaffStock({ found: true, code: '229', category: 'PVC film', unit: 'm', free: 7, reserved: 0, limit: 200, sizes: [{ size: 'a', free: 7, packages: 1, open: 1, limit: 200 }], stale: true, ageMinutes: 5 }, '229');
+  assert.ok(t.startsWith('(آخرین بروزرسانی: 5 دقیقه پیش، برگه الان پاسخ نداد)\n\nموجودی کد 229'));
+});
+
+test('keep-warm: one cheap lookup of a code that does not exist, one try, nothing cached', async () => {
+  const seen = [];
+  const fetchImpl = async (url, init) => { seen.push(JSON.parse(init.body)); return okRes({ found: false, code: 'warmup' }); };
+  const cache = new SheetCache();
+  const ms = await warmSheet({ ...cfg, sheetCache: cache }, fetchImpl);
+  assert.equal(typeof ms, 'number');
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].code, 'warmup');
+  assert.equal(cache.map.size, 0);
+  await assert.rejects(warmSheet(cfg, async () => { throw new Error('down'); }));
 });

@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
 import { answer } from './assistant.js';
-import { fetchStock, isTimeout } from './stock.js';
+import { SheetCache, fetchStock, isTimeout, warmSheet } from './stock.js';
 import { formatStaffStock } from './stock-format.js';
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
@@ -34,6 +34,14 @@ const client = new Anthropic();
 const system = buildSystemPrompt(config.kbDir, config.displayName);
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 config.log = (s) => logger.warn(s);
+config.logInfo = (s) => logger.info(s);
+config.sheetCache = new SheetCache(); // the last answer per lookup: reused for a minute, a fallback for a quarter of an hour
+// The sheet's script falls asleep and then needs up to a minute to wake: a cheap lookup every four minutes keeps it up.
+setTimeout(() => warmSheet(config).catch((e) => logger.warn(`keep-warm lookup failed: ${e.message}`)), 5000).unref();
+setInterval(() => {
+  warmSheet(config).then((ms) => { if (ms > 15000) logger.warn(`keep-warm lookup was slow: ${Math.round(ms / 1000)} s`); })
+    .catch((e) => logger.warn(`keep-warm lookup failed: ${e.message}`));
+}, 4 * 60 * 1000).unref();
 // One short line per message and what became of it: where, who (a role, never a number), the decision. No text.
 const trace = (where, role, decision) => logger.info(`msg ${where} ${role}: ${decision}`);
 const recent = new Map(); // manager alerts already sent
@@ -225,7 +233,7 @@ const staffHandlersFor = (key) => ({
       // fetchStock has already logged the real cause and tried twice; the colleague gets a plain sentence.
       const why = isTimeout(e) ? 'پاسخ برگه دیر رسید' : 'ارتباط با برگه برقرار نشد';
       return {
-        formatted: `دریافت موجودی کد ${i.code} ناموفق بود (${why}). دو بار تلاش شد. لطفاً کمی بعد دوباره بپرسید.`,
+        formatted: `دریافت موجودی کد ${i.code} ناموفق بود (${why}). سه بار تلاش شد. لطفاً یکی دو دقیقه بعد دوباره بپرسید.`,
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     }

@@ -63,10 +63,44 @@ async function requestOnce(config, body, fetchImpl, timeoutMs) {
 }
 
 /**
- * Asks the sheet. A timeout of [timeoutMs] on every request and ONE more try after [retryDelayMs] when the first fails
- * (network error, timeout or a 5xx); every failure is logged with its real cause and the HTTP status.
+ * What the sheet last said about a lookup. A fresh answer (a minute or so old) is used again without asking; an older
+ * one (up to a quarter of an hour) is only a fallback when the sheet does not answer.
  */
-export async function fetchStock(config, input, fetchImpl = fetch, { log = config.log || (() => {}), timeoutMs = [40000, 30000], retryDelayMs = 1500 } = {}) {
+export class SheetCache {
+  constructor({ freshMs = 75 * 1000, staleMs = 15 * 60 * 1000, now = Date.now } = {}) {
+    Object.assign(this, { freshMs, staleMs, now });
+    this.map = new Map();
+  }
+
+  key(input) {
+    return [input.code, input.category, input.size, input.quantity, input.quantity_unit].map((x) => String(x ?? '').trim().toLowerCase()).join('|');
+  }
+
+  get(input) {
+    const e = this.map.get(this.key(input));
+    return e ? { data: e.data, ageMs: this.now() - e.at } : null;
+  }
+
+  set(input, data) {
+    this.map.set(this.key(input), { data, at: this.now() });
+    if (this.map.size > 500) this.map.delete(this.map.keys().next().value);
+  }
+}
+
+const seconds = (ms) => (ms / 1000).toFixed(1);
+
+/**
+ * Asks the sheet. Up to [tries] tries, each with its own timeout ([timeoutMs], a number or a list: the first wait is
+ * long because Apps Script sometimes needs a minute to wake up), a short pause between them. Every try is logged with
+ * how long it took and, when it failed, its real cause and HTTP status. With a [cache]: a fresh answer is reused, and
+ * when every try fails an answer up to a quarter of an hour old is returned with { stale: true, ageMinutes }.
+ */
+export async function fetchStock(config, input, fetchImpl = fetch, {
+  log = config.log || (() => {}), info = config.logInfo || log, timeoutMs = [45000, 30000, 30000], retryDelayMs = 1500, tries = 3,
+  cache = config.sheetCache, now = Date.now,
+} = {}) {
+  const cached = cache?.get(input);
+  if (cached && cached.ageMs <= cache.freshMs) return cached.data;
   const body = JSON.stringify({
     action: 'botStock',
     token: config.botToken,
@@ -76,10 +110,11 @@ export async function fetchStock(config, input, fetchImpl = fetch, { log = confi
     qty: input.quantity || 0,
     qtyUnit: input.quantity_unit || '',
   });
+  const name = `stock lookup for "${String(input.code).slice(0, 30)}"`;
   let lastError;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    const started = now();
     try {
-      // The sheet usually answers in about five seconds but sometimes takes much longer: a generous first wait.
       const res = await requestOnce(config, body, fetchImpl, Array.isArray(timeoutMs) ? timeoutMs[attempt - 1] ?? timeoutMs.at(-1) : timeoutMs);
       if (!res.ok) {
         const err = new Error(`Sheet answered ${res.status}`);
@@ -88,16 +123,29 @@ export async function fetchStock(config, input, fetchImpl = fetch, { log = confi
       }
       const data = await res.json();
       if (!data.ok) throw Object.assign(new Error(data.error || 'Sheet refused'), { final: true });
+      info(`${name}: try ${attempt} of ${tries} ok in ${seconds(now() - started)} s`);
+      cache?.set(input, data);
       return data;
     } catch (e) {
       lastError = e;
-      log(`stock lookup for "${String(input.code).slice(0, 30)}" failed (try ${attempt} of 2): ${describeError(e)}${e.status ? ` | HTTP ${e.status}` : ''}`);
+      log(`${name}: try ${attempt} of ${tries} failed in ${seconds(now() - started)} s: ${describeError(e)}${e.status ? ` | HTTP ${e.status}` : ''}`);
       // The sheet's own refusal (wrong token, no code) and a 4xx are not worth trying again.
-      if (e.final || (e.status && e.status < 500) || attempt === 2) break;
+      if (e.final || (e.status && e.status < 500) || attempt === tries) break;
       await new Promise((r) => setTimeout(r, retryDelayMs));
     }
   }
+  if (cached && cached.ageMs <= cache.staleMs && !lastError.final) {
+    log(`${name}: the sheet did not answer, using the answer from ${Math.round(cached.ageMs / 60000)} minute(s) ago`);
+    return { ...cached.data, stale: true, ageMinutes: Math.round(cached.ageMs / 60000) };
+  }
   throw lastError;
+}
+
+/** Keeps the Apps Script instance awake: a lookup of a code that does not exist, which still reads the sheet. */
+export async function warmSheet(config, fetchImpl = fetch, opts = {}) {
+  const started = Date.now();
+  await fetchStock(config, { code: 'warmup' }, fetchImpl, { tries: 1, timeoutMs: 40000, cache: null, log: () => {}, ...opts });
+  return Date.now() - started;
 }
 
 const fmt = (n) => (Math.round(Number(n) * 100) / 100).toString();
@@ -135,7 +183,7 @@ export async function runCheckStock(input, ctx, config, { fetchImpl = fetch, rec
   try {
     // The code is the product: the size a customer writes is never sent, so a size that is not in the sheet cannot make
     // an available product look unavailable.
-    result = await fetchStock(config, { ...input, size: '' }, fetchImpl, { log: config.log, retryDelayMs: config.retryDelayMs, timeoutMs: config.timeoutMs });
+    result = await fetchStock(config, { ...input, size: '' }, fetchImpl, { log: config.log, retryDelayMs: config.retryDelayMs, timeoutMs: config.timeoutMs, tries: config.tries });
   } catch (e) {
     return { forModel: { status: 'error', instruction: 'Say a colleague will confirm availability and tag the team.' }, silent: false, error: String(e.message || e) };
   }
