@@ -12,7 +12,8 @@ import { auditInvoice, checkNumber } from './audit.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
-import { correctionSaved, detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
+import { AvailabilityDesk, answerRequest, classify, managerQuestion, parseManagerReply, reminderText, runAvailability } from './availability.js';
+import { LANG_NAME, correctionSaved, detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
 import { imageAction, understandImages } from './image.js';
 import { ignoredKind, imageOf } from './media.js';
 import { appendCorrection, parseCorrection, readCorrections } from './corrections.js';
@@ -70,6 +71,7 @@ const GATE_WORDS = {
 };
 const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
 const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
+const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availability') }); // questions to the sales manager that wait for his answer
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
@@ -106,6 +108,20 @@ const gate = new GroupGate({
     }
     const info = await groupInfo(groupId);
     const customer = info.subject.replace(config.groupSuffix, '').trim() || info.subject;
+    // Availability: ask for the quantity, answer when it is comfortably in stock, otherwise ask the sales manager.
+    if (config.availabilityFlow) {
+      const flow = await runAvailability({
+        messages, groupId, groupName: info.subject, customer, desk: avail,
+        decide: async (line) => {
+          try { return classify(await fetchStock(config, { code: line.code, quantity: line.quantity, quantity_unit: line.unit })); } catch { return { kind: 'unhandled' }; }
+        },
+        send: (gid, text, m) => sock.sendMessage(gid, { text }, m?.raw ? { quoted: m.raw } : undefined),
+        notifyManager: async (req) => (await sock.sendMessage(config.salesManager, { text: managerQuestion(req) }))?.key?.id,
+        log: (s) => logger.info(`availability in group "${info.subject}": ${s}`),
+      });
+      messages = flow.rest;
+      if (!messages.length) return;
+    }
     const images = [];
     for (const m of messages.filter((x) => x.loadImage).slice(-4)) {
       try { images.push(await m.loadImage()); } catch (e) { logger.warn(`image download failed: ${e.message}`); }
@@ -120,6 +136,14 @@ const gate = new GroupGate({
   },
 });
 
+// A request the manager has not answered for a quarter of an hour: one reminder, nothing is said to the customer.
+setInterval(async () => {
+  try {
+    if (!sock?.user) return;
+    for (const r of avail.dueReminders()) await sock.sendMessage(config.salesManager, { text: reminderText(r) });
+  } catch (e) { logger.warn(`reminder failed: ${e.message}`); }
+}, 60 * 1000).unref();
+
 // The daily summary for the information group, once a day after the set hour (counts only).
 setInterval(async () => {
   try {
@@ -131,6 +155,19 @@ setInterval(async () => {
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
 }, 60 * 1000).unref();
+
+/** The manager's own words, put into the customer's language (numbers, codes and units untouched); the words as they are if that fails. */
+async function translateTo(text, lang) {
+  if (detectLang(text, 'fa') === lang) return text;
+  try {
+    const res = await client.beta.messages.create({
+      model: config.model, max_tokens: 600,
+      system: `Translate the message into ${LANG_NAME[lang] || 'English'}. Keep numbers, product codes and units exactly. Short and polite, like a shop. Reply with the translation only.`,
+      messages: [{ role: 'user', content: text }], output_config: { effort: 'low' },
+    });
+    return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim() || text;
+  } catch { return text; }
+}
 
 async function findGroupJid(word) {
   const all = await sock.groupFetchAllParticipating();
@@ -261,7 +298,7 @@ async function customerVoiceStep(groupId, messages) {
   if (photo) {
     const u = await understandPhotos(messages.filter((x) => x.loadImage), photo.text, 'en');
     if (u.ok) {
-      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
+      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang, items: u.items });
       logger.info(`photo understood (${u.intent}), reply language ${u.lang}: asking for confirmation`);
       await sock.sendMessage(groupId, { text: u.confirmText }, quoted);
       return { done: true };
@@ -280,7 +317,7 @@ async function customerVoiceStep(groupId, messages) {
     const kind = answerKind(last.text);
     voiceDesk.clear(key);
     if (kind === 'no') { await sock.sendMessage(groupId, { text: retryText(pend.lang) }, quoted); return { done: true }; }
-    if (kind === 'yes') return { messages: [{ ...last, text: pend.requestText, hasImage: false, loadImage: null }] };
+    if (kind === 'yes') return { messages: [{ ...last, text: pend.requestText, hasImage: false, loadImage: null, lang: pend.lang, items: pend.items }] };
   }
   return { messages };
 }
@@ -417,6 +454,24 @@ async function handleStaffChat(raw, chatId, group) {
   }
   const role = admin ? 'admin' : 'staff';
   const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
+  // The sales manager answers a request about stock ("#12 yes", a reply to the question, or the only open one).
+  if (!group && avail.open.size) {
+    const reply0 = parseManagerReply(text, answerKind);
+    const isManager = [chatId, raw.key.remoteJidAlt].some((j) => j && jidDigits(j) === jidDigits(config.salesManager));
+    const req = reply0.action === 'none' ? null : avail.find({
+      quotedId: content?.extendedTextMessage?.contextInfo?.stanzaId, id: reply0.id,
+      allowSingle: (isManager || !!raw.key.fromMe) && ['yes', 'no', 'self'].includes(reply0.action),
+    });
+    if (req) {
+      const done = await answerRequest({
+        req, reply: reply0, desk: avail, log: (s) => trace(where, role, s),
+        send: (r, t) => sock.sendMessage(r.groupId, { text: t }, r.quoted?.raw ? { quoted: r.quoted.raw } : undefined),
+        translate: translateTo,
+      });
+      await reply(done);
+      return true;
+    }
+  }
   const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
   if (cmd) { trace(where, role, `command ${cmd}`); await reply(runCommand(cmd, { name: config.displayName, state: botState, corrections: () => readCorrections(config.authDir), desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
   const ctx = (content.extendedTextMessage || audio || image)?.contextInfo || {};
@@ -544,7 +599,7 @@ async function onMessage(raw) {
   const text = normalizeDigits(content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || '');
   const image = imageOf(content);
   const m = {
-    groupId, fromMe: !!raw.key.fromMe, sender: raw.key.participant, senderAlt: raw.key.participantAlt,
+    raw, groupId, fromMe: !!raw.key.fromMe, sender: raw.key.participant, senderAlt: raw.key.participantAlt,
     senderName: raw.pushName || '', text, hasImage: !!image,
     isVoice: !!content.audioMessage, seconds: content.audioMessage?.seconds || 0,
     loadAudio: content.audioMessage ? () => downloadMediaMessage(raw, 'buffer', {}) : null,

@@ -3,7 +3,7 @@
 // "119-6 MTR", "603 - 15 mtr", "701 25 meter?", "Please add 234 - 3 mtr also", and misspell "available".
 // The result is a hint for the answering model and a test target; it never answers anything by itself.
 
-import { normalizeDigits } from './text.js';
+import { normalizeDigits, normalizeLetters } from './text.js';
 
 const UNIT_WORDS = {
   m: 'm', mtr: 'm', mtrs: 'm', meter: 'm', meters: 'm', metre: 'm', metres: 'm',
@@ -31,14 +31,21 @@ function parseOrderLine(raw) {
   return { code: m[1].toUpperCase(), quantity: Number(m[2]), unit: UNIT_WORDS[m[3]] || m[3], addOn };
 }
 
-const AVAILABILITY_WORDS = /\b(avail\w*|avil\w*|in\s*stock|stock|please|pls|kindly|check|have|do\s+you|is|are|it|the|code)\b/g;
+// The words around a code in an availability question, in the languages of the customers.
+const AVAILABILITY_TOKENS = new Set([
+  'is', 'are', 'it', 'the', 'code', 'please', 'pls', 'kindly', 'check', 'have', 'do', 'you', 'stock', 'in', 'still', 'now', 'number', 'no',
+  'هل', 'متوفر', 'متوفره', 'متاح', 'موجود', 'لديكم', 'عندكم', 'كود', 'رقم', 'من', 'فضلك', 'لو', 'سمحت', 'الكود',
+  'کیا', 'دستیاب', 'ہے', 'ہیں', 'کوڈ', 'براہ', 'کرم', 'آپ', 'کے', 'پاس',
+  'آیا', 'موجوده', 'موجودی', 'هست', 'هستش', 'هستند', 'دارید', 'دارین', 'کد', 'لطفا', 'لطفاً', 'ممنون', 'شماره',
+].map((w) => normalizeLetters(w)));
 
-/** "108 available?", "511 AVAILBLE", "116?", "410" -> the codes asked about; [] when it is more than that. */
+/** "108 available?", "511 AVAILBLE", "116?", "هل 408 متوفر؟", "۴۰۸ موجوده؟" -> the codes asked about; [] when it is more than that. */
 function parseAvailability(raw) {
-  const s = cleanLine(raw).replace(AVAILABILITY_WORDS, ' ').replace(/[?؟!.,،;/]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!s) return [];
-  const parts = s.split(' ');
-  return parts.every((p) => new RegExp(`^${CODE}$`).test(p)) ? parts.map((p) => p.toUpperCase()) : [];
+  const tokens = cleanLine(normalizeLetters(raw)).replace(/[?؟!.,،;/]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+    .filter((w) => !AVAILABILITY_TOKENS.has(w) && !/^(avail|avil)\w*$/.test(w));
+  const re = new RegExp(`^${CODE}$`);
+  // a bare one or two digit number is more likely a quantity than a code
+  return tokens.length && tokens.every((p) => re.test(p) && !/^\d{1,2}$/.test(p)) ? tokens.map((p) => p.toUpperCase()) : [];
 }
 
 /**

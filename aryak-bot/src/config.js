@@ -47,6 +47,8 @@ export function loadConfig(env = process.env) {
     vatRate: Number(env.VAT_RATE || 5),
     moneyTolerance: Number(env.MONEY_TOLERANCE || 0.05),
     digestHour: Number(env.DIGEST_HOUR || 18),
+    // The customer availability flow (ask the quantity, answer or ask the sales manager); AVAILABILITY_FLOW=off keeps the old answer.
+    availabilityFlow: (env.AVAILABILITY_FLOW || 'on').toLowerCase() !== 'off',
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
