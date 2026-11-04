@@ -35,7 +35,7 @@ export function shape(text, max = 60) {
     let x;
     if (t === '؟') x = '?';
     else if (/^[?\-–—,.!]$/.test(t)) x = t === '–' || t === '—' ? '-' : t;
-    else if (/\d/.test(t)) x = '#';
+    else if (t === '#' || /\d/.test(t)) x = '#'; // a shape put through again stays the same
     else if (KEEP.has(t)) x = t;
     else x = '_';
     if (x === '_' && out.at(-1) === '_') continue;
@@ -174,7 +174,8 @@ export class Experience {
 
   // -- the review list
   candidate(c) {
-    const same = this.candidates.find((x) => x.status === 'open' && x.kind === c.kind && (c.shape ? x.shape === c.shape && x.answerType === c.answerType : x.wrong === c.wrong && x.right === c.right));
+    const keyOf = (x) => [x.kind, x.shape, x.answerType, x.lang, x.wrong, x.right, x.to, x.intent, x.customer, x.alias].join('|');
+    const same = this.candidates.find((x) => x.status === 'open' && keyOf(x) === keyOf(c));
     if (same) { same.count++; same.lastAt = this.now(); this.dirty = true; return same; }
     const entry = { id: this.nextId++, status: 'open', count: 1, priority: c.kind === 'correction' ? 2 : 1, firstAt: this.now(), lastAt: this.now(), ...c };
     this.candidates.push(entry);
@@ -194,7 +195,7 @@ export class Experience {
     c.status = approve ? 'approved' : 'rejected';
     if (approve) {
       const current = this.approved();
-      this.versions = [...this.versions.slice(0, this.version), [...current, { id: c.id, kind: c.kind, shape: c.shape, lang: c.lang, answerType: c.answerType, wrong: c.wrong, right: c.right }]];
+      this.versions = [...this.versions.slice(0, this.version), [...current, { id: c.id, kind: c.kind, shape: c.shape, lang: c.lang, answerType: c.answerType, wrong: c.wrong, right: c.right, to: c.to, intent: c.intent, customer: c.customer, alias: c.alias }]];
       this.version = this.versions.length;
     }
     this.dirty = true;
@@ -210,7 +211,10 @@ export class Experience {
   promptText() {
     const lines = this.approved().map((e) => (e.kind === 'correction'
       ? `- When you answered "${String(e.wrong).replace(/\s+/g, ' ').slice(0, 160)}", a colleague corrected it: "${String(e.right).replace(/\s+/g, ' ').slice(0, 200)}".`
-      : `- Customers (${e.lang}) sometimes write like "${e.shape}"; colleagues answer with: ${e.answerType}.`));
+      : e.kind === 'routing' ? `- A request that looks like "${e.shape}" is usually posted in the group "${e.to}".`
+        : e.kind === 'pattern' ? `- In ${e.lang}, a ${e.intent} message is usually answered with: ${e.answerType}.`
+          : e.kind === 'alias' ? ''
+            : `- Customers (${e.lang}) sometimes write like "${e.shape}"; colleagues answer with: ${e.answerType}.`)).filter(Boolean);
     return lines.length ? `# Learned from colleagues (approved by the owner)\n\n${lines.join('\n')}` : '';
   }
 
@@ -303,9 +307,50 @@ export function groupPreferences(exp, weeks = 4) {
 }
 
 export function describeCandidate(c) {
+  if (c.kind === 'routing') return `${c.id}. مسیر پیام (${c.count} بار)${c.imported ? '، از فایل بیرونی' : ''}: «${c.shape}» ⟵ گروه «${c.to}»`;
+  if (c.kind === 'pattern') return `${c.id}. الگوی پاسخ (${LANG_FA[c.lang] || c.lang}، ${c.count} بار)${c.imported ? '، از فایل بیرونی' : ''}: ${INTENT_FA[c.intent] || c.intent} ⟵ ${ANSWER_FA[c.answerType] || c.answerType}`;
+  if (c.kind === 'alias') return `${c.id}. نام دیگر مشتری${c.imported ? ' (از فایل بیرونی)' : ''}: ${c.customer} = ${c.alias}`;
   return c.kind === 'correction'
     ? `${c.id}. اصلاح همکار (اولویت بالا): «${String(c.wrong).replace(/\s+/g, ' ').slice(0, 70)}» ⟵ «${String(c.right || '').slice(0, 90)}»`
     : `${c.id}. عبارت تازه (${LANG_FA[c.lang] || c.lang}، ${c.count} بار): «${c.shape}» ⟵ پاسخ همکار: ${ANSWER_FA[c.answerType] || c.answerType}`;
+}
+
+/**
+ * A file of patterns from outside (the owner's chats read by a person, shapes only): every entry goes to the review list,
+ * none is applied. Strings are cut down to shapes again here, so a number or a name that slipped in cannot be kept.
+ * Format: docs/LEARNING_IMPORT_FORMAT.md.
+ */
+export function importPatterns(exp, data) {
+  const out = { phrasings: 0, routing: 0, patterns: 0, aliases: 0, skipped: 0 };
+  if (!data || typeof data !== 'object' || data.version !== 1) return { ...out, error: 'unsupported file' };
+  const LANGS = ['fa', 'ar', 'en', 'ur', 'hi'];
+  const INTENTS = ['availability', 'order', 'addon', 'invoice', 'delivery', 'payment', 'complaint', 'thanks', 'question', 'other'];
+  const ANSWERS = ['yes', 'no', 'limited', 'quantity', 'ask', 'file', 'other'];
+  const cnt = (v) => Math.max(1, Math.min(10000, Number(v) || 1));
+  const safe = (s) => { const x = shape(s); return x && x.replace(/[_\s#?.,!-]/g, '') ? x : ''; };
+  const add = (entry, field) => { exp.candidate(entry); out[field]++; };
+  for (const p of Array.isArray(data.phrasings) ? data.phrasings : []) {
+    const sh = safe(p?.shape);
+    if (!sh || !LANGS.includes(p.lang) || !ANSWERS.includes(p.answerType)) { out.skipped++; continue; }
+    add({ kind: 'phrasing', shape: sh, lang: p.lang, answerType: p.answerType, count: cnt(p.count), imported: true }, 'phrasings');
+  }
+  for (const r of Array.isArray(data.routing) ? data.routing : []) {
+    const sh = safe(r?.trigger);
+    const to = String(r?.to || '').replace(/[^\p{L}\p{N} ]/gu, '').trim().slice(0, 40);
+    if (!sh || !to) { out.skipped++; continue; }
+    add({ kind: 'routing', shape: sh, to, count: cnt(r.count), imported: true }, 'routing');
+  }
+  for (const a of Array.isArray(data.answerShapes) ? data.answerShapes : []) {
+    if (!INTENTS.includes(a?.intent) || !LANGS.includes(a?.lang) || !ANSWERS.includes(a?.answerType)) { out.skipped++; continue; }
+    add({ kind: 'pattern', intent: a.intent, lang: a.lang, answerType: a.answerType, count: cnt(a.count), imported: true }, 'patterns');
+  }
+  for (const al of Array.isArray(data.aliasSuggestions) ? data.aliasSuggestions : []) {
+    // names are business names only, and only when the owner approved them in the file
+    if (al?.approvedByOwner !== true || !al.customer) { out.skipped++; continue; }
+    for (const alias of (Array.isArray(al.aliases) ? al.aliases : []).slice(0, 5)) add({ kind: 'alias', customer: String(al.customer).slice(0, 60), alias: String(alias).slice(0, 60), imported: true }, 'aliases');
+  }
+  exp.dirty = true;
+  return out;
 }
 
 export function formatStatus(exp) {
@@ -323,6 +368,7 @@ export function parseLearnCommand(text) {
   if (/^(?:پیشنهادهای|پیشنهاد‌های)\s+یادگیری$/.test(s)) return { type: 'list' };
   if (/^بازگشت\s+یادگیری$/.test(s)) return { type: 'rollback' };
   if (/^گزارش\s+یادگیری$/.test(s)) return { type: 'report' };
+  if (/^بارگذاری\s+الگوها$/.test(s)) return { type: 'import' };
   const m = /^(بپذیر|رد)\s+(\d+)$/.exec(s);
   if (m) return { type: m[1] === 'رد' ? 'reject' : 'approve', id: Number(m[2]) };
   return null;

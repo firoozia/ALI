@@ -4,12 +4,15 @@ import makeWASocket, { DisconnectReason, downloadMediaMessage, isJidGroup, jidNo
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { answer } from './assistant.js';
-import { SheetCache, fetchReport, fetchStock, isTimeout, warmSheet } from './stock.js';
+import { SheetCache, fetchReport, fetchStock, isTimeout, managerMessage, warmSheet } from './stock.js';
 import { PriceBook, formatBook, formatCodePrice, formatParsed, parsePriceCommand, parsePriceDocument, parsePriceText } from './prices.js';
 import { auditInvoice, checkNumber } from './audit.js';
-import { Experience, describeCandidate, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
+import { parseOnBehalf } from './onbehalf.js';
+import { Aliases, parseAliasCommand } from './aliases.js';
+import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { Tracker, balanceOf, checkDelivery, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
@@ -80,6 +83,7 @@ const GATE_WORDS = {
 };
 const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
 const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
+const aliases = new Aliases(path.join(config.authDir, 'aliases')); // other spellings of a customer's name, added by the owner
 const experience = new Experience({ dir: path.join(config.authDir, 'experience') }); // counters and anonymous shapes; never messages
 const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
 const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availability') }); // questions to the sales manager that wait for his answer
@@ -209,6 +213,9 @@ async function translateTo(text, lang) {
   } catch { return text; }
 }
 
+const knownCustomers = () => [...groups.values()].map((g) => String(g.subject || '').replace(config.groupSuffix, '').trim()).filter(Boolean);
+const canon = (name) => aliases.resolve(name, knownCustomers());
+
 /** The label of a customer group for the experience store: the customer's name part of the group name. */
 const groupLabel = (subject) => String(subject || '').replace(config.groupSuffix, '').trim() || String(subject || '');
 
@@ -244,8 +251,19 @@ async function learnCommand(c, reply) {
   if (c.type === 'off' || c.type === 'on') { experience.on = c.type === 'on'; experience.dirty = true; experience.save(); return reply(`یادگیری ${experience.on ? 'روشن' : 'خاموش'} شد.`); }
   if (c.type === 'list') { const l = experience.review(10); return reply(l.length ? [...l.map(describeCandidate), 'پاسخ: «بپذیر ۳» یا «رد ۳»'].join('\n') : 'پیشنهادی در انتظار نیست.'); }
   if (c.type === 'report') return reply(learnedReport(experience, { errors: errorKinds() }));
+  if (c.type === 'import') {
+    // A file of patterns put on the VM by hand (see docs/LEARNING_IMPORT_FORMAT.md): everything goes to the review list.
+    const file = path.join(config.authDir, 'import', 'patterns.json');
+    let data;
+    try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return reply('فایل الگوها پیدا یا خوانده نشد. آن را با نام patterns.json در پوشهٔ import روی دستگاه بگذارید.'); }
+    const r = importPatterns(experience, data);
+    experience.save();
+    if (r.error) return reply('قالب فایل پذیرفته نشد (نسخهٔ ۱ لازم است).');
+    return reply(`به فهرست بررسی رفت: ${r.phrasings} عبارت، ${r.routing} مسیر، ${r.patterns} الگوی پاسخ، ${r.aliases} نام دیگر. ردشده: ${r.skipped}. هیچ‌چیز اعمال نشد؛ با «پیشنهادهای یادگیری» ببینید.`);
+  }
   if (c.type === 'rollback') { const ok = experience.rollback(); experience.save(); return reply(ok ? `به نسخهٔ ${experience.version} بازگشت داده شد.` : 'نسخهٔ تأییدشده‌ای نیست که بازگردانده شود.'); }
   const done = experience.decide(c.id, c.type === 'approve');
+  if (done && c.type === 'approve' && done.kind === 'alias') aliases.add(done.customer, done.alias);
   experience.save();
   return reply(done ? (c.type === 'approve' ? `پذیرفته شد (نسخهٔ ${experience.version}); از پیام بعدی در پرسش‌ها به کار می‌رود.` : 'رد شد.') : `پیشنهاد ${c.id} در فهرست نیست.`);
 }
@@ -283,7 +301,7 @@ async function trackGroup(raw, groupId, role) {
   const ev = await extractEvent({ client, config, role, caption: text, images });
   const where = `group "${(await groupInfo(groupId)).subject}"`;
   if (!ev) { trace(where, 'tracker', `${role}: nothing to record`); return; }
-  const event = { ...ev, at: Date.now(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24) };
+  const event = { ...ev, customer: canon(ev.customer), at: Date.now(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24) };
   if (!tracker.add(event)) return;
   trace(where, 'tracker', `${role} recorded (${event.lines?.length || 0} line(s)${event.amount ? ', an amount' : ''})`);
   if (!config.infoGroupName) return;
@@ -378,7 +396,7 @@ async function watchGroup(raw, groupId, role) {
   logger.info(`${groupId}: invoice ${final.verdict}, ${problems.length} point(s), ${urgent} urgent${book.loaded ? '' : ', no price list stored'}`);
   if (config.trackerEnabled && final.verdict !== 'error') {
     const invoiceEvent = {
-      type: 'invoice', at: Date.now(), ref: doc.hash, customer: verdict.request_customer || verdict.invoice_customer || meta.customer || '', number,
+      type: 'invoice', at: Date.now(), ref: doc.hash, customer: canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), number,
       total: verdict.invoice?.total ?? null, lines: (verdict.invoice?.lines || []).map((l) => ({ code: String(l.code || '').toUpperCase(), quantity: l.quantity, unit: l.unit })),
     };
     if (tracker.add(invoiceEvent) && config.cutGroupName) {
@@ -569,6 +587,38 @@ async function handlePriceFlow({ raw, content, text, key, reply, role, where, im
   return true;
 }
 
+/**
+ * A colleague posts a customer's request in a company group ("Bahar: 408 - 15 mtr"). The stock is checked and answered in
+ * the staff format, a request the stock cannot cover comfortably goes to the sales manager with the customer's name, and
+ * the order is recorded for the tracker. Nothing is written to the customer.
+ */
+async function handleOnBehalf({ ob, raw, reply, role, where, lang }) {
+  const customer = canon(ob.customer);
+  const blocks = [];
+  let toManager = 0;
+  for (const line of ob.lines) {
+    let res;
+    try { res = await fetchStock(config, { code: line.code, quantity: line.quantity, quantity_unit: line.unit }); } catch (e) { blocks.push(sheetFailed(lang, line.code, isTimeout(e))); continue; }
+    const d = classify(res);
+    const verdict = d.kind === 'ok' ? 'کافی است؛ می‌شود به مشتری موجود گفت' : d.kind === 'manager' ? 'کافی نیست یا کمتر از حداقل می‌ماند؛ به مدیر فروش گزارش شد' : 'کد ناشناخته یا در چند گروه است';
+    blocks.push(`${formatStaffStock(res, line.code, '', lang)}\n\n→ ${customer}: ${line.quantity} ${line.unit}: ${verdict}`);
+    if (d.kind === 'manager' && config.salesManager) {
+      const key = `${customer}|${String(res.code).toLowerCase()}|behalf`;
+      const last = recent.get(key);
+      if (!(last && Date.now() - last < config.dedupeMinutes * 60000)) {
+        recent.set(key, Date.now());
+        await sock.sendMessage(config.salesManager, { text: managerMessage(res, { customer, groupName: where }, line) });
+        toManager++;
+      }
+    }
+  }
+  if (config.trackerEnabled) {
+    tracker.add({ type: 'order', at: Date.now(), customer, lines: ob.lines.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), ref: createHash('sha256').update(`behalf|${raw.key.id}`).digest('hex').slice(0, 24) });
+  }
+  trace(where, role, `request on behalf of a customer: ${ob.lines.length} line(s), ${toManager} sent to the sales manager`);
+  await reply([`درخواست ${customer}:`, ...blocks].join('\n\n'));
+}
+
 async function handleStaffChat(raw, chatId, group) {
   const content = normalizeMessageContent(raw.message);
   const audio = config.voiceEnabled ? content?.audioMessage : null;
@@ -636,10 +686,17 @@ async function handleStaffChat(raw, chatId, group) {
   if (admin && (!group || group.command)) {
     const lc = parseLearnCommand(text);
     if (lc) { await learnCommand(lc, reply); return true; }
+    const ac = parseAliasCommand(text);
+    if (ac) { await reply(ac.list ? aliases.list() : aliases.add(ac.customer, ac.alias) ? `ثبت شد: «${ac.alias}» همان «${ac.customer}» است.` : 'نام را نفهمیدم.'); return true; }
   }
   // The owner's price list and special prices (admins, in a private chat or the command group).
   if (admin && (!group || group.command)) {
     if (await handlePriceFlow({ raw, content, text, key: `p:${chatId}`, reply, role, where, image, pdf })) return true;
+  }
+  // A customer's request posted by a colleague on his behalf (not in the groups that only record: cut, delivery, money).
+  if (text && !audio && !image && !pdf && !group?.tracked) {
+    const ob = parseOnBehalf(text);
+    if (ob) { await handleOnBehalf({ ob, raw, reply, role, where, lang: detectLang(text, 'fa') }); return true; }
   }
   if (pdf) return false; // a PDF is for the invoice and purchase-order flows
   // "Wrong, <the right answer>" as a reply to one of the assistant's messages: stored for the owner, nothing more.
@@ -746,7 +803,7 @@ async function onMessage(raw) {
   const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...config.commandGroupNames].filter(Boolean);
   if (staffWords.length) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();
-    if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)) })) return;
+    if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)), tracked: !!trackRole })) return;
   }
   if (config.watchGroupNames.length || config.invoiceGroupName) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();

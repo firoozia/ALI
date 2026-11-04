@@ -25,6 +25,11 @@ test('a shape keeps the pattern words only: numbers become #, names and everythi
   assert.equal(shape(''), '');
 });
 
+test('a shape put through again stays the same', () => {
+  for (const x of ['# - # mtr', '_ , # available ?', 'please add # - # mtr also', 'هل # متوفر ?', '_']) assert.equal(shape(x), x, x);
+  for (const raw of ['Hello Ahmed, 108 available?', '603 - 15 mtr']) assert.equal(shape(shape(raw)), shape(raw));
+});
+
 test('what a message is, and what kind of answer a colleague gave', () => {
   const intents = {
     '108 available?': 'availability', '603 - 15 mtr': 'order', 'Please add 234 - 3 mtr also': 'addon', 'please send the invoice': 'invoice', 'when is the delivery': 'delivery',

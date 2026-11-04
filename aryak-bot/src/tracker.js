@@ -187,7 +187,7 @@ export function balanceOf(tracker, customer) {
  */
 export function dueNags(tracker, requests, { now = Date.now(), orderHours = 24, deliveryHours = 48 } = {}) {
   const lines = [];
-  for (const r of requests) {
+  for (const r of allOrders(tracker, requests)) {
     const key = `order|${r.hash}`;
     if (tracker.nagged.has(key) || now - r.at < orderHours * 3600000) continue;
     const invoiced = tracker.of('invoice', r.meta.customer, { since: r.at }).length;
@@ -221,9 +221,15 @@ export function statementsDue(tracker, { now = Date.now(), timeZone = 'Asia/Duba
   return out;
 }
 
-/** The orders as the owner sees them: one line per purchase order with its steps. */
+/** The purchase orders kept, and the orders a colleague posted on a customer's behalf, as one list ({ at, hash, meta }). */
+export function allOrders(tracker, requests) {
+  const posted = tracker.events.filter((e) => e.type === 'order').map((e) => ({ at: e.at, hash: e.ref || String(e.at), meta: { customer: e.customer, po: '' } }));
+  return [...requests, ...posted].sort((a, b) => a.at - b.at);
+}
+
+/** The orders as the owner sees them: one line per order with its steps. */
 export function openOrders(tracker, requests, { max = 15 } = {}) {
-  const rows = requests.slice(-max).reverse().map((r) => {
+  const rows = allOrders(tracker, requests).slice(-max).reverse().map((r) => {
     const c = r.meta.customer;
     const step = (type) => (tracker.of(type, c, { since: r.at }).length ? 'بله' : 'نه');
     return `${c || '—'}${r.meta.po ? ` (سفارش ${r.meta.po})` : ''}: برش ${step('cut')}، فاکتور ${step('invoice')}، تحویل ${step('delivery')}، پرداخت ${step('payment')}`;
