@@ -43,6 +43,10 @@ export function loadConfig(env = process.env) {
     // Photos: read with Claude's vision and confirmed with the sender before anything is done (IMAGE_CONFIRM=off keeps the
     // old behaviour: the answering model looks at customers' photos itself).
     imageConfirm: (env.IMAGE_CONFIRM || 'on').toLowerCase() !== 'off',
+    // Invoice audit: VAT percent, money tolerance for rounding, the hour of the daily summary (local time).
+    vatRate: Number(env.VAT_RATE || 5),
+    moneyTolerance: Number(env.MONEY_TOLERANCE || 0.05),
+    digestHour: Number(env.DIGEST_HOUR || 18),
     helloOnce: (env.HELLO_ONCE || '').trim(), // a new value sends one greeting to the bot's own number
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR

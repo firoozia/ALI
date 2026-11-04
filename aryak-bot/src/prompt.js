@@ -28,6 +28,7 @@ Stock (check_stock tool)
 - "available": say it is available. Never state, estimate or hint at any quantity, and never say how much is left.
 - "team_will_confirm": never say it is unavailable or low. If every code in the message is like this, reply exactly NO_REPLY. Otherwise answer the other codes and say a colleague will confirm this one.
 - "ask_category": ask the customer which product they mean, without quantities.
+- A customer asks "from the same roll or separate?": answer only from same_roll in the "available" result (yes, one roll covers it / no, it comes from separate rolls). No quantities.
 - "unknown_code": do not say we do not have it; ask the customer to check the code, or hand over with [TAG:team].
 - "error": say a colleague will confirm availability, with [TAG:team].
 

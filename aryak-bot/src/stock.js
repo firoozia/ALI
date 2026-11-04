@@ -27,6 +27,19 @@ export const checkStockTool = {
   },
 };
 
+/**
+ * Can the quantity asked come from ONE roll or open piece? true / false, or undefined when it cannot be told (no quantity,
+ * a unit that could not be converted, or a sheet that does not give the rolls and pieces). Only this yes or no is passed on.
+ */
+export function sameRoll(result) {
+  const asked = Number(result.askedInUnit) || 0;
+  if (!asked || result.qtyChecked === false) return undefined;
+  const sizes = result.sizes || [];
+  if (!sizes.length || !sizes.every((s) => Array.isArray(s.packs) && Array.isArray(s.pieces))) return undefined;
+  const biggest = Math.max(0, ...sizes.flatMap((s) => [...s.packs.filter((p) => p.count > 0).map((p) => p.qty), ...s.pieces]));
+  return asked <= biggest + 1e-6;
+}
+
 /** The real cause of a failed fetch: undici hides it in err.cause (code and message). */
 export function describeError(e) {
   const c = e?.cause;
@@ -219,7 +232,16 @@ export async function runCheckStock(input, ctx, config, { fetchImpl = fetch, rec
     return { forModel: { status: 'ask_category', options: result.categories, instruction: 'Ask which of these products the customer means.' }, silent: false };
   }
   if (result.available) {
-    return { forModel: { status: 'available', instruction: 'Tell the customer it is available. Never give a quantity. Price and delivery go to a colleague.' }, silent: false };
+    const one = sameRoll(result);
+    return {
+      forModel: {
+        status: 'available',
+        ...(one === undefined ? {} : { same_roll: one }),
+        instruction: 'Tell the customer it is available. Never give a quantity. Price and delivery go to a colleague.'
+          + (one === undefined ? '' : ' If the customer asks whether it comes from the same roll or from separate rolls, answer from same_roll (true: one roll or piece covers it; false: it comes from separate rolls or pieces) and say nothing more about the stock.'),
+      },
+      silent: false,
+    };
   }
   // At or under the limit: say nothing in the group, tell the sales manager once.
   const key = `${ctx.groupId || ''}|${String(result.code).toLowerCase()}|${result.size || ''}`;

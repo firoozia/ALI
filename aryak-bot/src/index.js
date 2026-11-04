@@ -4,8 +4,12 @@ import makeWASocket, { DisconnectReason, downloadMediaMessage, isJidGroup, jidNo
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { answer } from './assistant.js';
 import { SheetCache, fetchReport, fetchStock, isTimeout, warmSheet } from './stock.js';
+import { PriceBook, formatBook, formatCodePrice, formatParsed, parsePriceCommand, parsePriceDocument, parsePriceText } from './prices.js';
+import { auditInvoice, checkNumber } from './audit.js';
+import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
 import { correctionSaved, detectLang, noVoice, notUnderstood, photoUnclear, sheetFailed, sizeNote } from './lang.js';
@@ -15,7 +19,7 @@ import { appendCorrection, parseCorrection, readCorrections } from './correction
 import { loadConfig } from './config.js';
 import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
-import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, reportText, staffWarning } from './invoice.js';
+import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
@@ -64,6 +68,8 @@ const GATE_WORDS = {
   waiting: 'customer message: waiting for a colleague to answer first',
   unknown: 'sender not recognised: not answered',
 };
+const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
+const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
@@ -114,6 +120,18 @@ const gate = new GroupGate({
   },
 });
 
+// The daily summary for the information group, once a day after the set hour (counts only).
+setInterval(async () => {
+  try {
+    if (!sock?.user || !config.infoGroupName || botState.paused) return;
+    const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
+    if (!day) return;
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone }));
+    writeLastDigest(config.authDir, day);
+    logger.info(`daily summary for ${day} sent`);
+  } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
+}, 60 * 1000).unref();
+
 async function findGroupJid(word) {
   const all = await sock.groupFetchAllParticipating();
   return Object.values(all).find((g) => (g.subject || '').toLowerCase().includes(word))?.id || null;
@@ -160,18 +178,43 @@ async function watchGroup(raw, groupId, role) {
   const meta = await extractMeta({ client, config, doc });
   const found = desk.find(meta);
   const ctx = { groupName: info.subject, customer: meta.customer, invoiceFile: doc.fileName, invoiceSender: doc.senderName };
+  let verdict;
   if (!found.request) {
     logger.info(`${groupId}: no purchase order for invoice (PO ${meta.po || '?'})`);
-    desk.record({ verdict: 'no-order', customer: meta.customer, po: meta.po, file: doc.fileName });
     await sendTo(config.infoGroupName, noRequestText(meta, { ...ctx, ambiguous: found.ambiguous, name: config.displayName }));
+    // Without an order there is nothing to compare with, but the arithmetic, the prices and the number can still be checked.
+    const read = await readInvoice({ client, config, invoice: doc });
+    verdict = { verdict: 'no-order', request_customer: '', invoice_customer: read?.invoice_customer || meta.customer, invoice_number: read?.invoice_number || '', invoice: read?.invoice || null, problems: [] };
+  } else {
+    verdict = await checkInvoice({ client, config, request: found.request, invoice: doc });
+  }
+  if (verdict.verdict === 'error') {
+    logger.info(`${groupId}: invoice check failed`);
+    await sendTo(config.infoGroupName, reportText(verdict, { ...ctx, name: config.displayName }));
     return;
   }
-  const verdict = await checkInvoice({ client, config, request: found.request, invoice: doc });
-  logger.info(`${groupId}: invoice ${verdict.verdict}`);
-  desk.record({ verdict: verdict.verdict, customer: verdict.request_customer || meta.customer, po: meta.po, file: doc.fileName, problems: verdict.problems?.length || 0 });
-  const text = reportText(verdict, { ...ctx, name: config.displayName });
-  if (text) await sendTo(config.infoGroupName, text);
-  const warn = staffWarning(verdict, config.displayName);
+  // The arithmetic, the prices against the owner's list and the invoice number: plain checks on what was read.
+  const number = verdict.invoice_number || verdict.invoice?.number || '';
+  const day = new Date().toISOString().slice(0, 10);
+  const own = (verdict.problems || []).map((p) => ({ severity: 'urgent', ...p }));
+  const extra = [
+    ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer }) : []),
+    ...(number ? checkNumber(number, desk.numbers()) : []),
+  ];
+  const problems = [...own, ...extra];
+  const urgent = problems.filter((p) => p.severity !== 'info').length;
+  const priceUrgent = extra.filter((p) => p.kind === 'price-below' && p.severity !== 'info').length;
+  const final = { ...verdict, problems, verdict: verdict.verdict === 'no-order' ? 'no-order' : urgent && verdict.verdict === 'match' ? 'mismatch' : verdict.verdict };
+  logger.info(`${groupId}: invoice ${final.verdict}, ${problems.length} point(s), ${urgent} urgent${book.loaded ? '' : ', no price list stored'}`);
+  desk.record({ verdict: final.verdict, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, po: meta.po, file: doc.fileName, problems: problems.length, urgent, priceUrgent, number });
+  if (verdict.verdict !== 'no-order') {
+    const text = reportText(final, { ...ctx, name: config.displayName });
+    if (text) await sendTo(config.infoGroupName, text);
+  } else if (problems.length) {
+    await sendTo(config.infoGroupName, reportText({ ...final, verdict: 'mismatch' }, { ...ctx, name: config.displayName }));
+  }
+  // The office user is told at once, in the invoices group, what to correct. Nothing is sent to a customer.
+  const warn = staffWarning(final, config.displayName);
   if (warn) await sock.sendMessage(groupId, { text: warn });
 }
 
@@ -292,12 +335,67 @@ const staffHandlersFor = (key, lang = 'fa') => ({
  * reply to the bot, or its name), and the owner's commands run in a private chat or the command group. Messages typed
  * on the bot's own phone count as the owner. Returns true when the message was dealt with here.
  */
+/**
+ * The owner's price list. Sent as text ("لیست قیمت جدید" and the rows), a photo or a PDF with "قیمت" in the caption, in a
+ * private chat or the command group by an admin: Claude (or a plain reader for simple rows) turns it into a table, the
+ * table is shown back, and only a "yes" stores it as the next version. Prices are never logged and never leave this chat.
+ * Also "لیست قیمت", "قیمت کد 408", "قیمت کد 408 برای <customer>", "مشتری استثنا <customer> کد 408 قیمت 11.5".
+ */
+async function handlePriceFlow({ raw, content, text, key, reply, role, where, image, pdf }) {
+  const pending = priceDesk.get(key);
+  if (pending && text) {
+    const kind = answerKind(text);
+    priceDesk.clear(key);
+    if (kind === 'yes') {
+      const saved = book.save(pending.next, role);
+      trace(where, role, `price list stored as version ${saved.version} (${Object.keys(saved.items).length} codes, ${saved.exceptions.length} exceptions)`);
+      await reply(`ثبت شد: نسخهٔ ${saved.version}. نسخهٔ پیشین نگه داشته شد.`);
+      return true;
+    }
+    if (kind === 'no') { await reply('لغو شد. چیزی ثبت نشد.'); return true; }
+  }
+  const command = parsePriceCommand(text);
+  if (command?.type === 'show') { await reply(formatBook(book)); return true; }
+  if (command?.type === 'code') { await reply(formatCodePrice(book, command.code, command.customer)); return true; }
+  if (command?.type === 'exception') {
+    const next = book.withException(command.exception);
+    priceDesk.set(key, { next });
+    await reply(`استثنای تازه: ${command.exception.customer}، کد ${command.exception.code} = ${command.exception.price}${command.exception.from ? ` از ${command.exception.from}` : ''}${command.exception.to ? ` تا ${command.exception.to}` : ''}\nدرست است؟ (بله / نه)`);
+    return true;
+  }
+  const looksLikePrice = /قیمت|price/i.test(text);
+  let blocks = null;
+  let parsed = null;
+  if (command?.type === 'new-list') {
+    const items = parsePriceText(command.text);
+    if (Object.keys(items).length) parsed = { currency: book.data.currency || 'AED', items, exceptions: [] };
+    else blocks = [{ type: 'text', text: command.text }];
+  } else if ((image || pdf) && looksLikePrice) {
+    const buf = await downloadMediaMessage(raw, 'buffer', {});
+    const b64 = buf.toString('base64');
+    blocks = [
+      image ? { type: 'image', source: { type: 'base64', media_type: String(image.mimetype || 'image/jpeg').split(';')[0], data: b64 } } : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+      { type: 'text', text: text || 'Price list.' },
+    ];
+  }
+  if (!parsed && blocks) parsed = await parsePriceDocument({ client, config, blocks });
+  if (!parsed && (blocks || command?.type === 'new-list')) { await reply('نتوانستم لیست قیمت را بخوانم. لطفاً متن یا فایل واضح‌تری بفرستید.'); return true; }
+  if (!parsed) return false;
+  // A list without exceptions keeps the ones already stored.
+  const next = { currency: parsed.currency, items: parsed.items, exceptions: parsed.exceptions.length ? parsed.exceptions : book.data.exceptions };
+  priceDesk.set(key, { next });
+  trace(where, role, `price list received (${Object.keys(next.items).length} codes, ${next.exceptions.length} exceptions): waiting for confirmation`);
+  await reply(formatParsed(next));
+  return true;
+}
+
 async function handleStaffChat(raw, chatId, group) {
   const content = normalizeMessageContent(raw.message);
   const audio = config.voiceEnabled ? content?.audioMessage : null;
   const image = config.imageConfirm ? imageOf(content) : null;
-  const text = textOf(content) || image?.caption || '';
-  if (!text && !audio && !image) {
+  const pdf = content?.documentMessage && /pdf/i.test(String(content.documentMessage.mimetype || '')) ? content.documentMessage : null;
+  const text = textOf(content) || image?.caption || pdf?.caption || '';
+  if (!text && !audio && !image && !pdf) {
     // Never silent: say which kind of message was left alone (its kind only, never its content).
     const kind = ignoredKind(content);
     if (kind) trace(group ? `group "${(await groupInfo(chatId)).subject}"` : 'private', raw.key.fromMe ? 'owner' : 'unknown', `ignored: a ${kind} is not a text, voice note or photo`);
@@ -326,6 +424,11 @@ async function handleStaffChat(raw, chatId, group) {
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
     ownIds: own, names: config.botNames,
   });
+  // The owner's price list and special prices (admins, in a private chat or the command group).
+  if (admin && (!group || group.command)) {
+    if (await handlePriceFlow({ raw, content, text, key: `p:${chatId}`, reply, role, where, image, pdf })) return true;
+  }
+  if (pdf) return false; // a PDF is for the invoice and purchase-order flows
   // "Wrong, <the right answer>" as a reply to one of the assistant's messages: stored for the owner, nothing more.
   const quotedText = textOf(normalizeMessageContent(ctx.quotedMessage));
   const quotedFromBot = !!ctx.participant && own.includes(jidNormalizedUser(ctx.participant));
