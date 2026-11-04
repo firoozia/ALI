@@ -83,3 +83,15 @@ test('the owner teaches in words: stored at once, listed, removable; questions a
   assert.ok(r.version > v);
   assert.equal(r.promptText(), '');
 });
+
+test('Zena / زينه is the manager called by name: dropped when parsing, never a code, a lone call means someone waits', async () => {
+  const { dropAttention, isNudge } = await import('../src/codes.js');
+  assert.equal(dropAttention('Zena 505 available'), '505 available');
+  assert.equal(dropAttention('زينه موجود'), 'موجود');
+  assert.equal(parseCustomerText('زينه 505 موجوددد؟').kind, 'availability');
+  assert.deepEqual(parseCustomerText('زينه 505 موجوددد؟').codes, ['505']);
+  assert.deepEqual(parseCustomerText('Zena, 229 - 5 m').kind, 'order');
+  assert.equal(parseCustomerText('Zena').kind, 'other');
+  for (const t of ['Zena', 'زينه', 'زينه؟', '?', '??', 'Zena ??']) assert.equal(isNudge(t), true, t);
+  for (const t of ['Zena 505', 'ok', '']) assert.equal(isNudge(t), false, t);
+});

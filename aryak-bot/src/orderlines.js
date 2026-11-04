@@ -4,7 +4,7 @@
 // The result is a hint for the answering model and a test target; it never answers anything by itself.
 
 import { normalizeDigits, normalizeLetters } from './text.js';
-import { UNIT_RE, dropBrandWord, tailName, unitOf } from './codes.js';
+import { UNIT_RE, dropAttention, dropBrandWord, tailName, unitOf } from './codes.js';
 
 const UNIT_WORDS = {
   m: 'm', mtr: 'm', mtrs: 'm', meter: 'm', meters: 'm', metre: 'm', metres: 'm',
@@ -22,7 +22,7 @@ const WITH_SPACE = new RegExp(`^(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}\\b`);
 const UNIT_FIRST = new RegExp(`^(${CODE})\\s*[-:=]*\\s*${UNIT}\\s*${NUM}\\b`);
 // the unit is required: "119-6" alone is a code, not 6 of 119.
 
-const cleanLine = (line) => dropBrandWord(normalizeDigits(line)).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
+const cleanLine = (line) => dropAttention(dropBrandWord(normalizeDigits(line))).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
 
 /** One line -> { code, quantity, unit, addOn } or null. */
 function parseOrderLine(raw) {
@@ -49,7 +49,7 @@ const AVAILABILITY_TOKENS = new Set([
 /** "108 available?", "511 AVAILBLE", "116?", "هل 408 متوفر؟", "۴۰۸ موجوده؟" -> the codes asked about; [] when it is more than that. */
 function parseAvailability(raw) {
   const tokens = cleanLine(normalizeLetters(raw)).replace(/[?؟!.,،;/]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
-    .filter((w) => !AVAILABILITY_TOKENS.has(w) && !/^(avail|avil)\w*$/.test(w));
+    .filter((w) => !AVAILABILITY_TOKENS.has(w) && !/^(avail|avil)\w*$/.test(w) && !/^موجو+د+$/.test(w));
   const re = new RegExp(`^${CODE}$`);
   // a bare one or two digit number is more likely a quantity than a code
   return tokens.length && tokens.every((p) => re.test(p) && !/^\d{1,2}$/.test(p)) ? tokens.map((p) => p.toUpperCase()) : [];

@@ -3,7 +3,7 @@
 // who it is for and what is asked. The customer's name is then matched against the known names (see aliases.js).
 
 import { normalizeDigits } from './text.js';
-import { UNIT_RE, dropBrandWord, tailName, unitOf } from './codes.js';
+import { UNIT_RE, dropAttention, dropBrandWord, tailName, unitOf } from './codes.js';
 
 const UNIT_WORDS = { m: 'm', mtr: 'm', mtrs: 'm', meter: 'm', meters: 'm', metre: 'm', metres: 'm', roll: 'roll', rolls: 'roll', pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs', carton: 'carton', cartons: 'carton', ctn: 'carton' };
 const UNIT = UNIT_RE;
@@ -14,7 +14,7 @@ const START = '(?:^|[\\s:،,])';
 const SEPARATED = new RegExp(`${START}(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${UNIT}\\b`, 'g'); // "603 - 15 mtr", "119-6 MTR"
 const SPACED = new RegExp(`${START}(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}\\b`, 'g'); // "229 20 m"
 
-const clean = (s) => dropBrandWord(normalizeDigits(s)).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
+const clean = (s) => dropAttention(dropBrandWord(normalizeDigits(s))).toLowerCase().replace(/[–—−]/g, '-').replace(/\s+/g, ' ').trim();
 const STOP = new Set(['hi', 'hello', 'please', 'pls', 'add', 'also', 'code', 'ok', 'yes', 'no', 'new', 'order', 'thanks', 'send', 'check', 'لطفا', 'سلام']);
 
 /** The words in front of the first order line, as a customer name; '' when they are not a name. */
