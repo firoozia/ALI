@@ -58,7 +58,14 @@ export class NameStore {
   }
 
   /** The read of an invoice message (number and customer), kept so a later "rename" needs no new read. */
-  remember(messageId, number, customer) { if (messageId && number && customer) { this.d.reads[messageId] = { ...(this.d.reads[messageId] || {}), number, customer }; this.save(); } }
+  remember(messageId, number, customer) {
+    if (messageId && number && customer) {
+      const first = !this.d.reads[messageId]?.customer;
+      this.d.reads[messageId] = { ...(this.d.reads[messageId] || {}), number, customer };
+      this.save();
+      if (first && this.onCustomer) { try { this.onCustomer(customer); } catch { /* a note about a name must never stop the invoice flow */ } }
+    }
+  }
   /** The result of the check of an invoice, kept BY INVOICE NUMBER (so the re-posted copy and the original find the same one). */
   setCheck(number, c) { if (number) { (this.d.checks ||= {})[String(number).toLowerCase()] = { ...c, at: this.now() }; const k = Object.keys(this.d.checks); for (const x of k.slice(0, Math.max(0, k.length - 300))) delete this.d.checks[x]; this.save(); } }
   checkOf(number) { return (this.d.checks || {})[String(number || '').toLowerCase()] || null; }

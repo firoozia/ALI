@@ -115,8 +115,8 @@ Kinds of change (no others exist):
 Rules: Use ONLY names that appear in KNOWN CUSTOMERS and GROUPS, copied exactly. If a name he used is not there (or could be two), do NOT guess: put a short Persian question in "questions". Never invent a customer, group, price or number. If the message is only a question, a greeting or chat, return {"changes":[],"questions":[]}. One sentence may hold several changes (for example a renamed group is watched AND the customer's invoices go to it). Do not output anything about prices, discounts, who may give orders, sending without his yes, or permissions: leave those out.`;
 
 /** One paid call (the owner's own message only): the changes the model understood, as parsed JSON, or null. */
-export async function understandTeaching({ client, config, text, customers, groups }) {
-  const user = `KNOWN CUSTOMERS:\n${customers.slice(0, 400).join('\n')}\n\nGROUPS:\n${groups.slice(0, 400).map((g) => g.subject).join('\n')}\n\nMESSAGE:\n${text}`;
+export async function understandTeaching({ client, config, text, customers, groups, same = [] }) {
+  const user = `KNOWN CUSTOMERS:\n${customers.slice(0, 400).join('\n')}\n\n${same.length ? `ALREADY THE SAME CUSTOMER, settled by the invoices - never ask about these and never output them as a change:\n${same.slice(0, 80).map(([a, b]) => `${a} = ${b}`).join('\n')}\n\n` : ''}GROUPS:\n${groups.slice(0, 400).map((g) => g.subject).join('\n')}\n\nMESSAGE:\n${text}`;
   const res = await client.beta.messages.create({ model: config.model, max_tokens: 1200, system: SYSTEM, messages: [{ role: 'user', content: user }], output_config: { effort: 'low' } });
   const out = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   const m = /\{[\s\S]*\}/.exec(out);
@@ -131,10 +131,14 @@ export async function understandTeaching({ client, config, text, customers, grou
 export function validateChanges(raw, ctx, userText = '') {
   const items = []; const questions = []; const refused = [];
   const customer = (n) => ctx.customers.find((c) => nameKey(c) === nameKey(n));
+  const settled = (a, b) => (ctx.same || []).some(([x, y]) => (nameKey(x) === nameKey(a) && nameKey(y) === nameKey(b)) || (nameKey(x) === nameKey(b) && nameKey(y) === nameKey(a)));
   const group = (n) => ctx.groups.find((g) => nameKey(g.subject) === nameKey(n));
   const internal = (g) => ['internal group', 'test group'].includes(groupAllowed(g.subject, ctx.config).why);
   const list = Array.isArray(raw?.changes) ? raw.changes.slice(0, MAX_CHANGES) : [];
-  for (const q of Array.isArray(raw?.questions) ? raw.questions : []) if (typeof q === 'string' && q.trim()) questions.push(q.trim().slice(0, 200));
+  for (const q of Array.isArray(raw?.questions) ? raw.questions : []) {
+    // a question "is X the same customer as Y" is not asked when an invoice already settled it
+    if (typeof q === 'string' && q.trim() && !(ctx.same || []).some(([x, y]) => q.toLowerCase().includes(String(x).toLowerCase()) && q.toLowerCase().includes(String(y).toLowerCase()))) questions.push(q.trim().slice(0, 200));
+  }
   if (WIDENING.test(userText)) refused.push('widening');
   else if (PRICE.test(userText)) refused.push('price');
   if (refused.length) return { items, questions, refused };
@@ -151,7 +155,7 @@ export function validateChanges(raw, ctx, userText = '') {
     } else if (c.kind === 'alias') {
       const cu = customer(c.customer); const al = String(c.alias || '').replace(/\s+/g, ' ').trim();
       if (!cu) questions.push(`مشتری «${String(c.customer).slice(0, 80)}» را در فهرست نمی‌شناسم؛ کدام مشتری است؟`);
-      else if (!al || al.length > 80 || nameKey(al) === nameKey(cu)) continue;
+      else if (!al || al.length > 80 || nameKey(al) === nameKey(cu) || settled(cu, al)) continue; // already the same customer: nothing to ask or save
       else push('alias', { customer: cu, alias: al }, `${al} = ${cu} (یک مشتری)`);
     } else if (c.kind === 'row') {
       const cu = customer(c.customer);
@@ -316,7 +320,7 @@ const keyOf = (i) => `${i.kind}|${JSON.stringify(i.data)}`;
  * offered as a rule in his own words ([fallbackRule]) for his yes: nothing is ever stored at once.
  * Returns { kind: 'refuse', message } | { kind: 'none' } | { kind: 'propose', items, questions, original, round, note }.
  */
-export async function runTeaching({ text, previous = null, explicit = false, client, config, customers, groups, fallbackRule = '' }) {
+export async function runTeaching({ text, previous = null, explicit = false, client, config, customers, groups, fallbackRule = '', same = [] }) {
   const userText = previous ? `${previous.original}\n${text}` : text;
   if (wideningIn(userText)) return { kind: 'refuse', message: WIDENING_REPLY };
   if (PRICE.test(userText)) return { kind: 'refuse', message: PRICE_REPLY };
@@ -324,8 +328,8 @@ export async function runTeaching({ text, previous = null, explicit = false, cli
     ? `${previous.original}\n\nThe assistant asked: ${previous.questions.map((q, i) => `(${i + 1}) ${q}`).join(' ')}\nHis answer: ${text}`
     : text;
   let raw = null;
-  try { raw = await understandTeaching({ client, config, text: asked, customers, groups }); } catch { raw = null; }
-  const v = validateChanges(raw, { customers, groups, config }, userText);
+  try { raw = await understandTeaching({ client, config, text: asked, customers, groups, same }); } catch { raw = null; }
+  const v = validateChanges(raw, { customers, groups, config, same }, userText);
   if (v.refused.includes('widening')) return { kind: 'refuse', message: WIDENING_REPLY };
   if (v.refused.includes('price')) return { kind: 'refuse', message: PRICE_REPLY };
   const note = v.refused.includes('internal') ? 'یک گروه داخلی بود و نمی‌شود آن را زیر نظر یا برای فاکتور مشتری گذاشت؛ کنار گذاشته شد.' : '';

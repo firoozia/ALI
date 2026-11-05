@@ -25,7 +25,7 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
-import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, mergeSources } from './customergroups.js';
+import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, learnPrintedName, mergeSources, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
 import { WatchList } from './watchlist.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
@@ -309,7 +309,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -590,7 +590,9 @@ async function teachFlow({ text, reply, previous = null, explicit = false }) {
   const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
   const names = mergeSources(customerNames.names(), { ...knownInvoiceCustomers() }).customers;
   const customers = [...new Set([...names, ...customerGroups.rows().map((r) => r.customer), ...Object.keys(aliases.map)])];
-  const r = await runTeaching({ text, previous, explicit, client, config, customers, groups: all, fallbackRule: ruleFrom(text, config.botNames) });
+  // pairs the invoices already settled (never asked about again): the stored aliases and the near duplicates with exactly one name printed on an invoice
+  const same = [...Object.entries(aliases.map).flatMap(([c, o]) => o.map((x) => [c, x])), ...settleDuplicates(names, knownInvoiceCustomers().customers).merges.flatMap((m) => m.others.map((o) => [m.main, o]))];
+  const r = await runTeaching({ text, previous, explicit, client, config, customers, groups: all, fallbackRule: ruleFrom(text, config.botNames), same });
   if (r.kind === 'refuse') { await reply(r.message); return true; }
   if (r.kind === 'none') {
     if (previous) { await reply('پاسخ را نفهمیدم؛ دوباره بنویسید یا بنویسید نه. چیزی ذخیره نشد.'); return true; }
@@ -601,6 +603,9 @@ async function teachFlow({ text, reply, previous = null, explicit = false }) {
   return true;
 }
 const knownInvoiceCustomers = () => collectCustomers({ reads: nameStore.d.reads, events: tracker.events, aliasMap: aliases.map });
+// A name printed on an invoice that differs from a stored customer but clearly is that customer: the row and its groups stay (never moved); the printed name
+// becomes the main name (the stored one its alias) and one line goes to the daily digest.
+nameStore.onCustomer = (printed) => { const note = learnPrintedName(printed, { list: customerGroups, aliases, config }); if (note) customerGroups.addNote(note); };
 const oneShot = new OneShot();
 const sendDesk = new SendDesk();
 
@@ -1189,7 +1194,7 @@ async function handleStaffChat(raw, chatId, group) {
     if (wanted) {
       if (!isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) { trace(where, 'owner', 'ignored: the customer-group list answers only the owner'); return true; }
       const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
-      for (const part of customerDesk.handle(wanted, { groups: all, known: { ...knownInvoiceCustomers(), aliasMap: aliases.map } })) await reply(part);
+      for (const part of customerDesk.handle(wanted, { groups: all, known: { ...knownInvoiceCustomers(), aliasMap: aliases.map, addAlias: (main, other) => aliases.add(main, other) } })) await reply(part);
       return true;
     }
   }

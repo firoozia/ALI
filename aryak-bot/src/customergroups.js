@@ -85,6 +85,10 @@ export class CustomerGroups {
   decline(customer, jid) { if (!this.isDeclined(customer, jid)) { this.d.declined.push(`${nameKey(customer)}|${jid}`); this.persist(); } }
   isDeclined(customer, jid) { return this.d.declined.includes(`${nameKey(customer)}|${jid}`); }
 
+  /** Short English lines for the next daily digest (a name printed on an invoice that matched a stored customer). */
+  addNote(line) { (this.d.notes ||= []).push(line); this.d.notes = this.d.notes.slice(-40); this.persist(); }
+  takeNotes() { const n = this.d.notes || []; if (n.length) { this.d.notes = []; this.persist(); } return n; }
+
   /** The customers named in a digest line as having no group (each is named once). */
   newUnmapped(customers, config, { mark = true } = {}) {
     if (!this.size) return []; // no list yet: the proposal comes first, no line per customer
@@ -279,6 +283,63 @@ export function clearWinner(ranked) {
   return top.shared >= 2 && (!second || second.shared < top.shared);
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------- the same customer written twice
+/** Words that only make a company name longer ("Trading", "LLC", "Co"). */
+const SUFFIX_WORDS = new Set(['trading', 'company', 'companies', 'co', 'llc', 'ltd', 'limited', 'est', 'estb', 'establishment', 'fzc', 'fze', 'fzco', 'general', 'group', 'enterprise', 'enterprises', 'industries', 'industry', 'international', 'intl', 'and', 'the', 'aryak', 'aryaak']);
+const suffixless = (s) => nameTokens(s).filter((t) => t.length >= 2 && !SUFFIX_WORDS.has(t) && !/^\d+$/.test(t));
+
+/**
+ * Are these two names one customer written twice (a short and a long form, or two spellings)? Every word of the shorter is in the longer
+ * (near spellings count), the longer adds only generic words, and the distinctive words are the same. "Atlas Kitchen" and "Atlas Commercial"
+ * are NOT (each has a word the other lacks); "Master Wood" and "Master Wood Branch" are NOT (branch is a distinctive word).
+ */
+export function nearDuplicate(a, b) {
+  const ma = matchWords(a); const mb = matchWords(b);
+  if (ma.weak || mb.weak || !ma.list.length || !mb.list.length) return false;
+  const ta = suffixless(a); const tb = suffixless(b);
+  if (!ta.length || !tb.length) return false;
+  const [s, l] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (pairScore(s, l).shared !== s.length) return false;
+  const ss = matchWords(s.join(' ')).list; const sl = matchWords(l.join(' ')).list;
+  return ss.length > 0 && ss.length === sl.length && pairScore(ss, sl).shared === ss.length;
+}
+
+/**
+ * Near-duplicate names among [names], settled by the invoices: the name printed on an invoice is the main name and the other becomes its
+ * alias without asking; only when neither (or both) was seen on an invoice is he asked. [seen]: names printed on invoices.
+ * Returns { merges: [{ main, others }], ask: [[names]] }.
+ */
+export function settleDuplicates(names, seen = []) {
+  const seenKeys = new Set(seen.map(nameKey));
+  const parent = names.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) if (nameKey(names[i]) !== nameKey(names[j]) && nearDuplicate(names[i], names[j])) parent[find(j)] = find(i);
+  const groups = new Map();
+  names.forEach((n, i) => { const r = find(i); groups.set(r, [...(groups.get(r) || []), n]); });
+  const merges = []; const ask = [];
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    const onInvoice = members.filter((m) => seenKeys.has(nameKey(m)));
+    if (onInvoice.length === 1) merges.push({ main: onInvoice[0], others: members.filter((m) => m !== onInvoice[0]) });
+    else if (!onInvoice.length) ask.push(members); // both printed on invoices: they are two names the customers use, left alone
+  }
+  return { merges, ask };
+}
+
+/**
+ * A name printed on a new invoice that is not in the list but clearly is a stored customer: the row and its groups are NOT touched (a row never
+ * moves to another group on its own); the printed name becomes the main name (the stored one its alias). Returns the digest line, or null.
+ */
+export function learnPrintedName(printed, { list, aliases, config }) {
+  if (!printed || !nameKey(printed) || isTestCustomer(printed, config.testCustomerName)) return null;
+  if (list.find(printed, altNames(aliases.map, printed))) return null;
+  const row = list.rows().find((r) => nearDuplicate(r.customer, printed));
+  if (!row) return null;
+  aliases.add(printed, row.customer);
+  return `Invoice name "${printed}" is the stored customer "${row.customer}": same group kept, the invoice name is the main name now`;
+}
+
 // ---------------------------------------------------------------------------------------------------------------- the proposal
 /**
  * GROUP-CENTRED: one row per customer group not yet in the list (never an internal or other group), so the owner reads about as many
@@ -315,7 +376,7 @@ export function buildProposal({ customers, groups, config, list, aliasMap = {}, 
   const words = (config.shadowGroupNames || []).map(lowName).filter(Boolean);
   const others = groups.filter((g) => !shadowGroup(g.subject, config) && !['internal group', 'test group'].includes(groupAllowed(g.subject, config).why)
     && (observedGroup(g.subject, config) || words.some((w) => lowName(g.subject).includes(w)))).map((g) => g.subject);
-  return { at: now, invoices, sources, rows, noGroup, groupCount, others };
+  return { at: now, invoices, sources, rows, noGroup, groupCount, others, merged: [], dupAsk: [] };
 }
 
 /** The proposal (and then the current list) as messages of about 40 rows each, in Persian, names exactly as they are. */
@@ -345,6 +406,8 @@ export function proposalTexts(proposal, list) {
   section('options', '❓ چند مشتری ممکن برای این گروه (شمارهٔ مشتری درست را بنویسید):', (r) => `${persianDigits(r.n)}. ${r.group.subject}`);
   section('none', '⛔ گروه بی‌مشتری (نام مشتری را بنویسید):', (r) => `${persianDigits(r.n)}. ${r.group.subject}`);
   if (!proposal.rows.some((r) => r.status === 'open')) { push(''); push('گروه تازه‌ای بدون پاسخ نیست.'); }
+  if (proposal.merged?.length) { push(''); push(`نام‌های تکراریِ فهرست حسابداری که خودم یکی کردم (${persianDigits(proposal.merged.length)}؛ نامِ چاپ‌شده روی فاکتور اصلی ماند):`); for (const m of proposal.merged.slice(0, 10)) push(`• ${m.main} ← ${m.others.join('، ')}`); }
+  if (proposal.dupAsk?.length) { push(''); push(`نام‌های تقریباً تکراری که روی هیچ فاکتوری ندیده‌ام (${persianDigits(proposal.dupAsk.length)}): نام درست را با «نام اصلی <نام>» بگویید.`); for (const g of proposal.dupAsk.slice(0, 10)) push(`• ${g.join(' / ')}`); }
   if (proposal.noGroup.length) { push(''); push(`مشتریانی که گروهی زیر نظر برایشان نیست: ${persianDigits(proposal.noGroup.length)} نام (برای دیدن نام‌ها بنویسید «نام‌های بی‌گروه»).`); }
   if (proposal.others?.length) { push(''); push(`گروه‌های زیر نظر که گروه مشتری حساب نشدند و ردیفی ندارند (${persianDigits(proposal.others.length)}): ${proposal.others.slice(0, 12).join('، ')}${proposal.others.length > 12 ? ' …' : ''}`); }
   push('');
@@ -407,6 +470,8 @@ export function parseListCommand(text) {
   if (!s) return null;
   if (/^(?:فهرست|لیست)\s*مشتری(?:\s*و|\s*[/-])?\s*گروه(?:\s*ها)?$/u.test(s) || /^customer\s*(?:and\s*)?group\s*list$/i.test(s)) return { type: 'list' };
   if (/^نام\s*ها(?:ی)?\s*بی\s*گروه$/u.test(s)) return { type: 'nogroup' };
+  let mm = /^نام\s*اصلی\s+(.+)$/u.exec(s);
+  if (mm) return { type: 'mainname', name: mm[1].trim() };
   if (/^تایید\s*همه$/u.test(s) || /^approve\s*all$/i.test(s)) return { type: 'approveAll' };
   let m = /^(?:تایید|approve)\s+(\d+(?:[\s,،و]+\d+)*)$/iu.exec(s);
   if (m) return { type: 'approve', nums: m[1].split(/[\s,،و]+/).map(Number) };
@@ -476,9 +541,25 @@ export class CustomerGroupDesk {
         this.pending = { kind: 'import', names, at: this.now() };
         return [`${persianDigits(names.length)} نام مشتری دریافت شد${dropped ? ` (${persianDigits(dropped)} نام اضافه بر ${persianDigits(MAX_NAMES)} نام نگرفتم)` : ''}. ${this.book.size ? `فهرست قبلی (${persianDigits(this.book.size)} نام) جایگزین می‌شود و نسخه‌اش می‌ماند؛ ` : ''}ردیف‌های تأییدشدهٔ مشتری و گروه دست نمی‌خورند.\nذخیره شود؟ بله / نه. اگر بخش بعدی فهرست را بفرستید به همین ادغام می‌شود (تا ${persianDigits(MAX_NAMES)} نام). چیزی فرستاده نمی‌شود.`];
       }
+      case 'mainname': {
+        const all = mergeSources(this.book.names(), known).customers;
+        const main = all.find((n) => nameKey(n) === nameKey(p.name));
+        if (!main) return [`نام «${p.name}» در فهرست نام‌ها نیست. چیزی تغییر نکرد.`];
+        const others = all.filter((n) => nameKey(n) !== nameKey(main) && nearDuplicate(n, main));
+        if (!others.length) return [`برای «${main}» نام تقریباً تکراری پیدا نکردم. چیزی تغییر نکرد.`];
+        for (const o of others) known.addAlias?.(main, o);
+        return [`ثبت شد: «${main}» نام اصلی است و ${others.map((o) => `«${o}»`).join('، ')} نام دیگر آن. ردیف تأییدشده‌ای تغییر نکرد.`];
+      }
       case 'list': {
         const merged = mergeSources(this.book.names(), known);
+        // the same customer written twice in the accounting list: the name printed on an invoice wins, the other becomes its alias (no question)
+        const settled = settleDuplicates(merged.customers, known.customers || []);
+        for (const m of settled.merges) for (const o of m.others) known.addAlias?.(m.main, o);
+        const gone = new Set(settled.merges.flatMap((m) => m.others.map(nameKey)));
+        merged.customers = merged.customers.filter((n) => !gone.has(nameKey(n)));
         const proposal = buildProposal({ customers: merged.customers, groups, config: this.config, list: this.list, aliasMap: known.aliasMap, invoices: known.invoices, sources: { fromBook: merged.fromBook, fromInvoices: merged.fromInvoices }, now: this.now() });
+        proposal.merged = settled.merges;
+        proposal.dupAsk = settled.ask;
         this.list.d.proposal = proposal; // a new proposal replaces the pending one; its row numbers stay until he answers
         this.list.persist();
         return proposalTexts(proposal, this.list);
