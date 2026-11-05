@@ -87,6 +87,13 @@ export function loadConfig(env = process.env) {
     shadowDailyCalls: Number(env.SHADOW_DAILY_MODEL_CALLS || 400),
     shadowCardGapSeconds: Number(env.SHADOW_CARD_GAP_SECONDS || 20),
     shadowCompareMinutes: Number(env.SHADOW_COMPARE_MINUTES || 60),
+    // cost control in the tracked internal groups (cut, delivery, confirmation, goods): the free caption reader always runs, the model
+    // fallback (a photo or an unreadable caption sent to the model) only when TRACK_MODEL is on; CUT_TRACKING=off stops the cut reading too
+    trackModel: /^(1|true|on|yes)$/i.test(env.TRACK_MODEL || ''),
+    cutTracking: !/^(0|false|off|no)$/i.test(env.CUT_TRACKING || 'on'),
+    costModelUsd: Number(env.COST_MODEL_USD || 0.01),
+    costVisionUsd: Number(env.COST_VISION_USD || 0.012),
+    costSpeechUsd: Number(env.COST_SPEECH_USD || 0.016),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),

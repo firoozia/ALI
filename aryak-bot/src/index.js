@@ -19,6 +19,9 @@ import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup, shadowGroup } from './guard.js';
 import { ShadowDesk, ShadowStore, dayLine, parseCardCorrection, parseShadowCommand, weekSummary } from './shadow.js';
 import { placeLanguage, toEnglish } from './english.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { UsageMeter, hasVisual } from './usage.js';
+import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -61,6 +64,19 @@ if (!config.allowedGroups.length && !config.allowedGroupNames.length) {
   console.error('Set ALLOWED_GROUP_NAMES (a word in the group names) or ALLOWED_GROUPS; otherwise the assistant answers nowhere.');
 }
 const client = new Anthropic();
+// The paid calls are counted per group and kind (the group is carried through the handling of a message).
+const usageCtx = new AsyncLocalStorage();
+const usage = new UsageMeter(path.join(config.authDir, 'usage'), { timeZone: config.timezone, cost: { model: config.costModelUsd, vision: config.costVisionUsd, speech: config.costSpeechUsd } });
+try {
+  const rawCreate = client.beta.messages.create.bind(client.beta.messages);
+  client.beta.messages.create = async (params, ...rest) => {
+    const group = usageCtx.getStore()?.group || '-';
+    usage.count(group, 'model');
+    if (hasVisual(params)) usage.count(group, 'vision');
+    return rawCreate(params, ...rest);
+  };
+} catch (e) { console.warn(`paid calls are not counted: ${e.message}`); }
+setInterval(() => usage.save(), 60 * 1000).unref();
 // The prompt: the rules and knowledge files, plus what the owner approved from the experience store (rebuilt when it changes).
 let systemCache = { version: -1, text: '' };
 const systemPrompt = () => {
@@ -89,6 +105,7 @@ const botState = new BotState(config.authDir); // pause switch
 const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
 const staffChats = new Set(); // private chats a staff member started: the assistant may answer there
+const lastPhotos = new Map(); // chat and sender -> their latest picture message (kept in memory, read only when she is asked about it)
 const keepLang = new WeakSet(); // replies that keep their own language (the test-only played customer or owner)
 const quietContents = new WeakSet(); // messages that are not an answer to anyone (the good-morning message): never counted for learning
 // What the customer-flow gate did with a message, in words (the gate also watches staff messages: a colleague's
@@ -271,7 +288,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [usage.line(), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -469,6 +486,8 @@ async function trackGroup(raw, groupId, role) {
   }
   if (role === 'goods') return; // only the shapes above are read there
   if (!image && !/\d/.test(text) && text.length < 12) return; // a greeting or a thanks
+  // The free caption reader is done. Anything else would be a paid call (and a photo download): only when the owner allows it.
+  if (!mayTrackWithModel(config)) { usage.count(groupLabel((await groupInfo(groupId)).subject), 'notRead'); return; }
   const images = [];
   if (image) {
     try { images.push({ base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: String(image.mimetype || 'image/jpeg').split(';')[0] }); } catch (e) { logger.warn(`tracker: photo download failed: ${e.message}`); }
@@ -607,7 +626,7 @@ async function understandPhotos(messagesWithImages, caption, fallbackLang, force
 async function understandAudio(load, seconds, forceLang = '') {
   // A long note is not even downloaded.
   if (seconds > MAX_SECONDS) { logger.info(`voice: ${seconds} s is too long, skipped`); return { ok: false, reason: 'too long' }; }
-  try { return await understand({ buffer: await load(), seconds, config, client, transcribe, forceLang, log: (s) => logger.info(s) }); }
+  try { return await understand({ buffer: await load(), seconds, config, client, transcribe: async (...a) => { usage.count(usageCtx.getStore()?.group || '-', 'speech'); return transcribe(...a); }, forceLang, log: (s) => logger.info(s) }); }
   catch (e) { logger.warn(`voice failed: ${e.message}`); return { ok: false, reason: 'error' }; }
 }
 
@@ -841,7 +860,9 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '' }) 
 async function handleStaffChat(raw, chatId, group) {
   const content = normalizeMessageContent(raw.message);
   const audio = config.voiceEnabled ? content?.audioMessage : null;
-  const image = config.imageConfirm ? imageOf(content) : null;
+  let image = config.imageConfirm ? imageOf(content) : null;
+  let imageRaw = raw; // the message the picture is downloaded from (the quoted or the earlier one when she is asked about "the picture above")
+  if (imageOf(content)) { lastPhotos.set(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`, { raw, image: imageOf(content), at: Date.now() }); if (lastPhotos.size > 80) lastPhotos.delete(lastPhotos.keys().next().value); }
   const pdf = content?.documentMessage && /pdf/i.test(String(content.documentMessage.mimetype || '')) ? content.documentMessage : null;
   let text = textOf(content) || image?.caption || pdf?.caption || '';
   if (!text && !audio && !image && !pdf) {
@@ -909,6 +930,9 @@ async function handleStaffChat(raw, chatId, group) {
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
     ownIds: own, names: config.botNames,
   });
+  // Cost control: in the cut, delivery, confirmation, information and invoices groups a photo or a voice note is never read by itself
+  // (no download, no vision, no speech); only a message that addresses her by name, or answers her, may be.
+  if ((audio || image) && !mayReadMedia({ group, addressed })) { trace(where, role, 'media left alone (cost control): not addressed to the assistant'); return true; }
   // The pipeline commands of the owner: a hold on delivery until cash is confirmed, the balance of a customer, the open orders.
   if (admin && (!group || group.command)) {
     const tc = parseTrackerCommand(text);
@@ -1004,6 +1028,14 @@ async function handleStaffChat(raw, chatId, group) {
   }
   // A voice note is only answered with a question; the request goes on after the same person says yes.
   const key = `s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
+  // "atossa read the picture above": addressed with no picture attached -> the quoted picture, or that person's previous one, read once
+  if (!image && !audio && addressed && text && config.imageConfirm && /\b(?:pictures?|photos?|image|pic)\b|عکس|تصویر|صورة|صوره/i.test(text)) {
+    const quoted = ctx.quotedMessage ? imageOf(normalizeMessageContent(ctx.quotedMessage)) : null;
+    const last = lastPhotos.get(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`);
+    if (quoted && ctx.stanzaId) { image = quoted; imageRaw = { key: { remoteJid: chatId, id: ctx.stanzaId, participant: ctx.participant }, message: ctx.quotedMessage }; }
+    else if (last && Date.now() - last.at < 30 * 60 * 1000) { image = last.image; imageRaw = last.raw; }
+    else { await reply('Please send the photo again with my name in the caption.'); return true; }
+  }
   if (audio) {
     // Nobody says the assistant's name outside the audio, so a colleague's voice note is always read; the words
     // in it decide. Addressed anyway: a mention, a reply to the assistant, a private chat, or a note that
@@ -1037,7 +1069,7 @@ async function handleStaffChat(raw, chatId, group) {
     const written = staffLang;
     trace(where, role, `photo received${image.mimetype ? ` (${String(image.mimetype).split(';')[0]})` : ''}: reading it`);
     let photo;
-    const loadPhoto = async () => { photo = photo || { base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: image.mimetype?.split(';')[0] || 'image/jpeg' }; return photo; };
+    const loadPhoto = async () => { photo = photo || { base64: (await downloadMediaMessage(imageRaw, 'buffer', {})).toString('base64'), mimeType: image.mimetype?.split(';')[0] || 'image/jpeg' }; return photo; };
     const mayCheck = explicit || !group || !!group?.test;
     // A caption that says invoice (or asks to compare or check): the invoice checker, not the order flow.
     if (looksLikeInvoice(text) && mayCheck) {
@@ -1265,6 +1297,8 @@ setInterval(async () => {
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
+  const store = usageCtx.getStore();
+  if (store) store.group = groupLabel((await groupInfo(groupId)).subject);
   const isTest = isTestSubject((await groupInfo(groupId)).subject);
   if (isTest) {
     // A test group: the account's own messages run the real paths here; the reports stay in the group and the memory is separate.
@@ -1298,11 +1332,11 @@ async function onMessage(raw) {
   // "Invoice inv-9910 delete this one": a deleted number is a legitimate gap in the numbering
   const delNo = deletedInvoice(textOf(normalizeMessageContent(raw.message)));
   if (delNo) tracker.markDeleted(delNo);
-  if (trackRole) trackGroup(raw, groupId, trackRole).catch((e) => logger.warn(`tracker failed: ${e.message}`));
+  if (trackRole && (trackRole !== 'cut' || config.cutTracking)) trackGroup(raw, groupId, trackRole).catch((e) => logger.warn(`tracker failed: ${e.message}`));
   const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...config.commandGroupNames].filter(Boolean);
   if (staffWords.length) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();
-    if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)), tracked: !!trackRole })) return;
+    if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)), tracked: !!trackRole, quiet: isQuietSubject(subject, config) })) return;
   }
   if (config.watchGroupNames.length || config.invoiceGroupName) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();
@@ -1416,7 +1450,7 @@ async function start() {
       // A message this account sent itself (the good-morning message, an answer) coming back is never read as a message of a person.
       if (raw?.key?.fromMe && sent.has(raw.key.id)) continue;
       // Each message is handled on its own: a slow answer to one never holds back the next.
-      onMessage(raw).catch((e) => logger.error(`message failed: ${e.message}`));
+      usageCtx.run({ group: '-' }, () => onMessage(raw)).catch((e) => logger.error(`message failed: ${e.message}`));
     }
     if (history) logger.info(`upsert ${type}: ${history} older message(s) ignored`);
   });
