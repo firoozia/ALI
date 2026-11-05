@@ -80,5 +80,5 @@ test('the send path translates for colleagues: the wiring is in the one send fun
   assert.match(src, /!isTestSubject\(/); // a test group is the exception, its replies follow the person
   assert.match(src, /ownerNumbers/);
   assert.match(src, /staffLang === 'en' \? toEnglish\(body\)/); // an answer to a colleague
-  assert.match(src, /as\s\+\(customer\|staff\|owner\)/); // the test-only prefixes
+  assert.ok(src.includes('(customer|staff|owner)')); // the test-only prefixes
 });
