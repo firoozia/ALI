@@ -23,6 +23,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { UsageMeter, hasVisual } from './usage.js';
 import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
 import { NameStore, meaninglessName, nameLineText, readableFileName } from './nameline.js';
+import { cleanOutgoing } from './outgoing.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -1336,7 +1337,11 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
   const referral = result.managerTexts.length ? 'Would send the sales manager a private report (nothing sent)' : '';
   if (!result.reply && !referral) return { action: 'none' };
   if (!result.reply) return { action: 'manager', note: [note, referral].filter(Boolean).join('\n'), customer, calls };
-  return { action: 'answer', reply: applyTags(result.reply, config.team).text, lang, note: [note, referral].filter(Boolean).join('\n'), customer, calls };
+  // the real message ends with a mention of the colleagues ("@" and their numbers, resolved when it is sent); the card says it in words
+  const tagged = applyTags(result.reply, config.team);
+  const body = tagged.text.replace(/\n@\d+(?: @\d+)*\s*$/, '');
+  const tagNote = tagged.mentions.length ? 'Would also tag a colleague (a real mention in the message)' : '';
+  return { action: 'answer', reply: body, lang, note: [note, referral, tagNote].filter(Boolean).join('\n'), customer, calls };
 }
 
 const shadowDesk = new ShadowDesk({ store: shadowStore, post: shadowPost, analyze: shadowAnalyze, config, log: (s) => logger.warn(s) });
@@ -1468,6 +1473,10 @@ async function start() {
     return !([...(config.ownerNumbers || []), ...ownIds()].map(jidDigits).includes(d));
   };
   sock.sendMessage = async (...a) => {
+    if (typeof a[1]?.text === 'string') {
+      const c = cleanOutgoing(a[1].text);
+      if (c.changed) { logger.warn('an unresolved placeholder was removed from an outgoing text'); if (!c.text) return undefined; a[1] = { ...a[1], text: c.text }; }
+    }
     if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && !keepLang.has(a[1])) {
       try { if (await englishFor(a[0])) { const en = toEnglish(a[1].text); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } } catch { /* sent as written */ }
     }
