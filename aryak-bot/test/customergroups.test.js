@@ -322,3 +322,26 @@ test('"approve all" never saves a near spelling or a one-word win: only exact, c
   assert.equal(list.rows().filter((r) => ['f1@g.us', 'f2@g.us', 'f3@g.us'].includes(r.jid)).length, 0); // nothing was confident but the exact orion
   assert.equal(list.find('Orion Design')?.jid, 'f4@g.us');
 });
+
+test('approved rows stay exactly as they were after a restart and a new proposal; the new proposal shows only the groups still open, renumbered', () => {
+  const { run, list, desk, dir, book } = mk();
+  run('فهرست مشتری و گروه');
+  run('تأیید همه');
+  const before = JSON.stringify(list.d.rows);
+  const version = list.d.version;
+  const approvedJids = new Set(list.rows().flatMap((r) => r.groups.map((g) => g.jid)));
+  assert.ok(approvedJids.size >= 5);
+  const list2 = new CustomerGroups(dir); // a restart
+  const desk2 = new CustomerGroupDesk({ list: list2, config, book: new NameBook(dir) });
+  assert.equal(JSON.stringify(list2.d.rows), before);
+  assert.equal(list2.d.version, version);
+  const texts = desk2.handle(desk2.wants('فهرست مشتری و گروه'), { groups: GROUPS, known }).join('\n');
+  assert.equal(JSON.stringify(list2.d.rows), before); // asking for a proposal changes no approved row
+  assert.equal(list2.d.version, version);
+  const rows = desk2.proposal.rows;
+  assert.deepEqual(rows.map((r) => r.n), rows.map((_, i) => i + 1)); // renumbered from one
+  for (const r of rows) for (const g of (r.groups || [r.group])) assert.ok(!approvedJids.has(g.jid), g.subject); // only groups still open
+  assert.ok(texts.includes('فهرست تأییدشدهٔ فعلی'));
+  assert.equal(book.size, NAMES.length);
+  assert.ok(desk.proposal);
+});
