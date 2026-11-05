@@ -113,7 +113,7 @@ test('captions become events: an opened roll is internal, several customers in o
   assert.equal(eventsFromCaption('payment', '300 sell car').ignore, true);
   assert.equal(eventsFromCaption('payment', 'CLEARED').cleared, true);
   assert.ok(!JSON.stringify(eventsFromCaption('payment', 'Your AC No: XXXX9999 is credited with AED 10.00')).includes('9999'));
-  assert.equal(eventsFromCaption('goods', 'JUWAT 10 GALLEN RECEIVED').events[0].kind, 'received');
+  assert.equal(eventsFromCaption('goods', 'JUWAT 10 GALLEN RECEIVED'), null); // goods arriving are kept by received.js
   assert.equal(eventsFromCaption('cut', 'good morning'), null);
 });
 

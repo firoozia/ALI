@@ -41,7 +41,8 @@ export function eventsFromCaption(role, text) {
   }
   if (role === 'goods') {
     const g = parseGoodsCaption(text);
-    return g ? { events: [{ type: 'goods', kind: g.kind, customer: g.customer, item: g.item, quantity: g.quantity, unit: g.unit, lines: [] }] } : null;
+    // goods that arrived are kept by received.js, in any internal group, as stock coming in
+    return g && g.kind !== 'received' ? { events: [{ type: 'goods', kind: g.kind, customer: g.customer, item: g.item, quantity: g.quantity, unit: g.unit, lines: [] }] } : null;
   }
   return null;
 }

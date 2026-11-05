@@ -20,6 +20,8 @@ import { guardedSend, observedGroup } from './guard.js';
 import { toEnglish } from './english.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
+import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
+import { groupAllowed } from './guard.js';
 import { isSourcingRequest, markSourcingReceived, openSourcing, sourcingAnswer, sourcingCover, sourcingEvent } from './sourcing.js';
 import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups, morningText, morningLang, weekdayNumbers, localParts } from './morning.js';
 import { customerFromMessages, productCode } from './codes.js';
@@ -928,6 +930,11 @@ async function handleStaffChat(raw, chatId, group) {
     const ac = parseAliasCommand(text);
     if (ac) { await reply(ac.list ? aliases.list() : aliases.add(ac.customer, ac.alias) ? `ثبت شد: «${ac.alias}» همان «${ac.customer}» است.` : 'نام را نفهمیدم.'); return true; }
   }
+  // "what was received this week": answered from the received-goods events (read only)
+  if (text && !audio && !image && !pdf && addressed) {
+    const rq = parseReceivedQuery(text);
+    if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
+  }
   // The owner's price list and special prices (admins, in a private chat or the command group).
   if (admin && (!group || group.command)) {
     if (await handlePriceFlow({ raw, content, text, key: `p:${chatId}`, reply, role, where, image, pdf })) return true;
@@ -1120,6 +1127,8 @@ async function watchObserved(raw, groupId, info) {
   }
 }
 
+const watchedSubject = (groupId) => groups.get(groupId)?.subject || '';
+
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
@@ -1130,6 +1139,19 @@ async function onMessage(raw) {
     if (delTest) testTracker.markDeleted(delTest);
     await handleStaffChat(raw, groupId, { command: false, tracked: false, test: true });
     return;
+  }
+  // Goods that arrived ("JUWAT 10 GALLEN RECEIVED"), written in ANY internal group, are remembered as stock coming in.
+  if (config.trackerEnabled && groupAllowed(watchedSubject(groupId), config).why === 'internal group' && !sent.has(raw.key.id)) {
+    const c = normalizeMessageContent(raw.message);
+    const t = textOf(c) || imageOf(c)?.caption || '';
+    const rec = t && receivedFrom(t, { group: groupLabel(watchedSubject(groupId)) });
+    if (rec) {
+      const ref = createHash('sha256').update(`recv|${groupId}|${raw.key.id}`).digest('hex').slice(0, 24);
+      if (tracker.add({ ...rec, ref })) {
+        for (const code of rec.codes) markSourcingReceived(tracker, code);
+        trace(`group "${watchedSubject(groupId)}"`, 'tracker', 'goods received recorded (stock arriving, not a sale)');
+      }
+    }
   }
   observe(raw, groupId).catch((e) => logger.warn(`experience: ${e.message}`));
   // A watched customer group (read only): recorded and learned from, never answered.

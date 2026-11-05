@@ -89,7 +89,7 @@ export function openSourcing(tracker, groupId, { now = Date.now(), maxAgeMs = 3 
 export function markSourcingReceived(tracker, code) {
   let n = 0;
   for (const e of tracker.events) {
-    if (e.type === 'sourcing' && e.status === 'answered' && productCode(e.code) === productCode(code)) { e.status = 'received'; n++; }
+    if (e.type === 'sourcing' && ['open', 'answered'].includes(e.status) && productCode(e.code) === productCode(code)) { e.status = 'received'; n++; }
   }
   if (n) tracker.persist('events');
   return n;

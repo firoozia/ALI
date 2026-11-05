@@ -39,6 +39,8 @@ export function buildDigest({ history, requests, day, timeZone = 'Asia/Dubai', e
   const count = (type) => today.filter((e) => e.type === type).length;
   if (count('cut') || count('delivery') || count('payment')) lines.push(`- برش‌های ثبت‌شده: ${count('cut')}`, `- تحویل‌ها: ${count('delivery')}`, `- پرداخت‌های ثبت‌شده: ${count('payment')}`);
   const open = events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared).length;
+  const received = count('received');
+  if (received) lines.push(`- کالاهای رسیده‌شده: ${received}`);
   if (open) lines.push(`- پرداخت‌های هنوز تأییدنشده («CLEARED» نخورده): ${open}`);
   lines.push(...extraLines);
   if (!orders.length && !checks.length) lines.push('امروز سفارش یا فاکتوری ثبت نشد.');

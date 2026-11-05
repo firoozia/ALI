@@ -140,6 +140,7 @@ export function parseGoodsCaption(text) {
   let item = (s.slice(0, q.index) + ' ' + s.slice(q.index + q[0].length)).replace(/\bFOR\s+.+$/i, ' ').replace(/\bRECEIVED\b/gi, ' ');
   for (const [re, w] of GLUE) item = item.replace(re, w);
   item = title(item.replace(/\s+/g, ' '));
+  item = item.replace(/\s+(?:from)\s*$/i, '').trim();
   return { kind: received ? 'received' : 'goods', item, quantity: num(q[1]), unit, customer: received || !forM ? '' : title(forM[1]) };
 }
 
