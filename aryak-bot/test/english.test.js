@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasPersian, toEnglish } from '../src/english.js';
+import { hasPersian, placeLanguage, toEnglish } from '../src/english.js';
 import { PriceBook } from '../src/prices.js';
 import { auditInvoice, checkNumber } from '../src/audit.js';
 import { noRequestText, reportText, staffWarning } from '../src/invoice.js';
@@ -77,8 +77,32 @@ test('the send path translates for colleagues: the wiring is in the one send fun
   const path = await import('node:path');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(src, /englishFor\(a\[0\]\)/); // every send passes the language check
-  assert.match(src, /!isTestSubject\(/); // a test group is the exception, its replies follow the person
+  assert.match(src, /why === 'internal group' \|\| why === 'test group'/); // every company group, the test group too, is English
   assert.match(src, /ownerNumbers/);
   assert.match(src, /staffLang === 'en' \? toEnglish\(body\)/); // an answer to a colleague
   assert.ok(src.includes('(customer|staff|owner)')); // the test-only prefixes
+});
+
+test('the language follows the place: English in every company group (even for the owner writing Persian), the language of the customer in a customer group, Persian only in private with the owner', () => {
+  // the owner writes Persian in a company group (staff, invoice, information, test ...): English
+  for (const kind of ['company-group']) assert.equal(placeLanguage({ kind, owner: true, written: 'fa' }), 'en');
+  // another colleague, any language, in a company group: English
+  assert.equal(placeLanguage({ kind: 'company-group', owner: false, written: 'ar' }), 'en');
+  // a customer group: the language the customer wrote in
+  assert.equal(placeLanguage({ kind: 'customer-group', written: 'ar' }), 'ar');
+  assert.equal(placeLanguage({ kind: 'customer-group', written: 'ur' }), 'ur');
+  // private: Persian only with the owner
+  assert.equal(placeLanguage({ kind: 'private', owner: true }), 'fa');
+  assert.equal(placeLanguage({ kind: 'private', owner: false, written: 'fa' }), 'en');
+  // the test-only prefixes
+  assert.equal(placeLanguage({ kind: 'company-group', owner: true, persona: 'customer', written: 'ar' }), 'ar');
+  assert.equal(placeLanguage({ kind: 'company-group', owner: true, persona: 'staff', written: 'fa' }), 'en');
+});
+
+test('the owner writes Persian in a company group and gets English: confirmations, command answers and teach acknowledgements', () => {
+  // what the program says there is translated by the one send path; these are the kinds of sentence it produces
+  for (const fa of ['ثبت شد (قانون 1): از این به بعد X', 'پیام صبح بخیر روشن شد.', 'فاکتور inv-1 بررسی شد؛ حساب، مالیات و قیمت‌ها ایرادی نداشت.']) {
+    const en = toEnglish(fa);
+    if (fa.startsWith('فاکتور')) assert.equal(hasPersian(en), false, en);
+  }
 });

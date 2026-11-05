@@ -162,6 +162,22 @@ function line(raw) {
   return tidy(raw);
 }
 
+/**
+ * The language of an answer follows the PLACE it is sent to:
+ *  - any company group (staff, command, invoice, information, cut, delivery, confirmation, goods, test): English only, whoever asked;
+ *  - a customer group: the language the customer wrote in [written];
+ *  - a private chat: Persian only with the owner, English with every other colleague.
+ * [persona] ('customer' | 'staff' | 'owner') is the test-only prefix that plays another person in the test group.
+ */
+export function placeLanguage({ kind, owner = false, persona = '', written = 'en' }) {
+  if (persona === 'customer') return written;
+  if (persona === 'owner') return 'fa';
+  if (persona === 'staff') return 'en';
+  if (kind === 'customer-group') return written;
+  if (kind === 'private') return owner ? 'fa' : 'en';
+  return 'en';
+}
+
 /** English for a report text: every line it knows; lines without Persian are left as they are. */
 export function toEnglish(text) {
   return String(text ?? '').split('\n').map(line).join('\n');

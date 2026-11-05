@@ -17,7 +17,7 @@ import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup } from './guard.js';
-import { toEnglish } from './english.js';
+import { placeLanguage, toEnglish } from './english.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -88,6 +88,7 @@ const botState = new BotState(config.authDir); // pause switch
 const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
 const staffChats = new Set(); // private chats a staff member started: the assistant may answer there
+const keepLang = new WeakSet(); // replies that keep their own language (the test-only played customer or owner)
 const quietContents = new WeakSet(); // messages that are not an answer to anyone (the good-morning message): never counted for learning
 // What the customer-flow gate did with a message, in words (the gate also watches staff messages: a colleague's
 // message cancels the answer that was waiting for a customer, it is not itself answered).
@@ -866,17 +867,22 @@ async function handleStaffChat(raw, chatId, group) {
     if (!group) staffChats.add(chatId);
   }
   const role = admin ? 'admin' : 'staff';
-  // The language of the answer is the person's: Persian for the owner only, English for every other colleague. In a test group the
-  // prefix "as customer:", "as staff:" or "as owner:" plays another person, to try every language.
-  let staffLang = ownerPerson ? 'fa' : 'en';
+  // The language follows the PLACE: English in every company group (even for the owner writing Persian, even in the test group),
+  // Persian only in a private chat with the owner. In the test group the prefix "as customer:" or "as staff:" (or "as owner:", the
+  // private chat language) plays another person, to try the other languages.
+  let persona = '';
   if (group?.test) {
     const pm = /^\s*as\s+(customer|staff|owner)\s*:\s*/i.exec(text);
-    if (pm) {
-      text = text.slice(pm[0].length);
-      staffLang = pm[1].toLowerCase() === 'owner' ? 'fa' : pm[1].toLowerCase() === 'staff' ? 'en' : detectLang(text, 'en');
-    }
+    if (pm) { text = text.slice(pm[0].length); persona = pm[1].toLowerCase(); }
   }
-  const reply = async (body) => { const said = staffLang === 'en' ? toEnglish(body) : body; return sock.sendMessage(chatId, { text: isSelf ? `🤖 ${said}` : said }, { quoted: raw }); };
+  const staffLang = placeLanguage({ kind: group ? 'company-group' : 'private', owner: ownerPerson, persona, written: detectLang(text, 'en') });
+  const keepLanguage = persona === 'customer' || persona === 'owner'; // a played person keeps its own language, nothing is translated
+  const reply = async (body) => {
+    const said = staffLang === 'en' ? toEnglish(body) : body;
+    const content = { text: isSelf ? `🤖 ${said}` : said };
+    if (keepLanguage) keepLang.add(content);
+    return sock.sendMessage(chatId, content, { quoted: raw });
+  };
   // The sales manager answers a request about stock ("#12 yes", a reply to the question, or the only open one).
   if (!group && avail.open.size) {
     const reply0 = parseManagerReply(text, answerKind);
@@ -1209,12 +1215,12 @@ async function start() {
   const guarded = guardedSend({ rawSend, config, isGroup: isJidGroup, known: staffChats, ownIds: () => ownIds(), log: (s) => logger.warn(s), subjectOf: async (jid) => groups.get(jid)?.subject ?? (await groupInfo(jid)).subject });
   // What colleagues read is English, whatever generated it: every group except a test group, and every private chat except the owner's.
   const englishFor = async (jid) => {
-    if (isJidGroup(jid)) return !isTestSubject(groups.get(jid)?.subject ?? (await groupInfo(jid)).subject);
+    if (isJidGroup(jid)) { const why = groupAllowed(groups.get(jid)?.subject ?? (await groupInfo(jid)).subject, config).why; return why === 'internal group' || why === 'test group'; } // a customer group keeps the customer's language
     const d = jidDigits(jid);
     return !([...(config.ownerNumbers || []), ...ownIds()].map(jidDigits).includes(d));
   };
   sock.sendMessage = async (...a) => {
-    if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text)) {
+    if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && !keepLang.has(a[1])) {
       try { if (await englishFor(a[0])) { const en = toEnglish(a[1].text); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } } catch { /* sent as written */ }
     }
     const r = await guarded(...a); if (r && isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
