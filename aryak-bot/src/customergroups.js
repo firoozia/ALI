@@ -159,20 +159,30 @@ export function altNames(aliasMap, name) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------- matching
-/** Words that say nothing about WHO the customer is: the company's own name and its spellings, company forms, trade words. */
+/**
+ * Words that say nothing about WHO the customer is: the company's own name and its spellings, company forms, trade words, place words.
+ * A distinctive word is four letters or more and not in this list.
+ */
 const GENERIC_WORDS = new Set([
+  // the company itself
   'aryak', 'aryaak', 'aryack', 'aryac', 'arayak', 'aryk', 'ariak', 'aryakk', 'aryaq', 'aryag', 'آریاک', 'اریاک',
-  'group', 'groups', 'order', 'orders', 'team', 'company', 'co', 'llc', 'ltd', 'fzc', 'fze', 'est', 'establishment', 'ind', 'industry', 'industries', 'general', 'and',
-  'kitchen', 'kitchens', 'wood', 'woods', 'woodwork', 'woodworks', 'door', 'doors', 'furniture', 'carpentry', 'pvc', 'film', 'trading', 'oman', 'dubai',
+  // groups, teams, orders, company forms
+  'group', 'groups', 'order', 'orders', 'team', 'teams', 'company', 'companies', 'comp', 'llc', 'ltd', 'limited', 'fzco', 'fzc', 'fze', 'establishment', 'estb', 'corporation', 'corp', 'enterprise', 'enterprises', 'holding', 'holdings', 'project', 'projects', 'and', 'the', 'for',
+  // what they do
+  'kitchen', 'kitchens', 'wood', 'woods', 'woodwork', 'woodworks', 'woodworking', 'door', 'doors', 'furniture', 'furnitures', 'carpentry', 'carpenter', 'joinery', 'pvc', 'film', 'films',
+  'design', 'designs', 'designer', 'designers', 'designing', 'decor', 'decors', 'decoration', 'decorations', 'interior', 'interiors', 'building', 'bulding', 'buildings', 'construction', 'contracting', 'contractor', 'contractors',
+  'technical', 'work', 'works', 'factory', 'factories', 'industry', 'industries', 'industrial', 'international', 'intl', 'commercial', 'trading', 'general', 'services', 'service', 'maintenance', 'supply', 'supplies', 'material', 'materials', 'engineering', 'manufacturing', 'mfg',
+  // streets and cities
+  'street', 'road', 'dubai', 'sharjah', 'ajman', 'abudhabi', 'dhabi', 'emirates', 'uae', 'oman', 'muscat', 'khaimah', 'fujairah', 'city', 'area', 'zone', 'free',
 ]);
 
-/** The words of a name that tell customers apart: generic words out, "al" out (alsham = al sham), single letters out. */
+/** The words of a name that tell customers apart: generic words out, "al" out (alsham = al sham), words under four letters out. */
 export function distinctive(s) {
   const out = [];
   for (let t of nameKey(s).split(' ').filter(Boolean)) {
     if (t === 'al' || t === 'el') continue;
     if (t.length > 4 && t.startsWith('al')) t = t.slice(2);
-    if (t.length < 2 || GENERIC_WORDS.has(t) || /^\d+$/.test(t)) continue;
+    if (t.length < 4 || GENERIC_WORDS.has(t) || /^\d+$/.test(t)) continue;
     out.push(t);
   }
   return out;
@@ -181,7 +191,6 @@ export function distinctive(s) {
 /** How alike two words are: 1 the same, 0.85 one letter off, 0.6 two off (longer words), else 0. */
 function wordMatch(a, b) {
   if (a === b) return 1;
-  if (Math.min(a.length, b.length) < 4) return 0;
   const d = editDistance(a, b);
   if (d === 1) return 0.85;
   return d === 2 && Math.max(a.length, b.length) >= 7 ? 0.6 : 0;
@@ -200,60 +209,65 @@ function pairScore(a, b) {
   return { score: score - 0.25 * extra, shared, equal: shared > 0 && extra === 0 };
 }
 
-const subjectWords = (subject) => distinctive(subject);
-
-/** The groups that may be this customer (best name of his names against each group), best first, each with its score. */
-export function rankGroups(names, custGroups) {
-  const words = names.map(distinctive).filter((w) => w.length);
+/** The customers that may own this group (every name of the customer tried), best first, each with its score. [customers]: { name, alts }. */
+export function rankCustomers(subject, customers, skip = () => false) {
+  const gw = distinctive(subject);
   const out = [];
-  for (const g of custGroups) {
-    const gw = subjectWords(g.subject);
+  if (!gw.length) return out;
+  for (const c of customers) {
+    if (skip(c.name)) continue;
     let best = null;
-    for (const w of words) { const p = pairScore(w, gw); if (p.shared && (!best || p.score > best.score)) best = p; }
-    if (best) out.push({ group: g, ...best });
+    for (const n of [c.name, ...(c.alts || [])]) { const w = distinctive(n); if (!w.length) continue; const p = pairScore(w, gw); if (p.shared && (!best || p.score > best.score)) best = p; }
+    if (best) out.push({ customer: c.name, ...best });
   }
   return out.sort((a, b) => b.score - a.score);
 }
 
 /**
- * A clear winner only: all the words match on both sides (and not another group like it), or two or more words match and no other group
- * matches that many. A single shared word with other words left over is never enough ("atlas kitchen" is not "atlas commercial").
+ * A clear winner only: all the words match on both sides and no other customer matches as well, or two or more words match and no other
+ * customer matches that many. A single shared word with other words left over is never enough.
  */
 export function clearWinner(ranked) {
   const [top, second] = ranked;
   if (!top) return false;
-  const margin = second ? top.score - second.score : Infinity;
-  if (top.equal && top.score >= 0.85 && margin >= 0.3) return true;
-  return top.shared >= 2 && top.score >= 1.6 && margin >= 0.5 && (!second || second.shared < top.shared);
+  if (top.equal && top.score >= 0.85) return !second || !second.equal || top.score - second.score >= 0.3;
+  return top.shared >= 2 && top.score >= 1.6 && (!second || (second.shared < top.shared && top.score - second.score >= 0.5));
 }
 
 // ---------------------------------------------------------------------------------------------------------------- the proposal
 /**
- * Customers against customer groups by the same rule that says what a customer group is (shadowGroup: never an internal or other group).
- * Confident = a clear winner; options = groups that look alike (best first); none = no group. [sources]: the counts shown in the head line.
+ * GROUP-CENTRED: one row per customer group not yet in the list (never an internal or other group), so the owner reads about as many
+ * lines as there are customer groups. A group with a clear winner is a confident pair (two groups with the same customer are ONE row with
+ * two groups); a group with two or three real candidates is an options row; a group with none is listed at the end for him to name.
+ * Customers with no group are a count and a list kept for "نام‌های بی‌گروه".
  */
 export function buildProposal({ customers, groups, config, list, aliasMap = {}, invoices = 0, sources = null, now = Date.now() }) {
-  const custGroups = groups.filter((g) => shadowGroup(g.subject, config));
-  const rows = [];
-  const claimed = new Set();
-  for (const name of customers) {
-    if (!nameKey(name) || isTestCustomer(name, config.testCustomerName)) continue;
-    const alts = altNames(aliasMap, name);
-    if (list.find(name, alts)) continue;
-    const ranked = rankGroups([name, ...alts], custGroups.filter((g) => !list.isDeclined(name, g.id)));
-    const shown = ranked.slice(0, MAX_OPTIONS);
-    for (const r of shown) claimed.add(r.group.id);
-    rows.push({ customer: name, kind: clearWinner(ranked) ? 'confident' : shown.length ? 'options' : 'none', options: (clearWinner(ranked) ? shown.slice(0, 1) : shown).map((r) => ({ jid: r.group.id, subject: r.group.subject })), status: 'open' });
-  }
-  const order = { confident: 0, options: 1, none: 2 };
-  rows.sort((a, b) => order[a.kind] - order[b.kind]);
-  rows.forEach((r, i) => { r.n = i + 1; });
   const mapped = new Set(list.rows().flatMap((r) => rowGroups(r).map((g) => g.jid)));
-  const orphans = custGroups.filter((g) => !claimed.has(g.id) && !mapped.has(g.id)).map((g) => g.subject);
-  return { at: now, invoices, sources, rows, orphans };
+  const custGroups = groups.filter((g) => shadowGroup(g.subject, config) && !mapped.has(g.id) && !list.isDeclined('*', g.id));
+  const people = customers.filter((n) => nameKey(n) && !isTestCustomer(n, config.testCustomerName)).map((name) => ({ name, alts: altNames(aliasMap, name) }));
+  const confident = new Map();
+  const options = [];
+  const none = [];
+  const seen = new Set();
+  for (const g of custGroups) {
+    const ranked = rankCustomers(g.subject, people, (name) => list.isDeclined(name, g.id));
+    ranked.slice(0, MAX_OPTIONS).forEach((r) => seen.add(nameKey(r.customer)));
+    const entry = { jid: g.id, subject: g.subject };
+    if (clearWinner(ranked)) {
+      const k = nameKey(ranked[0].customer);
+      if (!confident.has(k)) confident.set(k, { kind: 'confident', customer: ranked[0].customer, groups: [], status: 'open' });
+      confident.get(k).groups.push(entry);
+    } else if (ranked.length) options.push({ kind: 'options', group: entry, candidates: ranked.slice(0, 3).map((r) => r.customer), status: 'open' });
+    else none.push({ kind: 'none', group: entry, status: 'open' });
+  }
+  const rows = [...confident.values(), ...options, ...none];
+  rows.forEach((r, i) => { r.n = i + 1; });
+  const withGroup = new Set([...confident.keys(), ...seen]);
+  const noGroup = people.filter((p) => !withGroup.has(nameKey(p.name)) && !list.find(p.name, p.alts)).map((p) => p.name);
+  return { at: now, invoices, sources, rows, noGroup };
 }
 
-/** The proposal (and the current list) as messages of about 40 rows each, in Persian, names exactly as they are. */
+/** The proposal (and then the current list) as messages of about 40 rows each, in Persian, names exactly as they are. */
 export function proposalTexts(proposal, list) {
   const out = [];
   let cur = [];
@@ -268,31 +282,37 @@ export function proposalTexts(proposal, list) {
   const s = proposal.sources;
   if (s?.fromBook) push(`فهرست مشتری و گروه — نام‌ها از ${persianDigits(s.fromBook)} نام فهرست حسابداری و ${persianDigits(s.fromInvoices)} نام تازه‌ای که فقط روی فاکتورها دیدم آمده است (فاکتورهای دیده‌شده: ${persianDigits(proposal.invoices)}).`);
   else push(`فهرست مشتری و گروه — این پیشنهاد از ${persianDigits(proposal.invoices)} فاکتور ساخته شده است${proposal.invoices < 20 ? ' (هنوز کوتاه است و با فاکتورهای بیشتر کامل‌تر می‌شود؛ با فرستادن فهرست نام مشتری‌ها کامل‌تر می‌شود)' : ''}.`);
+  push(`هر ردیف یک گروه مشتری است (${persianDigits(proposal.rows.length)} گروه).`);
+  const section = (kind, title, show) => {
+    const rows = proposal.rows.filter((r) => r.kind === kind && r.status === 'open');
+    if (!rows.length) return;
+    push('');
+    push(title, false, title);
+    for (const r of rows) { push(show(r), true); if (kind === 'options') r.candidates.forEach((c, i) => push(`    ${persianDigits(i + 1)}) ${c}`)); }
+  };
+  section('confident', '✅ جفت‌های مطمئن:', (r) => `${persianDigits(r.n)}. ${r.customer} — ${showGroups(r.groups)}`);
+  section('options', '❓ چند مشتری ممکن برای این گروه (شمارهٔ مشتری درست را بنویسید):', (r) => `${persianDigits(r.n)}. ${r.group.subject}`);
+  section('none', '⛔ گروه بی‌مشتری (نام مشتری را بنویسید):', (r) => `${persianDigits(r.n)}. ${r.group.subject}`);
+  if (!proposal.rows.some((r) => r.status === 'open')) { push(''); push('گروه تازه‌ای بدون پاسخ نیست.'); }
+  if (proposal.noGroup.length) { push(''); push(`مشتریانی که گروهی زیر نظر برایشان نیست: ${persianDigits(proposal.noGroup.length)} نام (برای دیدن نام‌ها بنویسید «نام‌های بی‌گروه»).`); }
+  push('');
+  push('پاسخ: «تأیید همه» (فقط جفت‌های مطمئن)، «تأیید ۱ ۳ ۵»، «۳ نه»، «۴ = ۲» (مشتری شمارهٔ ۲ برای گروه ردیف ۴)، «۷ = نام مشتری». تا پاسخ ندهید چیزی ذخیره نمی‌شود و هیچ فاکتوری فرستاده نمی‌شود.');
   const cur_ = list.rows();
   if (cur_.length) {
     push('');
     push(`فهرست تأییدشدهٔ فعلی (${persianDigits(cur_.length)} مشتری):`, false, 'فهرست تأییدشدهٔ فعلی:');
     for (const r of cur_) push(`• ${r.customer} — ${showGroups(rowGroups(r))}`, true);
   }
-  const section = (kind, title, show) => {
-    const rows = proposal.rows.filter((r) => r.kind === kind && r.status === 'open');
-    if (!rows.length) return;
-    push('');
-    push(title, false, title);
-    for (const r of rows) { push(show(r), true); if (kind === 'options') r.options.forEach((o, i) => push(`    ${persianDigits(i + 1)}) ${o.subject}`)); }
-  };
-  section('confident', '✅ جفت‌های مطمئن:', (r) => `${persianDigits(r.n)}. ${r.customer} — ${r.options[0].subject}`);
-  section('options', '❓ چند گروه ممکن (گزینه را بنویسید؛ برای دو گروه دو شماره):', (r) => `${persianDigits(r.n)}. ${r.customer}`);
-  section('none', '⛔ بدون گروه:', (r) => `${persianDigits(r.n)}. ${r.customer}`);
-  if (!proposal.rows.some((r) => r.status === 'open')) { push(''); push('مشتری تازه‌ای بدون گروه نیست.'); }
-  if (proposal.orphans.length) {
-    push('');
-    push(`گروه‌های مشتری که نامی برایشان پیدا نشد (${persianDigits(proposal.orphans.length)}) — نام مشتری را برایشان بنویسید:`, false, 'گروه‌های بدون نام مشتری:');
-    for (const x of proposal.orphans) push(`• ${x}`, true);
-  }
-  push('');
-  push('پاسخ: «تأیید همه» (فقط جفت‌های مطمئن)، «تأیید ۱ ۳ ۵»، «۳ نه»، «۴ = ۲» یا «۴ = ۱ ۲» (دو گروه برای یک مشتری)، «۷ = کلمات نام گروه»؛ برای گروه بی‌نام: «مشتری <نام> گروه <کلمات نام گروه>». تا پاسخ ندهید چیزی ذخیره نمی‌شود و هیچ فاکتوری فرستاده نمی‌شود.');
   out.push(cur.join('\n'));
+  return out;
+}
+
+/** The names of the customers with no watched group, in messages of about 40. */
+export function noGroupTexts(proposal) {
+  const names = proposal.noGroup || [];
+  if (!names.length) return ['همهٔ نام‌ها گروهی دارند یا در فهرست‌اند.'];
+  const out = [];
+  for (let i = 0; i < names.length; i += PER_MESSAGE) out.push([i ? 'نام‌های بی‌گروه (ادامه):' : `نام‌های بی‌گروه (${persianDigits(names.length)}):`, ...names.slice(i, i + PER_MESSAGE).map((n) => `• ${n}`)].join('\n'));
   return out;
 }
 
@@ -334,6 +354,7 @@ export function parseListCommand(text) {
   const s = plain(text).replace(/^آتوسا[ ,،:]*/u, '').replace(/[.!؟?]+$/u, '').trim();
   if (!s) return null;
   if (/^(?:فهرست|لیست)\s*مشتری(?:\s*و|\s*[/-])?\s*گروه(?:\s*ها)?$/u.test(s) || /^customer\s*(?:and\s*)?group\s*list$/i.test(s)) return { type: 'list' };
+  if (/^نام\s*ها(?:ی)?\s*بی\s*گروه$/u.test(s)) return { type: 'nogroup' };
   if (/^تایید\s*همه$/u.test(s) || /^approve\s*all$/i.test(s)) return { type: 'approveAll' };
   let m = /^(?:تایید|approve)\s+(\d+(?:[\s,،و]+\d+)*)$/iu.exec(s);
   if (m) return { type: 'approve', nums: m[1].split(/[\s,،و]+/).map(Number) };
@@ -365,7 +386,7 @@ export class CustomerGroupDesk {
     const p = parseListCommand(text);
     if (!p) return null;
     if (p.type === 'yes' || p.type === 'no') return this.livePending() ? p : null;
-    if (['approveAll', 'approve', 'reject', 'pick'].includes(p.type)) return this.proposal ? p : null;
+    if (['approveAll', 'approve', 'reject', 'pick', 'nogroup'].includes(p.type)) return this.proposal ? p : null;
     return p;
   }
 
@@ -384,9 +405,11 @@ export class CustomerGroupDesk {
   }
 
   /** [groups]: { id, subject } of every group now; [known]: { customers, invoices, aliasMap }. Returns the messages to send back. */
-  handle(p, { groups, known }) {
+  handle(p, { groups, known = {} }) {
     const live = (jid) => groups.find((g) => g.id === jid);
     const usable = (g) => g && shadowGroup(g.subject, this.config);
+    const row = (n) => this.proposal.rows.find((r) => r.n === n);
+    const done = (r) => `ردیف ${persianDigits(r.n)} قبلاً رسیدگی شده است.`;
     switch (p.type) {
       case 'import': {
         const staged = this.livePending()?.kind === 'import' ? this.pending.names : [];
@@ -401,37 +424,48 @@ export class CustomerGroupDesk {
       case 'list': {
         const merged = mergeSources(this.book.names(), known);
         const proposal = buildProposal({ customers: merged.customers, groups, config: this.config, list: this.list, aliasMap: known.aliasMap, invoices: known.invoices, sources: { fromBook: merged.fromBook, fromInvoices: merged.fromInvoices }, now: this.now() });
-        this.list.d.proposal = proposal;
+        this.list.d.proposal = proposal; // a new proposal replaces the pending one; its row numbers stay until he answers
         this.list.persist();
         return proposalTexts(proposal, this.list);
       }
-      case 'approveAll': return this.save(this.proposal.rows.filter((r) => r.status === 'open' && r.kind === 'confident').map((r) => ({ row: r, opts: [r.options[0]] })), [], live, usable, 'همهٔ جفت‌های مطمئن');
-      case 'approve': return this.approveNumbers(p.nums, live, usable);
+      case 'nogroup': return noGroupTexts(this.proposal);
+      case 'approveAll': return this.save(this.proposal.rows.filter((r) => r.status === 'open' && r.kind === 'confident').map((r) => ({ row: r, customer: r.customer, groups: r.groups })), [], live, usable, 'همهٔ جفت‌های مطمئن');
+      case 'approve': {
+        const items = [];
+        const notes = [];
+        for (const n of p.nums) {
+          const r = row(n);
+          if (!r) { notes.push(this.wrong(n)); continue; }
+          if (r.status !== 'open') { notes.push(done(r)); continue; }
+          if (r.kind === 'options') { notes.push(`ردیف ${persianDigits(n)} (${r.group.subject}) چند مشتری ممکن دارد؛ بنویسید «${persianDigits(n)} = ۱» تا مشتری را برگزینید.`); continue; }
+          if (r.kind === 'none') { notes.push(`ردیف ${persianDigits(n)} (${r.group.subject}) مشتری ندارد؛ بنویسید «${persianDigits(n)} = نام مشتری».`); continue; }
+          items.push({ row: r, customer: r.customer, groups: r.groups });
+        }
+        return this.save(items, notes, live, usable, '');
+      }
       case 'reject': {
-        const row = this.proposal.rows.find((r) => r.n === p.n);
-        if (!row) return [this.wrong(p.n)];
-        if (row.status !== 'open') return [`ردیف ${persianDigits(p.n)} قبلاً رسیدگی شده است.`];
-        row.status = 'declined';
-        for (const o of row.options) this.list.decline(row.customer, o.jid);
+        const r = row(p.n);
+        if (!r) return [this.wrong(p.n)];
+        if (r.status !== 'open') return [done(r)];
+        r.status = 'declined';
+        if (r.kind === 'confident') for (const g of r.groups) this.list.decline(r.customer, g.jid);
+        else if (r.kind === 'options') for (const c of r.candidates) this.list.decline(c, r.group.jid);
+        else this.list.decline('*', r.group.jid);
         this.list.persist();
-        return [`ردیف ${persianDigits(p.n)} (${row.customer}) رد شد و دوباره پیشنهاد نمی‌شود. چیزی ذخیره نشد.`];
+        return [`ردیف ${persianDigits(p.n)} رد شد و دوباره پیشنهاد نمی‌شود. چیزی ذخیره نشد.`];
       }
       case 'pick': {
-        const row = this.proposal.rows.find((r) => r.n === p.n);
-        if (!row) return [this.wrong(p.n)];
-        if (row.status !== 'open') return [`ردیف ${persianDigits(p.n)} قبلاً رسیدگی شده است. برای تغییر بنویسید: مشتری ${row.customer} گروه …`];
+        const r = row(p.n);
+        if (!r) return [this.wrong(p.n)];
+        if (r.status !== 'open') return [done(r)];
+        const groupsOf = r.kind === 'confident' ? r.groups : [r.group];
         if (p.picks) {
-          const opts = [];
-          for (const k of p.picks) {
-            const o = row.options[k - 1];
-            if (!o) return [`ردیف ${persianDigits(p.n)} گزینهٔ ${persianDigits(k)} ندارد.${row.options.length ? '' : ' برایش گروهی پیدا نشده؛ بخشی از نام گروه را بنویسید.'}`];
-            if (!opts.some((x) => x.jid === o.jid)) opts.push(o);
-          }
-          return this.save([{ row, opts }], [], live, usable, '');
+          if (r.kind !== 'options') return [`ردیف ${persianDigits(p.n)} گزینه‌ای ندارد؛ نام مشتری را بنویسید: «${persianDigits(p.n)} = نام مشتری».`];
+          if (p.picks.length !== 1 || !r.candidates[p.picks[0] - 1]) return [`ردیف ${persianDigits(p.n)} یک مشتری از گزینه‌های ۱ تا ${persianDigits(r.candidates.length)} می‌خواهد.`];
+          return this.save([{ row: r, customer: r.candidates[p.picks[0] - 1], groups: groupsOf }], [], live, usable, '');
         }
-        const r = this.groupsByWords(p.value, groups);
-        if (r.error) return [r.error];
-        return this.save([{ row, opts: r.groups.map((g) => ({ jid: g.id, subject: g.subject })) }], [], live, usable, '');
+        const typed = mergeSources(this.book.names(), known).customers.find((c) => nameKey(c) === nameKey(p.value)) || p.value;
+        return this.save([{ row: r, customer: typed, groups: groupsOf }], [], live, usable, '');
       }
       case 'set': {
         const r = this.groupsByWords(p.words, groups);
@@ -453,8 +487,8 @@ export class CustomerGroupDesk {
         if (pend.kind === 'remove') { this.list.remove(pend.customer, new Date(this.now())); return [`حذف شد: ${pend.customer}. فهرست حالا ${persianDigits(this.list.size)} مشتری دارد.`]; }
         const gs = pend.groups.map((x) => live(x.jid));
         if (!gs.every(usable)) return [`یکی از گروه‌های «${showGroups(pend.groups)}» اکنون پیدا نمی‌شود یا گروه مشتری نیست. چیزی ذخیره نشد.`];
-        const row = this.list.approveGroups(pend.customer, gs.map((g) => ({ jid: g.id, subject: g.subject })), new Date(this.now()));
-        return [`ذخیره شد: ${row.customer} — ${showGroups(rowGroups(row))}. فهرست حالا ${persianDigits(this.list.size)} مشتری دارد. چیزی فرستاده نشد.`];
+        const row_ = this.list.approveGroups(pend.customer, gs.map((g) => ({ jid: g.id, subject: g.subject })), new Date(this.now()));
+        return [`ذخیره شد: ${row_.customer} — ${showGroups(rowGroups(row_))}. فهرست حالا ${persianDigits(this.list.size)} مشتری دارد. چیزی فرستاده نشد.`];
       }
       case 'no': this.pending = null; return ['انجام نشد. چیزی تغییر نکرد.'];
       default: return [];
@@ -470,29 +504,20 @@ export class CustomerGroupDesk {
     return 'گروه مشتری با این کلمات پیدا نشد. چیزی ذخیره نشد.';
   }
 
-  approveNumbers(nums, live, usable) {
-    const todo = [];
-    const notes = [];
-    for (const n of nums) {
-      const row = this.proposal.rows.find((r) => r.n === n);
-      if (!row) { notes.push(this.wrong(n)); continue; }
-      if (row.status !== 'open') { notes.push(`ردیف ${persianDigits(n)} قبلاً رسیدگی شده است.`); continue; }
-      if (row.kind === 'none') { notes.push(`ردیف ${persianDigits(n)} (${row.customer}) گروهی ندارد؛ بنویسید «${persianDigits(n)} = کلمات نام گروه».`); continue; }
-      if (row.options.length > 1) { notes.push(`ردیف ${persianDigits(n)} (${row.customer}) چند گروه دارد؛ بنویسید «${persianDigits(n)} = ۱» (یا «${persianDigits(n)} = ۱ ۲» برای دو گروه) تا گزینه را برگزینید.`); continue; }
-      todo.push({ row, opts: [row.options[0]] });
-    }
-    return this.save(todo, notes, live, usable, '');
-  }
-
-  /** Saves each { row, opts } whose groups are all still there and still customer groups; says what was saved and what was not. */
+  /**
+   * Saves each { row, customer, groups } whose groups are all still there and still customer groups. A customer who already has a row keeps
+   * his groups and gains these (an approval never drops one). Says what was saved and what was not.
+   */
   save(items, notes, live, usable, what) {
     const lines = [];
-    for (const { row, opts } of items) {
-      const gs = opts.map((o) => live(o.jid));
-      if (!gs.every(usable)) { notes.push(`ردیف ${persianDigits(row.n)} (${row.customer}): گروه «${showGroups(opts)}» اکنون پیدا نمی‌شود یا گروه مشتری نیست؛ ذخیره نشد.`); continue; }
-      const saved = this.list.approveGroups(row.customer, gs.map((g) => ({ jid: g.id, subject: g.subject })), new Date(this.now()));
+    for (const { row, customer, groups } of items) {
+      const gs = groups.map((o) => live(o.jid));
+      if (!gs.every(usable)) { notes.push(`ردیف ${persianDigits(row.n)}: گروه «${showGroups(groups)}» اکنون پیدا نمی‌شود یا گروه مشتری نیست؛ ذخیره نشد.`); continue; }
+      const prev = this.list.find(customer);
+      const all = [...rowGroups(prev), ...gs.map((g) => ({ jid: g.id, subject: g.subject }))].filter((g, i, a) => a.findIndex((x) => x.jid === g.jid) === i);
+      const saved = this.list.approveGroups(customer, all, new Date(this.now()));
       row.status = 'saved';
-      lines.push(`✅ ${persianDigits(row.n)}. ${row.customer} — ${showGroups(rowGroups(saved))}`);
+      lines.push(`✅ ${persianDigits(row.n)}. ${saved.customer} — ${showGroups(rowGroups(saved))}`);
     }
     this.list.persist();
     const left = this.proposal.rows.filter((r) => r.status === 'open').length;

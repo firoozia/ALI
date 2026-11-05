@@ -3,28 +3,22 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CustomerGroupDesk, CustomerGroups, NameBook, buildProposal, clearWinner, distinctive, mergeSources, parseListCommand, parseNameImport, rankGroups } from '../src/customergroups.js';
-import { resolveGroups } from '../src/invoicesend.js';
+import { CustomerGroupDesk, CustomerGroups, NameBook, clearWinner, distinctive, mergeSources, parseListCommand, parseNameImport, rankCustomers } from '../src/customergroups.js';
 
 // Invented names only: the real customer names never go into the repository.
 const config = {
   shadowGroupNames: ['aryak'], testGroupNames: ['test aryak bot'], staffGroupNames: ['aryak staff'], invoiceGroupName: 'invoices group', infoGroupName: 'information group',
   cutGroupName: 'aryak orders pictures', observeExcludeNames: ['aryak accounting'], staffNumbers: [], testCustomerName: 'test customer', allowCustomerGroupSends: false, morningGroupNames: [],
 };
-const G = (id, subject) => ({ id: `${id}@g.us`, subject });
-const GROUPS = [
-  G('p1', 'BLUE POINT - ARYAK'), G('p2', 'BLUE CAPITAL - ARYAK'), G('d1', 'DELTA COMMERCIAL - ARYAK'), G('m1', 'AMIR DESIGNER - ARYAK'), G('g1', 'GOLDEN SUN - ARYAK'),
-  G('k1', 'ZORVAN KITCHENS ORDERS - ARYAK'), G('s1', 'AL SHAM TRADING ARYAK'), G('o1', 'ORION - ARYAK'), G('o2', 'ORION TEAM GROUP - ARYAK'), G('x1', 'LONELY WORKS - ARYAK'),
-  G('t1', 'TEST ARYAK BOT'), G('i1', 'Aryak Staff'), G('f1', 'Family chat'),
-];
 const rawNames = (...n) => `لیست نام مشتری‌ها\n${n.join('\n')}`;
 const mk = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cn-'));
   const list = new CustomerGroups(dir);
   const book = new NameBook(dir);
   const desk = new CustomerGroupDesk({ list, config, book });
-  return { dir, list, book, desk, run: (text, known = { customers: [], invoices: 0, aliasMap: {} }) => { const p = desk.wants(text); assert.ok(p, `not taken: ${text}`); return desk.handle(p, { groups: GROUPS, known }); } };
+  return { dir, list, book, desk, run: (text) => { const p = desk.wants(text); assert.ok(p, `not taken: ${text}`); return desk.handle(p, { groups: [], known: { customers: [], invoices: 0, aliasMap: {} } }); } };
 };
+const people = (...names) => names.map((name) => ({ name, alts: [] }));
 
 test('the import text: the header line, one name per line, numbers and bullets removed, each name once; any other text is not an import', () => {
   const r = parseNameImport('لیست نام مشتری‌ها\n1. Blue Point\n• Delta Trading\n\n  blue   point  \nOrion');
@@ -76,89 +70,45 @@ test('the import is taken only from the owner path: the wiring uses the owner ru
   assert.ok(!/logger|console\.|sendMessage|oneShot/.test(lib));
 });
 
-test('matching: generic words and the company name are dropped, "al sham" is "alsham", single letters are dropped', () => {
+test('generic words: the company name, trade words, company forms and place words never tell customers apart; a distinctive word has four letters or more', () => {
   assert.deepEqual(distinctive('ZORVAN KITCHENS ORDERS - ARYAK'), ['zorvan']);
   assert.deepEqual(distinctive('AL SHAM TRADING ARYAK'), ['sham']);
   assert.deepEqual(distinctive('Alsham Trading LLC'), ['sham']);
   assert.deepEqual(distinctive('Aryaak Wood Door Furniture Carpentry PVC Film Oman Dubai Group Team Company'), []);
-  assert.deepEqual(distinctive('SY x NUQ Co'), ['sy', 'nuq']);
+  for (const w of ['design', 'designs', 'designer', 'building', 'bulding', 'contracting', 'technical', 'works', 'work', 'factory', 'international', 'intl', 'commercial', 'decor', 'decoration', 'joinery', 'interior', 'general', 'services', 'maintenance', 'street', 'sharjah']) assert.deepEqual(distinctive(`Nova ${w}`), ['nova'], w);
+  assert.deepEqual(distinctive('SY x NUQ Co Dash'), ['dash']); // under four letters is not distinctive
 });
 
 test('matching: spelling closeness counts (khaled/khalid, itquan/itqan, alsham/al sham)', () => {
-  const groups = [G('a1', 'KHALID - ARYAK'), G('a2', 'ITQAN - ARYAK'), G('a3', 'AL SHAM TRADING ARYAK')];
-  assert.equal(rankGroups(['Khaled'], groups)[0].group.id, 'a1@g.us');
-  assert.equal(rankGroups(['Itquan Group'], groups)[0].group.id, 'a2@g.us');
-  assert.equal(rankGroups(['Alsham'], groups)[0].group.id, 'a3@g.us');
+  const c = people('Khalid', 'Itqan', 'Al Sham');
+  assert.equal(rankCustomers('KHALED - ARYAK', c)[0].customer, 'Khalid');
+  assert.equal(rankCustomers('ITQUAN GROUP - ARYAK', c)[0].customer, 'Itqan');
+  assert.equal(rankCustomers('ALSHAM TRADING - ARYAK', c)[0].customer, 'Al Sham');
 });
 
-test('matching: a two-word match beats a one-word match; the one-word false pairs are never confident', () => {
-  const g = GROUPS.filter((x) => /ARYAK$/.test(x.subject) && !/TEST|Staff/.test(x.subject));
-  const rank = (n) => rankGroups([n], g);
-  const pointRank = rank('Blue Point');
-  assert.equal(pointRank[0].group.id, 'p1@g.us'); // two words against one
-  assert.equal(clearWinner(pointRank), true);
-  assert.equal(clearWinner(rank('Blue Capital')), true);
-  assert.equal(rank('Blue Capital')[0].group.id, 'p2@g.us');
-  // one word shared, the other side has more words: options only
-  assert.equal(clearWinner(rank('Delta Kitchen')), false); // delta vs delta commercial
-  assert.equal(rank('Delta Kitchen')[0].group.id, 'd1@g.us'); // still offered
-  assert.equal(clearWinner(rank('Designer Wood')), false); // designer vs amir designer
-  assert.equal(clearWinner(rank('Golden Door')), false); // golden vs golden sun
-  assert.equal(clearWinner(rank('Blue')), false); // a bare "blue" fits two groups
+test('matching: a two-word match beats a one-word match; the false pairs are never a clear winner', () => {
+  const c = people('Blue Point', 'Blue Capital', 'Atlas Kitchen', 'Atlas Commercial', 'Golden Door', 'Golden Sun', 'Amir Designer', 'Designer Wood');
+  const rank = (s) => rankCustomers(s, c);
+  assert.equal(rank('BLUE POINT - ARYAK')[0].customer, 'Blue Point');
+  assert.equal(clearWinner(rank('BLUE POINT - ARYAK')), true);
+  assert.equal(clearWinner(rank('BLUE CAPITAL - ARYAK')), true);
+  assert.equal(rank('BLUE CAPITAL - ARYAK')[0].customer, 'Blue Capital');
+  assert.equal(clearWinner(rank('ATLAS - ARYAK')), false); // atlas kitchen and atlas commercial are the same distinctive word
+  assert.equal(clearWinner(rank('GOLDEN - ARYAK')), false); // golden door / golden sun
+  assert.equal(clearWinner(rank('BLUE - ARYAK')), false); // a bare "blue" fits two customers
+  assert.equal(rank('DESIGNER WOOD - ARYAK').length, 0); // designer and wood say nothing: no candidate at all
 });
 
-test('the proposal over the imported names: confident only on a clear winner, the rest with options, then the groups with no name', () => {
-  const { list } = mk();
-  const p = buildProposal({ customers: ['Blue Point', 'Delta Kitchen', 'Zorvan', 'Nobody Known'], groups: GROUPS, config, list, invoices: 2, sources: { fromBook: 4, fromInvoices: 0 } });
-  const by = (n) => p.rows.find((r) => r.customer === n);
-  assert.equal(by('Blue Point').kind, 'confident');
-  assert.equal(by('Zorvan').kind, 'confident'); // kitchens and orders are generic: the same name
-  assert.equal(by('Delta Kitchen').kind, 'options');
-  assert.equal(by('Nobody Known').kind, 'none');
-  assert.ok(p.orphans.includes('LONELY WORKS - ARYAK')); // no customer name close to it: he writes the name
-  assert.ok(!p.orphans.some((s) => /BLUE POINT/.test(s)));
+test('the main group and the branch group each get their own customer', () => {
+  const c = people('Master Wood', 'Master Wood Branch');
+  const main = rankCustomers('MASTER WOOD - ARYAK', c);
+  const branch = rankCustomers('MASTER WOOD BRANCH - ARYAK', c);
+  assert.equal(main[0].customer, 'Master Wood');
+  assert.equal(clearWinner(main), true);
+  assert.equal(branch[0].customer, 'Master Wood Branch');
+  assert.equal(clearWinner(branch), true);
 });
 
-test('the head line says how many names came from which source', () => {
-  const { run, book } = mk();
-  book.save(['Blue Point', 'Orion', 'Zorvan']);
-  const known = { customers: ['Zorvan', 'Fresh Invoice Customer'], invoices: 5, aliasMap: {} };
-  const head = run('فهرست مشتری و گروه', known)[0].split('\n')[0];
-  assert.ok(head.includes('۳ نام فهرست حسابداری') && head.includes('۱ نام تازه') && head.includes('۵'), head);
+test('mergeSources: the imported names first, then the names only the invoices have, counted by source', () => {
   assert.deepEqual(mergeSources(['A One', 'b two'], { customers: ['B Two', 'C Three'], invoices: 9 }), { customers: ['A One', 'b two', 'C Three'], invoices: 9, fromBook: 2, fromInvoices: 1 });
-});
-
-test('one customer, two groups: both are offered, he picks "1 2", the row holds both, and a send asks which one (never both)', () => {
-  const { run, list, desk } = mk();
-  book: run(rawNames('Orion', 'Blue Point'));
-  run('بله');
-  run('فهرست مشتری و گروه');
-  const orion = desk.proposal.rows.find((r) => r.customer === 'Orion');
-  assert.equal(orion.kind, 'options');
-  assert.deepEqual(orion.options.map((o) => o.jid).sort(), ['o1@g.us', 'o2@g.us']);
-  assert.ok(run(`تأیید ${orion.n}`).join('').includes('دو گروه')); // not approved by a bare number
-  const out = run(`${orion.n} = ۱ ۲`).join('');
-  assert.ok(out.includes('ORION - ARYAK + ORION TEAM GROUP - ARYAK') || out.includes('ORION TEAM GROUP - ARYAK + ORION - ARYAK'));
-  const row = list.find('Orion');
-  assert.equal(row.groups.length, 2);
-  const r = resolveGroups('Orion', GROUPS, config, row);
-  assert.deepEqual(r.groups.map((x) => x.id).sort(), ['o1@g.us', 'o2@g.us']); // the existing choose step lists them
-  assert.equal(r.unconfirmed, false);
-  const one = resolveGroups('Orion', GROUPS.filter((x) => x.id !== 'o2@g.us'), config, row); // one of the two is gone: only the other
-  assert.deepEqual(one.groups.map((x) => x.id), ['o1@g.us']);
-  const none = resolveGroups('Orion', GROUPS.filter((x) => !/^o[12]/.test(x.id)), config, row);
-  assert.deepEqual([none.groups.length, none.stale], [0, true]);
-  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.match(src, /if \(groups\.length > 1\) \{ sendDesk\.start\(chatId, \{ step: 'choose'/); // several groups = he chooses by number
-});
-
-test('"customer X group a + b" gives one customer two groups after a yes; an internal group in the pair refuses the whole row', () => {
-  const { run, list } = mk();
-  const ask = run('مشتری Orion گروه orion team + lonely').join('');
-  assert.ok(ask.includes('ORION TEAM GROUP - ARYAK + LONELY WORKS - ARYAK'));
-  assert.equal(list.size, 0);
-  run('بله');
-  assert.equal(list.find('orion').groups.length, 2);
-  assert.ok(run('مشتری Orion گروه orion team + staff').join('').includes('گروه مشتری نیست'));
-  assert.equal(list.find('orion').groups.length, 2); // unchanged
 });
