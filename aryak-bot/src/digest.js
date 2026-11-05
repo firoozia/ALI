@@ -21,19 +21,23 @@ export const writeLastDigest = (dir, day) => { try { fs.mkdirSync(dir, { recursi
 export function buildDigest({ history, requests, day, timeZone = 'Asia/Dubai', events = [], extraLines = [] }) {
   const checks = history.filter((h) => dayOf(h.at, timeZone) === day);
   const orders = requests.filter((r) => dayOf(r.at, timeZone) === day);
+  // EVERY check of the day counts as checked, with or without an order: the arithmetic, the number and the prices are checked either way, and not
+  // having an order is not a problem by itself. An unreadable file is checked but never clean, and is shown on its own line.
+  const unreadable = checks.filter((h) => h.verdict === 'unreadable' || h.verdict === 'error').length;
   const noOrder = checks.filter((h) => h.verdict === 'no-order').length;
-  const real = checks.filter((h) => h.verdict !== 'no-order');
-  const wrong = real.filter((h) => (h.urgent || 0) > 0 || h.verdict === 'mismatch' || h.verdict === 'unreadable').length;
-  const priceAlerts = real.reduce((s, h) => s + (h.priceUrgent || 0), 0);
+  const compared = checks.filter((h) => h.verdict === 'match' || h.verdict === 'mismatch').length;
+  const wrong = checks.filter((h) => h.verdict !== 'unreadable' && h.verdict !== 'error' && ((h.urgent || 0) > 0 || h.verdict === 'mismatch')).length;
+  const priceAlerts = checks.reduce((s, h) => s + (h.priceUrgent || 0), 0);
   const lines = [
     `خلاصهٔ روز ${toDMY(day)}`,
     `- سفارش‌های دریافتی: ${orders.length}`,
-    `- فاکتورهای بررسی‌شده: ${real.length}`,
-    `- بدون ایراد: ${real.length - wrong}`,
+    `- فاکتورهای بررسی‌شده: ${checks.length}`,
+    `- بدون ایراد: ${checks.length - wrong - unreadable}`,
     `- دارای ایراد: ${wrong}${priceAlerts ? ` (هشدار قیمت: ${priceAlerts})` : ''}`,
   ];
-  if (noOrder) lines.push(`- فاکتور بدون سفارش پیدا شده: ${noOrder}`);
-  const notedOnly = real.filter((h) => (h.noted || 0) > 0 && !(h.urgent || 0)).length;
+  if (unreadable) lines.push(`- فاکتور ناخوانا: ${unreadable}`);
+  if (checks.length) lines.push(`- از این‌ها با سفارش مقایسه شد: ${compared}`, `- فاکتور بدون سفارش پیدا شده: ${noOrder}`);
+  const notedOnly = checks.filter((h) => (h.noted || 0) > 0 && !(h.urgent || 0)).length;
   if (notedOnly) lines.push(`- فاکتورهای فقط دارای یادداشت: ${notedOnly}`);
   const today = events.filter((e) => dayOf(e.at, timeZone) === day);
   const count = (type) => today.filter((e) => e.type === type).length;

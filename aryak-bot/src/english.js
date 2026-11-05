@@ -98,6 +98,8 @@ const RULES = [
   [/^- بدون ایراد: (\d+)$/, '- Without problems: $1'],
   [/^- دارای ایراد: (\d+)(?: \(هشدار قیمت: (\d+)\))?$/, (m) => `- With problems: ${m[1]}${m[2] ? ` (price alerts: ${m[2]})` : ''}`],
   [/^- فاکتور بدون سفارش پیدا شده: (\d+)$/, '- Invoices with no order found: $1'],
+  [/^- از این‌ها با سفارش مقایسه شد: (\d+)$/, '- Of these, compared with an order: $1'],
+  [/^- فاکتور ناخوانا: (\d+)$/, '- Unreadable invoices: $1'],
   [/^- فاکتورهای فقط دارای یادداشت: (\d+)$/, '- Invoices with notes only: $1'],
   [/^- کالاهای رسیده‌شده: (\d+)$/, '- Goods received entries: $1'],
   [/^- برش‌های ثبت‌شده: (\d+)$/, '- Cuts recorded: $1'],

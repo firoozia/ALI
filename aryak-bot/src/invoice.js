@@ -212,10 +212,10 @@ export class InvoiceDesk {
     try { this.history = JSON.parse(fs.readFileSync(path.join(this.dir, 'history.json'), 'utf8')); } catch { this.history = []; }
   }
 
-  /** Remembers one finished check: { verdict, customer, po, file, problems, urgent, priceUrgent, number }. Newest last, the last 50 are kept. */
+  /** Remembers one finished check: { verdict, customer, po, file, problems, urgent, priceUrgent, number }. Newest last, the last 500 are kept (a whole busy day, for the daily summary). */
   record(entry, now = Date.now()) {
     this.history.push({ at: now, ...entry });
-    this.history = this.history.slice(-50);
+    this.history = this.history.slice(-500);
     if (!this.dir) return;
     try {
       fs.mkdirSync(this.dir, { recursive: true });
