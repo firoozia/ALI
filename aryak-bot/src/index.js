@@ -25,7 +25,7 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
-import { CustomerGroupDesk, CustomerGroups, altNames, collectCustomers } from './customergroups.js';
+import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers } from './customergroups.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -575,7 +575,8 @@ async function checkForSend(buf) {
 }
 
 const customerGroups = new CustomerGroups(path.join(config.authDir, 'customer-groups')); // the owner's approved list: customer on the invoice -> group
-const customerDesk = new CustomerGroupDesk({ list: customerGroups, config });
+const customerNames = new NameBook(path.join(config.authDir, 'customer-groups')); // the names the owner imported from his accounting export (names only, on the VM)
+const customerDesk = new CustomerGroupDesk({ list: customerGroups, config, book: customerNames });
 const knownInvoiceCustomers = () => collectCustomers({ reads: nameStore.d.reads, events: tracker.events, aliasMap: aliases.map });
 const oneShot = new OneShot();
 const sendDesk = new SendDesk();

@@ -36,7 +36,7 @@ test('the owner words are read in Persian, Arabic and Latin digits, with or with
   assert.deepEqual(parseListCommand('تأیید ۱ ۳ ۵'), { type: 'approve', nums: [1, 3, 5] });
   assert.deepEqual(parseListCommand('تأیید ٢ و ٤'), { type: 'approve', nums: [2, 4] });
   assert.deepEqual(parseListCommand('۳ نه'), { type: 'reject', n: 3 });
-  assert.deepEqual(parseListCommand('۴ = ۲'), { type: 'pick', n: 4, value: '2' });
+  assert.deepEqual(parseListCommand('۴ = ۲'), { type: 'pick', n: 4, picks: [2] });
   assert.deepEqual(parseListCommand('۷ = dandy'), { type: 'pick', n: 7, value: 'dandy' });
   assert.deepEqual(parseListCommand('مشتری Master Wood گروه master wood'), { type: 'set', customer: 'Master Wood', words: 'master wood' });
   assert.deepEqual(parseListCommand('حذف مشتری Master Wood'), { type: 'remove', customer: 'Master Wood' });
@@ -68,7 +68,7 @@ test('the command builds the proposal and says honestly how many invoices it was
   assert.ok(msgs[0].includes('از ۶ فاکتور'));
   assert.ok(msgs[0].includes('کوتاه است'));
   assert.ok(msgs.join('\n').includes('MASTER WOOD — MASTER WOOD - ARYAK'));
-  assert.ok(msgs.join('\n').includes('گروه‌های مشتری که هنوز فاکتوری'));
+  assert.ok(msgs.join('\n').includes('گروه‌های مشتری که نامی برایشان پیدا نشد'));
   assert.equal(list.size, 0);
   assert.equal(list.d.version, 0);
 });

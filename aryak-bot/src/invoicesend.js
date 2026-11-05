@@ -41,7 +41,7 @@ export function looseName(a, b) {
 }
 const GENERIC = new Set(['aryak', 'kitchen', 'kitchens', 'door', 'doors', 'wood', 'trading', 'industries', 'ind', 'llc', 'furniture', 'carpentry', 'decor', 'group', 'company', 'work', 'works']);
 
-function editDistance(a, b) {
+export function editDistance(a, b) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 1; j <= b.length; j++) dp[0][j] = j;
   for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
@@ -78,8 +78,10 @@ export function targetGroups(customer, groups, config) {
 export function resolveGroups(customer, groups, config, row = null) {
   if (isTestCustomer(customer, config.testCustomerName)) return { groups: targetGroups(customer, groups, config), mapped: false, stale: false, unconfirmed: false };
   if (row) {
-    const g = groups.find((x) => x.id === row.jid);
-    if (g && shadowGroup(g.subject, config)) return { groups: [g], mapped: true, stale: false, unconfirmed: false };
+    // A row holds one or more approved groups; those still there and still customer groups are offered (two: he picks, never both).
+    const ids = (row.groups?.length ? row.groups.map((x) => x.jid) : [row.jid]);
+    const ok = ids.map((id) => groups.find((x) => x.id === id)).filter((g) => g && shadowGroup(g.subject, config));
+    if (ok.length) return { groups: ok, mapped: true, stale: false, unconfirmed: false };
     return { groups: [], mapped: true, stale: true, unconfirmed: false };
   }
   return { groups: targetGroups(customer, groups, config), mapped: false, stale: false, unconfirmed: true };
