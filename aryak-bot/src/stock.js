@@ -159,6 +159,7 @@ export async function fetchReport(config, params, fetchImpl = fetch, opts = {}) 
     category: params.category || '',
     customer: params.customer || '',
     detail: !!params.detail,
+    limit: params.limit || 0,
   });
   return askSheet(config, body, `outgoing report ${params.from}..${params.to}`, fetchImpl, opts);
 }

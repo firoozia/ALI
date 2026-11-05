@@ -9,6 +9,7 @@ import path from 'node:path';
 import { normalizeLetters } from './text.js';
 import { matchCod } from './captions.js';
 import { productCode } from './codes.js';
+import { sameName } from './sheetcheck.js';
 
 const DAY = 24 * 3600 * 1000;
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -247,14 +248,20 @@ export function reconcileCuts(tracker, customer, { now = Date.now(), windowDays 
   const cuts = tracker.of('cut', customer, { since: first - 3 * DAY }).filter((e) => !e.internal);
   const invoiced = sumByCode(invoices);
   const cut = sumByCode(cuts);
+  // The scanned OUT in the warehouse sheet (kept as events of type 'out') says more than a photo: not every cut is photographed.
+  const outs = tracker.events.filter((e) => e.type === 'out' && e.at >= first - 3 * DAY && sameName(e.customer, customer));
+  const scanned = sumByCode(outs.map((o) => ({ lines: [{ code: o.code, quantity: o.qty, unit: o.unit }] })));
+  const scans = new Map();
+  for (const o of outs) { const k = `${normCode(o.code)}|${normUnit(o.unit) || 'm'}`; scans.set(k, (scans.get(k) || 0) + 1); }
   const out = [];
   for (const [key, want] of invoiced) {
     const [code, unit] = key.split('|');
-    const got = cut.get(key) || 0;
+    const got = scanned.has(key) ? scanned.get(key) : cut.get(key) || 0;
+    const slack = tol * Math.max(1, scans.get(key) || 1);
     const last = [...invoices].reverse().find((i) => (i.lines || []).some((l) => normCode(l.code) === code));
     const base = { customer: last.customer || customer, number: last.number || '', code, unit, invoiced: round2(want), cut: round2(got) };
-    if (got > want + tol) out.push({ ...base, kind: 'cut-over', key: `cutrec|${last.ref || last.number}|${code}|over|${round2(got)}` });
-    else if (got > 0 && got < want - tol && now - last.at >= shortDays * DAY && tracker.startedAt && now - tracker.startedAt >= graceDays * DAY) {
+    if (got > want + slack) out.push({ ...base, kind: 'cut-over', key: `cutrec|${last.ref || last.number}|${code}|over|${round2(got)}` });
+    else if (got > 0 && got < want - slack && now - last.at >= shortDays * DAY && tracker.startedAt && now - tracker.startedAt >= graceDays * DAY) {
       out.push({ ...base, kind: 'cut-short', key: `cutrec|${last.ref || last.number}|${code}|short|${round2(got)}` });
     }
   }

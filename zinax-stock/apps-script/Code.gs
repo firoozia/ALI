@@ -954,7 +954,8 @@ function botReport_(req) {
     }).sort(function (a, b) { return b.total - a.total; }).slice(0, 10),
   };
   if (req.detail) {
-    out.rows = rows.sort(function (a, b) { return b.at - a.at; }).slice(0, 60);
+    // a day of cuts can be longer than 60 operations: the caller may ask for up to 500 (read only, nothing is written)
+    out.rows = rows.sort(function (a, b) { return b.at - a.at; }).slice(0, Math.min(500, Math.max(60, Number(req.limit) || 60)));
     out.rowsTotal = rows.length;
   }
   return out;

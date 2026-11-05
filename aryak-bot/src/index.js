@@ -19,6 +19,7 @@ import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup } from './guard.js';
 import { toEnglish } from './english.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
+import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { isSourcingRequest, markSourcingReceived, openSourcing, sourcingAnswer, sourcingCover, sourcingEvent } from './sourcing.js';
 import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups, morningText, morningLang, weekdayNumbers, localParts } from './morning.js';
 import { customerFromMessages, productCode } from './codes.js';
@@ -266,7 +267,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { const c = cutDigest(tracker); return [c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : ''].filter(Boolean); })() }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -375,6 +376,54 @@ async function cutReconcile(customer) {
   for (const f of fresh) tracker.markNagged(f.key);
   await infoPost(cutFindingText(fresh, config.displayName));
 }
+
+// The cut photos against the warehouse sheet (read only): at the summary hour the day is compared and kept; the next morning it is
+// compared again (late scans) and what still differs goes out as ONE English message, or into the summary when there are few.
+const sheetState = (() => {
+  const file = path.join(config.authDir, 'sheetcheck.json');
+  let d = { evening: '', morning: '', notes: [] };
+  try { d = { ...d, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { /* first start */ }
+  return { d, save: () => { try { fs.writeFileSync(file, JSON.stringify(d)); } catch { /* best effort */ } } };
+})();
+const sheetMatch = (a, b) => sameName(canon(a), canon(b)) || sameName(a, b);
+
+/** Compares one day. Returns the result, or null when the sheet could not give the whole day. */
+async function sheetDay(day) {
+  let rep;
+  try { rep = await fetchReport(config, { from: day, to: day, detail: true, limit: 500 }); } catch (e) { logger.warn(`sheet check: the report failed (${e.message})`); return null; }
+  const rows = (rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT');
+  if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn(`sheet check: only ${(rep.rows || []).length} of ${rep.rowsTotal} operations came back; the script needs the larger page (see the deploy note)`); return null; }
+  // the scans become events, so an invoice with an OUT of its quantity is satisfied even without a photo
+  for (const r of rows) {
+    const ref = createHash('sha256').update(`out|${r.day}|${r.at}|${r.code}|${r.qty}|${r.customer}`).digest('hex').slice(0, 24);
+    tracker.add({ type: 'out', at: Number(r.at) || Date.parse(`${r.day}T12:00:00Z`), customer: String(r.customer || ''), code: String(r.code || ''), qty: Number(r.qty) || 0, unit: String(r.unit || 'm'), ref });
+  }
+  const dayStart = Date.parse(`${day}T00:00:00Z`) - 14 * 3600000;
+  const cuts = tracker.events.filter((e) => e.type === 'cut' && e.at >= dayStart && e.at < dayStart + 38 * 3600000 && localParts(e.at, config.timezone).day === day);
+  return reconcileSheet({ cuts, rows, tol: config.cutToleranceMetres, match: sheetMatch });
+}
+
+async function sheetCheck(now = Date.now()) {
+  if (!config.trackerEnabled || !config.infoGroupName || botState.paused || !sock?.user) return;
+  const p = localParts(now, config.timezone);
+  const yesterday = localParts(now - 24 * 3600000, config.timezone).day;
+  if (p.minutes >= config.digestHour * 60 && sheetState.d.evening !== p.day) {
+    sheetState.d.evening = p.day; sheetState.save();
+    const r = await sheetDay(p.day);
+    if (r) logger.info(`sheet check ${p.day}: ${differences(r)} difference(s) so far, rechecked tomorrow morning`);
+  }
+  if (p.minutes >= config.sheetRecheckHour * 60 && p.minutes < config.digestHour * 60 && sheetState.d.morning !== p.day) {
+    sheetState.d.morning = p.day; sheetState.save();
+    const r = await sheetDay(yesterday);
+    if (!r) return;
+    const n = differences(r);
+    logger.info(`sheet check ${yesterday}: ${n} difference(s) after the recheck`);
+    if (!n) return;
+    if (n <= config.sheetDigestMax) { sheetState.d.notes.push(...sheetFindingText(yesterday, r).split('\n').slice(1).filter((l) => l.startsWith('- '))); sheetState.save(); return; } // few: in the summary
+    await infoPost(sheetFindingText(yesterday, r, config.displayName));
+  }
+}
+setInterval(() => { sheetCheck().catch((e) => logger.warn(`sheet check failed: ${e.message}`)); }, 10 * 60 * 1000).unref();
 
 // Every half hour: a partial cut of an invoice older than the window becomes a finding (once). Silent when nothing is wrong.
 setInterval(async () => {

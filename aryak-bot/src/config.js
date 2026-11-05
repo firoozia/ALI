@@ -76,6 +76,8 @@ export function loadConfig(env = process.env) {
     // the Information group: gap between its messages (a batch of invoices is not a burst); reminders are off until the owner decides
     infoGapSeconds: Number(env.INFO_GAP_SECONDS || 6),
     remindersOn: /^(1|true|on|yes)$/i.test(env.REMINDERS || ''),
+    sheetRecheckHour: Number(env.SHEET_RECHECK_HOUR || 9),
+    sheetDigestMax: Number(env.SHEET_DIGEST_MAX || 2),
     cutToleranceMetres: Number(env.CUT_TOLERANCE_METRES || 0.5),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
