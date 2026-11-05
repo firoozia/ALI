@@ -327,6 +327,15 @@ export function settleDuplicates(names, seen = []) {
   return { merges, ask };
 }
 
+/** The approved row of a customer by any of his names: the name itself, his other names (aliases), or a near duplicate of a stored name. */
+export function customerRowFor(name, { list, aliases }) {
+  if (!name || !nameKey(name)) return null;
+  return list.find(name, altNames(aliases.map, name)) || list.rows().find((r) => nearDuplicate(r.customer, name)) || null;
+}
+
+/** The approved row that holds this group (by its id): an order in that group belongs to that row's customer. */
+export const rowOfGroup = (list, jid) => list.rows().find((r) => rowGroups(r).some((g) => g.jid === jid)) || null;
+
 /**
  * A name printed on a new invoice that is not in the list but clearly is a stored customer: the row and its groups are NOT touched (a row never
  * moves to another group on its own); the printed name becomes the main name (the stored one its alias). Returns the digest line, or null.

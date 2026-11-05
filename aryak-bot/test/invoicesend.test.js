@@ -57,7 +57,7 @@ test('the invoice is found among the kept files by its read; the confirmation sa
   const text = confirmText({ read: hit.read, fileName: sendFileName(hit.read), group: 'NUQOUCH---ARYAK', alreadySent: '' });
   const lines = text.split('\n');
   assert.match(lines[0], /^⚠️ This invoice has 2 unresolved urgent problems\./);
-  assert.match(lines[1], /No matching purchase order/);
+  assert.match(lines[1], /No order in memory/);
   assert.ok(text.includes('Invoice inv-9955 — NUQOOSH KITCHENS IND . LLC'));
   assert.ok(text.includes('Total with VAT: AED 1234.50'));
   assert.ok(text.includes('File: inv-9955 NUQOOSH KITCHENS IND LLC.pdf')); // the dots collapse into a clean name
@@ -168,7 +168,7 @@ test('the real sequence: an invoice is checked with problems, renamed, then orde
   assert.deepEqual([read.urgent, read.noOrder, read.total], [2, true, 1234.5]);
   const text = confirmText({ read, fileName: sendFileName(read), group: 'NUQOUCH---ARYAK', alreadySent: '' });
   assert.match(text, /^⚠️ This invoice has 2 unresolved urgent problems: Wrong quantity 511 \(correct: 35 m, invoice: 53 m\); Price below list 511 \(correct: 12\.00, invoice: 9\.00\)\./);
-  assert.ok(text.includes('No matching purchase order'));
+  assert.ok(text.includes('No order in memory'));
   assert.ok(text.includes('Total with VAT: AED 1234.50'));
   assert.ok(!text.includes('not read') && !text.includes('not checked'));
   // the original and the copy share one check; a new check for the number replaces it

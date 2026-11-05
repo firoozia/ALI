@@ -96,7 +96,9 @@ export function confirmText({ read, fileName, group, alreadySent, unconfirmed = 
   if (unconfirmed) lines.push('⚠️ This group was not confirmed in the list.');
   if (read.checked === false) lines.push('⚠️ This invoice was not checked.');
   if (read.urgent > 0) lines.push(`⚠️ This invoice has ${read.urgent} unresolved urgent problem${read.urgent === 1 ? '' : 's'}${(read.points || []).length ? `: ${read.points.slice(0, 4).join('; ')}` : ''}.`);
-  if (read.noOrder) lines.push('⚠️ No matching purchase order was found for this invoice.');
+  // three honest states: a text order in memory was compared (same or differs), or no order is in memory (not a problem by itself)
+  if (read.orderState === 'text') lines.push((read.orderPoints || []).length ? `⚠️ Compared with a text order (low confidence): differs: ${read.orderPoints.slice(0, 4).join('; ')}.` : 'Compared with a text order (low confidence): same.');
+  else if (read.orderState === 'none' || (!read.orderState && read.noOrder)) lines.push('No order in memory; only arithmetic and number were checked.');
   if (alreadySent) lines.push(`⚠️ This invoice was already sent to this group (${alreadySent}).`);
   lines.push(`Invoice ${read.number} — ${read.customer}`);
   lines.push(`Total with VAT: ${read.total != null ? `AED ${Number(read.total).toFixed(2)}` : 'not read'}`);

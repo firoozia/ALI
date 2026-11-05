@@ -14,10 +14,10 @@ test('nine invoices with no order, one with an urgent point: checked 9, with pro
   assert.equal(lineOf(text, '- دارای ایراد'), '- دارای ایراد: 1');
   assert.equal(lineOf(text, '- بدون ایراد'), '- بدون ایراد: 8');
   assert.equal(lineOf(text, '- از این‌ها با سفارش مقایسه شد'), '- از این‌ها با سفارش مقایسه شد: 0');
-  assert.equal(lineOf(text, '- فاکتور بدون سفارش پیدا شده'), '- فاکتور بدون سفارش پیدا شده: 9');
+  assert.equal(lineOf(text, '- فاکتور بدون سفارش در حافظه'), '- فاکتور بدون سفارش در حافظه: 9');
   const en = toEnglish(text);
   assert.ok(en.includes('- Invoices checked: 9') && en.includes('- With problems: 1') && en.includes('- Without problems: 8'));
-  assert.ok(en.includes('- Of these, compared with an order: 0') && en.includes('- Invoices with no order found: 9'));
+  assert.ok(en.includes('- Of these, compared with an order: 0') && en.includes('- Invoices with no order in memory: 9'));
 });
 
 test('an unreadable file counts as checked but never as clean, on its own line; price alerts and notes count over all checks', () => {
@@ -35,7 +35,7 @@ test('an unreadable file counts as checked but never as clean, on its own line; 
   assert.equal(lineOf(text, '- بدون ایراد'), '- بدون ایراد: 3'); // 5 - 1 problem - 1 unreadable
   assert.equal(lineOf(text, '- فاکتور ناخوانا'), '- فاکتور ناخوانا: 1');
   assert.equal(lineOf(text, '- از این‌ها با سفارش مقایسه شد'), '- از این‌ها با سفارش مقایسه شد: 2');
-  assert.equal(lineOf(text, '- فاکتور بدون سفارش پیدا شده'), '- فاکتور بدون سفارش پیدا شده: 2');
+  assert.equal(lineOf(text, '- فاکتور بدون سفارش در حافظه'), '- فاکتور بدون سفارش در حافظه: 2');
   assert.equal(lineOf(text, '- فاکتورهای فقط دارای یادداشت'), '- فاکتورهای فقط دارای یادداشت: 2'); // the no-order one with notes counts
   assert.ok(toEnglish(text).includes('- Unreadable invoices: 1'));
 });

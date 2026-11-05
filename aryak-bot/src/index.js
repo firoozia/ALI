@@ -25,7 +25,7 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
-import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, learnPrintedName, mergeSources, settleDuplicates } from './customergroups.js';
+import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
 import { WatchList } from './watchlist.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
@@ -38,7 +38,7 @@ import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
-import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
+import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
 import { AvailabilityDesk, answerRequest, classify, managerQuestion, parseManagerReply, reminderText, runAvailability } from './availability.js';
@@ -185,7 +185,7 @@ const gate = new GroupGate({
     const info = await groupInfo(groupId);
     // One group can hold several billing customers: the name after an order line or beside a handwritten photo wins.
     const named = customerFromMessages(messages, orderLinesOf);
-    const customer = (named ? canon(named) : '') || info.subject.replace(config.groupSuffix, '').trim() || info.subject;
+    const customer = (named ? canon(named) : '') || customerOfGroup(groupId, info.subject.replace(config.groupSuffix, '').trim() || info.subject);
     // The order lines a customer wrote are kept in the order memory (with their quantities) for the invoice check.
     if (config.trackerEnabled) {
       for (const m of messages) {
@@ -329,7 +329,11 @@ async function translateTo(text, lang) {
 }
 
 const knownCustomers = () => [...groups.values()].map((g) => String(g.subject || '').replace(config.groupSuffix, '').trim()).filter(Boolean);
-const canon = (name) => aliases.resolve(name, knownCustomers());
+// The one name of a customer: his approved row first (a name, an alias or a near spelling of it), else the aliases and the group labels.
+const rowOfName = (name) => customerRowFor(name, { list: customerGroups, aliases });
+const canon = (name) => rowOfName(name)?.customer || aliases.resolve(name, knownCustomers());
+// An order written in a customer's group belongs to the customer of the approved row that holds that group (by its id), else to the group's label.
+const customerOfGroup = (groupId, label) => rowOfGroup(customerGroups, groupId)?.customer || canon(label);
 
 /** The label of a customer group for the experience store: the customer's name part of the group name. */
 const groupLabel = (subject) => String(subject || '').replace(config.groupSuffix, '').trim() || String(subject || '');
@@ -570,12 +574,13 @@ async function checkForSend(buf) {
   if (!rows?.length) return null;
   const inv = { ...r.invoice, lines: rows.map((l) => ({ ...l, code: productCode(l.code), printedCode: l.code })) };
   const customer = canon(r.invoice_customer || inv.customer || '');
+  const ord = checkInvoiceAgainstOrders(tracker, { customer, at: Date.now(), lines: inv.lines }, { explain: true });
   const problems = [
     ...auditInvoice(inv, { book, day: new Date().toISOString().slice(0, 10), vatRate: config.vatRate, tol: config.moneyTolerance, customer }),
-    ...checkInvoiceAgainstOrders(tracker, { customer, at: Date.now(), lines: inv.lines }, { explain: true }),
+    ...ord,
   ];
   const urgent = problems.filter((p) => p.severity !== 'info');
-  return { number: r.invoice_number || inv.number || '', customer: r.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: urgent.length, noOrder: problems.some((p) => p.kind === 'order-note'), points: urgent.map(shortPoint).slice(0, 6) };
+  return { number: r.invoice_number || inv.number || '', customer: r.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: urgent.length, noOrder: problems.some((p) => p.kind === 'order-note'), orderState: ord.some((p) => p.kind === 'order-note') ? 'none' : 'text', orderPoints: ord.filter((p) => p.severity !== 'info').map(shortPoint).slice(0, 4), points: urgent.map(shortPoint).slice(0, 6) };
 }
 
 const customerGroups = new CustomerGroups(path.join(config.authDir, 'customer-groups')); // the owner's approved list: customer on the invoice -> group
@@ -636,7 +641,7 @@ async function startOwnerSend({ chatId, parsed, ctx, reply }) {
     try {
       const buf = await downloadMediaMessage({ key: found.entry.key, message: found.entry.message }, 'buffer', {});
       const c = await checkForSend(buf);
-      if (c) { nameStore.setCheck(found.read.number, { total: c.total, urgent: c.urgent, noOrder: c.noOrder, points: c.points }); found.read = nameStore.fullRead(found.entry.id) || { ...found.read, ...c, checked: true }; }
+      if (c) { nameStore.setCheck(found.read.number, { total: c.total, urgent: c.urgent, noOrder: c.noOrder, orderState: c.orderState, orderPoints: c.orderPoints, points: c.points }); found.read = nameStore.fullRead(found.entry.id) || { ...found.read, ...c, checked: true }; }
     } catch (e) { logger.warn(`owner send: the check could not be made (${e.message})`); }
   }
   if (!found) { await reply(qdoc ? 'I could not read this invoice, so I send nothing.' : 'I do not have that invoice among the files I kept. Please reply to the PDF with the command. Nothing was sent.'); return; }
@@ -736,7 +741,7 @@ async function watchGroup(raw, groupId, role) {
   if (role === 'request') {
     if (doc.staff) return; // a colleague's PDF in the customer group is the forwarded invoice
     const meta = await extractMeta({ client, config, doc });
-    if (desk.addRequest(doc, meta, info.subject)) logger.info(`${groupId}: purchase order ${meta.po || '(no number)'} of ${meta.customer || '?'} kept`);
+    if (desk.addRequest(doc, { ...meta, mapped: rowOfGroup(customerGroups, groupId)?.customer || rowOfName(meta.customer)?.customer || '' }, info.subject)) logger.info(`${groupId}: purchase order ${meta.po || '(no number)'} of ${meta.customer || '?'} kept`);
     return;
   }
   if (!doc.staff) { logger.info(`invoice pdf not checked: sender is not the office`); return; }
@@ -744,7 +749,7 @@ async function watchGroup(raw, groupId, role) {
   if (!desk.firstTime(doc.hash)) { logger.info('invoice pdf not checked: this file was already checked'); return; }
   if (!config.infoGroupName) { logger.warn('INFO_GROUP_NAME is not set: invoice check skipped'); return; }
   const meta = await extractMeta({ client, config, doc });
-  const found = desk.find(meta);
+  const found = desk.find({ ...meta, mapped: rowOfName(meta.customer)?.customer || '' });
   const ctx = { groupName: info.subject, customer: meta.customer, invoiceFile: doc.fileName, invoiceSender: doc.senderName };
   let verdict;
   if (!found.request) {
@@ -770,8 +775,11 @@ async function watchGroup(raw, groupId, role) {
     try { const r = await fetchStock(config, { code }); if (r.found && !r.ambiguous && r.unit) sheetUnits[code.toUpperCase()] = r.unit; } catch { /* the check goes on without it */ }
   }
   const own = (verdict.problems || []).map((p) => ({ severity: 'urgent', ...p }));
-  const memory = !found.request && verdict.invoice
-    ? checkInvoiceAgainstOrders(tracker, { customer: canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), at: Date.now(), lines: verdict.invoice.lines || [] }) : [];
+  // three honest states: a PDF order, an order in memory from the groups (text, low confidence) that was compared, or no order in memory
+  const ordAll = !found.request && verdict.invoice
+    ? checkInvoiceAgainstOrders(tracker, { customer: canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), at: Date.now(), lines: verdict.invoice.lines || [] }, { explain: true }) : [];
+  const memory = ordAll.filter((p) => p.kind !== 'order-note'); // the "no order" note is a state, not a point
+  const orderState = found.request ? 'pdf' : (verdict.invoice && !ordAll.some((p) => p.kind === 'order-note') ? 'text' : 'none');
   const extra = [
     ...memory,
     ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer, sheetUnits }) : []),
@@ -791,7 +799,7 @@ async function watchGroup(raw, groupId, role) {
     // the invoice stays open: the cut may come the next day (or have come before); it is compared when a cut arrives, and now
     if (tracker.add(invoiceEvent)) await cutReconcile(invoiceEvent.customer);
   }
-  desk.record({ verdict: final.verdict, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, po: meta.po, problems: problems.length, urgent, priceUrgent, noted: problems.length - urgent, number });
+  desk.record({ verdict: final.verdict, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, po: meta.po, problems: problems.length, urgent, priceUrgent, noted: problems.length - urgent, number, orderState });
   // ONE short English message per invoice, only for a real mistake. A clean invoice, a missing order and every note are silent
   // here and only counted in the daily summary.
   if (urgent) await infoPost(invoiceFindingText({ number, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, problems }, config.displayName));
@@ -799,7 +807,7 @@ async function watchGroup(raw, groupId, role) {
   const warn = staffWarning(final, config.displayName);
   if (warn) await sock.sendMessage(groupId, { text: warn });
   // The readable name, from the invoice itself (the read the check already made; no extra paid call). Never counted as a problem.
-  nameStore.setCheck(number, { points: problems.filter((p) => p.severity !== 'info').map(shortPoint).slice(0, 6), total: verdict.invoice?.total ?? null, urgent, noOrder: !found.request && !tracker.of('order', canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), { since: Date.now() - 45 * 86400000 }).length });
+  nameStore.setCheck(number, { points: problems.filter((p) => p.severity !== 'info').map(shortPoint).slice(0, 6), total: verdict.invoice?.total ?? null, urgent, noOrder: orderState === 'none', orderState, orderPoints: memory.filter((p) => p.severity !== 'info').map(shortPoint).slice(0, 4) });
   try { await nameInvoice({ raw, groupId, fileName: doc.fileName, base64: doc.base64, number, customer: verdict.invoice_customer || verdict.invoice?.customer || '' }); } catch (e) { logger.warn(`invoice name failed: ${e.message}`); }
 }
 
@@ -1187,6 +1195,11 @@ async function handleStaffChat(raw, chatId, group) {
     const rq = parseReceivedQuery(text);
     if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
   }
+  // "وضعیت سفارش‌ها" (his own chat, owner only): counts of orders by source and of invoices in each state, last seven days, no names.
+  if (config.ownerInvoiceSend && text && !audio && !image && !group && isSelf && isOrderStatusCommand(text) && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
+    await reply(orderStatusText({ events: tracker.events, requests: desk.requests, history: desk.history }));
+    return true;
+  }
   // THE OWNER'S FIXED LIST "customer on the invoice -> group": proposal, answers and later changes. Only the owner, only in his own chat; free code.
   // Approving a row sends nothing (it only says which group an ordered invoice goes to; the order, the check and his yes stay as they are).
   if (config.ownerInvoiceSend && text && !audio && !image && !group && isSelf) {
@@ -1434,7 +1447,7 @@ async function watchObserved(raw, groupId, info) {
     // our staff asking the customer for goods is SOURCING: never an order, never a sale
     if (isSourcingRequest(text, (recentCodes.get(groupId) || []).map((c) => c.code))) {
       const ev = sourcingEvent(text);
-      if (ev && tracker.add({ ...ev, at: Date.now(), customer: canon(label), group: groupId, ref })) trace(`group "${info.subject}"`, 'observer', 'sourcing request recorded (staff asks the customer; not an order)');
+      if (ev && tracker.add({ ...ev, at: Date.now(), customer: customerOfGroup(groupId, label), group: groupId, ref })) trace(`group "${info.subject}"`, 'observer', 'sourcing request recorded (staff asks the customer; not an order)');
     }
     return;
   }
@@ -1446,7 +1459,7 @@ async function watchObserved(raw, groupId, info) {
   rememberCodes(groupId, text);
   const lines = orderLinesOf(text);
   if (lines.length) {
-    tracker.add({ type: 'order', at: Date.now(), customer: canon(lines.find((l) => l.customer)?.customer || label), lines: lines.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), source: 'observed', confidence: 'low', ref });
+    tracker.add({ type: 'order', at: Date.now(), customer: lines.find((l) => l.customer)?.customer ? canon(lines.find((l) => l.customer).customer) : customerOfGroup(groupId, label), lines: lines.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), source: 'observed', confidence: 'low', ref });
     trace(`group "${info.subject}"`, 'observer', `${lines.length} order line(s) recorded, low confidence`);
   }
 }

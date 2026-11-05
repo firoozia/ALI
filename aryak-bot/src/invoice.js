@@ -176,7 +176,8 @@ export class InvoiceDesk {
       return { none: true };
     }
     const n = normName(meta.customer);
-    const byName = n ? live.filter((r) => normName(r.meta.customer) === n) : [];
+    const key = meta.mapped ? normName(meta.mapped) : ''; // the approved row's customer: an order of a differently spelled name in the same customer's group
+    const byName = n ? live.filter((r) => normName(r.meta.customer) === n || (key && r.meta.mapped && normName(r.meta.mapped) === key)) : (key ? live.filter((r) => r.meta.mapped && normName(r.meta.mapped) === key) : []);
     if (byName.length) return { request: this.docOf(byName[byName.length - 1]) };
     return { none: true };
   }
