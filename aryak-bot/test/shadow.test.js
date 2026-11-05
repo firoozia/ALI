@@ -81,7 +81,7 @@ test('a bare availability question: the sheet stance (free lookup) is compared w
   yes.desk.onMessage(cust('Ar-221 available'));
   yes.desk.onMessage(staff('Yea', T0 + 20000));
   await yes.desk.idle();
-  assert.match(yes.posts[0], /Action: would ask for the quantity\nSheet check: 221 in stock\nReply \(en\): AR-221: how many metres or rolls do you need\?\nStaff said: Yea — same/);
+  assert.match(yes.posts[0], /Action: would ask for the quantity\nSheet check: 221 in stock\nReply \(en\): AR-221: how many metres or rolls do you need\?\nStaff said: Yea — she asked, staff answered/);
   const no = mk('no');
   no.desk.onMessage(cust('201/204 both are available?'));
   no.desk.onMessage(staff('201 yes', T0 + 20000));
@@ -91,7 +91,7 @@ test('a bare availability question: the sheet stance (free lookup) is compared w
   mixed.desk.onMessage(cust('201/204 both are available?'));
   mixed.desk.onMessage(staff('201 yes', T0 + 20000));
   await mixed.desk.idle();
-  assert.match(mixed.posts[0], /— unknown/);
+  assert.match(mixed.posts[0], /— she asked, staff answered/);
 });
 
 test('a question that depends on a photo or voice note she did not read: no proposed reply, left out of agreed and differed, counted apart', async () => {
@@ -158,7 +158,7 @@ test('the daily line and the week summary carry the owner\'s decision data per g
   desk.onMessage(cust('509 available?', T0 + 20 * 60000));
   desk.onMessage(staff('no', T0 + 20 * 60000 + 30000)); await desk.idle();
   const line = dayLine(desk.store, '2026-11-05', 60, T0 + 5 * 3600000);
-  assert.match(line, /Shadow 2026-11-05: 2 questions, 1 agreed, 1 differed, 0 unknown, 0 not answered by staff, staff average \d+ min/);
+  assert.match(line, /Shadow 2026-11-05: 2 questions, 1 agreed, 1 differed, 0 she asked and staff answered, 0 unknown, 0 not answered by staff, staff average \d+ min/);
   const week = weekSummary(desk.store, '2026-11-05', T0 + 5 * 3600000);
   assert.match(week, /^Shadow week \(1 day\): 2 questions, 1 agreed/);
   assert.match(week, /- Master Wood \(en\): 2 questions, 1 agreed, 1 differed/);

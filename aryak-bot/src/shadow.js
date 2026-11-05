@@ -48,6 +48,19 @@ const polarity = (t) => {
   return a === 'limited' || a === 'quantity' ? 'yes' : a;
 };
 
+// What the customer RECEIVED decides the verdict. When she only asks back (the quantity, the code) and staff gave an answer (yes, no, a quantity),
+// that is a state of its own, "asked": not agreed, not differed. Same means the same stance on the same code.
+const ASK_BACK = /\?\s*$|\b(?:send me|tell me|let me know|which code|what code|how many|how much|what quantity|what size)\b/i;
+export const askedBack = (c) => c.action === 'ask-quantity' || ASK_BACK.test(String(c.reply || ''));
+export function staffAnswered(texts) {
+  const joined = (texts || []).join(' / ');
+  const { by, general } = staffByCode(texts || []);
+  return Object.keys(by).length > 0 || !!general || /\d+(?:\.\d+)?\s*(?:m|mtrs?|meters?|metres?|pcs|pieces|rolls?|boxes)\b/i.test(joined);
+}
+export const VERDICT_LABEL = { asked: 'she asked, staff answered' };
+const verdictLabel = (v) => VERDICT_LABEL[v] || v;
+const KEY = (v) => (v === 'same' ? 'agreed' : v === 'different' ? 'differed' : v === 'asked' ? 'asked' : 'unknown');
+
 /** What she proposes and what staff said, compared by the kind of answer: same / different / unknown. */
 export function compareAnswers(proposed, staffText) {
   const a = polarity(proposed); const b = polarity(staffText);
@@ -99,7 +112,7 @@ export function cardText(c) {
   const lines = [`#${c.id} ${c.group}${c.customer && c.customer !== c.group ? ` (${c.customer})` : ''}`, `Customer: ${c.text || '—'}`, `Action: ${ACTIONS[c.action] || c.action}`];
   if (c.note) lines.push(c.note);
   if (c.reply) lines.push(`Reply${c.lang ? ` (${c.lang})` : ''}: ${mask(c.reply, 320)}`);
-  if (c.staffText && c.staffFirst) lines.push(`Staff said: ${mask(c.staffText)}${c.verdict ? ` — ${c.verdict}` : ''}`);
+  if (c.staffText && c.staffFirst) lines.push(`Staff said: ${mask(c.staffText)}${c.verdict ? ` — ${verdictLabel(c.verdict)}` : ''}`);
   return lines.join('\n');
 }
 
@@ -107,7 +120,7 @@ export function cardText(c) {
 export function followUpText(c) {
   const minutes = Math.round((c.staffAt - c.at) / 60000);
   const faster = c.staffAt > c.at ? `she would have been faster by ${minutes < 1 ? 'less than a minute' : `${minutes} min`}` : 'staff were first';
-  return `#${c.id} staff said: ${mask(c.staffText)} — ${c.verdict}; ${faster}`;
+  return `#${c.id} staff said: ${mask(c.staffText)} — ${verdictLabel(c.verdict)}; ${faster}`;
 }
 
 export class ShadowStore {
@@ -225,6 +238,12 @@ export class ShadowDesk {
   /** The verdict of a card against everything staff said (per code when the sheet gave a stance per code). */
   verdictFor(c) {
     if (!ANSWERING.includes(c.action)) return '';
+    if (askedBack(c)) {
+      // she only asked back and staff gave the answer: not agreed. Only a sheet that CONTRADICTS staff still counts as different.
+      if (!staffAnswered(c.staffTexts)) return 'unknown';
+      const sheet = c.stances && Object.keys(c.stances).length ? compareCodes(c.stances, c.staffTexts) : c.stance ? compareStance(c.stance, c.staffTexts.join(' / ')) : 'unknown';
+      return sheet === 'different' ? 'different' : 'asked';
+    }
     if (c.stances && Object.keys(c.stances).length) return compareCodes(c.stances, c.staffTexts);
     if (c.stance) return compareStance(c.stance, c.staffTexts.join(' / '));
     return c.reply ? compareAnswers(c.reply, c.staffTexts.join(' / ')) : 'unknown';
@@ -238,9 +257,8 @@ export class ShadowDesk {
     c.staffTexts = [...(c.staffTexts || []), ...texts];
     c.staffText = c.staffTexts.join(' / ');
     if (!ANSWERING.includes(c.action)) return false;
-    const key = (v) => (v === 'same' ? 'agreed' : v === 'different' ? 'differed' : 'unknown');
     const g = day.by[`${c.group}|${c.lang || '-'}`];
-    const bump = (v, n) => { if (!v) return; day[key(v)] += n; if (g && v !== 'unknown') g[key(v) === 'agreed' ? 'agreed' : 'differed'] += n; };
+    const bump = (v, n) => { if (!v) return; day[KEY(v)] = (day[KEY(v)] || 0) + n; if (g && (v === 'same' || v === 'different')) g[KEY(v)] += n; };
     c.verdict = this.verdictFor(c);
     // a card not yet posted is counted when it is posted; one already posted is corrected here
     if (c.id && c.verdict !== previous) { bump(previous, -1); bump(c.verdict, 1); }
@@ -254,7 +272,7 @@ export class ShadowDesk {
       c.id = this.store.next();
       this.store.d.cards.push(c);
       day.cards++;
-      if (ANSWERING.includes(c.action)) { day.questions++; day.answered++; const g = (day.by[`${c.group}|${c.lang || '-'}`] ||= { q: 0, agreed: 0, differed: 0 }); g.q++; if (c.verdict) { day[c.verdict === 'same' ? 'agreed' : c.verdict === 'different' ? 'differed' : 'unknown']++; if (c.verdict !== 'unknown') g[c.verdict === 'same' ? 'agreed' : 'differed']++; } }
+      if (ANSWERING.includes(c.action)) { day.questions++; day.answered++; const g = (day.by[`${c.group}|${c.lang || '-'}`] ||= { q: 0, agreed: 0, differed: 0 }); g.q++; if (c.verdict) { day[KEY(c.verdict)] = (day[KEY(c.verdict)] || 0) + 1; if (c.verdict === 'same' || c.verdict === 'different') g[KEY(c.verdict)]++; } }
       else if (c.action === 'needs-media') day.needsMedia++;
       this.store.save();
       for (let attempt = 1; attempt <= 2; attempt++) {
@@ -275,7 +293,7 @@ export class ShadowDesk {
     const changed = this.attachStaff(c, [m.text], at, false);
     this.store.save();
     if (!first && !changed) return;
-    this.queue = this.queue.then(() => this.post(first ? followUpText(c) : `#${c.id} update: staff also said: ${mask(m.text)} — ${c.verdict}`)).catch((e) => this.log(`shadow follow-up failed: ${e.message}`));
+    this.queue = this.queue.then(() => this.post(first ? followUpText(c) : `#${c.id} update: staff also said: ${mask(m.text)} — ${verdictLabel(c.verdict)}`)).catch((e) => this.log(`shadow follow-up failed: ${e.message}`));
     return this.queue;
   }
 }
@@ -289,20 +307,20 @@ export function dayLine(store, day, windowMinutes = 60, now = Date.now()) {
   if (!d) return '';
   const capNote = d.capHit ? ', ' + d.capHit + ' not shown (card cap)' : '';
   const mediaNote = d.needsMedia ? ', ' + d.needsMedia + ' need a photo or voice note (counted apart)' : '';
-  return `Shadow ${day}: ${d.questions} questions, ${d.agreed} agreed, ${d.differed} differed, ${d.unknown} unknown, ${unanswered(store, [day], windowMinutes, now)} not answered by staff, staff average ${fmtMin(d.staffMs, d.staffN)}${mediaNote}${capNote}`;
+  return `Shadow ${day}: ${d.questions} questions, ${d.agreed} agreed, ${d.differed} differed, ${d.asked || 0} she asked and staff answered, ${d.unknown} unknown, ${unanswered(store, [day], windowMinutes, now)} not answered by staff, staff average ${fmtMin(d.staffMs, d.staffN)}${mediaNote}${capNote}`;
 }
 
 /** The summary of the last seven days, per group and language: the owner's decision data. */
 export function weekSummary(store, today, now = Date.now()) {
   const days = Object.keys(store.d.days).filter((k) => k <= today).sort().slice(-7);
-  const t = { questions: 0, agreed: 0, differed: 0, unknown: 0, needsMedia: 0, staffMs: 0, staffN: 0, fasterMs: 0, fasterN: 0, calls: 0 };
+  const t = { questions: 0, agreed: 0, differed: 0, asked: 0, unknown: 0, needsMedia: 0, staffMs: 0, staffN: 0, fasterMs: 0, fasterN: 0, calls: 0 };
   const by = {};
   for (const k of days) {
     const d = store.d.days[k];
     for (const f of Object.keys(t)) t[f] += d[f] || 0;
     for (const [key, v] of Object.entries(d.by || {})) { const g = (by[key] ||= { q: 0, agreed: 0, differed: 0 }); g.q += v.q; g.agreed += v.agreed; g.differed += v.differed; }
   }
-  const lines = [`Shadow week (${days.length} day${days.length === 1 ? '' : 's'}): ${t.questions} questions, ${t.agreed} agreed, ${t.differed} differed, ${t.unknown} unknown, ${unanswered(store, days, 60, now)} not answered by staff; staff average ${fmtMin(t.staffMs, t.staffN)}; she would have been faster in ${t.fasterN} cases${t.fasterN ? ` (by ${fmtMin(t.fasterMs, t.fasterN)} on average)` : ''}; ${t.needsMedia} requests depend on a photo or voice note (not read, counted apart); model calls ${t.calls}`];
+  const lines = [`Shadow week (${days.length} day${days.length === 1 ? '' : 's'}): ${t.questions} questions, ${t.agreed} agreed, ${t.differed} differed, ${t.asked} she asked and staff answered, ${t.unknown} unknown, ${unanswered(store, days, 60, now)} not answered by staff; staff average ${fmtMin(t.staffMs, t.staffN)}; she would have been faster in ${t.fasterN} cases${t.fasterN ? ` (by ${fmtMin(t.fasterMs, t.fasterN)} on average)` : ''}; ${t.needsMedia} requests depend on a photo or voice note (not read, counted apart); model calls ${t.calls}`];
   for (const [key, v] of Object.entries(by).sort((a, b) => b[1].q - a[1].q).slice(0, 12)) {
     const [group, lang] = key.split('|');
     lines.push(`- ${group} (${lang}): ${v.q} questions, ${v.agreed} agreed, ${v.differed} differed`);

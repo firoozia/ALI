@@ -117,17 +117,17 @@ test('a split answer after the card is compared as it arrives and corrected when
   clock = 60000;
   desk.onMessage({ groupId: 'g', subject: 'S', label: 'S', staff: true, text: '220 available', at: clock });
   await desk.idle();
-  assert.match(posts[1], /staff said: 220 available — same/); // so far the one code staff mentioned agrees
+  assert.match(posts[1], /staff said: 220 available — she asked, staff answered/); // she only asked for the quantity: staff answered, not agreed
   clock = 90000;
   desk.onMessage({ groupId: 'g', subject: 'S', label: 'S', staff: true, text: '406 and 401 no', at: clock });
   await desk.idle();
   assert.equal(posts.length, 2); // the verdict did not change (still the same): no second message
-  assert.equal(desk.store.d.cards[0].verdict, 'same');
-  assert.equal(desk.store.day('1970-01-01').agreed, 1); // counted once
+  assert.equal(desk.store.d.cards[0].verdict, 'asked');
+  assert.equal(desk.store.day('1970-01-01').asked, 1); // counted once, apart from agreed
   clock = 100000;
   desk.onMessage({ groupId: 'g', subject: 'S', label: 'S', staff: true, text: '220 no', at: clock });
   await desk.idle();
   assert.match(posts[2], /update: staff also said: 220 no — different/);
-  assert.equal(desk.store.day('1970-01-01').agreed, 0);
-  assert.equal(desk.store.day('1970-01-01').differed, 1);
+  assert.equal(desk.store.day('1970-01-01').asked, 0);
+  assert.equal(desk.store.day('1970-01-01').differed, 1); // the sheet contradicts staff: still different
 });

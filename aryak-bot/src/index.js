@@ -24,6 +24,7 @@ import { UsageMeter, hasVisual } from './usage.js';
 import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
+import { withFollowUp } from './followup.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
@@ -213,7 +214,10 @@ const gate = new GroupGate({
       try { images.push(await m.loadImage()); } catch (e) { logger.warn(`image download failed: ${e.message}`); }
     }
     const ctx = { groupId, groupName: info.subject, customer, messageText: messages.map((m) => m.text).filter(Boolean).join(' / ') };
-    const result = await answer({ client, config, system: systemPrompt(), input: { groupName: info.subject, customer, transcript, messages, images }, ctx, recent });
+    // a follow-up with no code ("how much meters you have") carries the group's recent code as context; the codes of this batch are remembered after
+    const forModel = withFollowUp(messages, recentCodeList(groupId));
+    for (const m of messages) if (m.text) rememberCodes(groupId, m.text);
+    const result = await answer({ client, config, system: systemPrompt(), input: { groupName: info.subject, customer, transcript, messages: forModel, images }, ctx, recent });
     for (const text of result.managerTexts) await sock.sendMessage(config.salesManager, { text });
     logger.info(`${groupId}: ${result.why}`);
     if (!result.reply) return;
@@ -1415,6 +1419,8 @@ async function handleStaffChat(raw, chatId, group) {
 }
 
 const recentCodes = new Map(); // group id -> [{ code, at }]: what customers asked about lately (a staff answer repeats it)
+/** The codes this group asked about in the last half hour, oldest first (the context of a follow-up with no code). */
+const recentCodeList = (groupId) => (recentCodes.get(groupId) || []).filter((c) => Date.now() - c.at < 30 * 60 * 1000).map((c) => c.code);
 const rememberCodes = (groupId, text) => {
   const now = Date.now();
   const list = (recentCodes.get(groupId) || []).filter((c) => now - c.at < 30 * 60 * 1000);
@@ -1547,7 +1553,7 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
     if (!rest.length) return { action: 'none' };
   }
   calls++;
-  const result = await answer({ client, config, system: systemPrompt(), input: { groupName: subject, customer, transcript, messages: withText, images: [] }, ctx: { groupId, groupName: subject, customer, messageText: withText.map((m) => m.text).join(' / ') }, recent: shadowRecent });
+  const result = await answer({ client, config, system: systemPrompt(), input: { groupName: subject, customer, transcript, messages: withFollowUp(withText, recentCodeList(groupId)), images: [] }, ctx: { groupId, groupName: subject, customer, messageText: withText.map((m) => m.text).join(' / ') }, recent: shadowRecent });
   lang = detectLang(withText.map((m) => m.text).join(' '), 'en');
   const referral = result.managerTexts.length ? 'Would send the sales manager a private report (nothing sent)' : '';
   if (!result.reply && !referral) return { action: 'none' };
