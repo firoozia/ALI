@@ -280,3 +280,45 @@ test('the wiring: only the owner, only in his own chat, nothing is sent by the l
   assert.ok(!/anthropic|client\.|messages\.create|sendMessage|oneShot/i.test(lib)); // free code, no paid call, no way to write to a group
   assert.equal(isOwnerCommand({ fromMe: false, id: 'x', text: 'تأیید همه', sentIds: new Set() }), false); // a non-owner is refused by the same rule
 });
+
+test('every customer group has a row, even one with no real word in its name; a watched group left out of the rule is named, not lost', () => {
+  const groups = [...GROUPS, G('v1', 'PVC works - ARYAK'), G('e1', 'Eng.carpentry ARYAK'), G('r1', 'Ar-Rad - ARYAK')];
+  const { list } = mk();
+  const p = buildProposal({ customers: NAMES, groups, config, list });
+  const subjects = JSON.stringify(p.rows);
+  for (const s of ['PVC works - ARYAK', 'Eng.carpentry ARYAK', 'Ar-Rad - ARYAK']) assert.ok(subjects.includes(s), s);
+  const custGroups = groups.filter((g) => /ARYAK/.test(g.subject) && !/TEST|Staff|Accounting/.test(g.subject));
+  assert.equal(p.groupCount, custGroups.length); // 14 groups in fewer rows: the head line counts groups
+  assert.ok(p.others.includes('ARYAK Accounting')); // has the company word but an excluded word: never a row, but named
+  assert.ok(!p.others.includes('Aryak Staff') && !p.others.includes('TEST ARYAK BOT') && !p.others.includes('Family chat'));
+  const text = proposalTexts(p, list).join('\n');
+  assert.ok(text.includes(`${String(custGroups.length).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d])} گروه مشتری`));
+  assert.ok(text.includes('ARYAK Accounting'));
+});
+
+test('a pending proposal and a pending yes survive a restart: the numbers and the answers still work', () => {
+  const { run, list, desk, dir, book } = mk();
+  run('فهرست مشتری و گروه');
+  const first = desk.proposal.rows[0];
+  run(`تأیید ${first.n}`);
+  run('مشتری Dash Co گروه dash team');
+  const again = new CustomerGroupDesk({ list: new CustomerGroups(dir), config, book: new NameBook(dir) }); // a new process
+  assert.equal(again.proposal.rows.length, desk.proposal.rows.length);
+  assert.equal(again.proposal.rows[0].status, 'saved');
+  assert.ok(again.wants('تأیید همه')); // the proposal is still open
+  assert.ok(again.wants('بله')); // and so is the change waiting for his yes
+  const out = again.handle(again.wants('بله'), { groups: GROUPS, known }).join('');
+  assert.ok(out.includes('ذخیره شد'));
+  assert.ok(new CustomerGroups(dir).find('dash co'));
+  assert.equal(book.size, NAMES.length);
+});
+
+test('"approve all" never saves a near spelling or a one-word win: only exact, complete matches', () => {
+  const groups = [G('f1', 'AL AHLIA KITCHEN - ARYAK'), G('f2', 'GOLDEN SUN FURNITURE - ARYAK'), G('f3', 'RANA - ARYAK'), G('f4', 'ORION BUILDING - ARYAK')];
+  const { run, list } = mk(['Alia Wood', 'Golden Door Kitchen', 'Rana Wood', 'Rana Kitchen', 'Orion Design']);
+  const out = run('فهرست مشتری و گروه', groups).join('\n');
+  assert.ok(!out.includes('Alia Wood —') && !out.includes('Golden Door Kitchen —') && !/Rana (Wood|Kitchen) —/.test(out));
+  run('تأیید همه', groups);
+  assert.equal(list.rows().filter((r) => ['f1@g.us', 'f2@g.us', 'f3@g.us'].includes(r.jid)).length, 0); // nothing was confident but the exact orion
+  assert.equal(list.find('Orion Design')?.jid, 'f4@g.us');
+});

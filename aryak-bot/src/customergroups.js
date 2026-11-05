@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { editDistance, isTestCustomer } from './invoicesend.js';
-import { shadowGroup } from './guard.js';
+import { groupAllowed, observedGroup, shadowGroup } from './guard.js';
 import { normalizeLetters } from './text.js';
 
 const PER_MESSAGE = 40;
@@ -176,62 +176,107 @@ const GENERIC_WORDS = new Set([
   'street', 'road', 'dubai', 'sharjah', 'ajman', 'abudhabi', 'dhabi', 'emirates', 'uae', 'oman', 'muscat', 'khaimah', 'fujairah', 'city', 'area', 'zone', 'free',
 ]);
 
-/** The words of a name that tell customers apart: generic words out, "al" out (alsham = al sham), words under four letters out. */
-export function distinctive(s) {
+/** The words of a name with "al" handled (alsham = al sham): the starting "al" of a long word and a lone "al" are taken off. */
+function nameTokens(s) {
   const out = [];
   for (let t of nameKey(s).split(' ').filter(Boolean)) {
     if (t === 'al' || t === 'el') continue;
     if (t.length > 4 && t.startsWith('al')) t = t.slice(2);
-    if (t.length < 4 || GENERIC_WORDS.has(t) || /^\d+$/.test(t)) continue;
     out.push(t);
   }
   return out;
 }
 
-/** How alike two words are: 1 the same, 0.85 one letter off, 0.6 two off (longer words), else 0. */
-function wordMatch(a, b) {
-  if (a === b) return 1;
-  const d = editDistance(a, b);
-  if (d === 1) return 0.85;
-  return d === 2 && Math.max(a.length, b.length) >= 7 ? 0.6 : 0;
+/** The words that tell customers apart: generic words out, "al" out, words under four letters out. */
+export function distinctive(s) {
+  return nameTokens(s).filter((t) => t.length >= 4 && !GENERIC_WORDS.has(t) && !/^\d+$/.test(t));
 }
 
-/** Customer words against group words: { score, shared, equal }. Each shared word counts by how close it is; a word left over on either side costs a little. */
+/** The company's own name and its forms: never a name's one remaining word. */
+const FORM_WORDS = new Set(['aryak', 'aryaak', 'aryack', 'aryac', 'arayak', 'aryk', 'ariak', 'aryakk', 'aryaq', 'aryag', 'آریاک', 'اریاک', 'group', 'groups', 'team', 'teams', 'company', 'companies', 'comp', 'llc', 'ltd', 'limited', 'fzco', 'fzc', 'fze', 'establishment', 'estb', 'corporation', 'corp', 'enterprise', 'enterprises', 'holding', 'holdings', 'and', 'the', 'for']);
+
+/**
+ * The words used to compare two names: every non-generic word of two letters or more (short words count, so "golden sun" is not "golden"). When
+ * a name is nothing but generic words ("designer wood"), its first word that is not a company form is kept, marked weak (offered, never confident).
+ */
+export function matchWords(s) {
+  const t = nameTokens(s);
+  const list = t.filter((x) => x.length >= 2 && !GENERIC_WORDS.has(x) && !/^\d+$/.test(x));
+  if (list.length) return { list, weak: false };
+  const first = t.find((x) => x.length >= 3 && !FORM_WORDS.has(x) && !/^\d+$/.test(x));
+  return first ? { list: [first], weak: true } : { list: [], weak: false };
+}
+
+/** How alike two words are: 1 the same, 0.85 one letter off, 0.6 two off (not for short words); else 0. */
+function wordMatch(a, b) {
+  if (a === b) return 1;
+  if (Math.min(a.length, b.length) < 4) return 0;
+  const d = editDistance(a, b);
+  if (d === 1) return 0.85;
+  return d === 2 && (Math.max(a.length, b.length) >= 7 || (Math.max(a.length, b.length) >= 5 && a[0] === b[0])) ? 0.6 : 0;
+}
+
+/**
+ * Customer words [a] against group words [b]. A word may also match two joined words of the other side (abduljabar = abdul jabbar). Each
+ * shared word counts by how close it is; a word left over on either side costs a little. { score, shared, equal, groupLeft, exact, hasLong }.
+ */
 function pairScore(a, b) {
-  const used = new Set();
-  let score = 0; let shared = 0;
-  for (const x of a) {
-    let best = 0; let at = -1;
-    b.forEach((y, j) => { if (used.has(j)) return; const w = wordMatch(x, y); if (w > best) { best = w; at = j; } });
-    if (at >= 0) { used.add(at); score += best; shared += 1; }
+  const usedA = new Set(); const usedB = new Set();
+  let score = 0; let shared = 0; let exact = true; let hasLong = false;
+  for (let i = 0; i < a.length; i++) {
+    if (usedA.has(i)) continue;
+    let best = { w: 0 };
+    for (let j = 0; j < b.length; j++) {
+      if (usedB.has(j)) continue;
+      const w1 = wordMatch(a[i], b[j]);
+      if (w1 > best.w) best = { w: w1, ia: [i], ib: [j], joined: false };
+      if (i + 1 < a.length && !usedA.has(i + 1)) { const w = wordMatch(a[i] + a[i + 1], b[j]); if (w > best.w) best = { w, ia: [i, i + 1], ib: [j], joined: true }; }
+      if (j + 1 < b.length && !usedB.has(j + 1)) { const w = wordMatch(a[i], b[j] + b[j + 1]); if (w > best.w) best = { w, ia: [i], ib: [j, j + 1], joined: true }; }
+    }
+    if (!best.w) continue;
+    best.ia.forEach((k) => usedA.add(k)); best.ib.forEach((k) => usedB.add(k));
+    score += best.w; shared += 1;
+    if (best.w < 1 || best.joined) exact = false;
+    if (best.ia.some((k) => a[k].length >= 4) || best.ib.some((k) => b[k].length >= 4)) hasLong = true;
   }
-  const extra = a.length - shared + (b.length - shared);
-  return { score: score - 0.25 * extra, shared, equal: shared > 0 && extra === 0 };
+  const leftA = a.length - usedA.size; const leftB = b.length - usedB.size;
+  return { score: score - 0.25 * (leftA + leftB), shared, equal: shared > 0 && leftA === 0 && leftB === 0, groupLeft: leftB, exact, hasLong };
 }
 
 /** The customers that may own this group (every name of the customer tried), best first, each with its score. [customers]: { name, alts }. */
 export function rankCustomers(subject, customers, skip = () => false) {
-  const gw = distinctive(subject);
+  const g = matchWords(subject);
   const out = [];
-  if (!gw.length) return out;
+  if (!g.list.length) return out;
+  const groupLong = g.list.some((x) => x.length >= 4);
   for (const c of customers) {
     if (skip(c.name)) continue;
     let best = null;
-    for (const n of [c.name, ...(c.alts || [])]) { const w = distinctive(n); if (!w.length) continue; const p = pairScore(w, gw); if (p.shared && (!best || p.score > best.score)) best = p; }
+    for (const n of [c.name, ...(c.alts || [])]) {
+      const w = matchWords(n);
+      if (!w.list.length) continue;
+      const p = pairScore(w.list, g.list);
+      if (!p.shared || (groupLong && !p.hasLong)) continue; // a group with a real word must share a real word
+      const weak = w.weak || g.weak;
+      const cand = { ...p, weak, score: p.score - (weak ? 0.3 : 0) };
+      if (!best || cand.score > best.score) best = cand;
+    }
     if (best) out.push({ customer: c.name, ...best });
   }
   return out.sort((a, b) => b.score - a.score);
 }
 
 /**
- * A clear winner only: all the words match on both sides and no other customer matches as well, or two or more words match and no other
- * customer matches that many. A single shared word with other words left over is never enough.
+ * A clear winner only, and strict: every word of the group matches a word of the customer EXACTLY (no near spelling, no joined words, no
+ * word the customer lacks), and no other customer matches as well. Two customers that both fit the group are never confident, except that
+ * the exact name beats a longer one (a main group goes to "Master Wood", the branch group to "Master Wood Branch"). Near spellings,
+ * weak (generic-only) names and one-word wins with words left over are offered as options, never confident.
  */
 export function clearWinner(ranked) {
   const [top, second] = ranked;
-  if (!top) return false;
-  if (top.equal && top.score >= 0.85) return !second || !second.equal || top.score - second.score >= 0.3;
-  return top.shared >= 2 && top.score >= 1.6 && (!second || (second.shared < top.shared && top.score - second.score >= 0.5));
+  if (!top || top.weak || !top.exact || top.groupLeft > 0) return false;
+  if (top.equal) return !ranked.slice(1).some((r) => r.equal);
+  return top.shared >= 2 && (!second || second.shared < top.shared);
 }
 
 // ---------------------------------------------------------------------------------------------------------------- the proposal
@@ -261,10 +306,16 @@ export function buildProposal({ customers, groups, config, list, aliasMap = {}, 
     else none.push({ kind: 'none', group: entry, status: 'open' });
   }
   const rows = [...confident.values(), ...options, ...none];
+  const groupCount = rows.reduce((n, r) => n + (r.groups ? r.groups.length : 1), 0);
   rows.forEach((r, i) => { r.n = i + 1; });
   const withGroup = new Set([...confident.keys(), ...seen]);
   const noGroup = people.filter((p) => !withGroup.has(nameKey(p.name)) && !list.find(p.name, p.alts)).map((p) => p.name);
-  return { at: now, invoices, sources, rows, noGroup };
+  // Watched groups that are NOT customer groups by the rule (an internal or excluded word in the name): never a row, but named so none is lost silently.
+  const lowName = (x) => String(x).toLowerCase();
+  const words = (config.shadowGroupNames || []).map(lowName).filter(Boolean);
+  const others = groups.filter((g) => !shadowGroup(g.subject, config) && !['internal group', 'test group'].includes(groupAllowed(g.subject, config).why)
+    && (observedGroup(g.subject, config) || words.some((w) => lowName(g.subject).includes(w)))).map((g) => g.subject);
+  return { at: now, invoices, sources, rows, noGroup, groupCount, others };
 }
 
 /** The proposal (and then the current list) as messages of about 40 rows each, in Persian, names exactly as they are. */
@@ -282,7 +333,7 @@ export function proposalTexts(proposal, list) {
   const s = proposal.sources;
   if (s?.fromBook) push(`فهرست مشتری و گروه — نام‌ها از ${persianDigits(s.fromBook)} نام فهرست حسابداری و ${persianDigits(s.fromInvoices)} نام تازه‌ای که فقط روی فاکتورها دیدم آمده است (فاکتورهای دیده‌شده: ${persianDigits(proposal.invoices)}).`);
   else push(`فهرست مشتری و گروه — این پیشنهاد از ${persianDigits(proposal.invoices)} فاکتور ساخته شده است${proposal.invoices < 20 ? ' (هنوز کوتاه است و با فاکتورهای بیشتر کامل‌تر می‌شود؛ با فرستادن فهرست نام مشتری‌ها کامل‌تر می‌شود)' : ''}.`);
-  push(`هر ردیف یک گروه مشتری است (${persianDigits(proposal.rows.length)} گروه).`);
+  push(`${persianDigits(proposal.groupCount ?? proposal.rows.length)} گروه مشتری در ${persianDigits(proposal.rows.length)} ردیف (دو گروه یک مشتری در یک ردیف می‌آید).`);
   const section = (kind, title, show) => {
     const rows = proposal.rows.filter((r) => r.kind === kind && r.status === 'open');
     if (!rows.length) return;
@@ -295,6 +346,7 @@ export function proposalTexts(proposal, list) {
   section('none', '⛔ گروه بی‌مشتری (نام مشتری را بنویسید):', (r) => `${persianDigits(r.n)}. ${r.group.subject}`);
   if (!proposal.rows.some((r) => r.status === 'open')) { push(''); push('گروه تازه‌ای بدون پاسخ نیست.'); }
   if (proposal.noGroup.length) { push(''); push(`مشتریانی که گروهی زیر نظر برایشان نیست: ${persianDigits(proposal.noGroup.length)} نام (برای دیدن نام‌ها بنویسید «نام‌های بی‌گروه»).`); }
+  if (proposal.others?.length) { push(''); push(`گروه‌های زیر نظر که گروه مشتری حساب نشدند و ردیفی ندارند (${persianDigits(proposal.others.length)}): ${proposal.others.slice(0, 12).join('، ')}${proposal.others.length > 12 ? ' …' : ''}`); }
   push('');
   push('پاسخ: «تأیید همه» (فقط جفت‌های مطمئن)، «تأیید ۱ ۳ ۵»، «۳ نه»، «۴ = ۲» (مشتری شمارهٔ ۲ برای گروه ردیف ۴)، «۷ = نام مشتری». تا پاسخ ندهید چیزی ذخیره نمی‌شود و هیچ فاکتوری فرستاده نمی‌شود.');
   const cur_ = list.rows();
@@ -376,8 +428,11 @@ export class CustomerGroupDesk {
     this.config = config;
     this.book = book;
     this.now = now;
-    this.pending = null;
   }
+
+  /** A change waiting for his yes (or an import in progress) is kept in the list file, so a restart does not lose it. */
+  get pending() { return this.list.d.pending || null; }
+  set pending(v) { this.list.d.pending = v; this.list.persist(); }
 
   get proposal() { return this.list.d.proposal; }
 

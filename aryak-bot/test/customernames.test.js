@@ -94,9 +94,11 @@ test('matching: a two-word match beats a one-word match; the false pairs are nev
   assert.equal(clearWinner(rank('BLUE CAPITAL - ARYAK')), true);
   assert.equal(rank('BLUE CAPITAL - ARYAK')[0].customer, 'Blue Capital');
   assert.equal(clearWinner(rank('ATLAS - ARYAK')), false); // atlas kitchen and atlas commercial are the same distinctive word
-  assert.equal(clearWinner(rank('GOLDEN - ARYAK')), false); // golden door / golden sun
+  assert.equal(clearWinner(rankCustomers('GOLDEN - ARYAK', people('Golden Door', 'Golden Door Kitchen'))), false); // two customers that are both just golden
   assert.equal(clearWinner(rank('BLUE - ARYAK')), false); // a bare "blue" fits two customers
-  assert.equal(rank('DESIGNER WOOD - ARYAK').length, 0); // designer and wood say nothing: no candidate at all
+  const weak = rank('DESIGNER WOOD - ARYAK'); // nothing but generic words: the first word survives, offered but never confident
+  assert.deepEqual(weak.map((r) => r.customer), ['Designer Wood']);
+  assert.equal(clearWinner(weak), false);
 });
 
 test('the main group and the branch group each get their own customer', () => {
@@ -111,4 +113,30 @@ test('the main group and the branch group each get their own customer', () => {
 
 test('mergeSources: the imported names first, then the names only the invoices have, counted by source', () => {
   assert.deepEqual(mergeSources(['A One', 'b two'], { customers: ['B Two', 'C Three'], invoices: 9 }), { customers: ['A One', 'b two', 'C Three'], invoices: 9, fromBook: 2, fromInvoices: 1 });
+});
+
+test('a near spelling or a one-word win is never confident, two customers for one group never are either', () => {
+  const near = rankCustomers('AL AHLIA KITCHEN - ARYAK', people('Alia Wood'));
+  assert.equal(near[0].customer, 'Alia Wood'); // offered
+  assert.equal(clearWinner(near), false); // ahlia / alia is a guess
+  const golden = rankCustomers('GOLDEN SUN FURNITURE - ARYAK', people('Golden Door Kitchen'));
+  assert.equal(golden[0].customer, 'Golden Door Kitchen');
+  assert.equal(clearWinner(golden), false); // "sun" is a word the customer lacks
+  const two = rankCustomers('RANA - ARYAK', people('Rana Wood', 'Rana Kitchen'));
+  assert.equal(two.length, 2);
+  assert.equal(clearWinner(two), false);
+  assert.equal(clearWinner(rankCustomers('RANA - ARYAK', people('Rana Wood'))), true); // one exact customer is a clear winner
+});
+
+test('a name made only of generic words keeps its first word; short and joined spellings still find the customer', () => {
+  const dw = rankCustomers('DESIGNER WOOD - ARYAK', people('DESIGNER WOOD CARPENTRY'));
+  assert.equal(dw[0].customer, 'DESIGNER WOOD CARPENTRY');
+  assert.equal(clearWinner(dw), false);
+  const saj = rankCustomers('SAJ GROUP - ARYAK', people('SAJ INTERNATIONAL TRADING'));
+  assert.equal(saj[0].customer, 'SAJ INTERNATIONAL TRADING');
+  const bab = rankCustomers('BAB AL HIRA - ARYAK', people('BAB ALHEERA TRADING'));
+  assert.equal(bab[0].customer, 'BAB ALHEERA TRADING');
+  const joined = rankCustomers('ABDULJABAR COMPANY OMAN - ARYAK', people('ABDUL JABBAR MOKHTAR AHMAD', 'Other Person'));
+  assert.deepEqual(joined.map((r) => r.customer), ['ABDUL JABBAR MOKHTAR AHMAD']);
+  assert.equal(clearWinner(joined), false); // joined spelling: offered only
 });
