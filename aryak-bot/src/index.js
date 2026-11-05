@@ -17,6 +17,7 @@ import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup } from './guard.js';
+import { toEnglish } from './english.js';
 import { isSourcingRequest, markSourcingReceived, openSourcing, sourcingAnswer, sourcingCover, sourcingEvent } from './sourcing.js';
 import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups, morningText, morningLang, weekdayNumbers, localParts } from './morning.js';
 import { customerFromMessages, productCode } from './codes.js';
@@ -807,7 +808,7 @@ async function handleStaffChat(raw, chatId, group) {
       staffLang = pm[1].toLowerCase() === 'owner' ? 'fa' : pm[1].toLowerCase() === 'staff' ? 'en' : detectLang(text, 'en');
     }
   }
-  const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
+  const reply = async (body) => { const said = staffLang === 'en' ? toEnglish(body) : body; return sock.sendMessage(chatId, { text: isSelf ? `🤖 ${said}` : said }, { quoted: raw }); };
   // The sales manager answers a request about stock ("#12 yes", a reply to the question, or the only open one).
   if (!group && avail.open.size) {
     const reply0 = parseManagerReply(text, answerKind);
@@ -1118,7 +1119,17 @@ async function start() {
   const rawSend = sock.sendMessage.bind(sock);
   // EVERY message leaves through this one function; the guard decides whether the destination may be written to.
   const guarded = guardedSend({ rawSend, config, isGroup: isJidGroup, known: staffChats, ownIds: () => ownIds(), log: (s) => logger.warn(s), subjectOf: async (jid) => groups.get(jid)?.subject ?? (await groupInfo(jid)).subject });
-  sock.sendMessage = async (...a) => { const r = await guarded(...a); if (r && isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
+  // What colleagues read is English, whatever generated it: every group except a test group, and every private chat except the owner's.
+  const englishFor = async (jid) => {
+    if (isJidGroup(jid)) return !isTestSubject(groups.get(jid)?.subject ?? (await groupInfo(jid)).subject);
+    const d = jidDigits(jid);
+    return !([...(config.ownerNumbers || []), ...ownIds()].map(jidDigits).includes(d));
+  };
+  sock.sendMessage = async (...a) => {
+    if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text)) {
+      try { if (await englishFor(a[0])) { const en = toEnglish(a[1].text); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } } catch { /* sent as written */ }
+    }
+    const r = await guarded(...a); if (r && isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
   sock.ev.on('creds.update', saveCreds);
   const onQr = pairingOnce({
     registered: () => !!state.creds.registered,
