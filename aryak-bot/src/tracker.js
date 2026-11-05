@@ -35,11 +35,13 @@ export class Tracker {
     this.nagged = new Set();
     this.statements = new Set(); // "yyyy-mm|customer" the statement reminder was sent for
     this.deleted = new Set(); // invoice numbers the office deleted on purpose: a gap there is not an error
+    this.startedAt = 0; // when recording began: before it nothing was seen, so a missing record proves nothing
     this.load();
   }
 
   add(ev) {
     if (ev.ref && this.events.some((e) => e.ref === ev.ref)) return false;
+    if (!this.startedAt) { this.startedAt = ev.at || Date.now(); this.persist('state'); }
     this.events.push(ev);
     if (this.events.length > 5000) this.events.shift();
     this.persist('events');
@@ -79,7 +81,7 @@ export class Tracker {
     try {
       fs.mkdirSync(this.dir, { recursive: true });
       if (what === 'events') fs.writeFileSync(path.join(this.dir, 'events.json'), JSON.stringify(this.events));
-      else fs.writeFileSync(path.join(this.dir, 'state.json'), JSON.stringify({ holds: [...this.holds.values()], nagged: [...this.nagged].slice(-2000), statements: [...this.statements], deleted: [...this.deleted] }));
+      else fs.writeFileSync(path.join(this.dir, 'state.json'), JSON.stringify({ holds: [...this.holds.values()], nagged: [...this.nagged].slice(-2000), statements: [...this.statements], deleted: [...this.deleted], startedAt: this.startedAt }));
     } catch { /* best effort */ }
   }
 
@@ -92,6 +94,7 @@ export class Tracker {
       this.nagged = new Set(s.nagged || []);
       this.statements = new Set(s.statements || []);
       this.deleted = new Set(s.deleted || []);
+      this.startedAt = Number(s.startedAt) || 0;
     } catch { /* first start */ }
   }
 }
@@ -195,43 +198,85 @@ export function checkDelivery(tracker, del, { windowDays = 30 } = {}) {
  * one that shares the most codes with the invoice is taken (never a guess between equals). A missing order is only a note.
  * [inv]: { customer, at, lines: [{ code, quantity, unit }] }. Returns problems in the shape of the invoice report.
  */
-export function checkInvoiceAgainstOrders(tracker, inv, { windowDays = 45 } = {}) {
+export function checkInvoiceAgainstOrders(tracker, inv, { windowDays = 45, explain = false } = {}) {
   const since = (inv.at || Date.now()) - windowDays * DAY;
   const withLines = (e) => (e.lines || []).some((l) => l.code);
+  // ONLY real orders (a PDF order, text lines, a confirmed photo, a colleague posting for the customer): never the cuts.
   const orders = tracker.of('order', inv.customer, { since }).filter(withLines);
-  const cuts = tracker.of('cut', inv.customer, { since }).filter((e) => !e.internal && withLines(e));
   const note = (text) => [{ kind: 'order-note', item: '', requested: '', invoiced: '', note: text, severity: 'info' }];
+  if (!orders.length) return explain ? note('سفارشی برای این مشتری در حافظهٔ دستیار نیست (شاید فقط در گفتگوی خصوصی آمده)؛ فقط حساب و قیمت سنجیده شد') : [];
   const invoiceMap = sumByCode([{ lines: inv.lines || [] }]);
   const codesOf = (map) => new Set([...map.keys()].map((k) => k.split('|')[0]));
-  let source = 'order';
-  let pool = orders;
-  if (!pool.length) { pool = cuts; source = 'cut'; }
-  if (!pool.length) return note('سفارشی برای این مشتری در حافظهٔ دستیار نیست (شاید فقط در گفتگوی خصوصی آمده)؛ فقط حساب و قیمت سنجیده شد');
-  // the open order that shares the most codes with the invoice; the cuts of one customer are taken together
-  let chosen;
-  if (source === 'cut') chosen = pool;
-  else {
-    const invCodes = codesOf(invoiceMap);
-    const score = (e) => [...codesOf(sumByCode([e]))].filter((c) => invCodes.has(c)).length;
-    const ranked = pool.map((e) => ({ e, s: score(e) })).sort((a, b) => b.s - a.s || b.e.at - a.e.at);
-    if (!ranked[0].s) return note(`برای این مشتری سفارش ثبت شده ولی هیچ‌کدام کد مشترکی با این فاکتور ندارد (${ranked.length} سفارش)`);
-    chosen = [ranked[0].e];
-  }
-  const wanted = sumByCode(chosen);
-  const from = source === 'cut' ? 'سفارش فقط از گروه برش شناخته شد' : 'سفارش ثبت‌شده';
-  const sev = source === 'cut' ? 'info' : 'urgent';
+  // the open order that shares the most codes with the invoice; never a guess between equals
+  const invCodes = codesOf(invoiceMap);
+  const score = (e) => [...codesOf(sumByCode([e]))].filter((c) => invCodes.has(c)).length;
+  const ranked = orders.map((e) => ({ e, s: score(e) })).sort((a, b) => b.s - a.s || b.e.at - a.e.at);
+  if (!ranked[0].s) return explain ? note(`برای این مشتری سفارش ثبت شده ولی هیچ‌کدام کد مشترکی با این فاکتور ندارد (${ranked.length} سفارش)`) : [];
+  const order = ranked[0].e;
+  const wanted = sumByCode([order]);
+  // an order may be invoiced in parts: a code that another invoice of the customer (after the order) carries is not missing here
+  const others = tracker.of('invoice', inv.customer, { since: order.at }).filter((e) => e.number !== inv.number && e.at !== inv.at);
+  const elsewhere = codesOf(sumByCode(others));
   const out = [];
   for (const [key, got] of invoiceMap) {
     const [code, unit] = key.split('|');
     const want = wanted.get(key);
-    if (want === undefined) out.push({ kind: 'extra', item: code, requested: '', invoiced: `${qty(got)} ${unit}`, note: `این کد در ${from} نیست`, severity: sev });
-    else if (Math.abs(got - want) > 1e-6) out.push({ kind: 'quantity', item: code, requested: `${qty(want)} ${unit}`, invoiced: `${qty(got)} ${unit}`, note: `مقدار با ${from} فرق دارد`, severity: sev });
+    if (want === undefined) out.push({ kind: 'extra', item: code, requested: '', invoiced: `${qty(got)} ${unit}`, note: 'این کد در سفارش ثبت‌شده نیست', severity: 'urgent' });
+    else if (Math.abs(got - want) > 1e-6) out.push({ kind: 'quantity', item: code, requested: `${qty(want)} ${unit}`, invoiced: `${qty(got)} ${unit}`, note: 'مقدار با سفارش ثبت‌شده فرق دارد', severity: 'urgent' });
   }
   for (const [key, want] of wanted) {
-    if (!invoiceMap.has(key)) { const [code, unit] = key.split('|'); out.push({ kind: 'missing', item: code, requested: `${qty(want)} ${unit}`, invoiced: '', note: `در ${from} بود و در فاکتور نیست`, severity: sev }); }
+    const [code, unit] = key.split('|');
+    if (!invoiceMap.has(key) && !elsewhere.has(code)) out.push({ kind: 'missing', item: code, requested: `${qty(want)} ${unit}`, invoiced: '', note: 'در سفارش ثبت‌شده بود و در فاکتور نیست', severity: 'urgent' });
   }
-  if (source === 'cut') out.unshift(...note('سفارش این مشتری فقط از گروه برش شناخته شد'));
   return out;
+}
+
+/**
+ * Invoice versus cut, in EITHER order (the cut may come the day after the invoice, or the cut photo may come first). For one
+ * customer: the invoices of the last [windowDays] and the cuts since just before the first of them, added up per code.
+ *  - a cut ABOVE the invoiced quantity is reported at once;
+ *  - a cut BELOW it only after [shortDays] days from the invoice, only when some cut exists (a partial cut), and not in the
+ *    first [graceDays] days after recording began (the cuts before that were never seen);
+ *  - no cut at all, or a cut with no invoice, is never a finding (not every cut is photographed): see cutDigest.
+ * Each finding has a [key] so it is said once. Internal rolls ("FOR CUT") and damage notes are not cuts.
+ */
+export function reconcileCuts(tracker, customer, { now = Date.now(), windowDays = 10, shortDays = 3, graceDays = 3, tol = 0.5 } = {}) {
+  const invoices = tracker.of('invoice', customer, { since: now - windowDays * DAY }).filter((e) => (e.lines || []).some((l) => l.code && l.quantity));
+  if (!invoices.length) return [];
+  const first = Math.min(...invoices.map((i) => i.at));
+  const cuts = tracker.of('cut', customer, { since: first - 3 * DAY }).filter((e) => !e.internal);
+  const invoiced = sumByCode(invoices);
+  const cut = sumByCode(cuts);
+  const out = [];
+  for (const [key, want] of invoiced) {
+    const [code, unit] = key.split('|');
+    const got = cut.get(key) || 0;
+    const last = [...invoices].reverse().find((i) => (i.lines || []).some((l) => normCode(l.code) === code));
+    const base = { customer: last.customer || customer, number: last.number || '', code, unit, invoiced: round2(want), cut: round2(got) };
+    if (got > want + tol) out.push({ ...base, kind: 'cut-over', key: `cutrec|${last.ref || last.number}|${code}|over|${round2(got)}` });
+    else if (got > 0 && got < want - tol && now - last.at >= shortDays * DAY && tracker.startedAt && now - tracker.startedAt >= graceDays * DAY) {
+      out.push({ ...base, kind: 'cut-short', key: `cutrec|${last.ref || last.number}|${code}|short|${round2(got)}` });
+    }
+  }
+  return out;
+}
+
+/** The customers who have an open invoice (last [windowDays] days). */
+export function customersWithOpenInvoices(tracker, { now = Date.now(), windowDays = 10 } = {}) {
+  return [...new Set(tracker.events.filter((e) => e.type === 'invoice' && now - e.at <= windowDays * DAY).map((e) => e.customer).filter(Boolean))];
+}
+
+/** Two counts for the daily summary: invoices with no cut recorded after [shortDays] days, and cuts with no invoice after a day. */
+export function cutDigest(tracker, { now = Date.now(), shortDays = 3, windowDays = 10 } = {}) {
+  const invoices = tracker.events.filter((e) => e.type === 'invoice' && now - e.at <= windowDays * DAY);
+  const cuts = tracker.events.filter((e) => e.type === 'cut' && !e.internal && now - e.at <= windowDays * DAY);
+  // an invoice counts when some code on it has no cut of that very code (a letter variant such as 108 C is another code)
+  const invoiceNoCut = invoices.filter((i) => now - i.at >= shortDays * DAY && (() => {
+    const cutCodes = new Set([...sumByCode(tracker.of('cut', i.customer, { since: i.at - 3 * DAY }).filter((c) => !c.internal)).keys()].map((k) => k.split('|')[0]));
+    return (i.lines || []).some((l) => l.code && l.quantity && !cutCodes.has(normCode(l.code)));
+  })()).length;
+  const cutNoInvoice = cuts.filter((c) => now - c.at >= DAY && !tracker.of('invoice', c.customer, { since: c.at - windowDays * DAY }).length).length;
+  return { invoiceNoCut, cutNoInvoice };
 }
 
 /** Money items nobody has closed yet ("CLEARED" is the office's reply): cash, receipts, cheques and transfers, oldest first. */

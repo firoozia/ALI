@@ -73,6 +73,10 @@ export function loadConfig(env = process.env) {
     observeExcludeNames: (env.OBSERVE_EXCLUDE_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     // customer groups are never written to unless this is switched on
     allowCustomerGroupSends: /^(1|true|on|yes)$/i.test(env.ALLOW_CUSTOMER_GROUP_SENDS || ''),
+    // the Information group: gap between its messages (a batch of invoices is not a burst); reminders are off until the owner decides
+    infoGapSeconds: Number(env.INFO_GAP_SECONDS || 6),
+    remindersOn: /^(1|true|on|yes)$/i.test(env.REMINDERS || ''),
+    cutToleranceMetres: Number(env.CUT_TOLERANCE_METRES || 0.5),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),

@@ -60,26 +60,26 @@ test('the invoice is compared with the order memory: the same metres, a wrong qu
   assert.deepEqual(checkInvoiceAgainstOrders(t, inv([L('PVC FILM108', 40), L('511', 35), L('408', 15)])), []);
 });
 
-test('no order is a note, an order known only from the cut group is said so, several orders are matched by their lines', () => {
-  const none = checkInvoiceAgainstOrders(new Tracker(), inv([L('108', 40)]));
+test('no order is silent (a note only when asked), a cut is never an order, several orders are matched by their lines', () => {
+  assert.deepEqual(checkInvoiceAgainstOrders(new Tracker(), inv([L('108', 40)])), []); // silent in the pipeline
+  const none = checkInvoiceAgainstOrders(new Tracker(), inv([L('108', 40)]), { explain: true }); // the on-demand check says it
   assert.deepEqual(none.map((p) => [p.kind, p.severity]), [['order-note', 'info']]);
   const cuts = new Tracker();
   cuts.add({ type: 'cut', at: NOW - 1000, customer: 'تست', lines: [L('108', 40)], ref: 'c1' });
-  const fromCut = checkInvoiceAgainstOrders(cuts, inv([L('108', 30)]));
-  assert.match(fromCut[0].note, /فقط از گروه برش/);
-  assert.equal(fromCut.find((p) => p.kind === 'quantity').severity, 'info');
+  assert.deepEqual(checkInvoiceAgainstOrders(cuts, inv([L('108', 30)])), []); // cuts alone never make a quantity or a missing line
   const two = new Tracker();
   two.add({ type: 'order', at: NOW - 7200000, customer: 'تست', lines: [L('229', 20)], ref: 'a' });
   two.add({ type: 'order', at: NOW - 3600000, customer: 'تست', lines: [L('108', 40), L('511', 35)], ref: 'b' });
   assert.deepEqual(checkInvoiceAgainstOrders(two, inv([L('229', 20)])), []); // the older order is the one with the same line
-  assert.equal(checkInvoiceAgainstOrders(two, inv([L('777', 5)]))[0].kind, 'order-note'); // none shares a code: said, not guessed
+  assert.deepEqual(checkInvoiceAgainstOrders(two, inv([L('777', 5)])), []); // none shares a code: silent in the pipeline, not guessed
+  assert.equal(checkInvoiceAgainstOrders(two, inv([L('777', 5)]), { explain: true })[0].kind, 'order-note');
 });
 
 test('a test memory is separate from the real one', () => {
   const real = new Tracker();
   const test = new Tracker();
   test.add({ type: 'order', at: NOW, customer: 'تست', lines: [L('108', 40)], ref: 't' });
-  assert.equal(checkInvoiceAgainstOrders(real, inv([L('108', 40)]))[0].kind, 'order-note');
+  assert.deepEqual(checkInvoiceAgainstOrders(real, inv([L('108', 40)])), []);
   assert.deepEqual(checkInvoiceAgainstOrders(test, inv([L('108', 40)])), []);
 });
 

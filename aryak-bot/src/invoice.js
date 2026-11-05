@@ -91,7 +91,6 @@ function reportBody(v, ctx) {
   if (v.verdict === 'error') {
     lines.push('⚠️ بررسی فاکتور انجام نشد');
     lines.push(`گروه: ${ctx.groupName}`);
-    if (ctx.invoiceFile) lines.push(`فایل فاکتور: ${ctx.invoiceFile}`);
     lines.push(`علت: ${v.error}`);
     return lines.join('\n');
   }
@@ -274,7 +273,6 @@ export async function readInvoice({ client, config, invoice }) {
 /** Report when no purchase order matches the invoice. */
 export function noRequestText(meta, ctx) {
   const lines = ['⚠️ سفارش مشتری برای این فاکتور پیدا نشد، بررسی انجام نشد'];
-  lines.push(`فاکتور: ${ctx.invoiceFile || '—'}`);
   if (ctx.invoiceSender) lines.push(`فرستاد: ${ctx.invoiceSender}`);
   lines.push(`مشتری روی فاکتور: ${meta.customer || '—'}`);
   lines.push(`شمارهٔ سفارش روی فاکتور: ${meta.po || '—'}`);

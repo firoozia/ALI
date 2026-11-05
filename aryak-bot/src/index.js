@@ -18,12 +18,13 @@ import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup } from './guard.js';
 import { toEnglish } from './english.js';
+import { cutFindingText, invoiceFindingText } from './finding.js';
 import { isSourcingRequest, markSourcingReceived, openSourcing, sourcingAnswer, sourcingCover, sourcingEvent } from './sourcing.js';
 import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups, morningText, morningLang, weekdayNumbers, localParts } from './morning.js';
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
-import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
+import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
@@ -234,7 +235,7 @@ async function morningCommand(c, reply) {
 // statement day the customers whose monthly statement was not recorded. Report-only, to the information group.
 setInterval(async () => {
   try {
-    if (!sock?.user || !config.infoGroupName || botState.paused || !config.trackerEnabled) return;
+    if (!sock?.user || !config.infoGroupName || botState.paused || !config.trackerEnabled || !config.remindersOn) return;
     const lines = dueNags(tracker, desk.requests, { orderHours: config.orderNagHours, deliveryHours: config.deliveryNagHours });
     if (lines.length) await sendTo(config.infoGroupName, `یادآوری:\n${lines.slice(0, 12).map((l) => `- ${l}`).join('\n')}\n— ${config.displayName}`);
     const due = statementsDue(tracker, { timeZone: config.timezone, day: config.statementDay });
@@ -265,7 +266,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { const c = cutDigest(tracker); return [c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : ''].filter(Boolean); })() }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -359,6 +360,30 @@ async function trackedRole(groupId) {
  * compares it with the steps before it. Anything found goes to the information group; nothing is ever written to the
  * group watched or to a customer, except the hold reminder in the delivery group.
  */
+// Messages to the Information group go one after the other with a gap, so a batch of invoices is never a burst.
+let infoChain = Promise.resolve();
+const infoPost = (text) => {
+  infoChain = infoChain.then(async () => { await sendTo(config.infoGroupName, text); await new Promise((r) => setTimeout(r, Math.max(0, config.infoGapSeconds) * 1000)); }).catch((e) => logger.warn(`information group post failed: ${e.message}`));
+  return infoChain;
+};
+
+/** Invoice versus cut for one customer: one message with the new findings (a cut above the invoice at once, a partial cut after the window). */
+async function cutReconcile(customer) {
+  if (!config.trackerEnabled || !config.infoGroupName || !customer) return;
+  const fresh = reconcileCuts(tracker, customer, { tol: config.cutToleranceMetres }).filter((f) => !tracker.nagged.has(f.key));
+  if (!fresh.length) return;
+  for (const f of fresh) tracker.markNagged(f.key);
+  await infoPost(cutFindingText(fresh, config.displayName));
+}
+
+// Every half hour: a partial cut of an invoice older than the window becomes a finding (once). Silent when nothing is wrong.
+setInterval(async () => {
+  try {
+    if (!sock?.user || botState.paused) return;
+    for (const customer of customersWithOpenInvoices(tracker)) await cutReconcile(customer);
+  } catch (e) { logger.warn(`cut reconcile failed: ${e.message}`); }
+}, 30 * 60 * 1000).unref();
+
 async function trackGroup(raw, groupId, role) {
   if (sent.has(raw.key.id) || botState.paused) return;
   const content = normalizeMessageContent(raw.message);
@@ -380,9 +405,10 @@ async function trackGroup(raw, groupId, role) {
       trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
-      if (role === 'delivery' && config.infoGroupName) {
+      if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
+      if (role === 'delivery') {
         const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
-        if (findings.length) await sendTo(config.infoGroupName, `ℹ️ تحویل ${event.customer || ''}:\n${findings.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
+        if (findings.length) trace(whereDet, 'tracker', `${findings.length} delivery note(s) kept for the digest only`);
         if (tracker.isHeld(event.customer)) await sock.sendMessage(groupId, { text: `⛔ ${tracker.isHeld(event.customer)}: تحویل تا تأیید نقدی نباید انجام شود. — ${config.displayName}` }, { quoted: raw });
       }
     }
@@ -400,13 +426,11 @@ async function trackGroup(raw, groupId, role) {
   const event = { ...ev, customer: canon(ev.customer), at: Date.now(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24) };
   if (!tracker.add(event)) return;
   trace(where, 'tracker', `${role} recorded (${event.lines?.length || 0} line(s)${event.amount ? ', an amount' : ''})`);
-  if (!config.infoGroupName) return;
+  if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
   if (role === 'delivery') {
     const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
-    if (findings.length) await sendTo(config.infoGroupName, `ℹ️ تحویل ${event.customer || ''}:\n${findings.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
+    if (findings.length) trace(where, 'tracker', `${findings.length} delivery note(s) kept for the digest only`);
     if (tracker.isHeld(event.customer)) await sock.sendMessage(groupId, { text: `⛔ ${tracker.isHeld(event.customer)}: تحویل تا تأیید نقدی نباید انجام شود. — ${config.displayName}` }, { quoted: raw });
-  } else if (role === 'payment' && event.kind !== 'statement' && event.customer && event.amount) {
-    await sendTo(config.infoGroupName, `ℹ️ پرداخت ثبت شد: ${event.customer}، ${Number(event.amount).toFixed(2)} درهم\n${formatBalance(event.customer, balanceOf(tracker, event.customer))}\n— ${config.displayName}`);
   }
 }
 
@@ -465,7 +489,6 @@ async function watchGroup(raw, groupId, role) {
   let verdict;
   if (!found.request) {
     logger.info(`${groupId}: no purchase order for invoice (PO ${meta.po || '?'})`);
-    await sendTo(config.infoGroupName, noRequestText(meta, { ...ctx, ambiguous: found.ambiguous, name: config.displayName }));
     // Without an order there is nothing to compare with, but the arithmetic, the prices and the number can still be checked.
     const read = await readInvoice({ client, config, invoice: doc });
     verdict = { verdict: 'no-order', request_customer: '', invoice_customer: read?.invoice_customer || meta.customer, invoice_number: read?.invoice_number || '', invoice: read?.invoice || null, problems: [] };
@@ -474,7 +497,6 @@ async function watchGroup(raw, groupId, role) {
   }
   if (verdict.verdict === 'error') {
     logger.info(`${groupId}: invoice check failed`);
-    await sendTo(config.infoGroupName, reportText(verdict, { ...ctx, name: config.displayName }));
     return;
   }
   // The arithmetic, the prices against the owner's list and the invoice number: plain checks on what was read.
@@ -506,19 +528,14 @@ async function watchGroup(raw, groupId, role) {
       type: 'invoice', at: Date.now(), ref: doc.hash, customer: canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), number,
       total: verdict.invoice?.total ?? null, lines: (verdict.invoice?.lines || []).map((l) => ({ code: String(l.code || '').toUpperCase(), quantity: l.quantity, unit: l.unit })),
     };
-    if (tracker.add(invoiceEvent) && config.cutGroupName) {
-      const notes = checkInvoiceAgainstCuts(tracker, invoiceEvent);
-      if (notes.length) await sendTo(config.infoGroupName, `ℹ️ مقایسهٔ فاکتور ${number} با گروه برش:\n${notes.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
-    }
+    // the invoice stays open: the cut may come the next day (or have come before); it is compared when a cut arrives, and now
+    if (tracker.add(invoiceEvent)) await cutReconcile(invoiceEvent.customer);
   }
-  desk.record({ verdict: final.verdict, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, po: meta.po, file: doc.fileName, problems: problems.length, urgent, priceUrgent, number });
-  if (verdict.verdict !== 'no-order') {
-    const text = reportText(final, { ...ctx, name: config.displayName });
-    if (text) await sendTo(config.infoGroupName, text);
-  } else if (problems.length) {
-    await sendTo(config.infoGroupName, reportText({ ...final, verdict: 'mismatch' }, { ...ctx, name: config.displayName }));
-  }
-  // The office user is told at once, in the invoices group, what to correct. Nothing is sent to a customer.
+  desk.record({ verdict: final.verdict, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, po: meta.po, problems: problems.length, urgent, priceUrgent, noted: problems.length - urgent, number });
+  // ONE short English message per invoice, only for a real mistake. A clean invoice, a missing order and every note are silent
+  // here and only counted in the daily summary.
+  if (urgent) await infoPost(invoiceFindingText({ number, customer: verdict.request_customer || verdict.invoice_customer || meta.customer, problems }, config.displayName));
+  // The office user is told at once, in the invoices group, what to correct (urgent points only). Nothing is sent to a customer.
   const warn = staffWarning(final, config.displayName);
   if (warn) await sock.sendMessage(groupId, { text: warn });
 }
@@ -761,7 +778,7 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '' }) 
   const problems = [
     ...auditInvoice(inv, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer, sheetUnits }),
     ...(number ? checkNumber(number, test ? [] : desk.numbers(), T.deleted) : []),
-    ...checkInvoiceAgainstOrders(T, { customer, at: Date.now(), lines: inv.lines }),
+    ...checkInvoiceAgainstOrders(T, { customer, at: Date.now(), lines: inv.lines }, { explain: true }),
     ...sourcingCover(T, { customer, at: Date.now(), lines: inv.lines }),
   ];
   trace(where, role, `invoice check on request: ${problems.length} point(s), ${problems.filter((p) => p.severity !== 'info').length} urgent${book.loaded ? '' : ', no price list stored'}`);
