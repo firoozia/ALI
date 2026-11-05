@@ -15,7 +15,7 @@ const files = fs.readdirSync(SRC).filter((f) => f.endsWith('.js'));
 const BS = String.fromCharCode(92);
 
 // block comment | line comment | 'string' | "string" | `template` | regex literal (right after an operator or a bracket)
-const TOKEN = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`|(?<=[=>(,:;!&|?{}[]\s*)\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[a-z]*/g;
+const TOKEN = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`|(?<=(?:[=>(,:;!&|?{}[]|\breturn)\s*)\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[a-z]*/g;
 /** The source without comments, strings, template text and regex literals (replaced by spaces), so names can be scanned. */
 const strip = (src) => src.replace(TOKEN, (m) => m.replace(/[^\n]/g, ' '));
 

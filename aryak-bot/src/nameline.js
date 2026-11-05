@@ -65,6 +65,43 @@ export class NameStore {
   isOwnName(fileName) { const cut = this.now() - 24 * 3600 * 1000; return this.d.own.some((o) => o.name === fileName && o.at >= cut); }
 }
 
+/**
+ * Words by which a colleague asks her to name invoices from what is printed on them: "rename", "change the name", "تغییر نام", "هم نام
+ * ... کن", "اسم ... عوض", "اسم بزار", and the Arabic ways to say it. The caller requires that she is addressed by name.
+ */
+export function wantsRename(text) {
+  const s = String(text || '');
+  return /\brename\b|\bchange\s+(?:the\s+)?(?:file\s+)?names?\b|\bname\s+(?:the\s+)?(?:invoices?|files?)\b/i.test(s)
+    || /تغییر\s*(?:دادن\s*)?(?:نام|اسم)|هم\s*نام|(?:نام|اسم)[^\n]{0,40}(?:عوض|تغییر|بزار|بذار|بگذار)|(?:نام|اسم)\s*(?:بزار|بذار|بگذار)/u.test(s)
+    || /(?:غي[رّ]|تغيير|بدّ?ل)\s*(?:ال)?(?:اسم|إسم)|(?:اسم|إسم)[^\n]{0,30}(?:غي[رّ]|بدّ?ل)|(?:إعادة|اعادة|أعد|اعد)\s*تسمية/u.test(s);
+}
+
+/** The PDF messages seen in a group (the last [max] on disk: the message proto only), so invoices already sent can be named later. */
+export class MediaKeep {
+  constructor(dir = '', { replacer, reviver, max = 50 } = {}) {
+    this.file = dir ? path.join(dir, 'invoice-media.json') : '';
+    Object.assign(this, { replacer, reviver, max });
+    this.list_ = [];
+    try { if (this.file) this.list_ = JSON.parse(fs.readFileSync(this.file, 'utf8'), reviver); } catch { /* none yet */ }
+  }
+
+  add(entry) {
+    if (!entry?.id || this.list_.some((e) => e.id === entry.id)) return false;
+    this.list_.push(entry);
+    this.list_ = this.list_.slice(-this.max);
+    this.save();
+    return true;
+  }
+
+  /** Newest first, for one group. */
+  list(groupId) { return this.list_.filter((e) => !groupId || e.groupId === groupId).slice().reverse(); }
+
+  save() {
+    if (!this.file) return;
+    try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.list_, this.replacer)); } catch { /* best effort */ }
+  }
+}
+
 /** The switch: 'file' (re-post with the readable name, the default), 'line' (only the text line) or 'off'. */
 export function nameMode(value) {
   const v = String(value ?? 'file').trim().toLowerCase();

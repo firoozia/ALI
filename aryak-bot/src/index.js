@@ -1,6 +1,6 @@
 // ARYAK Assistant: WhatsApp (Baileys) + Claude + Zinax Stock.
 
-import makeWASocket, { DisconnectReason, downloadMediaMessage, isJidGroup, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
+import makeWASocket, { BufferJSON, DisconnectReason, downloadMediaMessage, isJidGroup, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
@@ -22,7 +22,7 @@ import { placeLanguage, toEnglish } from './english.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { UsageMeter, hasVisual } from './usage.js';
 import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
-import { NameStore, meaninglessName, nameLineText, readableFileName } from './nameline.js';
+import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
@@ -556,6 +556,35 @@ async function pdfOf(raw, groupId, { internal = false } = {}) {
  * The bot never answers a customer here.
  */
 const nameStore = new NameStore(path.join(config.authDir, 'invoice-names'));
+// The PDFs seen in the Invoices group (and the test group): the last 50 messages (proto only) so invoices already sent can be named later.
+const mediaKeep = new MediaKeep(path.join(config.authDir, 'invoice-media'), { replacer: BufferJSON.replacer, reviver: BufferJSON.reviver });
+const keepPdf = (raw, groupId, fileName) => { const c = normalizeMessageContent(raw.message); if (c?.documentMessage) mediaKeep.add({ id: raw.key.id, groupId, key: raw.key, message: { documentMessage: c.documentMessage }, fileName: fileName || '', at: Date.now() }); };
+
+/** Name the recent invoices that still have a meaningless file name (no quote needed). One short English line says how many. */
+async function renameRecent(chatId) {
+  const all = mediaKeep.list(chatId);
+  if (!all.length) return 'I only keep the invoices posted since this update. New ones are named automatically; for an older file, reply to it with "Atossa rename".';
+  const waiting = all.filter((e) => meaninglessName(e.fileName)).slice(0, 25);
+  if (!waiting.length) return 'No recent invoice has a meaningless file name. New ones are named automatically; for an older file, reply to it with "Atossa rename".';
+  let named = 0;
+  let skipped = 0;
+  for (const e of waiting) {
+    try {
+      const qraw = { key: e.key, message: e.message };
+      if (nameStore.named(e.id, null)) { skipped++; continue; }
+      const buf = await downloadMediaMessage(qraw, 'buffer', {}); // an expired file fails here and is counted as skipped
+      let read = nameStore.recall(e.id);
+      if (!read) {
+        const r = await readInvoice({ client, config, invoice: { base64: buf.toString('base64'), mimeType: 'application/pdf' } });
+        if (r?.invoice_number && r?.invoice_customer) { read = { number: r.invoice_number, customer: r.invoice_customer }; nameStore.remember(e.id, read.number, read.customer); }
+      }
+      if (!read || !readableFileName(read.number, read.customer) || nameStore.named(e.id, read.number)) { skipped++; continue; }
+      if (await nameInvoice({ raw: qraw, groupId: chatId, fileName: e.fileName, base64: buf.toString('base64'), number: read.number, customer: read.customer, force: true })) named++; else skipped++;
+      await new Promise((r) => setTimeout(r, 3000)); // a gap between the posts
+    } catch (err) { skipped++; logger.warn(`rename: one invoice could not be named (${err.message})`); }
+  }
+  return `Named ${named} invoice${named === 1 ? '' : 's'}, skipped ${skipped} (already named, expired or unreadable). For an older file, reply to it with "Atossa rename".`;
+}
 
 /**
  * Give an invoice a readable name from what is printed on it. WhatsApp cannot rename a sent file, so the same PDF bytes are posted again
@@ -586,6 +615,7 @@ async function watchGroup(raw, groupId, role) {
   const { info, doc } = got;
   // her own re-post under a readable name coming back: nothing is checked, recorded, read or renamed again
   if (raw.key.fromMe && nameStore.isOwnName(doc.fileName)) { logger.info('invoice pdf: her own re-post, ignored'); return; }
+  if (role === 'invoice') keepPdf(raw, groupId, doc.fileName);
   if (role === 'request') {
     if (doc.staff) return; // a colleague's PDF in the customer group is the forwarded invoice
     const meta = await extractMeta({ client, config, doc });
@@ -1030,9 +1060,10 @@ async function handleStaffChat(raw, chatId, group) {
     const rq = parseReceivedQuery(text);
     if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
   }
-  // "Atossa rename this invoice" as a reply to an invoice PDF (the Invoices group and the test group): the readable name from the invoice itself
-  if (addressed && text && !audio && !image && config.invoiceNameMode !== 'off' && (group?.test || group?.invoice) && /\brename\b|تغییر\s*نام/i.test(text) && ctx.quotedMessage) {
-    const qdoc = normalizeMessageContent(ctx.quotedMessage)?.documentMessage;
+  // "Atossa rename this invoice" (a reply to an invoice PDF) or "name the invoices with a code name after the customer in the invoice" (no
+  // reply: the recent ones): the readable name from the invoice itself. Invoices group and test group, addressed by name.
+  if (addressed && text && !audio && !image && config.invoiceNameMode !== 'off' && (group?.test || group?.invoice) && wantsRename(text)) {
+    const qdoc = ctx.quotedMessage ? normalizeMessageContent(ctx.quotedMessage)?.documentMessage : null;
     if (qdoc && /pdf/i.test(String(qdoc.mimetype || ''))) {
       const qraw = { key: { remoteJid: chatId, id: ctx.stanzaId, participant: ctx.participant }, message: ctx.quotedMessage };
       let buf = null;
@@ -1046,6 +1077,8 @@ async function handleStaffChat(raw, chatId, group) {
       await nameInvoice({ raw: qraw, groupId: chatId, fileName: qdoc.fileName || '', base64: buf?.toString('base64'), number: read.number, customer: read.customer, force: true });
       return true;
     }
+    await reply(await renameRecent(chatId));
+    return true;
   }
   // The owner's price list and special prices (admins, in a private chat or the command group).
   if (admin && (!group || group.command)) {
@@ -1072,6 +1105,7 @@ async function handleStaffChat(raw, chatId, group) {
       if (buf.length > 20 * 1024 * 1024) { await reply('این فایل برای بررسی بزرگ است.'); return true; }
       trace(where, role, 'pdf received: checking it as an invoice');
       if (raw.key.fromMe && nameStore.isOwnName(pdf.fileName || '')) { trace(where, role, 'her own re-post, ignored'); return true; }
+      if (group?.test) keepPdf(raw, chatId, pdf.fileName);
       const b64 = buf.toString('base64');
       await onDemandInvoice({ doc: { base64: b64, fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test, after: group?.test ? (r) => nameInvoice({ raw, groupId: chatId, fileName: pdf.fileName || '', base64: b64, ...r }) : null });
       return true;

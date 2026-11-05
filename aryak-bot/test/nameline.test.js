@@ -57,8 +57,8 @@ test('the wiring: the rename runs only in the Invoices group and the test group,
   assert.match(fn, /nameStore\.named\(raw\.key\.id, number\)/); // deduped by message and number
   assert.match(fn, /invoiceNameMode === 'file' && base64/); // the re-post, else the line
   // the callers: the Invoices-group flow, the test group, and the explicit request (Invoices group or test group only)
-  assert.equal((src.match(/await nameInvoice\(|=> nameInvoice\(/g) || []).length, 3);
-  assert.match(src, /\(group\?\.test \|\| group\?\.invoice\) && \/\\brename\\b/);
+  assert.equal((src.match(/await nameInvoice\(|=> nameInvoice\(/g) || []).length, 4); // watch, test group, a quoted PDF, the recent ones
+  assert.ok(src.includes('(group?.test || group?.invoice) && wantsRename(text)')); // only the Invoices group and the test group, addressed by name
   assert.match(src, /after: group\?\.test \?/);
   // her own re-post is ignored in both routes
   assert.equal((src.match(/nameStore\.isOwnName\(/g) || []).length, 2);
