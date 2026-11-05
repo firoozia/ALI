@@ -16,6 +16,8 @@ import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
 import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
+import { guardedSend, observedGroup } from './guard.js';
+import { isSourcingRequest, markSourcingReceived, openSourcing, sourcingAnswer, sourcingCover, sourcingEvent } from './sourcing.js';
 import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups, morningText, morningLang, weekdayNumbers, localParts } from './morning.js';
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf } from './orderlines.js';
@@ -80,6 +82,7 @@ const desk = new InvoiceDesk({ dir: config.requestsDir }); // customers' purchas
 const botState = new BotState(config.authDir); // pause switch
 const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
+const staffChats = new Set(); // private chats a staff member started: the assistant may answer there
 const quietContents = new WeakSet(); // messages that are not an answer to anyone (the good-morning message): never counted for learning
 // What the customer-flow gate did with a message, in words (the gate also watches staff messages: a colleague's
 // message cancels the answer that was waiting for a customer, it is not itself answered).
@@ -294,7 +297,7 @@ async function observe(raw, groupId) {
   if (!config.learning || !experience.on || sent.has(raw.key.id)) return;
   const info = await groupInfo(groupId);
   const subject = info.subject.toLowerCase();
-  const customerGroup = config.allowedGroupNames.some((w) => subject.includes(w)) || config.watchGroupNames.some((w) => subject.includes(w));
+  const customerGroup = config.allowedGroupNames.some((w) => subject.includes(w)) || config.watchGroupNames.some((w) => subject.includes(w)) || observedGroup(info.subject, config);
   if (!customerGroup) return;
   const content = normalizeMessageContent(raw.message);
   if (!content || content.protocolMessage || content.reactionMessage) return;
@@ -374,6 +377,8 @@ async function trackGroup(raw, groupId, role) {
       const event = { ...ev, customer: canon(ev.customer), at: Date.now(), ref: refOf(raw.key.id, i) };
       if (!tracker.add(event)) continue;
       trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
+      // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
+      if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'delivery' && config.infoGroupName) {
         const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
         if (findings.length) await sendTo(config.infoGroupName, `ℹ️ تحویل ${event.customer || ''}:\n${findings.map((f) => `- ${f}`).join('\n')}\n— ${config.displayName}`);
@@ -518,20 +523,20 @@ async function watchGroup(raw, groupId, role) {
 }
 
 /** Reads the photos of a message with Claude's vision. Never throws. */
-async function understandPhotos(messagesWithImages, caption, fallbackLang) {
+async function understandPhotos(messagesWithImages, caption, fallbackLang, forceLang = '') {
   const images = [];
   for (const m of messagesWithImages.slice(-3)) {
     try { images.push(await m.loadImage()); } catch (e) { logger.warn(`photo download failed: ${e.message}`); }
   }
   if (!images.length) return { ok: false, reason: 'error' };
-  return understandImages({ images, caption, config, client, fallbackLang, log: (s) => logger.info(s) });
+  return understandImages({ images, caption, config, client, fallbackLang, forceLang, log: (s) => logger.info(s) });
 }
 
 /** Reads one voice note: download, speech to text, intent. Never throws. */
-async function understandAudio(load, seconds) {
+async function understandAudio(load, seconds, forceLang = '') {
   // A long note is not even downloaded.
   if (seconds > MAX_SECONDS) { logger.info(`voice: ${seconds} s is too long, skipped`); return { ok: false, reason: 'too long' }; }
-  try { return await understand({ buffer: await load(), seconds, config, client, transcribe, log: (s) => logger.info(s) }); }
+  try { return await understand({ buffer: await load(), seconds, config, client, transcribe, forceLang, log: (s) => logger.info(s) }); }
   catch (e) { logger.warn(`voice failed: ${e.message}`); return { ok: false, reason: 'error' }; }
 }
 
@@ -756,6 +761,7 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '' }) 
     ...auditInvoice(inv, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer, sheetUnits }),
     ...(number ? checkNumber(number, test ? [] : desk.numbers(), T.deleted) : []),
     ...checkInvoiceAgainstOrders(T, { customer, at: Date.now(), lines: inv.lines }),
+    ...sourcingCover(T, { customer, at: Date.now(), lines: inv.lines }),
   ];
   trace(where, role, `invoice check on request: ${problems.length} point(s), ${problems.filter((p) => p.severity !== 'info').length} urgent${book.loaded ? '' : ', no price list stored'}`);
   await reply(onDemandText({ problems, customer, number, name: '', groupName: where }));
@@ -766,7 +772,7 @@ async function handleStaffChat(raw, chatId, group) {
   const audio = config.voiceEnabled ? content?.audioMessage : null;
   const image = config.imageConfirm ? imageOf(content) : null;
   const pdf = content?.documentMessage && /pdf/i.test(String(content.documentMessage.mimetype || '')) ? content.documentMessage : null;
-  const text = textOf(content) || image?.caption || pdf?.caption || '';
+  let text = textOf(content) || image?.caption || pdf?.caption || '';
   if (!text && !audio && !image && !pdf) {
     // Never silent: say which kind of message was left alone (its kind only, never its content).
     const kind = ignoredKind(content);
@@ -779,6 +785,7 @@ async function handleStaffChat(raw, chatId, group) {
   const isSelf = own.some((o) => jidDigits(o) === jidDigits(chatId));
   if (!group && raw.key.fromMe && !isSelf) { trace(where, 'owner', 'ignored: the owner talking to someone else'); return false; } // from the bot's phone
   let admin = !!raw.key.fromMe;
+  let ownerPerson = !!raw.key.fromMe; // typed on the account's own phone counts as the owner
   if (!raw.key.fromMe) {
     let info = group ? await groupInfo(chatId) : { lidToPhone: new Map() };
     const who = group ? { sender: raw.key.participant, senderAlt: raw.key.participantAlt } : { sender: chatId, senderAlt: raw.key.remoteJidAlt };
@@ -786,8 +793,20 @@ async function handleStaffChat(raw, chatId, group) {
     if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(who); }
     if (!staff) { trace(where, 'not-staff', group ? 'left to the customer flow' : 'ignored: private chat from a number that is not staff'); return false; }
     admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
+    ownerPerson = staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;
+    if (!group) staffChats.add(chatId);
   }
   const role = admin ? 'admin' : 'staff';
+  // The language of the answer is the person's: Persian for the owner only, English for every other colleague. In a test group the
+  // prefix "as customer:", "as staff:" or "as owner:" plays another person, to try every language.
+  let staffLang = ownerPerson ? 'fa' : 'en';
+  if (group?.test) {
+    const pm = /^\s*as\s+(customer|staff|owner)\s*:\s*/i.exec(text);
+    if (pm) {
+      text = text.slice(pm[0].length);
+      staffLang = pm[1].toLowerCase() === 'owner' ? 'fa' : pm[1].toLowerCase() === 'staff' ? 'en' : detectLang(text, 'en');
+    }
+  }
   const reply = async (body) => sock.sendMessage(chatId, { text: isSelf ? `🤖 ${body}` : body }, { quoted: raw });
   // The sales manager answers a request about stock ("#12 yes", a reply to the question, or the only open one).
   if (!group && avail.open.size) {
@@ -850,7 +869,7 @@ async function handleStaffChat(raw, chatId, group) {
   if (text && !audio && !image && !pdf && !group?.tracked) {
     const ob = parseOnBehalf(text);
     if (ob) {
-      try { await handleOnBehalf({ ob, raw, reply, role, where, lang: detectLang(text, 'fa'), test: !!group?.test }); } catch (e) {
+      try { await handleOnBehalf({ ob, raw, reply, role, where, lang: staffLang, test: !!group?.test }); } catch (e) {
         logger.error(`order on behalf failed: ${e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e.message}`);
         await reply(ORDER_FAILED);
       }
@@ -880,7 +899,7 @@ async function handleStaffChat(raw, chatId, group) {
     experience.candidate({ kind: 'correction', wrong: quotedText.slice(0, 200), right: fix.right.slice(0, 300) });
     if (group) experience.corrected(groupLabel(where.replace(/^group "|"$/g, '')), detectLang(text, 'fa'));
     trace(where, role, 'correction of an answer stored for the owner');
-    await reply(correctionSaved(detectLang(text, 'fa')));
+    await reply(correctionSaved(staffLang));
     return true;
   }
   // A voice note is only answered with a question; the request goes on after the same person says yes.
@@ -890,7 +909,7 @@ async function handleStaffChat(raw, chatId, group) {
     // in it decide. Addressed anyway: a mention, a reply to the assistant, a private chat, or a note that
     // follows its question.
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
-    const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0);
+    const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0, staffLang);
     const named = !u.ok && !!u.transcript && nameHeard(u.transcript, config.botNames);
     const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
     const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
@@ -915,7 +934,7 @@ async function handleStaffChat(raw, chatId, group) {
   if (image) {
     // A colleague's photo is always read (no name is written on a photo); what is in it decides.
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
-    const written = detectLang(text, 'fa');
+    const written = staffLang;
     trace(where, role, `photo received${image.mimetype ? ` (${String(image.mimetype).split(';')[0]})` : ''}: reading it`);
     let photo;
     const loadPhoto = async () => { photo = photo || { base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: image.mimetype?.split(';')[0] || 'image/jpeg' }; return photo; };
@@ -925,7 +944,7 @@ async function handleStaffChat(raw, chatId, group) {
       try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test, hint: customerFromMessages([{ text, hasImage: true }], orderLinesOf) }); } catch (e) { logger.error(`invoice check failed: ${e.message}`); await reply(INVOICE_FAILED); }
       return true;
     }
-    const u = await understandPhotos([{ loadImage: loadPhoto }], text, written);
+    const u = await understandPhotos([{ loadImage: loadPhoto }], text, written, staffLang);
     if (u.reason === 'invoice' && mayCheck) {
       try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test }); } catch (e) { logger.error(`invoice check failed: ${e.message}`); await reply(INVOICE_FAILED); }
       return true;
@@ -946,7 +965,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   let asked = text;
   let confirmed = false;
-  let lang = detectLang(text, 'fa'); // the language the answer is written in
+  let lang = staffLang; // the language the answer is written in
   const pend = config.voiceEnabled ? voiceDesk.get(key) : null;
   let engaged = false; // an answer to the assistant's own question counts as addressed to her
   if (pend) {
@@ -984,6 +1003,56 @@ async function handleStaffChat(raw, chatId, group) {
   return true;
 }
 
+const recentCodes = new Map(); // group id -> [{ code, at }]: what customers asked about lately (a staff answer repeats it)
+const rememberCodes = (groupId, text) => {
+  const now = Date.now();
+  const list = (recentCodes.get(groupId) || []).filter((c) => now - c.at < 30 * 60 * 1000);
+  for (const l of orderLinesOf(text)) list.push({ code: l.code, at: now });
+  for (const m of String(text || '').matchAll(/(?:^|[^\d])(\d{2,5})(?:[^\d]|$)/g)) list.push({ code: m[1], at: now });
+  recentCodes.set(groupId, list.slice(-60));
+};
+
+/**
+ * A customer group we only WATCH: nothing is ever written to it. What is learned: language and kinds (the experience store),
+ * the order lines customers write (recorded with low confidence: nobody confirms them), the purchase orders they post (the LPO
+ * store for the invoice comparison), and the requests OUR staff makes TO the customer (sourcing, not a sale). Voice notes and
+ * photos are not read or kept here.
+ */
+async function watchObserved(raw, groupId, info) {
+  if (sent.has(raw.key.id) || botState.paused) return;
+  const content = normalizeMessageContent(raw.message);
+  if (!content || content.protocolMessage || content.reactionMessage) return;
+  const image = imageOf(content);
+  const text = textOf(content) || image?.caption || '';
+  const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+  let staff = raw.key.fromMe ? true : staffChecker(config.staffNumbers, info.lidToPhone)(sender);
+  if (staff === null) { info = await groupInfo(groupId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender); }
+  if (staff === null) return; // cannot tell who wrote it: nothing is recorded
+  const label = groupLabel(info.subject);
+  if (content.documentMessage && !staff) { await watchGroup(raw, groupId, 'request'); return; }
+  if (!text || !config.trackerEnabled) return;
+  const ref = createHash('sha256').update(`obs|${groupId}|${raw.key.id}`).digest('hex').slice(0, 24);
+  if (staff) {
+    // our staff asking the customer for goods is SOURCING: never an order, never a sale
+    if (isSourcingRequest(text, (recentCodes.get(groupId) || []).map((c) => c.code))) {
+      const ev = sourcingEvent(text);
+      if (ev && tracker.add({ ...ev, at: Date.now(), customer: canon(label), group: groupId, ref })) trace(`group "${info.subject}"`, 'observer', 'sourcing request recorded (staff asks the customer; not an order)');
+    }
+    return;
+  }
+  // the customer's answer to such a request is not an order either
+  for (const e of openSourcing(tracker, groupId)) {
+    const a = sourcingAnswer(text, e);
+    if (a) { tracker.update(e.ref, { status: a.status, answer: a.answer, answerQuantity: a.quantity ?? null }); trace(`group "${info.subject}"`, 'observer', `sourcing request answered (${a.answer})`); return; }
+  }
+  rememberCodes(groupId, text);
+  const lines = orderLinesOf(text);
+  if (lines.length) {
+    tracker.add({ type: 'order', at: Date.now(), customer: canon(lines.find((l) => l.customer)?.customer || label), lines: lines.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), source: 'observed', confidence: 'low', ref });
+    trace(`group "${info.subject}"`, 'observer', `${lines.length} order line(s) recorded, low confidence`);
+  }
+}
+
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
@@ -996,6 +1065,9 @@ async function onMessage(raw) {
     return;
   }
   observe(raw, groupId).catch((e) => logger.warn(`experience: ${e.message}`));
+  // A watched customer group (read only): recorded and learned from, never answered.
+  const watchedInfo = await groupInfo(groupId);
+  if (observedGroup(watchedInfo.subject, config)) { watchObserved(raw, groupId, watchedInfo).catch((e) => logger.warn(`observer failed: ${e.message}`)); return; }
   const trackRole = await trackedRole(groupId);
   // "Invoice inv-9910 delete this one": a deleted number is a legitimate gap in the numbering
   const delNo = deletedInvoice(textOf(normalizeMessageContent(raw.message)));
@@ -1044,7 +1116,9 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
   sock = makeWASocket({ auth: state, logger: logger.child({ module: 'baileys' }, { level: 'warn' }) });
   const rawSend = sock.sendMessage.bind(sock);
-  sock.sendMessage = async (...a) => { const r = await rawSend(...a); if (isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
+  // EVERY message leaves through this one function; the guard decides whether the destination may be written to.
+  const guarded = guardedSend({ rawSend, config, isGroup: isJidGroup, known: staffChats, ownIds: () => ownIds(), log: (s) => logger.warn(s), subjectOf: async (jid) => groups.get(jid)?.subject ?? (await groupInfo(jid)).subject });
+  sock.sendMessage = async (...a) => { const r = await guarded(...a); if (r && isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
   sock.ev.on('creds.update', saveCreds);
   const onQr = pairingOnce({
     registered: () => !!state.creds.registered,
@@ -1057,6 +1131,13 @@ async function start() {
     if (qr) onQr();
     if (connection === 'open') {
       logger.info('connected to WhatsApp');
+      setTimeout(async () => {
+        try {
+          const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => g.subject || '');
+          const watched = all.filter((s) => observedGroup(s, config));
+          logger.info(`watched customer groups (${watched.length} of ${all.length}): ${watched.join(' | ') || 'none'}`);
+        } catch (e) { logger.warn(`could not list the watched groups: ${e.message}`); }
+      }, 30 * 1000).unref();
       // A few seconds after opening, so the session keys are ready; sent to the account's own chat only.
       setTimeout(() => {
         helloOnce({

@@ -27,7 +27,7 @@ const bytesOf = (base64) => Math.floor((String(base64 || '').length * 3) / 4);
  * reason is 'unreadable' (blurred or nothing legible), 'other' (not an order or stock photo), 'too big', or 'error'.
  * [fallbackLang]: the language when neither the picture nor the caption tells.
  */
-export async function understandImages({ images, caption = '', config, client, fallbackLang = 'fa', log = () => {} }) {
+export async function understandImages({ images, caption = '', config, client, fallbackLang = 'fa', log = () => {}, forceLang = '' }) {
   const usable = images.filter((i) => IMAGE_TYPES.includes(String(i.mimeType || '').toLowerCase()) && bytesOf(i.base64) <= MAX_IMAGE_BYTES).slice(-MAX_IMAGES);
   if (!usable.length) { log(`photo: ${images.length} picture(s), none usable (type or size)`); return { ok: false, reason: 'too big' }; }
   let v;
@@ -63,7 +63,7 @@ export async function understandImages({ images, caption = '', config, client, f
     log(`photo: no stock or order request found${unclear ? `, ${unclear} code(s) unclear` : ''}`);
     return { ok: false, reason: unclear ? 'unreadable' : 'other' };
   }
-  const lang = langOf(v.language) || (caption ? detectLang(caption, '') : '') || fallbackLang;
+  const lang = forceLang || langOf(v.language) || (caption ? detectLang(caption, '') : '') || fallbackLang;
   log(`photo: understood as ${v.intent}, ${items.length} code(s)${unclear ? `, ${unclear} unclear` : ''}, reply language ${lang}`);
   return {
     ok: true, intent: v.intent, lang, items, unclear,

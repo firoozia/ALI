@@ -80,11 +80,11 @@ Decide what the speaker wants and answer with ONE JSON object and nothing else:
 const field = (v, d) => (typeof v === 'string' ? v : d);
 
 /** Claude reads the transcript: returns { intent, language, codes, requestText, confirmText } or null when nothing usable. */
-export async function extractIntent({ client, config, transcript }) {
+export async function extractIntent({ client, config, transcript, forceLang = '' }) {
   const res = await client.beta.messages.create({
     model: config.model,
     max_tokens: 800,
-    system: INTENT_RULES,
+    system: forceLang ? `${INTENT_RULES}\nWrite "request_text" and "confirm_text" in ${forceLang === 'fa' ? 'Persian' : 'English'} whatever language was spoken.` : INTENT_RULES,
     messages: [{ role: 'user', content: `Transcript:\n${transcript}` }],
     output_config: { effort: 'low' },
     betas: ['server-side-fallback-2026-07-01'],
@@ -154,7 +154,7 @@ export function nameHeard(transcript, names = []) {
   return i >= 0 && ['موجودی', 'کد'].includes(words[i + 1]);
 }
 
-export async function understand({ buffer, seconds = 0, config, client, transcribe, log = () => {} }) {
+export async function understand({ buffer, seconds = 0, config, client, transcribe, log = () => {}, forceLang = '' }) {
   if (!buffer?.length) return { ok: false, reason: 'empty' };
   if (buffer.length > 9 * 1024 * 1024 || seconds > MAX_SECONDS) return { ok: false, reason: 'too long' };
   let t;
@@ -162,10 +162,10 @@ export async function understand({ buffer, seconds = 0, config, client, transcri
   log(`voice: transcript ${t.text.length} characters, confidence ${Math.round(t.confidence * 100) / 100}${t.language ? `, language ${t.language}` : ''}`);
   if (!t.text.trim() || t.confidence < (config.speechMinConfidence ?? 0.5)) return { ok: false, reason: 'unclear', transcript: t.text };
   let i;
-  try { i = await extractIntent({ client, config, transcript: normalizeSpokenNumbers(t.text) }); } catch (e) { log(`voice: intent failed: ${e.message}`); return { ok: false, reason: 'intent error' }; }
+  try { i = await extractIntent({ client, config, transcript: normalizeSpokenNumbers(t.text), forceLang }); } catch (e) { log(`voice: intent failed: ${e.message}`); return { ok: false, reason: 'intent error' }; }
   if (!i) { log('voice: no stock or order request found'); return { ok: false, reason: 'no intent', transcript: t.text }; }
   // The language of the person: what the model heard in the words, else what the speech service said, else the letters.
-  const lang = langOf(i.language) || langOf(t.language) || detectLang(t.text);
+  const lang = forceLang || langOf(i.language) || langOf(t.language) || detectLang(t.text);
   // A stock question is confirmed with a sentence built here, so it is always in the speaker's language.
   const confirmText = i.intent === 'stock' && i.codes.length ? confirmStock(lang, i.codes) : i.confirmText;
   log(`voice: understood as ${i.intent}, reply language ${lang}`);

@@ -66,6 +66,13 @@ export function loadConfig(env = process.env) {
     morningDailyCap: Number(env.MORNING_DAILY_CAP || 40),
     morningGapMin: Number(env.MORNING_GAP_MIN_SECONDS || 20),
     morningGapMax: Number(env.MORNING_GAP_MAX_SECONDS || 60),
+    // people: the owner gets Persian, every other staff member English, customers the language they wrote in
+    ownerNumbers: list(env.OWNER_NUMBERS),
+    // customer groups to WATCH and learn from (read only, never a reply); internal and configured groups are excluded automatically
+    observeGroupNames: (env.OBSERVE_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    observeExcludeNames: (env.OBSERVE_EXCLUDE_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    // customer groups are never written to unless this is switched on
+    allowCustomerGroupSends: /^(1|true|on|yes)$/i.test(env.ALLOW_CUSTOMER_GROUP_SENDS || ''),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),

@@ -26,7 +26,7 @@ const GLOBALS = new Set(['console', 'process', 'Buffer', 'setTimeout', 'setInter
 const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof', 'new', 'delete', 'void', 'in', 'of', 'instanceof', 'else', 'do', 'case', 'throw', 'yield', 'class', 'const', 'let', 'var', 'from', 'as', 'default', 'try', 'finally', 'break', 'continue', 'static', 'get', 'set', 'export', 'extends']);
 
 // Names the rough scanner cannot see being declared: a parameter inside a template literal nested in another one.
-const KNOWN = { 'morning.js': ['learnedLang', 'log'], 'report.js': ['x'], 'image.js': ['code'], 'stock.js': ['info'] }; // image.js: text inside a prompt template; stock.js: a parameter whose default holds braces
+const KNOWN = { 'guard.js': ['log'], 'morning.js': ['learnedLang', 'log'], 'report.js': ['x'], 'image.js': ['code'], 'stock.js': ['info'] }; // image.js: text inside a prompt template; stock.js: a parameter whose default holds braces
 
 function declared(code) {
   const names = new Set();
