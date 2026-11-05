@@ -98,6 +98,9 @@ export function loadConfig(env = process.env) {
     costSpeechUsd: Number(env.COST_SPEECH_USD || 0.016),
     // an invoice with a meaningless file name is re-posted with the number and customer printed on it: file (default), line, off
     invoiceNameMode: nameMode(env.INVOICE_NAME_LINE),
+    // the owner can order an invoice to be sent into the customer's own group (his yes needed); the test customer goes to the test group
+    ownerInvoiceSend: !/^(0|false|off|no)$/i.test(env.OWNER_INVOICE_SEND || 'on'),
+    testCustomerName: (env.TEST_CUSTOMER_NAME || 'test customer').trim().toLowerCase(),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),

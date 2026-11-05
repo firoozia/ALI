@@ -24,6 +24,7 @@ import { UsageMeter, hasVisual } from './usage.js';
 import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
+import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, sendFileName, targetGroups } from './invoicesend.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -556,6 +557,59 @@ async function pdfOf(raw, groupId, { internal = false } = {}) {
  * The bot never answers a customer here.
  */
 const nameStore = new NameStore(path.join(config.authDir, 'invoice-names'));
+const oneShot = new OneShot();
+const sendDesk = new SendDesk();
+
+/** The owner's order "send the invoice of X into the customer's group": find the invoice and the group, then ask him. Nothing is sent here. */
+async function startOwnerSend({ chatId, parsed, ctx, reply }) {
+  let found = null;
+  const qdoc = ctx.quotedMessage ? normalizeMessageContent(ctx.quotedMessage)?.documentMessage : null;
+  if (qdoc && /pdf/i.test(String(qdoc.mimetype || ''))) {
+    const entry = { id: ctx.stanzaId, key: { remoteJid: chatId, id: ctx.stanzaId, participant: ctx.participant }, message: ctx.quotedMessage, fileName: qdoc.fileName || '' };
+    let read = nameStore.recall(ctx.stanzaId);
+    if (!read?.number || !read?.customer) {
+      try {
+        const buf = await downloadMediaMessage({ key: entry.key, message: entry.message }, 'buffer', {});
+        const r = await readInvoice({ client, config, invoice: { base64: buf.toString('base64'), mimeType: 'application/pdf' } });
+        if (r?.invoice_number && r?.invoice_customer) { nameStore.remember(ctx.stanzaId, r.invoice_number, r.invoice_customer); read = nameStore.recall(ctx.stanzaId); }
+      } catch (e) { logger.warn(`owner send: the PDF could not be read (${e.message})`); }
+    }
+    if (read?.number && read?.customer) found = { entry, read };
+  } else {
+    found = findInvoice(parsed.customer, mediaKeep.list(), (id) => nameStore.recall(id));
+  }
+  if (!found) { await reply(qdoc ? 'I could not read this invoice, so I send nothing.' : 'I do not have that invoice among the files I kept. Please reply to the PDF with the command. Nothing was sent.'); return; }
+  const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
+  const groups = targetGroups(found.read.customer, all, config);
+  if (!groups.length) { await reply(`I found no customer group for ${found.read.customer}. Nothing was sent.`); return; }
+  if (groups.length > 1) { sendDesk.start(chatId, { step: 'choose', invoice: found, groups }); await reply(chooseText(groups)); return; }
+  sendDesk.start(chatId, { step: 'confirm', invoice: found, group: groups[0] });
+  await reply(confirmText({ read: found.read, fileName: sendFileName(found.read), group: groups[0].subject, alreadySent: nameStore.sentTo(found.read.number, groups[0].id) ? 'before' : '' }));
+}
+
+/** The owner's yes: send the same PDF bytes under the readable name to the one group, once, through the guard's one-shot token. */
+async function finishOwnerSend({ chatId, pending, reply }) {
+  const { invoice: { entry, read }, group } = pending;
+  const file = sendFileName(read);
+  try {
+    const buf = await downloadMediaMessage({ key: entry.key, message: entry.message }, 'buffer', {});
+    const content = { document: buf, mimetype: 'application/pdf', fileName: file };
+    oneShot.grant(group.id, content);
+    quietContents.add(content);
+    const r = await sock.sendMessage(group.id, content);
+    if (!r) throw new Error('the message was not sent');
+    const p = localParts(Date.now(), config.timezone);
+    const when = `${p.day} ${String(Math.floor(p.minutes / 60)).padStart(2, '0')}:${String(p.minutes % 60).padStart(2, '0')}`;
+    nameStore.markSentTo(read.number, group.id, when, file);
+    logger.info(`invoice ${read.number} sent to group "${group.subject}" by the owner's order`);
+    await reply(`Sent ${read.number} to "${group.subject}" at ${when} (Dubai time).`);
+  } catch (e) {
+    logger.warn(`owner send of ${read.number} failed: ${e.message}`);
+    await reply(`Sending ${read.number} failed (${e.message}). Nothing was retried.`);
+  }
+}
+
+
 // The PDFs seen in the Invoices group (and the test group): the last 50 messages (proto only) so invoices already sent can be named later.
 const mediaKeep = new MediaKeep(path.join(config.authDir, 'invoice-media'), { replacer: BufferJSON.replacer, reviver: BufferJSON.reviver });
 const keepPdf = (raw, groupId, fileName) => { const c = normalizeMessageContent(raw.message); if (c?.documentMessage) mediaKeep.add({ id: raw.key.id, groupId, key: raw.key, message: { documentMessage: c.documentMessage }, fileName: fileName || '', at: Date.now() }); };
@@ -682,6 +736,7 @@ async function watchGroup(raw, groupId, role) {
   const warn = staffWarning(final, config.displayName);
   if (warn) await sock.sendMessage(groupId, { text: warn });
   // The readable name, from the invoice itself (the read the check already made; no extra paid call). Never counted as a problem.
+  nameStore.facts(raw.key.id, { total: verdict.invoice?.total ?? null, urgent, noOrder: !found.request && !tracker.of('order', canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), { since: Date.now() - 45 * 86400000 }).length });
   try { await nameInvoice({ raw, groupId, fileName: doc.fileName, base64: doc.base64, number, customer: verdict.invoice_customer || verdict.invoice?.customer || '' }); } catch (e) { logger.warn(`invoice name failed: ${e.message}`); }
 }
 
@@ -928,7 +983,7 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '', af
   ];
   trace(where, role, `invoice check on request: ${problems.length} point(s), ${problems.filter((p) => p.severity !== 'info').length} urgent${book.loaded ? '' : ', no price list stored'}`);
   await reply(onDemandText({ problems, customer, number, name: '', groupName: where }));
-  if (after) await after({ number, customer: read.invoice_customer || inv.customer || '' });
+  if (after) await after({ number, customer: read.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: problems.filter((p) => p.severity !== 'info').length, noOrder: problems.some((p) => p.kind === 'order-note') });
 }
 
 async function handleStaffChat(raw, chatId, group) {
@@ -1060,6 +1115,31 @@ async function handleStaffChat(raw, chatId, group) {
     const rq = parseReceivedQuery(text);
     if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
   }
+  // THE OWNER ORDERS AN INVOICE INTO A CUSTOMER'S GROUP. Only a message typed on this account (never one she sent, never a forwarded one),
+  // only in the Invoices group, the test group or his own chat; anyone else is told only the owner can; nothing is sent without his yes.
+  if (config.ownerInvoiceSend && text && !audio && !image && (group?.invoice || group?.test || (!group && isSelf))) {
+    const owner = isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) });
+    const waiting = sendDesk.get(chatId);
+    if (waiting && owner) {
+      const a = sendDesk.answer(chatId, text, true);
+      if (a?.type === 'choose') {
+        const g = waiting.groups[a.index];
+        sendDesk.start(chatId, { step: 'confirm', invoice: waiting.invoice, group: g });
+        await reply(confirmText({ read: waiting.invoice.read, fileName: sendFileName(waiting.invoice.read), group: g.subject, alreadySent: nameStore.sentTo(waiting.invoice.read.number, g.id) ? 'before' : '' }));
+        return true;
+      }
+      if (a?.type === 'yes') { sendDesk.clear(chatId); await finishOwnerSend({ chatId, pending: waiting, reply }); return true; }
+      if (a?.type === 'cancel') { await reply('Cancelled. Nothing was sent.'); return true; }
+    }
+    if (addressed && !wantsRename(text)) {
+      const parsed = parseSendCommand(text);
+      if (parsed) {
+        if (!owner) { await reply('Only the owner can order an invoice to be sent to a customer. I cannot send invoices to customers.'); return true; }
+        await startOwnerSend({ chatId, parsed, ctx, reply });
+        return true;
+      }
+    }
+  }
   // "Atossa rename this invoice" (a reply to an invoice PDF) or "name the invoices with a code name after the customer in the invoice" (no
   // reply: the recent ones): the readable name from the invoice itself. Invoices group and test group, addressed by name.
   if (addressed && text && !audio && !image && config.invoiceNameMode !== 'off' && (group?.test || group?.invoice) && wantsRename(text)) {
@@ -1107,7 +1187,7 @@ async function handleStaffChat(raw, chatId, group) {
       if (raw.key.fromMe && nameStore.isOwnName(pdf.fileName || '')) { trace(where, role, 'her own re-post, ignored'); return true; }
       if (group?.test) keepPdf(raw, chatId, pdf.fileName);
       const b64 = buf.toString('base64');
-      await onDemandInvoice({ doc: { base64: b64, fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test, after: group?.test ? (r) => nameInvoice({ raw, groupId: chatId, fileName: pdf.fileName || '', base64: b64, ...r }) : null });
+      await onDemandInvoice({ doc: { base64: b64, fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test, after: group?.test ? (r) => { nameStore.facts(raw.key.id, { total: r.total, urgent: r.urgent, noOrder: r.noOrder }); return nameInvoice({ raw, groupId: chatId, fileName: pdf.fileName || '', base64: b64, number: r.number, customer: r.customer }); } : null });
       return true;
     }
     return false; // a PDF is for the invoice and purchase-order flows
@@ -1499,7 +1579,7 @@ async function start() {
   sock = makeWASocket({ auth: state, logger: logger.child({ module: 'baileys' }, { level: 'warn' }) });
   const rawSend = sock.sendMessage.bind(sock);
   // EVERY message leaves through this one function; the guard decides whether the destination may be written to.
-  const guarded = guardedSend({ rawSend, config, isGroup: isJidGroup, known: staffChats, ownIds: () => ownIds(), log: (s) => logger.warn(s), subjectOf: async (jid) => groups.get(jid)?.subject ?? (await groupInfo(jid)).subject });
+  const guarded = guardedSend({ rawSend, config, oneShot, isGroup: isJidGroup, known: staffChats, ownIds: () => ownIds(), log: (s) => logger.warn(s), subjectOf: async (jid) => groups.get(jid)?.subject ?? (await groupInfo(jid)).subject });
   // What colleagues read is English, whatever generated it: every group except a test group, and every private chat except the owner's.
   const englishFor = async (jid) => {
     if (isJidGroup(jid)) { const why = groupAllowed(groups.get(jid)?.subject ?? (await groupInfo(jid)).subject, config).why; return why === 'internal group' || why === 'test group'; } // a customer group keeps the customer's language

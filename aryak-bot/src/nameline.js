@@ -21,7 +21,7 @@ const clean = (s) => String(s || '').normalize('NFKC').replace(/[\\/:*?"<>|\u000
 /** "inv-9919", "MASTER WOOD" -> "inv-9919 MASTER WOOD.pdf" (safe characters only); '' when the number or the customer is missing. */
 export function readableFileName(number, customer) {
   const n = clean(number).toLowerCase().replace(/\s+/g, '-');
-  const c = clean(customer).toUpperCase().replace(/\.+$/, '');
+  const c = clean(customer).toUpperCase().replace(/\./g, '').replace(/\s+/g, ' ').trim(); // "IND . LLC" and "L.L.C" lose their dots
   return n && c ? `${n} ${c}.pdf` : '';
 }
 
@@ -58,7 +58,12 @@ export class NameStore {
   }
 
   /** The read of an invoice message (number and customer), kept so a later "rename" needs no new read. */
-  remember(messageId, number, customer) { if (messageId && number && customer) { this.d.reads[messageId] = { number, customer }; this.save(); } }
+  remember(messageId, number, customer) { if (messageId && number && customer) { this.d.reads[messageId] = { ...(this.d.reads[messageId] || {}), number, customer }; this.save(); } }
+  /** What the check found about an invoice (total with VAT, unresolved urgent points, no matching order), kept with its read. */
+  facts(messageId, f) { if (messageId) { this.d.reads[messageId] = { ...(this.d.reads[messageId] || {}), ...f }; this.save(); } }
+  /** When this invoice number was sent into this group by the owner's order, or null. */
+  sentTo(number, jid) { return (this.d.sentLog || {})[`${String(number).toLowerCase()}|${jid}`] || null; }
+  markSentTo(number, jid, when, fileName) { (this.d.sentLog ||= {})[`${String(number).toLowerCase()}|${jid}`] = when; if (fileName) this.d.own.push({ name: fileName, at: this.now() }); this.save(); }
   recall(messageId) { return this.d.reads[messageId] || null; }
 
   /** Is this file name one she gave herself, in the last day? (her own re-post coming back) */

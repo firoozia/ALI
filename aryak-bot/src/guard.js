@@ -54,13 +54,15 @@ export function shadowGroup(subject, config) {
  * The send function with the guard in front of it. [rawSend](...args), [subjectOf](jid) -> the group name (may be async),
  * [isGroup](jid), [known]: staff chats, [log](text). A blocked send returns undefined and is logged by name only.
  */
-export function guardedSend({ rawSend, config, subjectOf, isGroup, known, ownIds = () => [], log = () => {} }) {
+export function guardedSend({ rawSend, config, subjectOf, isGroup, known, ownIds = () => [], oneShot = null, log = () => {} }) {
   return async (...args) => {
     const jid = args[0];
     if (isGroup(jid)) {
       let subject = '';
       try { subject = (await subjectOf(jid)) || ''; } catch { /* unknown group: blocked below */ }
       const v = subject ? groupAllowed(subject, config) : { ok: false, why: 'unknown group' };
+      // The only exception: a one-shot token for exactly this group and this exact PDF message, made by the owner's approved flow.
+      if (!v.ok && subject && oneShot?.consume(jid, args[1])) { log(`owner invoice send: one-shot token used for group "${subject}"`); return rawSend(...args); }
       if (!v.ok) { log(`blocked: no message to group "${subject || 'unknown'}" (${v.why})`); return undefined; }
     } else if (!privateAllowed(jid, config, known, ownIds())) {
       log('blocked: no message to a private chat that is not staff');
