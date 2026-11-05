@@ -57,6 +57,15 @@ export function loadConfig(env = process.env) {
     // groups of countable goods (accessories, saw blades, glue): a word of each name, comma separated
     // groups for live tests: the account's own messages run the real paths there, the reports stay in the group and nothing enters the real tracker
     testGroupNames: (env.TEST_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    // the good-morning message: only the groups listed here (empty = nothing is ever sent)
+    morningGroupNames: (env.MORNING_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    morningTime: (env.MORNING_TIME || '08:30').trim(),
+    morningCatchUpUntil: (env.MORNING_CATCHUP_UNTIL || '10:00').trim(),
+    morningOffDays: (env.MORNING_OFF_DAYS || 'friday').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    morningWeekendDays: (env.MORNING_WEEKEND_DAYS || 'thursday').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    morningDailyCap: Number(env.MORNING_DAILY_CAP || 40),
+    morningGapMin: Number(env.MORNING_GAP_MIN_SECONDS || 20),
+    morningGapMax: Number(env.MORNING_GAP_MAX_SECONDS || 60),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),

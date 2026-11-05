@@ -16,6 +16,7 @@ import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
 import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
+import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups, morningText, morningLang, weekdayNumbers, localParts } from './morning.js';
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
@@ -79,6 +80,7 @@ const desk = new InvoiceDesk({ dir: config.requestsDir }); // customers' purchas
 const botState = new BotState(config.authDir); // pause switch
 const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
+const quietContents = new WeakSet(); // messages that are not an answer to anyone (the good-morning message): never counted for learning
 // What the customer-flow gate did with a message, in words (the gate also watches staff messages: a colleague's
 // message cancels the answer that was waiting for a customer, it is not itself answered).
 const GATE_WORDS = {
@@ -179,6 +181,50 @@ setInterval(async () => {
     for (const r of avail.dueReminders()) await sock.sendMessage(config.salesManager, { text: reminderText(r) });
   } catch (e) { logger.warn(`reminder failed: ${e.message}`); }
 }, 60 * 1000).unref();
+
+// The good-morning message: a run is due on a working day in the window after the set time; the listed groups only.
+const morningStore = new MorningStore(path.join(config.authDir, 'morning'));
+let morningRunning = false;
+const morningPhrases = () => { try { return JSON.parse(fs.readFileSync(new URL('../data/morning-phrases.json', import.meta.url), 'utf8')); } catch (e) { logger.warn(`morning phrases unreadable: ${e.message}`); return null; } };
+const morningSend = async (id, text) => { const content = { text }; quietContents.add(content); return sock.sendMessage(id, content); };
+const learnedLangOf = (g) => experience.groupLanguage(groupLabel(g.subject));
+setInterval(async () => {
+  if (morningRunning || !sock?.user || !config.morningGroupNames.length || !morningStore.enabled || botState.paused) return;
+  const due = morningDue({ now: Date.now(), timeZone: config.timezone, time: config.morningTime, catchUpUntil: config.morningCatchUpUntil, offDays: weekdayNumbers(config.morningOffDays), weekendWishDays: weekdayNumbers(config.morningWeekendDays) });
+  if (!due || morningStore.completed === due.day) return;
+  const phrases = morningPhrases();
+  if (!phrases) return;
+  morningRunning = true;
+  try {
+    const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
+    const r = await runMorning({
+      day: due.day, weekend: due.weekend, groups: all, words: config.morningGroupNames, phrases, name: config.displayName, store: morningStore,
+      send: morningSend, sleep: (ms) => new Promise((res) => setTimeout(res, ms)), stillOpen: () => !botState.paused && !!morningDue({ now: Date.now(), timeZone: config.timezone, time: config.morningTime, catchUpUntil: config.morningCatchUpUntil, offDays: weekdayNumbers(config.morningOffDays), weekendWishDays: weekdayNumbers(config.morningWeekendDays) }),
+      cap: config.morningDailyCap, gapMin: config.morningGapMin, gapMax: config.morningGapMax, learnedLang: learnedLangOf, log: (s) => logger.info(s),
+    });
+    logger.info(`morning run: ${r.sent} sent, ${r.skipped} skipped, ${r.failed} failed${r.capped ? ', daily cap reached' : ''}${r.closed ? ', window closed' : ''}`);
+  } catch (e) { logger.warn(`morning run failed: ${e.message}`); } finally { morningRunning = false; }
+}, 30 * 1000).unref();
+
+/** The owner's commands about the good-morning message. "آزمایش" sends both variants now, to the test group only. */
+async function morningCommand(c, reply) {
+  if (c.type === 'on' || c.type === 'off') { morningStore.setEnabled(c.type === 'on'); return reply(c.type === 'on' ? 'پیام صبح بخیر روشن شد.' : 'پیام صبح بخیر خاموش شد.'); }
+  if (c.type === 'status') {
+    const p = localParts(Date.now(), config.timezone);
+    return reply(`پیام صبح بخیر: ${morningStore.enabled ? 'روشن' : 'خاموش'}؛ ${config.morningGroupNames.length} نام در فهرست گروه‌ها؛ ساعت ${config.morningTime} تا ${config.morningCatchUpUntil}؛ روزهای تعطیل: ${config.morningOffDays.length ? config.morningOffDays.join('، ') : 'ندارد'}؛ امروز ${morningStore.count(p.day)} گروه فرستاده شد.`);
+  }
+  const phrases = morningPhrases();
+  if (!phrases) return reply('فایل عبارت‌های صبح بخیر خوانده نشد.');
+  const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
+  const targets = matchGroups(all, config.testGroupNames);
+  if (!targets.length) return reply('گروه آزمایشی پیدا نشد؛ تنظیم گروه آزمایشی را بررسی کنید.');
+  const day = localParts(Date.now(), config.timezone).day;
+  for (const g of targets) for (const weekend of [false, true]) {
+    await morningSend(g.id, morningText({ phrases, lang: morningLang(learnedLangOf(g), g.subject), day, weekend, name: config.displayName }));
+  }
+  logger.info(`morning test: sent to ${targets.length} test group(s)`);
+  return reply(`نمونهٔ روز عادی و نمونهٔ آخر هفته به گروه آزمایشی فرستاده شد (${targets.length} گروه).`);
+}
 
 // Once an hour: the polite single reminders (an order without an invoice, an invoice without a delivery), and on the
 // statement day the customers whose monthly statement was not recorded. Report-only, to the information group.
@@ -786,6 +832,10 @@ async function handleStaffChat(raw, chatId, group) {
     const rule = ruleFrom(text, config.botNames);
     if (rule) { const r = rules.add(rule); trace(where, role, `owner rule ${r.id} stored`); await reply(`ثبت شد (قانون ${r.id}): ${r.text}`); return true; }
   }
+  if (admin && (!group || group.command || group.test)) {
+    const mc = parseMorningCommand(text);
+    if (mc) { await morningCommand(mc, reply); return true; }
+  }
   if (admin && (!group || group.command)) {
     const lc = parseLearnCommand(text);
     if (lc) { await learnCommand(lc, reply); return true; }
@@ -994,7 +1044,7 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(config.authDir);
   sock = makeWASocket({ auth: state, logger: logger.child({ module: 'baileys' }, { level: 'warn' }) });
   const rawSend = sock.sendMessage.bind(sock);
-  sock.sendMessage = async (...a) => { const r = await rawSend(...a); if (isJidGroup(a[0]) && groups.get(a[0])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
+  sock.sendMessage = async (...a) => { const r = await rawSend(...a); if (isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
   sock.ev.on('creds.update', saveCreds);
   const onQr = pairingOnce({
     registered: () => !!state.creds.registered,
@@ -1044,6 +1094,8 @@ async function start() {
         logger.info(`msg ${where} unknown: ignored: ${verdict.reason}`);
         continue;
       }
+      // A message this account sent itself (the good-morning message, an answer) coming back is never read as a message of a person.
+      if (raw?.key?.fromMe && sent.has(raw.key.id)) continue;
       // Each message is handled on its own: a slow answer to one never holds back the next.
       onMessage(raw).catch((e) => logger.error(`message failed: ${e.message}`));
     }

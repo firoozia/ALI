@@ -170,6 +170,17 @@ export class Experience {
   }
 
   /** A colleague corrected her answer in [group]. */
+  /** The language most used in a group over the weeks kept ('' when nothing is known). */
+  groupLanguage(group) {
+    const counts = {};
+    for (const w of Object.values(this.weeks)) for (const [k, v] of Object.entries(w)) {
+      const m = /^g\|(.*)\|([a-z]{2,5})$/.exec(k);
+      if (m && m[1] === group) counts[m[2]] = (counts[m[2]] || 0) + v;
+    }
+    const top = Object.entries(counts).filter(([l]) => l !== 'media').sort((a, b) => b[1] - a[1])[0];
+    return top ? top[0] : '';
+  }
+
   corrected(group, lang = 'fa') { if (this.on) { this.bump(`mc|${group}|${lang}`); } }
 
   // -- the review list

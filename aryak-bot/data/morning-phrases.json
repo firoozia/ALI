@@ -1,0 +1,48 @@
+{
+  "_comment": "Good-morning phrases. {name} is the assistant's name. Edit freely: one phrase is picked per day, so keep several of each. 'weekend' is used on the last working day of the week.",
+  "en": {
+    "daily": [
+      "Good morning! Wishing everyone a successful day. — {name}",
+      "Good morning, and a productive day to all. — {name}",
+      "Good morning! May today go smoothly and well. — {name}",
+      "Good morning, everyone. Wishing you a great and successful day. — {name}"
+    ],
+    "weekend": [
+      "Good morning! Wishing everyone a successful day, and a good weekend ahead. — {name}",
+      "Good morning, and a productive last day of the week. Have a lovely weekend! — {name}",
+      "Good morning! A successful day to all, and a restful weekend. — {name}"
+    ]
+  },
+  "ar": {
+    "daily": [
+      "صباح الخير! أتمنى لكم يوماً موفقاً. — {name}",
+      "صباح الخير للجميع، يوم مثمر وناجح إن شاء الله. — {name}",
+      "صباح النور! يوم سعيد وموفق للجميع. — {name}"
+    ],
+    "weekend": [
+      "صباح الخير! أتمنى لكم يوماً موفقاً وعطلة نهاية أسبوع سعيدة. — {name}",
+      "صباح الخير للجميع، يوم ناجح وإجازة أسبوعية جميلة. — {name}"
+    ]
+  },
+  "fa": {
+    "daily": [
+      "صبح بخیر! روزی پرموفقیت برای همه آرزو می‌کنم. — {name}",
+      "صبح همگی بخیر، روزتان پربار و خوب باشد. — {name}",
+      "صبح بخیر! امیدوارم امروز روز خوبی داشته باشید. — {name}"
+    ],
+    "weekend": [
+      "صبح بخیر! روزی موفق و آخر هفته‌ای خوش برای همه آرزو می‌کنم. — {name}",
+      "صبح بخیر، آخرین روز کاری هفته پربار باشد و تعطیلات خوبی داشته باشید. — {name}"
+    ]
+  },
+  "ur": {
+    "daily": [
+      "صبح بخیر! سب کے لیے کامیاب دن کی دعا۔ — {name}",
+      "صبح بخیر، آپ کا دن اچھا اور کامیاب گزرے۔ — {name}"
+    ],
+    "weekend": [
+      "صبح بخیر! کامیاب دن اور خوشگوار ویک اینڈ کی دعا۔ — {name}",
+      "صبح بخیر، ہفتے کا آخری کام کا دن اچھا گزرے اور چھٹی مبارک ہو۔ — {name}"
+    ]
+  }
+}
