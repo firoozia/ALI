@@ -11,6 +11,12 @@ const LABEL = {
   'price-unknown': 'Price not in list', 'prices-unchecked': 'Prices not checked', gap: 'Missing number', 'price-above': 'Price above list', 'price-missing': 'Price not printed',
 };
 
+/** One problem as a short phrase for the owner's confirmation: "Wrong quantity 511 (correct: 35 m, invoice: 53 m)". */
+export function shortPoint(p) {
+  const right = p.requested ? ` (correct: ${p.requested}${p.invoiced ? `, invoice: ${p.invoiced}` : ''})` : p.invoiced ? ` (invoice: ${p.invoiced})` : '';
+  return `${LABEL[p.kind] || String(p.kind).replace(/-/g, ' ')}${p.item ? ` ${p.item}` : ''}${right}`;
+}
+
 /** The urgent points of one invoice as one message. [v]: { number, customer, problems } (only the urgent ones are written). */
 export function invoiceFindingText(v, name = '') {
   const urgent = (v.problems || []).filter((p) => p.severity !== 'info');

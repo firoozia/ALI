@@ -73,7 +73,8 @@ export function targetGroups(customer, groups, config) {
 // ---------------------------------------------------------------------------------------------------------------- the confirmation
 export function confirmText({ read, fileName, group, alreadySent }) {
   const lines = [];
-  if (read.urgent > 0) lines.push(`⚠️ This invoice has ${read.urgent} unresolved urgent problem${read.urgent === 1 ? '' : 's'}.`);
+  if (read.checked === false) lines.push('⚠️ This invoice was not checked.');
+  if (read.urgent > 0) lines.push(`⚠️ This invoice has ${read.urgent} unresolved urgent problem${read.urgent === 1 ? '' : 's'}${(read.points || []).length ? `: ${read.points.slice(0, 4).join('; ')}` : ''}.`);
   if (read.noOrder) lines.push('⚠️ No matching purchase order was found for this invoice.');
   if (alreadySent) lines.push(`⚠️ This invoice was already sent to this group (${alreadySent}).`);
   lines.push(`Invoice ${read.number} — ${read.customer}`);

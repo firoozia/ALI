@@ -25,7 +25,7 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, sendFileName, targetGroups } from './invoicesend.js';
-import { cutFindingText, invoiceFindingText } from './finding.js';
+import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
 import { groupAllowed } from './guard.js';
@@ -557,6 +557,22 @@ async function pdfOf(raw, groupId, { internal = false } = {}) {
  * The bot never answers a customer here.
  */
 const nameStore = new NameStore(path.join(config.authDir, 'invoice-names'));
+
+/** The check of an invoice file that has none yet (an old file, or the copy): the same read and arithmetic, one paid call, for the owner's order. */
+async function checkForSend(buf) {
+  const r = await readInvoice({ client, config, invoice: { base64: buf.toString('base64'), mimeType: 'application/pdf' } });
+  const rows = r?.invoice?.lines;
+  if (!rows?.length) return null;
+  const inv = { ...r.invoice, lines: rows.map((l) => ({ ...l, code: productCode(l.code), printedCode: l.code })) };
+  const customer = canon(r.invoice_customer || inv.customer || '');
+  const problems = [
+    ...auditInvoice(inv, { book, day: new Date().toISOString().slice(0, 10), vatRate: config.vatRate, tol: config.moneyTolerance, customer }),
+    ...checkInvoiceAgainstOrders(tracker, { customer, at: Date.now(), lines: inv.lines }, { explain: true }),
+  ];
+  const urgent = problems.filter((p) => p.severity !== 'info');
+  return { number: r.invoice_number || inv.number || '', customer: r.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: urgent.length, noOrder: problems.some((p) => p.kind === 'order-note'), points: urgent.map(shortPoint).slice(0, 6) };
+}
+
 const oneShot = new OneShot();
 const sendDesk = new SendDesk();
 
@@ -574,9 +590,17 @@ async function startOwnerSend({ chatId, parsed, ctx, reply }) {
         if (r?.invoice_number && r?.invoice_customer) { nameStore.remember(ctx.stanzaId, r.invoice_number, r.invoice_customer); read = nameStore.recall(ctx.stanzaId); }
       } catch (e) { logger.warn(`owner send: the PDF could not be read (${e.message})`); }
     }
-    if (read?.number && read?.customer) found = { entry, read };
+    if (read?.number && read?.customer) found = { entry, read: nameStore.fullRead(ctx.stanzaId) || read };
   } else {
-    found = findInvoice(parsed.customer, mediaKeep.list(), (id) => nameStore.recall(id));
+    found = findInvoice(parsed.customer, mediaKeep.list(), (id) => nameStore.fullRead(id) || nameStore.recall(id));
+  }
+  // The check of this invoice, by its number (the original and its re-posted copy share it); none yet: the same read and arithmetic now.
+  if (found && found.read.checked !== true) {
+    try {
+      const buf = await downloadMediaMessage({ key: found.entry.key, message: found.entry.message }, 'buffer', {});
+      const c = await checkForSend(buf);
+      if (c) { nameStore.setCheck(found.read.number, { total: c.total, urgent: c.urgent, noOrder: c.noOrder, points: c.points }); found.read = nameStore.fullRead(found.entry.id) || { ...found.read, ...c, checked: true }; }
+    } catch (e) { logger.warn(`owner send: the check could not be made (${e.message})`); }
   }
   if (!found) { await reply(qdoc ? 'I could not read this invoice, so I send nothing.' : 'I do not have that invoice among the files I kept. Please reply to the PDF with the command. Nothing was sent.'); return; }
   const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
@@ -653,7 +677,7 @@ async function nameInvoice({ raw, groupId, fileName, base64, number, customer, f
   if (!force && (!meaninglessName(fileName) || nameStore.named(raw.key.id, number))) return false;
   let ok = false;
   if (config.invoiceNameMode === 'file' && base64) {
-    try { ok = !!(await sock.sendMessage(groupId, { document: Buffer.from(base64, 'base64'), mimetype: 'application/pdf', fileName: file }, { quoted: raw })); } catch (e) { logger.warn(`invoice re-post failed: ${e.message}`); }
+    try { const sentCopy = await sock.sendMessage(groupId, { document: Buffer.from(base64, 'base64'), mimetype: 'application/pdf', fileName: file }, { quoted: raw }); ok = !!sentCopy; if (sentCopy?.key?.id) nameStore.remember(sentCopy.key.id, number, customer); /* a reply to the copy finds the same read and check */ } catch (e) { logger.warn(`invoice re-post failed: ${e.message}`); }
   }
   if (ok) { nameStore.markNamed(raw.key.id, number, file); return true; }
   const sentLine = await sock.sendMessage(groupId, { text: nameLineText(number, customer) }, { quoted: raw });
@@ -736,7 +760,7 @@ async function watchGroup(raw, groupId, role) {
   const warn = staffWarning(final, config.displayName);
   if (warn) await sock.sendMessage(groupId, { text: warn });
   // The readable name, from the invoice itself (the read the check already made; no extra paid call). Never counted as a problem.
-  nameStore.facts(raw.key.id, { total: verdict.invoice?.total ?? null, urgent, noOrder: !found.request && !tracker.of('order', canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), { since: Date.now() - 45 * 86400000 }).length });
+  nameStore.setCheck(number, { points: problems.filter((p) => p.severity !== 'info').map(shortPoint).slice(0, 6), total: verdict.invoice?.total ?? null, urgent, noOrder: !found.request && !tracker.of('order', canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), { since: Date.now() - 45 * 86400000 }).length });
   try { await nameInvoice({ raw, groupId, fileName: doc.fileName, base64: doc.base64, number, customer: verdict.invoice_customer || verdict.invoice?.customer || '' }); } catch (e) { logger.warn(`invoice name failed: ${e.message}`); }
 }
 
@@ -983,7 +1007,7 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '', af
   ];
   trace(where, role, `invoice check on request: ${problems.length} point(s), ${problems.filter((p) => p.severity !== 'info').length} urgent${book.loaded ? '' : ', no price list stored'}`);
   await reply(onDemandText({ problems, customer, number, name: '', groupName: where }));
-  if (after) await after({ number, customer: read.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: problems.filter((p) => p.severity !== 'info').length, noOrder: problems.some((p) => p.kind === 'order-note') });
+  if (after) await after({ number, customer: read.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: problems.filter((p) => p.severity !== 'info').length, noOrder: problems.some((p) => p.kind === 'order-note'), points: problems.filter((p) => p.severity !== 'info').map(shortPoint).slice(0, 6) });
 }
 
 async function handleStaffChat(raw, chatId, group) {
@@ -1187,7 +1211,7 @@ async function handleStaffChat(raw, chatId, group) {
       if (raw.key.fromMe && nameStore.isOwnName(pdf.fileName || '')) { trace(where, role, 'her own re-post, ignored'); return true; }
       if (group?.test) keepPdf(raw, chatId, pdf.fileName);
       const b64 = buf.toString('base64');
-      await onDemandInvoice({ doc: { base64: b64, fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test, after: group?.test ? (r) => { nameStore.facts(raw.key.id, { total: r.total, urgent: r.urgent, noOrder: r.noOrder }); return nameInvoice({ raw, groupId: chatId, fileName: pdf.fileName || '', base64: b64, number: r.number, customer: r.customer }); } : null });
+      await onDemandInvoice({ doc: { base64: b64, fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test, after: group?.test ? (r) => { nameStore.facts(raw.key.id, { total: r.total, urgent: r.urgent, noOrder: r.noOrder }); nameStore.setCheck(r.number, { total: r.total, urgent: r.urgent, noOrder: r.noOrder, points: r.points || [] }); return nameInvoice({ raw, groupId: chatId, fileName: pdf.fileName || '', base64: b64, number: r.number, customer: r.customer }); } : null });
       return true;
     }
     return false; // a PDF is for the invoice and purchase-order flows

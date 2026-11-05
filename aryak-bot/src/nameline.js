@@ -37,7 +37,7 @@ export class NameStore {
   constructor(dir = '', now = () => Date.now()) {
     this.file = dir ? path.join(dir, 'invoice-names.json') : '';
     this.now = now;
-    this.d = { messages: [], numbers: [], reads: {}, own: [] };
+    this.d = { messages: [], numbers: [], reads: {}, own: [], checks: {} };
     try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* first start */ }
   }
 
@@ -59,6 +59,16 @@ export class NameStore {
 
   /** The read of an invoice message (number and customer), kept so a later "rename" needs no new read. */
   remember(messageId, number, customer) { if (messageId && number && customer) { this.d.reads[messageId] = { ...(this.d.reads[messageId] || {}), number, customer }; this.save(); } }
+  /** The result of the check of an invoice, kept BY INVOICE NUMBER (so the re-posted copy and the original find the same one). */
+  setCheck(number, c) { if (number) { (this.d.checks ||= {})[String(number).toLowerCase()] = { ...c, at: this.now() }; const k = Object.keys(this.d.checks); for (const x of k.slice(0, Math.max(0, k.length - 300))) delete this.d.checks[x]; this.save(); } }
+  checkOf(number) { return (this.d.checks || {})[String(number || '').toLowerCase()] || null; }
+  /** The read of a message together with the check of its invoice number: { number, customer, total, urgent, noOrder, points, checked }. */
+  fullRead(messageId) {
+    const r = this.recall(messageId);
+    if (!r?.number || !r?.customer) return null;
+    const c = this.checkOf(r.number);
+    return c ? { ...r, ...c, checked: true } : { ...r, checked: false };
+  }
   /** What the check found about an invoice (total with VAT, unresolved urgent points, no matching order), kept with its read. */
   facts(messageId, f) { if (messageId) { this.d.reads[messageId] = { ...(this.d.reads[messageId] || {}), ...f }; this.save(); } }
   /** When this invoice number was sent into this group by the owner's order, or null. */

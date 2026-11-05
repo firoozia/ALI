@@ -146,3 +146,55 @@ test('the wiring: owner only, only in the Invoices group / test group / his own 
   // the model is told what she can and cannot do
   assert.ok(fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'staff.js'), 'utf8').includes('ONLY the owner can order it'));
 });
+
+// ------------------------------------------------------------------------------------------ the confirmation must show what the check found
+import { shortPoint } from '../src/finding.js';
+
+test('the real sequence: an invoice is checked with problems, renamed, then ordered by a reply to the RENAMED copy: the confirmation shows the same problems', () => {
+  const store = new NameStore('', () => 0);
+  // the watch: the check of the original message (a file with a code name), kept by invoice number
+  const problems = [
+    { kind: 'quantity', item: '511', requested: '35 m', invoiced: '53 m', severity: 'urgent' },
+    { kind: 'price-below', item: '511', requested: '12.00', invoiced: '9.00', severity: 'urgent' },
+    { kind: 'price-unknown', item: '999', severity: 'info' },
+  ];
+  store.remember('orig-guid', 'inv-9955', 'NUQOOSH KITCHENS IND . LLC');
+  store.setCheck('inv-9955', { total: 1234.5, urgent: 2, noOrder: true, points: problems.filter((p) => p.severity !== 'info').map(shortPoint) });
+  // the rename: the re-posted copy is another message; its read is remembered under ITS id
+  store.remember('copy-readable', 'inv-9955', 'NUQOOSH KITCHENS IND . LLC');
+  // the owner replies to the copy: the same read and the same check
+  const read = store.fullRead('copy-readable');
+  assert.equal(read.checked, true);
+  assert.deepEqual([read.urgent, read.noOrder, read.total], [2, true, 1234.5]);
+  const text = confirmText({ read, fileName: sendFileName(read), group: 'NUQOUCH---ARYAK', alreadySent: '' });
+  assert.match(text, /^⚠️ This invoice has 2 unresolved urgent problems: Wrong quantity 511 \(correct: 35 m, invoice: 53 m\); Price below list 511 \(correct: 12\.00, invoice: 9\.00\)\./);
+  assert.ok(text.includes('No matching purchase order'));
+  assert.ok(text.includes('Total with VAT: AED 1234.50'));
+  assert.ok(!text.includes('not read') && !text.includes('not checked'));
+  // the original and the copy share one check; a new check for the number replaces it
+  assert.equal(store.fullRead('orig-guid').urgent, 2);
+});
+
+test('an invoice with no check says so on top; "Total with VAT: not read" appears only when the total truly is unknown', () => {
+  const store = new NameStore('', () => 0);
+  store.remember('old-file', 'inv-1', 'BAHAR');
+  const read = store.fullRead('old-file');
+  assert.equal(read.checked, false);
+  const text = confirmText({ read, fileName: 'inv-1 BAHAR.pdf', group: 'G', alreadySent: '' });
+  assert.match(text.split('\n')[0], /^⚠️ This invoice was not checked\./);
+  assert.ok(text.includes('Send? yes / no')); // still asked
+  // a clean checked invoice: no warning lines at all
+  store.setCheck('inv-1', { total: 100, urgent: 0, noOrder: false, points: [] });
+  const clean = confirmText({ read: store.fullRead('old-file'), fileName: 'inv-1 BAHAR.pdf', group: 'G', alreadySent: '' });
+  assert.ok(!clean.includes('⚠️'));
+  assert.ok(clean.includes('Total with VAT: AED 100.00'));
+});
+
+test('the wiring: every path looks up the stored check by number, makes the check when there is none, and the re-posted copy remembers the read', () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(src, /nameStore\.setCheck\(number,/); // the watch keeps the check by invoice number
+  assert.ok(src.includes("found.read.checked !== true")); // none yet: the same read and arithmetic now (one paid call, owner only)
+  assert.match(src, /async function checkForSend\(buf\)/);
+  assert.match(src, /nameStore\.remember\(sentCopy\.key\.id, number, customer\)/); // the copy finds the same read and check
+  assert.match(src, /nameStore\.fullRead\(ctx\.stanzaId\)/); // the reply path
+});
