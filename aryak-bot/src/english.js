@@ -11,6 +11,7 @@ const KIND = {
   'جمع جزء': 'Subtotal', مالیات: 'VAT', 'قیمت کمتر از لیست': 'Price below list', 'قیمت بیشتر از لیست': 'Price above list', 'قیمت چاپ نشده': 'Price not printed',
   'قیمت در لیست نیست': 'Price not in list', 'قیمت‌ها سنجیده نشد': 'Prices not checked', 'واحد قیمت': 'Price unit', 'واحد کالا': 'Item unit', 'واحد پول': 'Currency',
   'شمارهٔ تکراری': 'Duplicate number', 'شمارهٔ جاافتاده': 'Missing number',
+  'یادداشت سفارش': 'Order note', 'پوشش با تأمین': 'Covered by sourcing', 'برش بیشتر از فاکتور': 'Cut above the invoice', 'برش کمتر از فاکتور': 'Cut below the invoice',
 };
 
 const SOURCE = { 'سفارش فقط از گروه برش شناخته شد': 'order known only from the cut group', 'سفارش ثبت‌شده': 'recorded order' };
@@ -140,7 +141,7 @@ const RULES = [
 // words inside a line that a template above did not take whole
 const INLINE = [[' · رزرو: ', ' · Reserved: '], [' · حد: ', ' · Limit: '], [' · سایز: ', ' · Size: '], [' · محل: ', ' · Location: '], [/ و /g, ' and '], [' | درست: ', ' | Correct: '], [' | فاکتور: ', ' | Invoice: ']];
 
-const LABELS = new RegExp(`^(\\d+\\.\\s*)?(⚠️\\s*)?(${kinds}): `);
+const LABELS = new RegExp(`^(\\d+\\.\\s*)?(⚠️\\s*)?(${kinds})(?=: | \\||$)`);
 
 function line(raw) {
   if (!PERSIAN.test(raw)) return raw;
@@ -148,7 +149,7 @@ function line(raw) {
   // "1. ⚠️ Label: item" keeps its number and sign, the label is translated
   const lm = LABELS.exec(raw);
   const tidy = (s) => { let out = s; for (const [x, y] of INLINE) out = out.replace(x, y); return out.replace(/،/g, ','); };
-  if (lm) return tidy(`${lm[1] || ''}${lm[2] || ''}${KIND[lm[3]]}: ${raw.slice(lm[0].length)}`);
+  if (lm) return tidy(`${lm[1] || ''}${lm[2] || ''}${KIND[lm[3]]}${raw.slice(lm[0].length)}`);
   const text = raw.trim();
   const num = /^(?:\d+\.\s*)?/.exec(text)[0]; // a list number
   const afterNum = text.slice(num.length);

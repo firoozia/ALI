@@ -76,8 +76,11 @@ const KIND = {
   missing: 'قلم جاافتاده', extra: 'قلم اضافه', code: 'کد اشتباه', size: 'اندازه اشتباه', quantity: 'مقدار اشتباه',
   price: 'قیمت اشتباه', total: 'جمع کل اشتباه', customer: 'نام مشتری', unreadable: 'ناخوانا',
   'line-total': 'مبلغ ردیف', subtotal: 'جمع جزء', vat: 'مالیات', 'price-below': 'قیمت کمتر از لیست', 'price-above': 'قیمت بیشتر از لیست',
-  'price-missing': 'قیمت چاپ نشده', 'price-unknown': 'قیمت در لیست نیست', 'prices-unchecked': 'قیمت‌ها سنجیده نشد', unit: 'واحد قیمت', 'unit-sheet': 'واحد کالا', currency: 'واحد پول', duplicate: 'شمارهٔ تکراری', gap: 'شمارهٔ جاافتاده',
+  'order-note': 'یادداشت سفارش', 'sourcing-cover': 'پوشش با تأمین', 'cut-over': 'برش بیشتر از فاکتور', 'cut-short': 'برش کمتر از فاکتور', 'price-missing': 'قیمت چاپ نشده', 'price-unknown': 'قیمت در لیست نیست', 'prices-unchecked': 'قیمت‌ها سنجیده نشد', unit: 'واحد قیمت', 'unit-sheet': 'واحد کالا', currency: 'واحد پول', duplicate: 'شمارهٔ تکراری', gap: 'شمارهٔ جاافتاده',
 };
+
+/** The human label of a kind of point; a kind without one never shows as a raw internal word. */
+export const kindLabel = (kind) => KIND[kind] || String(kind || '').replace(/-/g, ' ');
 
 /** The message for the information group, or null when the invoice matches (nothing is posted for a match). */
 export function reportText(v, ctx) {
@@ -101,7 +104,7 @@ function reportBody(v, ctx) {
   if (ctx.invoiceSender) lines.push(`فاکتور را فرستاد: ${ctx.invoiceSender}`);
   lines.push('');
   v.problems.forEach((p, i) => {
-    lines.push(`${i + 1}. ${p.severity === 'info' ? '' : '⚠️ '}${KIND[p.kind] || p.kind}: ${p.item || '—'}`);
+    lines.push(`${i + 1}. ${p.severity === 'info' ? '' : '⚠️ '}${kindLabel(p.kind)}${p.item ? `: ${p.item}` : ''}`);
     if (p.requested && p.invoiced) lines.push(`   درست: ${p.requested} | فاکتور: ${p.invoiced}`);
     else if (p.requested) lines.push(`   درست: ${p.requested}`);
     else if (p.invoiced) lines.push(`   فاکتور: ${p.invoiced}`);
@@ -248,7 +251,7 @@ export function staffWarning(v, name = '') {
   if (!urgent.length) return null;
   const lines = [`⚠️ فاکتور ${v.invoice_number || ''} را اصلاح کنید (${urgent.length} مورد) و پیش از اصلاح برای مشتری نفرستید:`];
   urgent.slice(0, 8).forEach((p, i) => {
-    lines.push(`${i + 1}. ${KIND[p.kind] || p.kind}: ${p.item || '—'}${p.requested || p.invoiced ? ` | درست: ${p.requested || '—'} | فاکتور: ${p.invoiced || '—'}` : ''}`);
+    lines.push(`${i + 1}. ${kindLabel(p.kind)}${p.item ? `: ${p.item}` : ''}${p.requested || p.invoiced ? ` | درست: ${p.requested || '—'} | فاکتور: ${p.invoiced || '—'}` : ''}`);
   });
   if (urgent.length > 8) lines.push(`و ${urgent.length - 8} مورد دیگر در گروه اطلاعات`);
   if (name) lines.push(`— ${name}`);

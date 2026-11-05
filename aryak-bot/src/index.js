@@ -1269,7 +1269,7 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
           stance = ok === seen.length ? 'yes' : ok === 0 && seen.every(([, v]) => v === 'none free' || v === 'not in the sheet') ? 'no' : 'mixed';
         }
       }
-      return { action, reply: sends.join('\n'), lang: detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, sheetNote, managerLine].filter(Boolean).join('\n'), stance, customer, calls };
+      return { action, reply: sends.join('\n'), lang: flow.lang || detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, sheetNote, managerLine].filter(Boolean).join('\n'), stance, customer, calls };
     }
     if (!rest.length) return { action: 'none' };
   }

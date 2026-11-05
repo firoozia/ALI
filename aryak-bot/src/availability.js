@@ -177,10 +177,13 @@ const slim = (r) => ({ code: r.code, category: r.category, unit: r.unit, free: r
  */
 export async function runAvailability({ messages, groupId, groupName, customer, desk, decide, send, notifyManager, log = () => {}, now = Date.now() }) {
   const rest = [];
+  // The customer's language is the one of the whole batch: "221" alone has no letters, so it takes the language of the words around it.
+  const batchLang = detectLang(messages.map((x) => x.text || '').join(' '), 'en');
+  let usedLang = '';
   for (const m of messages) {
     const key = `${groupId}|${m.sender || ''}`;
     const text = m.text || '';
-    let lang = m.lang || detectLang(text, 'en');
+    let lang = m.lang || detectLang(text, batchLang);
     let lines = null;
     let asks = null;
     if (m.items) {
@@ -204,6 +207,7 @@ export async function runAvailability({ messages, groupId, groupName, customer, 
     if (!lines && !(asks && asks.length)) { rest.push(m); continue; }
     if (!lines) {
       if (asks.length === 1) desk.setQty(key, { code: asks[0], lang }, now);
+      usedLang = lang;
       await send(groupId, askQuantityText(lang, asks), m);
       log(`asked the customer for the quantity (${asks.length} code(s)), language ${lang}`);
       continue;
@@ -219,6 +223,7 @@ export async function runAvailability({ messages, groupId, groupName, customer, 
     }
     if (!ok.length && !toManager.length) { rest.push(m); continue; }
     if (ok.length) {
+      usedLang = lang;
       await send(groupId, availableText(lang, ok.map((l) => l.code), lines.length > 1), m);
       log(`answered available for ${ok.length} line(s), language ${lang}`);
     }
@@ -232,7 +237,7 @@ export async function runAvailability({ messages, groupId, groupName, customer, 
     // Lines the flow cannot judge (an unknown code, a code in two groups) go on to the normal answer, alone.
     if (unhandled.length) rest.push({ ...m, text: unhandled.map((l) => `${l.code} - ${l.quantity} ${l.unit}`).join('\n'), items: undefined });
   }
-  return { rest };
+  return { rest, lang: usedLang };
 }
 
 /**

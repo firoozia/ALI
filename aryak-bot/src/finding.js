@@ -7,6 +7,8 @@ const LABEL = {
   quantity: 'Wrong quantity', extra: 'Extra item', missing: 'Missing item', code: 'Wrong code', size: 'Wrong size', price: 'Wrong price', total: 'Wrong total',
   'line-total': 'Line amount', subtotal: 'Subtotal', vat: 'VAT', 'price-below': 'Price below list', unit: 'Price unit', 'unit-sheet': 'Item unit',
   currency: 'Currency', duplicate: 'Duplicate number', customer: 'Customer name', unreadable: 'Unreadable',
+  'order-note': 'Order note', 'sourcing-cover': 'Covered by sourcing', 'cut-over': 'Cut above the invoice', 'cut-short': 'Cut below the invoice',
+  'price-unknown': 'Price not in list', 'prices-unchecked': 'Prices not checked', gap: 'Missing number', 'price-above': 'Price above list', 'price-missing': 'Price not printed',
 };
 
 /** The urgent points of one invoice as one message. [v]: { number, customer, problems } (only the urgent ones are written). */
@@ -15,7 +17,7 @@ export function invoiceFindingText(v, name = '') {
   const lines = [`⚠️ Invoice ${v.number || ''}${v.customer ? ` — ${v.customer}` : ''}: ${urgent.length} problem${urgent.length === 1 ? '' : 's'}`.replace(/\s+:/, ':')];
   urgent.slice(0, 6).forEach((p) => {
     const right = p.requested ? ` (correct: ${p.requested}${p.invoiced ? `, invoice: ${p.invoiced}` : ''})` : p.invoiced ? ` (invoice: ${p.invoiced})` : '';
-    lines.push(`- ${LABEL[p.kind] || p.kind}${p.item ? ` ${p.item}` : ''}${right}${p.note ? `. ${toEnglish(p.note)}` : ''}`);
+    lines.push(`- ${LABEL[p.kind] || String(p.kind).replace(/-/g, ' ')}${p.item ? ` ${p.item}` : ''}${right}${p.note ? `. ${toEnglish(p.note)}` : ''}`);
   });
   if (urgent.length > 6) lines.push(`- and ${urgent.length - 6} more`);
   if (name) lines.push(`— ${name}`);
