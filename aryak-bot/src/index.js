@@ -16,7 +16,8 @@ import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
 import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
-import { guardedSend, observedGroup } from './guard.js';
+import { guardedSend, observedGroup, shadowGroup } from './guard.js';
+import { ShadowDesk, ShadowStore, dayLine, parseCardCorrection, parseShadowCommand, weekSummary } from './shadow.js';
 import { placeLanguage, toEnglish } from './english.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
@@ -927,6 +928,25 @@ async function handleStaffChat(raw, chatId, group) {
     if (rule) { const r = rules.add(rule); trace(where, role, `owner rule ${r.id} stored`); await reply(`ثبت شد (قانون ${r.id}): ${r.text}`); return true; }
   }
   if (admin && (!group || group.command || group.test)) {
+    const sc = parseShadowCommand(text);
+    if (sc) {
+      if (sc.type === 'on' || sc.type === 'off') { shadowStore.setEnabled(sc.type === 'on'); await reply(sc.type === 'on' ? 'Shadow mode is on.' : 'Shadow mode is off.'); return true; }
+      const day = localParts(Date.now(), config.timezone).day;
+      const d = shadowStore.day(day);
+      await reply([`Shadow mode: ${shadowStore.enabled && config.shadowGroupNames.length ? 'on' : 'off'}; ${config.shadowGroupNames.length} name(s) in the list; media ${config.shadowMedia ? 'on' : 'off'}; cards today ${d.cards} of ${config.shadowCardCap}; model calls ${d.calls} of ${config.shadowDailyCalls}.`, dayLine(shadowStore, day, config.shadowCompareMinutes), weekSummary(shadowStore, day)].filter(Boolean).join('\n'));
+      return true;
+    }
+    const cc = parseCardCorrection(text);
+    if (cc) {
+      const card = shadowStore.card(cc.id);
+      if (!card) { await reply(`There is no card #${cc.id}.`); return true; }
+      appendCorrection(config.authDir, { at: new Date().toISOString(), where, role, wrong: card.reply || card.action, right: cc.right });
+      experience.candidate({ kind: 'correction', wrong: String(card.reply || card.action).slice(0, 200), right: cc.right.slice(0, 300) });
+      await reply(`Noted for #${cc.id}; it is on the owner's learning list.`);
+      return true;
+    }
+  }
+  if (admin && (!group || group.command || group.test)) {
     const mc = parseMorningCommand(text);
     if (mc) { await morningCommand(mc, reply); return true; }
   }
@@ -1135,6 +1155,113 @@ async function watchObserved(raw, groupId, info) {
 
 const watchedSubject = (groupId) => groups.get(groupId)?.subject || '';
 
+// ---- SHADOW mode: the real customer flow, its answers written as cards into the test group ----------------------------------
+const shadowStore = new ShadowStore(path.join(config.authDir, 'shadow'));
+const shadowAvail = new AvailabilityDesk({ dir: '' }); // its own state, nothing persisted, nothing shared with the real flow
+const shadowRecent = new Map();
+let shadowChain = Promise.resolve();
+/** The ONLY way out of shadow mode: a card into the test group, one after the other with a gap. */
+const shadowPost = (text) => {
+  shadowChain = shadowChain.then(async () => {
+    const word = config.testGroupNames[0];
+    if (word) await sendTo(word, text);
+    await new Promise((r) => setTimeout(r, Math.max(0, config.shadowCardGapSeconds) * 1000));
+  }).catch((e) => logger.warn(`shadow card failed: ${e.message}`));
+  return shadowChain;
+};
+
+async function shadowAnalyze({ groupId, subject, label, messages, transcript }) {
+  const customer = canon(customerFromMessages(messages, orderLinesOf) || '') || label;
+  const withText = messages.filter((m) => m.text && !/^\(voice note, sticker or file\)$/.test(m.text));
+  const media = messages.filter((m) => m.hasImage || m.isVoice);
+  let note = media.length && !config.shadowMedia ? `${media.some((m) => m.isVoice) ? 'voice note' : 'photo'} not read (shadow media is off)` : '';
+  let calls = 0;
+  // Media is read only when the owner turns it on; the confirmation she would have asked is shown as a draft, never asked.
+  if (media.length && config.shadowMedia) {
+    for (const m of media.slice(-3)) {
+      try {
+        const u = m.isVoice && m.loadAudio ? await understandAudio(m.loadAudio, m.seconds || 0) : m.loadImage ? await understandPhotos([m], m.text, 'en') : null;
+        calls++;
+        if (u?.ok) { withText.push({ ...m, text: u.requestText, hasImage: false, isVoice: false }); note = [note, `${m.isVoice ? 'Voice note' : 'Photo'} read; the confirmation she would have asked: ${u.confirmText}`].filter(Boolean).join('\n'); }
+        else note = [note, `${m.isVoice ? 'voice note' : 'photo'} could not be used (${u?.reason || 'unreadable'})`].filter(Boolean).join('\n');
+      } catch (e) { note = [note, `${m.isVoice ? 'voice note' : 'photo'} could not be read`].filter(Boolean).join('\n'); }
+    }
+  }
+  if (!withText.length) return media.length ? { action: 'media', note, customer, calls } : { action: 'none' };
+  const proposals = [];
+  const log = (s) => {
+    if (/^asked the customer for the quantity/.test(s)) proposals.push('ask-quantity');
+    else if (/^answered available/.test(s)) proposals.push('answer');
+    else if (/sent to the sales manager/.test(s)) proposals.push('manager');
+  };
+  const sends = [];
+  let lang = '';
+  let managerLine = '';
+  if (config.availabilityFlow) {
+    const flow = await runAvailability({
+      messages: withText, groupId, groupName: subject, customer, desk: shadowAvail,
+      decide: async (line) => { calls++; try { return classify(await fetchStock(config, { code: line.code, quantity: line.quantity, quantity_unit: line.unit })); } catch { return { kind: 'unhandled' }; } },
+      send: async (gid, text) => { sends.push(text); },
+      notifyManager: async (req) => { managerLine = `Would refer to the sales manager: code ${req.res?.code || '?'}, ${req.line.quantity} ${req.line.unit} requested (nothing sent)`; return null; },
+      log,
+    });
+    // a question she would have asked the customer is shown as a draft and closed: nobody will answer it
+    shadowAvail.qty.clear();
+    for (const r of [...shadowAvail.open.values()]) shadowAvail.close(r.id);
+    const rest = flow.rest;
+    if (sends.length || managerLine) {
+      const action = proposals.includes('manager') && !sends.length ? 'manager' : proposals.includes('ask-quantity') ? 'ask-quantity' : 'answer';
+      return { action, reply: sends.join('\n'), lang: detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, managerLine].filter(Boolean).join('\n'), customer, calls };
+    }
+    if (!rest.length) return { action: 'none' };
+  }
+  calls++;
+  const result = await answer({ client, config, system: systemPrompt(), input: { groupName: subject, customer, transcript, messages: withText, images: [] }, ctx: { groupId, groupName: subject, customer, messageText: withText.map((m) => m.text).join(' / ') }, recent: shadowRecent });
+  lang = detectLang(withText.map((m) => m.text).join(' '), 'en');
+  const referral = result.managerTexts.length ? 'Would send the sales manager a private report (nothing sent)' : '';
+  if (!result.reply && !referral) return { action: 'none' };
+  if (!result.reply) return { action: 'manager', note: [note, referral].filter(Boolean).join('\n'), customer, calls };
+  return { action: 'answer', reply: applyTags(result.reply, config.team).text, lang, note: [note, referral].filter(Boolean).join('\n'), customer, calls };
+}
+
+const shadowDesk = new ShadowDesk({ store: shadowStore, post: shadowPost, analyze: shadowAnalyze, config, log: (s) => logger.warn(s) });
+
+/** A message of a shadow group goes to the shadow desk (and nowhere near the real flow). */
+async function shadowIntake(raw, groupId, info) {
+  if (sent.has(raw.key.id) || botState.paused) return;
+  const content = normalizeMessageContent(raw.message);
+  if (!content || content.protocolMessage || content.reactionMessage) return;
+  const image = imageOf(content);
+  const text = normalizeDigits(content.conversation || content.extendedTextMessage?.text || image?.caption || '');
+  const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+  let staff = raw.key.fromMe ? true : staffChecker(config.staffNumbers, info.lidToPhone)(sender);
+  if (staff === null) { info = await groupInfo(groupId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(sender); }
+  shadowDesk.onMessage({
+    groupId, subject: info.subject, label: groupLabel(info.subject), staff, fromMe: !!raw.key.fromMe, text, hasImage: !!image, isVoice: !!content.audioMessage, at: Date.now(),
+    seconds: content.audioMessage?.seconds || 0,
+    // downloaded only when shadow media is on and the request is analysed
+    loadAudio: content.audioMessage && config.shadowMedia ? () => downloadMediaMessage(raw, 'buffer', {}) : null,
+    loadImage: image && config.shadowMedia ? async () => ({ base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: image.mimetype?.split(';')[0] || 'image/jpeg' }) : null,
+  });
+}
+
+// The daily line at the summary hour, and the week summary on the seventh day: into the test group, one message each.
+let shadowLastLine = '';
+setInterval(async () => {
+  try {
+    if (!sock?.user || !config.shadowGroupNames.length || !shadowStore.enabled) return;
+    const p = localParts(Date.now(), config.timezone);
+    if (p.minutes < config.digestHour * 60 + 5 || shadowLastLine === p.day) return;
+    shadowLastLine = p.day;
+    const line = dayLine(shadowStore, p.day, config.shadowCompareMinutes);
+    if (line) await shadowPost(line);
+    const d = shadowStore.day(p.day);
+    if (d.calls >= config.shadowDailyCalls && shadowStore.d.warned !== p.day) { shadowStore.d.warned = p.day; shadowStore.save(); await shadowPost(`⚠️ Shadow: the daily model budget (${config.shadowDailyCalls} calls) was reached; later requests were not analysed.`); }
+    if (!shadowStore.d.started) { shadowStore.d.started = Date.now(); shadowStore.save(); }
+    if (Date.now() - shadowStore.d.started >= 7 * 86400000 && shadowStore.d.summaryDay !== p.day && Object.keys(shadowStore.d.days).length >= 7) { shadowStore.d.summaryDay = p.day; shadowStore.save(); await shadowPost(weekSummary(shadowStore, p.day)); }
+  } catch (e) { logger.warn(`shadow summary failed: ${e.message}`); }
+}, 5 * 60 * 1000).unref();
+
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
@@ -1162,7 +1289,11 @@ async function onMessage(raw) {
   observe(raw, groupId).catch((e) => logger.warn(`experience: ${e.message}`));
   // A watched customer group (read only): recorded and learned from, never answered.
   const watchedInfo = await groupInfo(groupId);
+  // A SHADOW group: the real customer flow runs on it and its answers become cards in the test group; nothing is ever sent to it.
+  const inShadow = shadowGroup(watchedInfo.subject, config);
+  if (inShadow) shadowIntake(raw, groupId, watchedInfo).catch((e) => logger.warn(`shadow failed: ${e.message}`));
   if (observedGroup(watchedInfo.subject, config)) { watchObserved(raw, groupId, watchedInfo).catch((e) => logger.warn(`observer failed: ${e.message}`)); return; }
+  if (inShadow) return; // never the real flow
   const trackRole = await trackedRole(groupId);
   // "Invoice inv-9910 delete this one": a deleted number is a legitimate gap in the numbering
   const delNo = deletedInvoice(textOf(normalizeMessageContent(raw.message)));
@@ -1241,6 +1372,8 @@ async function start() {
           const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => g.subject || '');
           const watched = all.filter((s) => observedGroup(s, config));
           logger.info(`watched customer groups (${watched.length} of ${all.length}): ${watched.join(' | ') || 'none'}`);
+          const shadow = all.filter((s) => shadowGroup(s, config));
+          logger.info(`SHADOW groups (${shadow.length} of ${all.length}): ${shadow.join(' | ') || 'none'}`);
         } catch (e) { logger.warn(`could not list the watched groups: ${e.message}`); }
       }, 30 * 1000).unref();
       // A few seconds after opening, so the session keys are ready; sent to the account's own chat only.

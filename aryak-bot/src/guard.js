@@ -44,6 +44,12 @@ export function observedGroup(subject, config) {
   return !!words.length && holds(subject, words) && !holds(subject, internalWords(config));
 }
 
+/** The customer groups in SHADOW mode (the answers she would give go to the test group): same rule, own words. */
+export function shadowGroup(subject, config) {
+  const words = (config.shadowGroupNames || []).map(low).filter(Boolean);
+  return !!words.length && holds(subject, words) && !holds(subject, internalWords(config));
+}
+
 /**
  * The send function with the guard in front of it. [rawSend](...args), [subjectOf](jid) -> the group name (may be async),
  * [isGroup](jid), [known]: staff chats, [log](text). A blocked send returns undefined and is logged by name only.
