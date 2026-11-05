@@ -286,6 +286,13 @@ export function cutDigest(tracker, { now = Date.now(), shortDays = 3, windowDays
   return { invoiceNoCut, cutNoInvoice };
 }
 
+/** The same payment posted again within minutes (a bank message forwarded by several people): true when it is already recorded. */
+export function isDuplicatePayment(tracker, ev, { windowMs = 10 * 60 * 1000 } = {}) {
+  if (ev.type !== 'payment' || !(Number(ev.amount) > 0)) return false;
+  return tracker.events.some((e) => e.type === 'payment' && e.kind === ev.kind && Math.abs(Number(e.amount) - Number(ev.amount)) < 0.005
+    && Math.abs((e.at || 0) - (ev.at || Date.now())) <= windowMs && (!e.customer || !ev.customer || sameCustomer(e.customer, ev.customer)));
+}
+
 /** Money items nobody has closed yet ("CLEARED" is the office's reply): cash, receipts, cheques and transfers, oldest first. */
 export function unclearedPayments(tracker, { now = Date.now(), minHours = 0 } = {}) {
   return tracker.events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared && (!minHours || now - e.at >= minHours * 3600000));

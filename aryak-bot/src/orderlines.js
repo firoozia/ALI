@@ -8,7 +8,7 @@ import { UNIT_RE, dropAttention, dropBrandWord, tailName, unitOf } from './codes
 
 const UNIT_WORDS = {
   m: 'm', mtr: 'm', mtrs: 'm', meter: 'm', meters: 'm', metre: 'm', metres: 'm',
-  roll: 'roll', rolls: 'roll', pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs', carton: 'carton', cartons: 'carton', ctn: 'carton',
+  roll: 'roll', rolls: 'roll', role: 'roll', roles: 'roll', pc: 'pcs', pcs: 'pcs', piece: 'pcs', pieces: 'pcs', carton: 'carton', cartons: 'carton', ctn: 'carton',
 };
 const UNIT = UNIT_RE;
 const CODE = '(?:[a-z]{1,4}-?\\d+(?:-\\d+)?|\\d{2,5})';
@@ -19,6 +19,8 @@ const WITH_SEPARATOR = new RegExp(`^(${CODE})\\s*[-:=x]+\\s*\\(?\\s*${NUM}\\s*${
 // "701 25 meter"
 const WITH_SPACE = new RegExp(`^(${CODE})\\s+\\(?\\s*${NUM}\\s*${UNIT}(?![A-Za-z\\u0620-\\u06FF])`);
 // the unit in front of the number: "101-- roll 2"
+// words between the code and the quantity: "509 number pvc need 6 meters", "116 number need  3 meters"
+const WITH_WORDS = new RegExp(`^(${CODE})\\s+(?:(?:number|no\\.?|pvc|film|code|colou?r)\\s+)*(?:(?:need|needs|needed|required|want|wanted|only|about)\\s+)+\\(?\\s*${NUM}\\s*${UNIT}(?![A-Za-z\\u0620-\\u06FF])`);
 const UNIT_FIRST = new RegExp(`^(${CODE})\\s*[-:=]*\\s*${UNIT}\\s*${NUM}\\b`);
 // the unit is required: "119-6" alone is a code, not 6 of 119.
 
@@ -29,18 +31,22 @@ function parseOrderLine(raw) {
   let s = cleanLine(raw).replace(/[?؟!.]+$/g, '').trim();
   const addOn = /^(please\s+)?add\b/.test(s) || /\balso\b/.test(s);
   s = s.replace(/^(please\s+)?(add\s+)?/, '').replace(/\s+also$/, '').trim();
-  let m = WITH_SEPARATOR.exec(s) || WITH_SPACE.exec(s);
+  let m = WITH_SEPARATOR.exec(s) || WITH_SPACE.exec(s) || WITH_WORDS.exec(s);
   let q;
   let u;
   if (m) { q = m[2]; u = m[3]; } else if ((m = UNIT_FIRST.exec(s))) { q = m[3]; u = m[2]; } else return null;
   // the words after the line ("al ebda", "nuqoosh") name the billing customer
-  const customer = tailName(s.slice(m[0].length));
-  return { code: m[1].toUpperCase(), quantity: Number(q), unit: UNIT_WORDS[u] || unitOf(u), addOn, ...(customer ? { customer } : {}) };
+  const tail = s.slice(m[0].length);
+  // "405  1MTR FOR SAMPLE": a sample is not a customer; the line is kept and marked
+  const sample = /\bsamples?\b/.test(tail);
+  const customer = sample ? '' : tailName(tail);
+  return { code: m[1].toUpperCase(), quantity: Number(q), unit: UNIT_WORDS[u] || unitOf(u), addOn, ...(sample ? { sample: true } : {}), ...(customer ? { customer } : {}) };
 }
 
 // The words around a code in an availability question, in the languages of the customers.
 const AVAILABILITY_TOKENS = new Set([
   'is', 'are', 'it', 'the', 'code', 'please', 'pls', 'kindly', 'check', 'have', 'do', 'you', 'stock', 'in', 'still', 'now', 'number', 'no',
+  'we', 'and', 'both', 'all', 'any', 'got',
   'هل', 'متوفر', 'متوفره', 'متاح', 'موجود', 'لديكم', 'عندكم', 'كود', 'رقم', 'من', 'فضلك', 'لو', 'سمحت', 'الكود',
   'کیا', 'دستیاب', 'ہے', 'ہیں', 'کوڈ', 'براہ', 'کرم', 'آپ', 'کے', 'پاس',
   'آیا', 'موجوده', 'موجودی', 'هست', 'هستش', 'هستند', 'دارید', 'دارین', 'کد', 'لطفا', 'لطفاً', 'ممنون', 'شماره',
@@ -54,6 +60,9 @@ function parseAvailability(raw) {
   // a bare one or two digit number is more likely a quantity than a code
   return tokens.length && tokens.every((p) => re.test(p) && !/^\d{1,2}$/.test(p)) ? tokens.map((p) => p.toUpperCase()) : [];
 }
+
+/** "I HAVE ORDER PLS WAIT": the customer announces that an order is coming in several messages; it is neither an order nor a question. */
+export const announcesOrder = (text) => /\b(?:i|we)\s+have\s+(?:an?\s+)?order\b|\border\b[^\n]{0,30}\b(?:wait|coming)\b|\bwait\b[^\n]{0,30}\border\b/i.test(String(text || ''));
 
 /**
  * @returns {{ kind: 'order'|'availability'|'other', lines: Array<{code:string, quantity:number, unit:string, addOn:boolean}>, codes: string[] }}

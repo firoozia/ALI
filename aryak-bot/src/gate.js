@@ -2,6 +2,7 @@
 // within the waiting time. Messages a customer sends while the bot waits are answered together.
 
 import { digits } from './tags.js';
+import { announcesOrder } from './orderlines.js';
 
 export class GroupGate {
   /**
@@ -45,6 +46,8 @@ export class GroupGate {
       this.pending.set(m.groupId, p);
     }
     p.messages.push(m);
+    // "I have order, please wait": the order comes in several messages, so the wait is doubled (once)
+    if (announcesOrder(m.text) && !p.extended) { this.clearTimer(p.timer); p.extended = true; p.timer = this.setTimer(() => this.fire(m.groupId), this.waitMs * 2); }
     return 'waiting';
   }
 

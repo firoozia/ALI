@@ -31,7 +31,7 @@ import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups,
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
-import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
+import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock } from './stock-format.js';
@@ -471,6 +471,7 @@ async function trackGroup(raw, groupId, role) {
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
     for (const [i, ev] of det.events.entries()) {
       const event = { ...ev, customer: canon(ev.customer), at: Date.now(), ref: refOf(raw.key.id, i) };
+      if (isDuplicatePayment(tracker, event)) { trace(whereDet, 'tracker', 'the same payment was already recorded minutes ago: counted once'); continue; }
       if (!tracker.add(event)) continue;
       trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
@@ -1253,6 +1254,7 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
       const action = proposals.includes('manager') && !sends.length ? 'manager' : proposals.includes('ask-quantity') ? 'ask-quantity' : 'answer';
       // For a bare availability question the free sheet lookup (no model) shows the stock she would rely on, the AR prefix handled.
       let stance = proposals.includes('answer') ? 'yes' : '';
+      let stances = {};
       let sheetNote = '';
       if (action === 'ask-quantity') {
         const codes = [...new Set(withText.flatMap((m) => parseCustomerText(m.text).codes))].slice(0, 6);
@@ -1265,11 +1267,13 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
         }
         if (seen.length) {
           sheetNote = `Sheet check: ${seen.map(([c, v]) => `${productCode(c)} ${v}`).join(', ')}`;
+          // a stance per code, so "220 available" and "406 and 401 no" from staff are compared code by code
+          for (const [c, v] of seen) if (v === 'in stock' || v === 'low stock') stances[productCode(c)] = 'yes'; else if (v === 'none free' || v === 'not in the sheet') stances[productCode(c)] = 'no';
           const ok = seen.filter(([, v]) => v === 'in stock').length;
           stance = ok === seen.length ? 'yes' : ok === 0 && seen.every(([, v]) => v === 'none free' || v === 'not in the sheet') ? 'no' : 'mixed';
         }
       }
-      return { action, reply: sends.join('\n'), lang: flow.lang || detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, sheetNote, managerLine].filter(Boolean).join('\n'), stance, customer, calls };
+      return { action, reply: sends.join('\n'), lang: flow.lang || detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, sheetNote, managerLine].filter(Boolean).join('\n'), stance, stances, customer, calls };
     }
     if (!rest.length) return { action: 'none' };
   }

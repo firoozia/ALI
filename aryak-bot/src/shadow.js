@@ -12,6 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { classifyAnswer, classifyIntent } from './experience.js';
 import { localParts } from './morning.js';
+import { announcesOrder } from './orderlines.js';
+import { productCode } from './codes.js';
 
 const REQUEST_INTENTS = new Set(['availability', 'order', 'addon', 'delivery', 'question']);
 /** Only real requests make a card: availability, an order, a quantity, a delivery question; never greetings, thanks or chit-chat. */
@@ -35,11 +37,13 @@ const ANSWERING = ['answer', 'ask-quantity', 'manager'];
 
 // Short spoken forms the answer classifier does not know ("Yea", "yep", "nope", "201 yes"): the polarity is read from them first.
 const NO_WORD = /^\W*(?:\d+\W+)?(?:no|nope|nah|na|not\b|never|لا|نه|نہیں)/iu;
+const NO_ANYWHERE = /(?:^|\W)(?:no|nope|nah|لا|نه|نہیں)(?:\W|$)/iu;
 const YES_WORD = /(?:^|\W)(?:yea|yeah|yep|yup|ya|yes|ok|okay|sure|available|موجود|نعم|بله|ہاں)(?:\W|$)/iu;
 const polarity = (t) => {
   const s = String(t || '');
   if (NO_WORD.test(s) || /\bnot\s+available\b|\bno\s+stock\b|\bsold\s+out\b/i.test(s)) return 'no';
   if (YES_WORD.test(s)) return 'yes';
+  if (NO_ANYWHERE.test(s)) return 'no'; // "406 and 401 no"
   const a = classifyAnswer(s);
   return a === 'limited' || a === 'quantity' ? 'yes' : a;
 };
@@ -56,6 +60,38 @@ export function compareStance(stance, staffText) {
   const b = polarity(staffText);
   if (!['yes', 'no'].includes(stance) || !['yes', 'no'].includes(b)) return 'unknown';
   return stance === b ? 'same' : 'different';
+}
+
+/**
+ * What staff said, code by code: "220 available" then "406 and 401 no" -> { 220: yes, 406: no, 401: no }; a clause with no code
+ * ("Yea", "no") is the general answer. A partial answer ("406 only 4.6+4.8 available") is a yes with a condition.
+ */
+export function staffByCode(texts) {
+  const by = {};
+  let general = '';
+  for (const text of texts) {
+    for (const clause of String(text || '').split(/[,;\n]|\s\/\s|\s[-–]\s/)) {
+      const pol = polarity(clause);
+      if (!['yes', 'no'].includes(pol)) continue;
+      const codes = [...clause.matchAll(/(?:^|[^\d.])(\d{2,5})(?![\d.]*\d)(?:[^\d]|$)/g)].map((m) => productCode(m[1]));
+      if (codes.length) for (const c of codes) by[c] = pol;
+      else general = pol;
+    }
+  }
+  return { by, general };
+}
+
+/** Her stance per code (from the sheet) against what staff said per code: same, different or unknown overall. */
+export function compareCodes(stances, texts) {
+  const { by, general } = staffByCode(texts);
+  const verdicts = [];
+  for (const [code, stance] of Object.entries(stances || {})) {
+    const said = by[productCode(code)] || general;
+    if (!said || !['yes', 'no'].includes(stance)) continue;
+    verdicts.push(said === stance ? 'same' : 'different');
+  }
+  if (!verdicts.length) return 'unknown';
+  return verdicts.includes('different') ? 'different' : 'same';
 }
 
 /** The compact English card. [c]: a card of the store. */
@@ -100,12 +136,13 @@ export class ShadowStore {
 export class ShadowDesk {
   /**
    * [post](text): the only way out (the test group). [analyze]({ groupId, subject, label, messages, transcript }) -> { action, reply,
-   * lang, note, stance, calls } | { action: 'none' }. [setTimer]/[clearTimer] and [now] are replaceable for tests.
+   * lang, note, stance, stances, calls } | { action: 'none' }. [setTimer]/[clearTimer] and [now] are replaceable for tests.
    */
   constructor({ store, post, analyze, config, setTimer = setTimeout, clearTimer = clearTimeout, now = () => Date.now(), log = () => {} }) {
     Object.assign(this, { store, post, analyze, config, setTimer, clearTimer, now, log });
     this.pending = new Map(); // group id -> { messages, timer, subject }
     this.transcripts = new Map();
+    this.staffBuf = new Map(); // group id -> [{ text, at }]: what staff said lately (an answer can come in pieces)
     this.work = Promise.resolve(); // analyses, one after the other
     this.queue = Promise.resolve(); // cards, numbered in the order they are posted
   }
@@ -126,12 +163,26 @@ export class ShadowDesk {
     this.transcripts.set(m.groupId, lines.slice(-20));
     if (!staff) {
       let p = this.pending.get(m.groupId);
-      if (!p) { p = { messages: [], transcript: before, subject: m.subject, label: m.label, timer: null }; p.timer = this.setTimer(() => this.fire(m.groupId), this.config.shadowMergeMs ?? 120000); this.pending.set(m.groupId, p); }
+      const merge = this.config.shadowMergeMs ?? 120000;
+      if (!p) { p = { messages: [], transcript: before, subject: m.subject, label: m.label, timer: null, announced: false }; this.pending.set(m.groupId, p); }
       p.messages.push(m);
+      // "I have order, please wait": the order comes in several messages, so the batch waits much longer; once real lines follow, the usual wait again
+      const announce = announcesOrder(m.text);
+      if (announce) p.announced = true;
+      this.clearTimer(p.timer);
+      p.timer = this.setTimer(() => this.fire(m.groupId), announce ? (this.config.shadowAnnounceMs ?? 600000) : merge);
       return 'waiting';
     }
+    // staff speak: remember it (an answer can come in several messages), then either they were first or they follow a card
+    const buf = (this.staffBuf.get(m.groupId) || []).filter((x) => m.at - x.at < 10 * 60000);
+    buf.push({ text: m.text || '', at: m.at ?? this.now() });
+    this.staffBuf.set(m.groupId, buf);
     const p = this.pending.get(m.groupId);
-    if (p) { this.clearTimer(p.timer); this.pending.delete(m.groupId); this.run(() => this.produce(p, { text: m.text || '', at: this.now() })); return 'staff-first'; }
+    if (p) {
+      this.clearTimer(p.timer); this.pending.delete(m.groupId);
+      this.run(() => this.produce(p, { texts: buf.filter((x) => x.at >= (p.messages[0].at || 0)).map((x) => x.text), at: m.at ?? this.now() }));
+      return 'staff-first';
+    }
     this.staffAfter(m);
     return 'staff-after';
   }
@@ -148,11 +199,12 @@ export class ShadowDesk {
     return this.work;
   }
 
-  /** One batch of customer messages -> at most one card. [staff]: what staff already said, if they were first. */
+  /** One batch of customer messages -> at most one card. [staff]: { texts, at } of what staff already said, if they were first. */
   async produce(p, staff) {
     const text = p.messages.map((x) => x.text).filter(Boolean).join(' / ');
     const mediaOnly = !text && p.messages.some((x) => x.hasImage || x.isVoice);
-    if (!mediaOnly && !looksLikeRequest(text) && !p.messages.some((x) => (x.hasImage || x.isVoice) && x.text)) return; // chit-chat, thanks: no card, no cost
+    // each message on its own (the lines of an order come as separate messages, the first may be "I have order, please wait")
+    if (!mediaOnly && !p.messages.some((x) => looksLikeRequest(x.text) || announcesOrder(x.text)) && !looksLikeRequest(text) && !p.messages.some((x) => (x.hasImage || x.isVoice) && x.text)) return; // chit-chat, thanks: no card, no cost
     const day = this.store.day(this.today());
     if (day.cards >= (this.config.shadowCardCap ?? 60)) { day.capHit++; this.store.save(); return; }
     let d;
@@ -164,22 +216,36 @@ export class ShadowDesk {
     const c = {
       groupId: p.messages[0].groupId, group: p.label || p.subject, customer: d.customer || '', at, customerAt: p.messages[0].at || at,
       text: mask(text || (p.messages.some((x) => x.isVoice) ? '(voice note)' : '(photo)')), action: d.action, reply: d.reply || '', lang: d.lang || '', note: d.note || '',
-      stance: d.stance || '', staffAt: 0, staffText: '', verdict: '', staffFirst: false,
+      stance: d.stance || '', stances: d.stances || {}, staffAt: 0, staffText: '', staffTexts: [], verdict: '', staffFirst: false,
     };
-    if (staff && staff.text) this.attachStaff(c, staff.text, staff.at, true);
+    if (staff && staff.texts?.length) this.attachStaff(c, staff.texts, staff.at, true);
     this.emit(c, day);
   }
 
-  /** Records what staff said on a card and compares it (not for a card that needs a photo). */
-  attachStaff(c, staffText, at, first) {
-    c.staffAt = at; c.staffText = staffText; c.staffFirst = !!first;
+  /** The verdict of a card against everything staff said (per code when the sheet gave a stance per code). */
+  verdictFor(c) {
+    if (!ANSWERING.includes(c.action)) return '';
+    if (c.stances && Object.keys(c.stances).length) return compareCodes(c.stances, c.staffTexts);
+    if (c.stance) return compareStance(c.stance, c.staffTexts.join(' / '));
+    return c.reply ? compareAnswers(c.reply, c.staffTexts.join(' / ')) : 'unknown';
+  }
+
+  /** Records what staff said on a card and compares it (not for a card that needs a photo); a later message can change the verdict. */
+  attachStaff(c, texts, at, first) {
     const day = this.store.day(localParts(c.at, this.tz()).day);
-    day.staffN++; day.staffMs += Math.max(0, at - c.customerAt);
-    if (!ANSWERING.includes(c.action)) return; // needs the photo, not analysed: no verdict, nothing to count
-    c.verdict = c.stance ? compareStance(c.stance, staffText) : c.reply ? compareAnswers(c.reply, staffText) : 'unknown';
-    day[c.verdict === 'same' ? 'agreed' : c.verdict === 'different' ? 'differed' : 'unknown']++;
-    const g = day.by[`${c.group}|${c.lang || '-'}`]; if (g && c.verdict !== 'unknown') g[c.verdict === 'same' ? 'agreed' : 'differed']++;
-    if (!first && at > c.at) { day.fasterN++; day.fasterMs += at - c.at; }
+    const previous = c.verdict;
+    if (!c.staffAt) { c.staffAt = at; c.staffFirst = !!first; day.staffN++; day.staffMs += Math.max(0, at - c.customerAt); }
+    c.staffTexts = [...(c.staffTexts || []), ...texts];
+    c.staffText = c.staffTexts.join(' / ');
+    if (!ANSWERING.includes(c.action)) return false;
+    const key = (v) => (v === 'same' ? 'agreed' : v === 'different' ? 'differed' : 'unknown');
+    const g = day.by[`${c.group}|${c.lang || '-'}`];
+    const bump = (v, n) => { if (!v) return; day[key(v)] += n; if (g && v !== 'unknown') g[key(v) === 'agreed' ? 'agreed' : 'differed'] += n; };
+    c.verdict = this.verdictFor(c);
+    // a card not yet posted is counted when it is posted; one already posted is corrected here
+    if (c.id && c.verdict !== previous) { bump(previous, -1); bump(c.verdict, 1); }
+    if (!previous && !first && at > c.at) { day.fasterN++; day.fasterMs += at - c.at; }
+    return c.verdict !== previous;
   }
 
   /** The card is numbered when it is posted, in order, so the numbers have no gaps; a failed post is tried once more. */
@@ -188,7 +254,7 @@ export class ShadowDesk {
       c.id = this.store.next();
       this.store.d.cards.push(c);
       day.cards++;
-      if (ANSWERING.includes(c.action)) { day.questions++; day.answered++; const g = (day.by[`${c.group}|${c.lang || '-'}`] ||= { q: 0, agreed: 0, differed: 0 }); g.q++; }
+      if (ANSWERING.includes(c.action)) { day.questions++; day.answered++; const g = (day.by[`${c.group}|${c.lang || '-'}`] ||= { q: 0, agreed: 0, differed: 0 }); g.q++; if (c.verdict) { day[c.verdict === 'same' ? 'agreed' : c.verdict === 'different' ? 'differed' : 'unknown']++; if (c.verdict !== 'unknown') g[c.verdict === 'same' ? 'agreed' : 'differed']++; } }
       else if (c.action === 'needs-media') day.needsMedia++;
       this.store.save();
       for (let attempt = 1; attempt <= 2; attempt++) {
@@ -199,15 +265,17 @@ export class ShadowDesk {
     return this.queue;
   }
 
-  /** Staff answered after her card, inside the window: compare and say it once. */
+  /** Staff answered after her card, inside the window (the answer may come in pieces): compare, say it once, and again only if the verdict changed. */
   staffAfter(m) {
     const windowMs = (this.config.shadowCompareMinutes ?? 60) * 60000;
     const at = this.now();
-    const c = [...this.store.d.cards].reverse().find((x) => x.groupId === m.groupId && !x.staffAt && ANSWERING.includes(x.action) && at - x.at <= windowMs);
+    const c = [...this.store.d.cards].reverse().find((x) => x.groupId === m.groupId && ANSWERING.includes(x.action) && at - x.at <= windowMs && (!x.staffAt || at - x.staffAt <= 5 * 60000));
     if (!c || !m.text) return;
-    this.attachStaff(c, m.text, at, false);
+    const first = !c.staffAt;
+    const changed = this.attachStaff(c, [m.text], at, false);
     this.store.save();
-    this.queue = this.queue.then(() => this.post(followUpText(c))).catch((e) => this.log(`shadow follow-up failed: ${e.message}`));
+    if (!first && !changed) return;
+    this.queue = this.queue.then(() => this.post(first ? followUpText(c) : `#${c.id} update: staff also said: ${mask(m.text)} — ${c.verdict}`)).catch((e) => this.log(`shadow follow-up failed: ${e.message}`));
     return this.queue;
   }
 }
