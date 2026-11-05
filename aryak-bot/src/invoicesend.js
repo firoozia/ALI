@@ -75,7 +75,7 @@ export function targetGroups(customer, groups, config) {
  * match. [row]: the approved row of this customer or null. { groups, mapped, stale, unconfirmed }: stale = a row exists but its group is gone
  * or no longer a customer group (nothing is sent, no fallback); unconfirmed = the loose match was used for a real customer.
  */
-export function resolveGroups(customer, groups, config, row = null) {
+export function resolveGroups(customer, groups, config, row = null, alts = []) {
   if (isTestCustomer(customer, config.testCustomerName)) return { groups: targetGroups(customer, groups, config), mapped: false, stale: false, unconfirmed: false };
   if (row) {
     // A row holds one or more approved groups; those still there and still customer groups are offered (two: he picks, never both).
@@ -84,7 +84,10 @@ export function resolveGroups(customer, groups, config, row = null) {
     if (ok.length) return { groups: ok, mapped: true, stale: false, unconfirmed: false };
     return { groups: [], mapped: true, stale: true, unconfirmed: false };
   }
-  return { groups: targetGroups(customer, groups, config), mapped: false, stale: false, unconfirmed: true };
+  // no approved row: the loose match, by the name on the invoice and by his other names (aliases)
+  const seen = new Set();
+  const found = [customer, ...alts].flatMap((n) => targetGroups(n, groups, config)).filter((g) => !seen.has(g.id) && seen.add(g.id));
+  return { groups: found, mapped: false, stale: false, unconfirmed: true };
 }
 
 // ---------------------------------------------------------------------------------------------------------------- the confirmation

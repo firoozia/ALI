@@ -25,7 +25,9 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
-import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers } from './customergroups.js';
+import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, mergeSources } from './customergroups.js';
+import { PRICE, PRICE_REPLY, TaughtStore, TeachDesk, WIDENING, WIDENING_REPLY, isExplicitTeaching, looksLikeTeaching, understandTeaching, validateChanges } from './teach.js';
+import { WatchList } from './watchlist.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -123,6 +125,8 @@ const GATE_WORDS = {
 };
 const book = new PriceBook(path.join(config.authDir, 'prices')); // the owner's price list, on the VM only
 const priceDesk = new VoiceDesk({ ttlMs: 30 * 60 * 1000 }); // a parsed list or exception waiting for the owner's yes
+const watchList = new WatchList(path.join(config.authDir, 'watched-groups')); // watched groups kept by id, so a renamed group stays watched
+watchList.applyTo(config);
 const rules = new Rules(config.authDir); // rules the owner taught in words: durable, listed, removable
 const aliases = new Aliases(path.join(config.authDir, 'aliases')); // other spellings of a customer's name, added by the owner
 const experience = new Experience({ dir: path.join(config.authDir, 'experience') }); // counters and anonymous shapes; never messages
@@ -577,6 +581,29 @@ async function checkForSend(buf) {
 const customerGroups = new CustomerGroups(path.join(config.authDir, 'customer-groups')); // the owner's approved list: customer on the invoice -> group
 const customerNames = new NameBook(path.join(config.authDir, 'customer-groups')); // the names the owner imported from his accounting export (names only, on the VM)
 const customerDesk = new CustomerGroupDesk({ list: customerGroups, config, book: customerNames });
+const taught = new TaughtStore(path.join(config.authDir, 'taught')); // what the owner taught in words: numbered, versioned, removable
+const teachDesk = new TeachDesk({ store: taught });
+const teachFx = () => ({ aliases, customerGroups, rules, watchList, config });
+
+/** The owner's sentence of teaching: one paid call (his own message only) -> checked changes -> numbered confirmation. Saves nothing. false = nothing to teach. */
+async function teachFlow({ text, reply }) {
+  if (WIDENING.test(text)) { await reply(WIDENING_REPLY); return true; }
+  if (PRICE.test(text)) { await reply(PRICE_REPLY); return true; }
+  const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
+  const names = mergeSources(customerNames.names(), { ...knownInvoiceCustomers() }).customers;
+  const customers = [...new Set([...names, ...customerGroups.rows().map((r) => r.customer), ...Object.keys(aliases.map)])];
+  let raw = null;
+  try { raw = await understandTeaching({ client, config, text, customers, groups: all }); } catch (e) { logger.warn(`teach: the sentence could not be understood (${e.message})`); return false; }
+  const v = validateChanges(raw, { customers, groups: all, config }, text);
+  if (v.refused.includes('widening')) { await reply(WIDENING_REPLY); return true; }
+  if (v.refused.includes('price')) { await reply(PRICE_REPLY); return true; }
+  const note = v.refused.includes('internal') ? ['یک گروه داخلی بود و نمی‌شود آن را زیر نظر یا برای فاکتور مشتری گذاشت؛ کنار گذاشته شد.'] : [];
+  if (!v.items.length && !v.questions.length && !note.length) return false;
+  if (!v.items.length) { await reply([...v.questions.map((q) => `❓ ${q}`), ...note].join('\n')); return true; }
+  customerDesk.pending = null; // this confirmation is the open question now
+  await reply([teachDesk.propose(v.items, v.questions), ...note].join('\n'));
+  return true;
+}
 const knownInvoiceCustomers = () => collectCustomers({ reads: nameStore.d.reads, events: tracker.events, aliasMap: aliases.map });
 const oneShot = new OneShot();
 const sendDesk = new SendDesk();
@@ -597,7 +624,11 @@ async function startOwnerSend({ chatId, parsed, ctx, reply }) {
     }
     if (read?.number && read?.customer) found = { entry, read: nameStore.fullRead(ctx.stanzaId) || read };
   } else {
-    found = findInvoice(parsed.customer, mediaKeep.list(), (id) => nameStore.fullRead(id) || nameStore.recall(id));
+    // the name he said, then his other names for that customer (aliases): "AL EBDA" finds the invoice of the customer it is an alias of
+    for (const nm of [...new Set([parsed.customer, aliases.resolve(parsed.customer, []), ...altNames(aliases.map, parsed.customer)].filter((x) => x !== undefined))]) {
+      found = findInvoice(nm, mediaKeep.list(), (id) => nameStore.fullRead(id) || nameStore.recall(id));
+      if (found) break;
+    }
   }
   // The check of this invoice, by its number (the original and its re-posted copy share it); none yet: the same read and arithmetic now.
   if (found && found.read.checked !== true) {
@@ -610,7 +641,7 @@ async function startOwnerSend({ chatId, parsed, ctx, reply }) {
   if (!found) { await reply(qdoc ? 'I could not read this invoice, so I send nothing.' : 'I do not have that invoice among the files I kept. Please reply to the PDF with the command. Nothing was sent.'); return; }
   const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
   const row = customerGroups.find(found.read.customer, altNames(aliases.map, found.read.customer));
-  const { groups, stale, unconfirmed } = resolveGroups(found.read.customer, all, config, row);
+  const { groups, stale, unconfirmed } = resolveGroups(found.read.customer, all, config, row, altNames(aliases.map, found.read.customer));
   if (stale) { await reply(`The group saved in the list for ${found.read.customer} ("${row.subject}") is not there any more, or is no longer a customer group. Nothing was sent. Fix the list first.`); return; }
   if (!groups.length) { await reply(`I found no customer group for ${found.read.customer}. Nothing was sent.`); return; }
   if (groups.length > 1) { sendDesk.start(chatId, { step: 'choose', invoice: found, groups, unconfirmed }); await reply(chooseText(groups)); return; }
@@ -1105,7 +1136,15 @@ async function handleStaffChat(raw, chatId, group) {
     }
   }
   // The owner teaches in words: kept at once as a durable rule (not sent to the review list), confirmed in one line.
-  if (admin && addressed && !audio && !image) {
+  // TEACHING IN WORDS (his own chat, the owner only): the answers to a confirmation, "what have you learned", "forget N", and a sentence that
+  // starts like a teaching. One call understands the sentence; nothing is saved before his yes. No explicit start -> after every other command.
+  if (config.ownerTeach && text && !audio && !image && !group && isSelf && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
+    const tp = teachDesk.wants(text);
+    if (tp) { for (const part of teachDesk.handle(tp, teachFx())) await reply(part); return true; }
+    if (isExplicitTeaching(text) && (await teachFlow({ text, reply }))) return true;
+  }
+  // The owner teaches a rule in words: only HE can add or remove one (typed on this account, not sent by the program, not forwarded).
+  if (admin && addressed && !audio && !image && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
     const rc = parseRuleCommand(text);
     if (rc) { await reply(rc.list ? rules.list() : rules.remove(rc.remove) ? `قانون ${rc.remove} برداشته شد.` : 'قانونی با این شماره نبود.'); return true; }
     const rule = ruleFrom(text, config.botNames);
@@ -1345,6 +1384,11 @@ async function handleStaffChat(raw, chatId, group) {
       lang = follow.lang || lang;
       trace(where, role, 'follow-up: answered the assistant\'s question');
     }
+  }
+  // A sentence that reads as an instruction, in his own chat, that no command matched: teaching (never for a question; the model may find nothing to save).
+  if (config.ownerTeach && !group && isSelf && !confirmed && !isExplicitTeaching(text) && looksLikeTeaching(text)
+    && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
+    if (await teachFlow({ text, reply })) return true;
   }
   if (!addressed && !confirmed && !engaged) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
@@ -1649,6 +1693,7 @@ async function start() {
     if (qr) onQr();
     if (connection === 'open') {
       logger.info('connected to WhatsApp');
+      sock.groupFetchAllParticipating().then((g) => { for (const r of watchList.sync(Object.values(g).map((x) => ({ id: x.id, subject: x.subject || '' })), config)) logger.info(`watched group renamed: "${r.from}" -> "${r.to}" (kept watched)`); }).catch((e) => logger.warn(`watch list: ${e.message}`));
       setTimeout(async () => {
         try {
           const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => g.subject || '');
@@ -1683,6 +1728,7 @@ async function start() {
       } else logger.error('logged out: delete the auth folder and link again');
     }
   });
+  sock.ev.on('groups.update', (updates) => { for (const u of updates || []) if (u?.id && u.subject && watchList.rename(u.id, u.subject, config)) logger.info(`watched group renamed to "${u.subject}" (kept watched)`); });
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     let history = 0;
     for (const raw of messages) {

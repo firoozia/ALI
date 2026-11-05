@@ -100,6 +100,8 @@ export function loadConfig(env = process.env) {
     invoiceNameMode: nameMode(env.INVOICE_NAME_LINE),
     // the owner can order an invoice to be sent into the customer's own group (his yes needed); the test customer goes to the test group
     ownerInvoiceSend: !/^(0|false|off|no)$/i.test(env.OWNER_INVOICE_SEND || 'on'),
+    // the owner can teach her in one sentence in his own chat (aliases, customer groups, watched groups, rules, terms); every change needs his yes
+    ownerTeach: !/^(0|false|off|no)$/i.test(env.OWNER_TEACH || 'on'),
     testCustomerName: (env.TEST_CUSTOMER_NAME || 'test customer').trim().toLowerCase(),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),

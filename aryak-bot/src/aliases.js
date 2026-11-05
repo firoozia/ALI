@@ -36,6 +36,18 @@ export class Aliases {
     return true;
   }
 
+  /** Takes one other name off a customer (the customer stays); true when it was there. */
+  remove(customer, alias) {
+    const key = Object.keys(this.map).find((k) => same(k, customer));
+    if (!key) return false;
+    const n = this.map[key].length;
+    this.map[key] = this.map[key].filter((x) => norm(x) !== norm(alias));
+    if (this.map[key].length === n) return false;
+    if (!this.map[key].length) delete this.map[key];
+    this.save();
+    return true;
+  }
+
   save() {
     if (!this.file) return;
     try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.map)); } catch { /* best effort */ }
