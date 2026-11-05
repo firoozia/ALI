@@ -1,5 +1,7 @@
 // Settings from the environment (or a .env file loaded by the process manager).
 
+import { nameMode } from './nameline.js';
+
 const list = (s) => String(s || '').split(',').map((x) => x.trim()).filter(Boolean);
 
 export function loadConfig(env = process.env) {
@@ -94,6 +96,8 @@ export function loadConfig(env = process.env) {
     costModelUsd: Number(env.COST_MODEL_USD || 0.01),
     costVisionUsd: Number(env.COST_VISION_USD || 0.012),
     costSpeechUsd: Number(env.COST_SPEECH_USD || 0.016),
+    // an invoice with a meaningless file name is re-posted with the number and customer printed on it: file (default), line, off
+    invoiceNameMode: nameMode(env.INVOICE_NAME_LINE),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
     deliveryNagHours: Number(env.DELIVERY_NAG_HOURS || 48),

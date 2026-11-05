@@ -22,6 +22,7 @@ import { placeLanguage, toEnglish } from './english.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { UsageMeter, hasVisual } from './usage.js';
 import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
+import { NameStore, meaninglessName, nameLineText, readableFileName } from './nameline.js';
 import { cutFindingText, invoiceFindingText } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -150,6 +151,18 @@ async function groupInfo(jid, force = false) {
   return info;
 }
 
+/** A free look at the sheet for one code: 'ok' (something free), 'none' (nothing free), or 'unknown' (several groups, no answer, not in the sheet). */
+async function stockState(code) {
+  try {
+    const r = await fetchStock(config, { code });
+    if (!r.found) return { state: 'unknown', label: 'not in the sheet' };
+    if (r.ambiguous) return { state: 'unknown', label: 'in several groups' };
+    const free = Number(r.free) || 0;
+    if (free <= 0) return { state: 'none', label: 'none free' };
+    return { state: 'ok', label: free >= Number(r.limit || 0) ? 'in stock' : 'low stock' };
+  } catch { return { state: 'unknown', label: 'sheet did not answer' }; }
+}
+
 const gate = new GroupGate({
   waitMs: config.waitMinutes * 60 * 1000,
   isStaff: (m) => m.staff,
@@ -180,6 +193,7 @@ const gate = new GroupGate({
         decide: async (line) => {
           try { return classify(await fetchStock(config, { code: line.code, quantity: line.quantity, quantity_unit: line.unit })); } catch { return { kind: 'unhandled' }; }
         },
+        lookup: async (code) => (await stockState(code)).state,
         send: (gid, text, m) => sock.sendMessage(gid, { text }, m?.raw ? { quoted: m.raw } : undefined),
         notifyManager: async (req) => (await sock.sendMessage(config.salesManager, { text: managerQuestion(req) }))?.key?.id,
         log: (s) => logger.info(`availability in group "${info.subject}": ${s}`),
@@ -540,12 +554,37 @@ async function pdfOf(raw, groupId, { internal = false } = {}) {
  * Invoice group: a colleague's PDF is an invoice, checked against its order before it goes to the customer.
  * The bot never answers a customer here.
  */
+const nameStore = new NameStore(path.join(config.authDir, 'invoice-names'));
+
+/**
+ * Give an invoice a readable name from what is printed on it. WhatsApp cannot rename a sent file, so the same PDF bytes are posted again
+ * as a reply to the original under the readable file name; if that fails, one line is written. Automatic only for a meaningless file name,
+ * once per message and per invoice number; [force] is the explicit request. Silent when the number or the customer is missing.
+ */
+async function nameInvoice({ raw, groupId, fileName, base64, number, customer, force = false }) {
+  if (config.invoiceNameMode === 'off') return false;
+  const file = readableFileName(number, customer);
+  if (!file) return false;
+  nameStore.remember(raw.key.id, number, customer);
+  if (!force && (!meaninglessName(fileName) || nameStore.named(raw.key.id, number))) return false;
+  let ok = false;
+  if (config.invoiceNameMode === 'file' && base64) {
+    try { ok = !!(await sock.sendMessage(groupId, { document: Buffer.from(base64, 'base64'), mimetype: 'application/pdf', fileName: file }, { quoted: raw })); } catch (e) { logger.warn(`invoice re-post failed: ${e.message}`); }
+  }
+  if (ok) { nameStore.markNamed(raw.key.id, number, file); return true; }
+  const sentLine = await sock.sendMessage(groupId, { text: nameLineText(number, customer) }, { quoted: raw });
+  if (sentLine) nameStore.markNamed(raw.key.id, number, '');
+  return !!sentLine;
+}
+
 async function watchGroup(raw, groupId, role) {
   // An invoice posted from this very account (the owner tests from it) is checked in the Invoices group: the bot never posts a PDF itself.
   if (raw.key.fromMe && role !== 'invoice') return;
   const got = await pdfOf(raw, groupId, { internal: role === 'invoice' });
   if (!got) return;
   const { info, doc } = got;
+  // her own re-post under a readable name coming back: nothing is checked, recorded, read or renamed again
+  if (raw.key.fromMe && nameStore.isOwnName(doc.fileName)) { logger.info('invoice pdf: her own re-post, ignored'); return; }
   if (role === 'request') {
     if (doc.staff) return; // a colleague's PDF in the customer group is the forwarded invoice
     const meta = await extractMeta({ client, config, doc });
@@ -611,6 +650,8 @@ async function watchGroup(raw, groupId, role) {
   // The office user is told at once, in the invoices group, what to correct (urgent points only). Nothing is sent to a customer.
   const warn = staffWarning(final, config.displayName);
   if (warn) await sock.sendMessage(groupId, { text: warn });
+  // The readable name, from the invoice itself (the read the check already made; no extra paid call). Never counted as a problem.
+  try { await nameInvoice({ raw, groupId, fileName: doc.fileName, base64: doc.base64, number, customer: verdict.invoice_customer || verdict.invoice?.customer || '' }); } catch (e) { logger.warn(`invoice name failed: ${e.message}`); }
 }
 
 /** Reads the photos of a message with Claude's vision. Never throws. */
@@ -835,7 +876,7 @@ async function onDemandInvoice(args) {
   }
 }
 
-async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '' }) {
+async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '', after = null }) {
   const T = trackerOf(test);
   const read = await readInvoice({ client, config, invoice: doc });
   const rows = Array.isArray(read?.invoice?.lines) ? read.invoice.lines : [];
@@ -856,6 +897,7 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '' }) 
   ];
   trace(where, role, `invoice check on request: ${problems.length} point(s), ${problems.filter((p) => p.severity !== 'info').length} urgent${book.loaded ? '' : ', no price list stored'}`);
   await reply(onDemandText({ problems, customer, number, name: '', groupName: where }));
+  if (after) await after({ number, customer: read.invoice_customer || inv.customer || '' });
 }
 
 async function handleStaffChat(raw, chatId, group) {
@@ -987,6 +1029,23 @@ async function handleStaffChat(raw, chatId, group) {
     const rq = parseReceivedQuery(text);
     if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
   }
+  // "Atossa rename this invoice" as a reply to an invoice PDF (the Invoices group and the test group): the readable name from the invoice itself
+  if (addressed && text && !audio && !image && config.invoiceNameMode !== 'off' && (group?.test || group?.invoice) && /\brename\b|تغییر\s*نام/i.test(text) && ctx.quotedMessage) {
+    const qdoc = normalizeMessageContent(ctx.quotedMessage)?.documentMessage;
+    if (qdoc && /pdf/i.test(String(qdoc.mimetype || ''))) {
+      const qraw = { key: { remoteJid: chatId, id: ctx.stanzaId, participant: ctx.participant }, message: ctx.quotedMessage };
+      let buf = null;
+      try { buf = await downloadMediaMessage(qraw, 'buffer', {}); } catch (e) { logger.warn(`rename: the pdf could not be downloaded: ${e.message}`); }
+      let read = nameStore.recall(ctx.stanzaId); // the read the check already made, if there is one
+      if (!read && buf) {
+        const r = await readInvoice({ client, config, invoice: { base64: buf.toString('base64'), mimeType: 'application/pdf' } });
+        if (r?.invoice_number && r?.invoice_customer) { read = { number: r.invoice_number, customer: r.invoice_customer }; nameStore.remember(ctx.stanzaId, read.number, read.customer); }
+      }
+      if (!read || !readableFileName(read.number, read.customer)) { await reply('I could not read the invoice number and the customer from this file, so I cannot name it.'); return true; }
+      await nameInvoice({ raw: qraw, groupId: chatId, fileName: qdoc.fileName || '', base64: buf?.toString('base64'), number: read.number, customer: read.customer, force: true });
+      return true;
+    }
+  }
   // The owner's price list and special prices (admins, in a private chat or the command group).
   if (admin && (!group || group.command)) {
     if (await handlePriceFlow({ raw, content, text, key: `p:${chatId}`, reply, role, where, image, pdf })) return true;
@@ -1011,7 +1070,9 @@ async function handleStaffChat(raw, chatId, group) {
       try { buf = await downloadMediaMessage(raw, 'buffer', {}); } catch (e) { logger.warn(`pdf download failed: ${e.message}`); return true; }
       if (buf.length > 20 * 1024 * 1024) { await reply('این فایل برای بررسی بزرگ است.'); return true; }
       trace(where, role, 'pdf received: checking it as an invoice');
-      await onDemandInvoice({ doc: { base64: buf.toString('base64'), fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test });
+      if (raw.key.fromMe && nameStore.isOwnName(pdf.fileName || '')) { trace(where, role, 'her own re-post, ignored'); return true; }
+      const b64 = buf.toString('base64');
+      await onDemandInvoice({ doc: { base64: b64, fileName: pdf.fileName || '', mimeType: 'application/pdf' }, reply, where, role, test: !!group?.test, after: group?.test ? (r) => nameInvoice({ raw, groupId: chatId, fileName: pdf.fileName || '', base64: b64, ...r }) : null });
       return true;
     }
     return false; // a PDF is for the invoice and purchase-order flows
@@ -1230,9 +1291,10 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
   }
   if (!withText.length) return media.length ? { action: 'needs-media', note, customer, calls } : { action: 'none' };
   const proposals = [];
+  const statuses = new Map();
   const log = (s) => {
     if (/^asked the customer for the quantity/.test(s)) proposals.push('ask-quantity');
-    else if (/^answered available/.test(s)) proposals.push('answer');
+    else if (/^answered (?:not )?available/.test(s)) proposals.push('answer');
     else if (/sent to the sales manager/.test(s)) proposals.push('manager');
   };
   const sends = [];
@@ -1242,6 +1304,7 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
     const flow = await runAvailability({
       messages: withText, groupId, groupName: subject, customer, desk: shadowAvail,
       decide: async (line) => { calls++; try { return classify(await fetchStock(config, { code: line.code, quantity: line.quantity, quantity_unit: line.unit })); } catch { return { kind: 'unhandled' }; } },
+      lookup: async (code) => { calls++; const v = await stockState(code); statuses.set(code, v); return v.state; },
       send: async (gid, text) => { sends.push(text); },
       notifyManager: async (req) => { managerLine = `Would refer to the sales manager: code ${req.res?.code || '?'}, ${req.line.quantity} ${req.line.unit} requested (nothing sent)`; return null; },
       log,
@@ -1253,26 +1316,16 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
     if (sends.length || managerLine) {
       const action = proposals.includes('manager') && !sends.length ? 'manager' : proposals.includes('ask-quantity') ? 'ask-quantity' : 'answer';
       // For a bare availability question the free sheet lookup (no model) shows the stock she would rely on, the AR prefix handled.
-      let stance = proposals.includes('answer') ? 'yes' : '';
-      let stances = {};
+      // The free sheet lookups made by the flow give her stance per code (the AR prefix is handled by the lookup), so "220 available" and
+      // "406 and 401 no" from staff are compared code by code.
+      const stances = {};
       let sheetNote = '';
-      if (action === 'ask-quantity') {
-        const codes = [...new Set(withText.flatMap((m) => parseCustomerText(m.text).codes))].slice(0, 6);
-        const seen = [];
-        for (const code of codes) {
-          try {
-            const r = await fetchStock(config, { code });
-            seen.push(!r.found ? [code, 'not in the sheet'] : r.ambiguous ? [code, 'in several groups'] : Number(r.free) > 0 && Number(r.free) >= Number(r.limit || 0) ? [code, 'in stock'] : Number(r.free) > 0 ? [code, 'low stock'] : [code, 'none free']);
-          } catch { seen.push([code, 'sheet did not answer']); }
-        }
-        if (seen.length) {
-          sheetNote = `Sheet check: ${seen.map(([c, v]) => `${productCode(c)} ${v}`).join(', ')}`;
-          // a stance per code, so "220 available" and "406 and 401 no" from staff are compared code by code
-          for (const [c, v] of seen) if (v === 'in stock' || v === 'low stock') stances[productCode(c)] = 'yes'; else if (v === 'none free' || v === 'not in the sheet') stances[productCode(c)] = 'no';
-          const ok = seen.filter(([, v]) => v === 'in stock').length;
-          stance = ok === seen.length ? 'yes' : ok === 0 && seen.every(([, v]) => v === 'none free' || v === 'not in the sheet') ? 'no' : 'mixed';
-        }
+      if (statuses.size) {
+        sheetNote = `Sheet check: ${[...statuses].map(([c, v]) => `${productCode(c)} ${v.label}`).join(', ')}`;
+        for (const [c, v] of statuses) if (v.state === 'ok') stances[productCode(c)] = 'yes'; else if (v.state === 'none' || v.label === 'not in the sheet') stances[productCode(c)] = 'no';
       }
+      const states = Object.values(stances);
+      const stance = !states.length ? (proposals.includes('answer') ? 'yes' : '') : states.every((x) => x === 'yes') ? 'yes' : states.every((x) => x === 'no') ? 'no' : 'mixed';
       return { action, reply: sends.join('\n'), lang: flow.lang || detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, sheetNote, managerLine].filter(Boolean).join('\n'), stance, stances, customer, calls };
     }
     if (!rest.length) return { action: 'none' };
@@ -1366,7 +1419,7 @@ async function onMessage(raw) {
   const staffWords = [...config.staffGroupNames, config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...config.commandGroupNames].filter(Boolean);
   if (staffWords.length) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();
-    if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)), tracked: !!trackRole, quiet: isQuietSubject(subject, config) })) return;
+    if (staffWords.some((w) => subject.includes(w)) && await handleStaffChat(raw, groupId, { command: config.commandGroupNames.some((w) => subject.includes(w)), tracked: !!trackRole, quiet: isQuietSubject(subject, config), invoice: !!config.invoiceGroupName && subject.includes(config.invoiceGroupName) })) return;
   }
   if (config.watchGroupNames.length || config.invoiceGroupName) {
     const subject = (await groupInfo(groupId)).subject.toLowerCase();

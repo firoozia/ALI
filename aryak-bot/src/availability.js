@@ -175,7 +175,7 @@ const slim = (r) => ({ code: r.code, category: r.category, unit: r.unit, free: r
  * message sent; [log](text) writes a decision (never the message text).
  * Returns { rest }: the messages this flow did not deal with, left to the normal answer.
  */
-export async function runAvailability({ messages, groupId, groupName, customer, desk, decide, send, notifyManager, log = () => {}, now = Date.now() }) {
+export async function runAvailability({ messages, groupId, groupName, customer, desk, decide, send, notifyManager, lookup = null, log = () => {}, now = Date.now() }) {
   const rest = [];
   // The customer's language is the one of the whole batch: "221" alone has no letters, so it takes the language of the words around it.
   const batchLang = detectLang(messages.map((x) => x.text || '').join(' '), 'en');
@@ -206,10 +206,26 @@ export async function runAvailability({ messages, groupId, groupName, customer, 
     }
     if (!lines && !(asks && asks.length)) { rest.push(m); continue; }
     if (!lines) {
-      if (asks.length === 1) desk.setQty(key, { code: asks[0], lang }, now);
-      usedLang = lang;
-      await send(groupId, askQuantityText(lang, asks), m);
-      log(`asked the customer for the quantity (${asks.length} code(s)), language ${lang}`);
+      // A free look at the sheet first: a code with nothing free is answered as not available now; the quantity is asked only for the rest.
+      let none = [];
+      let askCodes = asks;
+      if (lookup) {
+        const states = [];
+        for (const c of asks) states.push([c, await lookup(c)]);
+        none = states.filter(([, s]) => s === 'none').map(([c]) => c);
+        askCodes = states.filter(([, s]) => s !== 'none').map(([c]) => c);
+      }
+      if (none.length) {
+        usedLang = lang;
+        await send(groupId, `${none.join(', ')}: ${notAvailableText(lang)}`, m);
+        log(`answered not available for ${none.length} code(s), language ${lang}`);
+      }
+      if (askCodes.length) {
+        if (askCodes.length === 1) desk.setQty(key, { code: askCodes[0], lang }, now);
+        usedLang = lang;
+        await send(groupId, askQuantityText(lang, askCodes), m);
+        log(`asked the customer for the quantity (${askCodes.length} code(s)), language ${lang}`);
+      }
       continue;
     }
     const ok = [];
