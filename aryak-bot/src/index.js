@@ -17,7 +17,7 @@ import { eventsFromCaption } from './captionevents.js';
 import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup, shadowGroup } from './guard.js';
-import { ShadowDesk, ShadowStore, dayLine, parseCardCorrection, parseShadowCommand, weekSummary } from './shadow.js';
+import { ShadowDesk, ShadowStore, dayLine, parseCardCorrection, parseShadowCommand, postingProblems, weekSummary } from './shadow.js';
 import { placeLanguage, toEnglish } from './english.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { UsageMeter, hasVisual } from './usage.js';
@@ -29,7 +29,7 @@ import { groupAllowed } from './guard.js';
 import { isSourcingRequest, markSourcingReceived, openSourcing, sourcingAnswer, sourcingCover, sourcingEvent } from './sourcing.js';
 import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups, morningText, morningLang, weekdayNumbers, localParts } from './morning.js';
 import { customerFromMessages, productCode } from './codes.js';
-import { orderLinesOf } from './orderlines.js';
+import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, readLastDigest, writeLastDigest } from './digest.js';
@@ -957,7 +957,8 @@ async function handleStaffChat(raw, chatId, group) {
       if (sc.type === 'on' || sc.type === 'off') { shadowStore.setEnabled(sc.type === 'on'); await reply(sc.type === 'on' ? 'Shadow mode is on.' : 'Shadow mode is off.'); return true; }
       const day = localParts(Date.now(), config.timezone).day;
       const d = shadowStore.day(day);
-      await reply([`Shadow mode: ${shadowStore.enabled && config.shadowGroupNames.length ? 'on' : 'off'}; ${config.shadowGroupNames.length} name(s) in the list; media ${config.shadowMedia ? 'on' : 'off'}; cards today ${d.cards} of ${config.shadowCardCap}; model calls ${d.calls} of ${config.shadowDailyCalls}.`, dayLine(shadowStore, day, config.shadowCompareMinutes), weekSummary(shadowStore, day)].filter(Boolean).join('\n'));
+      const pp = postingProblems(shadowStore);
+      await reply([`Shadow mode: ${shadowStore.enabled && config.shadowGroupNames.length ? 'on' : 'off'}; ${config.shadowGroupNames.length} name(s) in the list; media ${config.shadowMedia ? 'on' : 'off'}; cards today ${d.cards} of ${config.shadowCardCap}; model calls ${d.calls} of ${config.shadowDailyCalls}; last card #${shadowStore.d.n}${pp.unposted.length ? `; NOT posted: #${pp.unposted.join(', #')}` : ''}${pp.gaps.length ? `; missing numbers: #${pp.gaps.slice(0, 10).join(', #')}` : ''}.`, dayLine(shadowStore, day, config.shadowCompareMinutes), weekSummary(shadowStore, day)].filter(Boolean).join('\n'));
       return true;
     }
     const cc = parseCardCorrection(text);
@@ -1194,12 +1195,14 @@ const shadowRecent = new Map();
 let shadowChain = Promise.resolve();
 /** The ONLY way out of shadow mode: a card into the test group, one after the other with a gap. */
 const shadowPost = (text) => {
-  shadowChain = shadowChain.then(async () => {
+  const run = shadowChain.then(async () => {
     const word = config.testGroupNames[0];
-    if (word) await sendTo(word, text);
-    await new Promise((r) => setTimeout(r, Math.max(0, config.shadowCardGapSeconds) * 1000));
-  }).catch((e) => logger.warn(`shadow card failed: ${e.message}`));
-  return shadowChain;
+    const jid = word ? await findGroupJid(word) : null;
+    if (!jid) throw new Error('the test group was not found');
+    if (!(await sock.sendMessage(jid, { text }))) throw new Error('the card was not sent');
+  });
+  shadowChain = run.catch((e) => logger.warn(`shadow card failed: ${e.message}`)).then(() => new Promise((r) => setTimeout(r, Math.max(0, config.shadowCardGapSeconds) * 1000)));
+  return run;
 };
 
 async function shadowAnalyze({ groupId, subject, label, messages, transcript }) {
@@ -1219,7 +1222,12 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
       } catch (e) { note = [note, `${m.isVoice ? 'voice note' : 'photo'} could not be read`].filter(Boolean).join('\n'); }
     }
   }
-  if (!withText.length) return media.length ? { action: 'media', note, customer, calls } : { action: 'none' };
+  const understood = (m) => parseCustomerText(m.text || '').kind !== 'other'; // the free parser can read it without the picture
+  if (media.length && !config.shadowMedia && !withText.some(understood)) {
+    // "Available" under a picture: it depends on a photo or a voice note nobody read, so there is nothing fair to propose
+    return { action: 'needs-media', note: note.replace(' (shadow media is off)', '').replace('not read', 'not read: the question depends on it'), customer, calls: 0 };
+  }
+  if (!withText.length) return media.length ? { action: 'needs-media', note, customer, calls } : { action: 'none' };
   const proposals = [];
   const log = (s) => {
     if (/^asked the customer for the quantity/.test(s)) proposals.push('ask-quantity');
@@ -1243,7 +1251,25 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
     const rest = flow.rest;
     if (sends.length || managerLine) {
       const action = proposals.includes('manager') && !sends.length ? 'manager' : proposals.includes('ask-quantity') ? 'ask-quantity' : 'answer';
-      return { action, reply: sends.join('\n'), lang: detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, managerLine].filter(Boolean).join('\n'), customer, calls };
+      // For a bare availability question the free sheet lookup (no model) shows the stock she would rely on, the AR prefix handled.
+      let stance = proposals.includes('answer') ? 'yes' : '';
+      let sheetNote = '';
+      if (action === 'ask-quantity') {
+        const codes = [...new Set(withText.flatMap((m) => parseCustomerText(m.text).codes))].slice(0, 6);
+        const seen = [];
+        for (const code of codes) {
+          try {
+            const r = await fetchStock(config, { code });
+            seen.push(!r.found ? [code, 'not in the sheet'] : r.ambiguous ? [code, 'in several groups'] : Number(r.free) > 0 && Number(r.free) >= Number(r.limit || 0) ? [code, 'in stock'] : Number(r.free) > 0 ? [code, 'low stock'] : [code, 'none free']);
+          } catch { seen.push([code, 'sheet did not answer']); }
+        }
+        if (seen.length) {
+          sheetNote = `Sheet check: ${seen.map(([c, v]) => `${productCode(c)} ${v}`).join(', ')}`;
+          const ok = seen.filter(([, v]) => v === 'in stock').length;
+          stance = ok === seen.length ? 'yes' : ok === 0 && seen.every(([, v]) => v === 'none free' || v === 'not in the sheet') ? 'no' : 'mixed';
+        }
+      }
+      return { action, reply: sends.join('\n'), lang: detectLang(withText.map((m) => m.text).join(' '), 'en'), note: [note, sheetNote, managerLine].filter(Boolean).join('\n'), stance, customer, calls };
     }
     if (!rest.length) return { action: 'none' };
   }

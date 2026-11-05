@@ -1,9 +1,12 @@
 // SHADOW MODE: for a week she watches the customer groups and, for every real request, writes the answer she WOULD give as a
-// numbered card in the test group (never to the customer). When staff answer the same question later, the card gets a short
-// follow-up: what staff said, whether it agrees, and whether she would have been faster. Everything that leaves this module goes
-// through [post], which only ever writes to the test group: there is no other way out, so nothing can reach a customer, the sales
-// manager or anyone else from here. The analysis itself (the real customer flow with its parsing, stock lookup, price and limit
-// rules and the customer's language) is given in as [analyze] and must have no side effects outside the shadow state.
+// numbered card in the test group (never to the customer). The card is made even when staff answered first (in real mode she
+// answers first anyway), and then compared with what staff said: same, different or unknown; and whether she would have been
+// faster. A question that depends on a photo or a voice note she did not read ("Available" under a picture) is a card "needs the
+// photo (not read)" with no proposed reply, left out of the agree/differ counts and counted on its own.
+// Everything that leaves this module goes through [post], which only ever writes to the test group: there is no other way out, so
+// nothing can reach a customer, the sales manager or anyone else from here. The analysis itself (the real customer flow with its
+// parsing, stock lookup, price and limit rules and the customer's language) is given in as [analyze] and has no side effects outside
+// the shadow state.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,17 +29,33 @@ export function mask(text, max = 140) {
 
 export const ACTIONS = {
   answer: 'would answer', 'ask-quantity': 'would ask for the quantity', manager: 'would refer to the sales manager (nothing sent)',
-  silent: 'would stay silent because staff already answered', media: 'not read', budget: 'not analysed (daily budget reached)',
+  silent: 'would stay silent because staff already answered', media: 'not read', 'needs-media': 'needs the photo (not read)', budget: 'not analysed (daily budget reached)',
+};
+const ANSWERING = ['answer', 'ask-quantity', 'manager'];
+
+// Short spoken forms the answer classifier does not know ("Yea", "yep", "nope", "201 yes"): the polarity is read from them first.
+const NO_WORD = /^\W*(?:\d+\W+)?(?:no|nope|nah|na|not\b|never|لا|نه|نہیں)/iu;
+const YES_WORD = /(?:^|\W)(?:yea|yeah|yep|yup|ya|yes|ok|okay|sure|available|موجود|نعم|بله|ہاں)(?:\W|$)/iu;
+const polarity = (t) => {
+  const s = String(t || '');
+  if (NO_WORD.test(s) || /\bnot\s+available\b|\bno\s+stock\b|\bsold\s+out\b/i.test(s)) return 'no';
+  if (YES_WORD.test(s)) return 'yes';
+  const a = classifyAnswer(s);
+  return a === 'limited' || a === 'quantity' ? 'yes' : a;
 };
 
 /** What she proposes and what staff said, compared by the kind of answer: same / different / unknown. */
 export function compareAnswers(proposed, staffText) {
-  const a = classifyAnswer(proposed);
-  const b = classifyAnswer(staffText);
+  const a = polarity(proposed); const b = polarity(staffText);
   if (['other', 'file'].includes(a) || ['other', 'file'].includes(b)) return 'unknown';
-  // "limited" and a quantity are both a yes with a condition
-  const norm = (x) => (x === 'limited' || x === 'quantity' ? 'yes' : x);
-  return norm(a) === norm(b) ? 'same' : 'different';
+  return a === b ? 'same' : 'different';
+}
+
+/** The stock stance she would take ('yes' | 'no' | 'mixed') against what staff said: when she only asks for the quantity, the sheet decides. */
+export function compareStance(stance, staffText) {
+  const b = polarity(staffText);
+  if (!['yes', 'no'].includes(stance) || !['yes', 'no'].includes(b)) return 'unknown';
+  return stance === b ? 'same' : 'different';
 }
 
 /** The compact English card. [c]: a card of the store. */
@@ -44,7 +63,7 @@ export function cardText(c) {
   const lines = [`#${c.id} ${c.group}${c.customer && c.customer !== c.group ? ` (${c.customer})` : ''}`, `Customer: ${c.text || '—'}`, `Action: ${ACTIONS[c.action] || c.action}`];
   if (c.note) lines.push(c.note);
   if (c.reply) lines.push(`Reply${c.lang ? ` (${c.lang})` : ''}: ${mask(c.reply, 320)}`);
-  if (c.staffText && c.action === 'silent') lines.push(`Staff said: ${mask(c.staffText)}`);
+  if (c.staffText && c.staffFirst) lines.push(`Staff said: ${mask(c.staffText)}${c.verdict ? ` — ${c.verdict}` : ''}`);
   return lines.join('\n');
 }
 
@@ -73,24 +92,28 @@ export class ShadowStore {
   get enabled() { return this.d.enabled; }
   setEnabled(on) { this.d.enabled = !!on; this.save(); }
 
-  day(day) { return (this.d.days[day] ||= { cards: 0, questions: 0, answered: 0, silent: 0, agreed: 0, differed: 0, unknown: 0, calls: 0, capHit: 0, fasterN: 0, fasterMs: 0, staffMs: 0, staffN: 0, by: {} }); }
+  day(day) { return (this.d.days[day] ||= { cards: 0, questions: 0, answered: 0, silent: 0, agreed: 0, differed: 0, unknown: 0, needsMedia: 0, calls: 0, capHit: 0, fasterN: 0, fasterMs: 0, staffMs: 0, staffN: 0, by: {} }); }
   card(id) { return this.d.cards.find((c) => c.id === id); }
   next() { return ++this.d.n; }
 }
 
 export class ShadowDesk {
   /**
-   * [post](text): the only way out (the test group). [analyze]({ groupId, subject, messages, transcript }) -> { action, reply, lang,
-   * note, calls } | { action: 'none' }. [setTimer]/[clearTimer] and [now] are replaceable for tests.
+   * [post](text): the only way out (the test group). [analyze]({ groupId, subject, label, messages, transcript }) -> { action, reply,
+   * lang, note, stance, calls } | { action: 'none' }. [setTimer]/[clearTimer] and [now] are replaceable for tests.
    */
   constructor({ store, post, analyze, config, setTimer = setTimeout, clearTimer = clearTimeout, now = () => Date.now(), log = () => {} }) {
     Object.assign(this, { store, post, analyze, config, setTimer, clearTimer, now, log });
     this.pending = new Map(); // group id -> { messages, timer, subject }
     this.transcripts = new Map();
+    this.work = Promise.resolve(); // analyses, one after the other
+    this.queue = Promise.resolve(); // cards, numbered in the order they are posted
   }
 
   tz() { return this.config.timezone || 'Asia/Dubai'; }
   today() { return localParts(this.now(), this.tz()).day; }
+  /** Resolves when every analysis and card started so far is finished (the tests wait on it). */
+  idle() { return this.work.then(() => this.queue); }
 
   /** [m]: { groupId, subject, label, staff: true|false|null, fromMe, text, hasImage, isVoice, at }. */
   onMessage(m) {
@@ -108,106 +131,125 @@ export class ShadowDesk {
       return 'waiting';
     }
     const p = this.pending.get(m.groupId);
-    if (p) { this.clearTimer(p.timer); this.pending.delete(m.groupId); this.staffFirst(p, m); return 'staff-first'; }
+    if (p) { this.clearTimer(p.timer); this.pending.delete(m.groupId); this.run(() => this.produce(p, { text: m.text || '', at: this.now() })); return 'staff-first'; }
     this.staffAfter(m);
     return 'staff-after';
   }
 
-  async fire(groupId) {
+  fire(groupId) {
     const p = this.pending.get(groupId);
-    if (!p) return;
+    if (!p) return Promise.resolve();
     this.pending.delete(groupId);
-    try {
-      const text = p.messages.map((x) => x.text).filter(Boolean).join(' / ');
-      const mediaOnly = !text && p.messages.some((x) => x.hasImage || x.isVoice);
-      if (!mediaOnly && !looksLikeRequest(text)) return; // chit-chat, greetings, thanks: no card, no cost
-      const day = this.store.day(this.today());
-      if (this.store.day(this.today()).cards >= (this.config.shadowCardCap ?? 60)) { day.capHit++; this.store.save(); return; }
-      let d;
-      if (day.calls >= (this.config.shadowDailyCalls ?? 400)) d = { action: 'budget' };
-      else d = await this.analyze({ groupId, subject: p.subject, label: p.label, messages: p.messages, transcript: p.transcript });
-      if (!d || d.action === 'none') return;
-      day.calls += d.calls || 0;
-      await this.card(p, d, text || (p.messages.some((x) => x.isVoice) ? '(voice note)' : '(photo)'));
-    } catch (e) { this.log(`shadow analysis failed: ${e.message}`); }
+    return this.run(() => this.produce(p, null));
   }
 
-  async card(p, d, text) {
-    const day = this.store.day(this.today());
-    const at = this.now();
-    const c = {
-      id: this.store.next(), groupId: p.messages[0].groupId, group: p.label || p.subject, customer: d.customer || '', at, customerAt: p.messages[0].at || at,
-      text: mask(text), action: d.action, reply: d.reply || '', lang: d.lang || '', note: d.note || '', staffAt: 0, staffText: '', verdict: '',
-    };
-    this.store.d.cards.push(c);
-    day.cards++;
-    if (['answer', 'ask-quantity', 'manager'].includes(d.action)) { day.questions++; day.answered++; const g = (day.by[`${c.group}|${c.lang || '-'}`] ||= { q: 0, agreed: 0, differed: 0 }); g.q++; }
-    this.store.save();
-    await this.post(cardText(c));
-    return c;
+  run(fn) {
+    this.work = this.work.then(fn).catch((e) => this.log(`shadow analysis failed: ${e.message}`));
+    return this.work;
   }
 
-  /** Staff answered before she did: a card "would stay silent". */
-  staffFirst(p, m) {
+  /** One batch of customer messages -> at most one card. [staff]: what staff already said, if they were first. */
+  async produce(p, staff) {
     const text = p.messages.map((x) => x.text).filter(Boolean).join(' / ');
-    if (!looksLikeRequest(text)) return;
+    const mediaOnly = !text && p.messages.some((x) => x.hasImage || x.isVoice);
+    if (!mediaOnly && !looksLikeRequest(text) && !p.messages.some((x) => (x.hasImage || x.isVoice) && x.text)) return; // chit-chat, thanks: no card, no cost
     const day = this.store.day(this.today());
     if (day.cards >= (this.config.shadowCardCap ?? 60)) { day.capHit++; this.store.save(); return; }
+    let d;
+    if (day.calls >= (this.config.shadowDailyCalls ?? 400)) d = { action: 'budget' };
+    else d = await this.analyze({ groupId: p.messages[0].groupId, subject: p.subject, label: p.label, messages: p.messages, transcript: p.transcript });
+    if (!d || d.action === 'none') return;
+    day.calls += d.calls || 0;
     const at = this.now();
-    const c = { id: this.store.next(), groupId: m.groupId, group: p.label || p.subject, customer: '', at, customerAt: p.messages[0].at || at, text: mask(text), action: 'silent', reply: '', lang: '', note: '', staffAt: at, staffText: m.text || '', verdict: 'unknown' };
-    this.store.d.cards.push(c);
-    day.cards++; day.silent++; day.questions++;
+    const c = {
+      groupId: p.messages[0].groupId, group: p.label || p.subject, customer: d.customer || '', at, customerAt: p.messages[0].at || at,
+      text: mask(text || (p.messages.some((x) => x.isVoice) ? '(voice note)' : '(photo)')), action: d.action, reply: d.reply || '', lang: d.lang || '', note: d.note || '',
+      stance: d.stance || '', staffAt: 0, staffText: '', verdict: '', staffFirst: false,
+    };
+    if (staff && staff.text) this.attachStaff(c, staff.text, staff.at, true);
+    this.emit(c, day);
+  }
+
+  /** Records what staff said on a card and compares it (not for a card that needs a photo). */
+  attachStaff(c, staffText, at, first) {
+    c.staffAt = at; c.staffText = staffText; c.staffFirst = !!first;
+    const day = this.store.day(localParts(c.at, this.tz()).day);
     day.staffN++; day.staffMs += Math.max(0, at - c.customerAt);
-    this.store.save();
-    return this.post(cardText(c));
+    if (!ANSWERING.includes(c.action)) return; // needs the photo, not analysed: no verdict, nothing to count
+    c.verdict = c.stance ? compareStance(c.stance, staffText) : c.reply ? compareAnswers(c.reply, staffText) : 'unknown';
+    day[c.verdict === 'same' ? 'agreed' : c.verdict === 'different' ? 'differed' : 'unknown']++;
+    const g = day.by[`${c.group}|${c.lang || '-'}`]; if (g && c.verdict !== 'unknown') g[c.verdict === 'same' ? 'agreed' : 'differed']++;
+    if (!first && at > c.at) { day.fasterN++; day.fasterMs += at - c.at; }
+  }
+
+  /** The card is numbered when it is posted, in order, so the numbers have no gaps; a failed post is tried once more. */
+  emit(c, day) {
+    this.queue = this.queue.then(async () => {
+      c.id = this.store.next();
+      this.store.d.cards.push(c);
+      day.cards++;
+      if (ANSWERING.includes(c.action)) { day.questions++; day.answered++; const g = (day.by[`${c.group}|${c.lang || '-'}`] ||= { q: 0, agreed: 0, differed: 0 }); g.q++; }
+      else if (c.action === 'needs-media') day.needsMedia++;
+      this.store.save();
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try { await this.post(cardText(c)); c.posted = true; break; } catch (e) { c.posted = false; this.log(`shadow card #${c.id} failed to post (try ${attempt}): ${e.message}`); }
+      }
+      this.store.save();
+    }).catch((e) => this.log(`shadow card failed: ${e.message}`));
+    return this.queue;
   }
 
   /** Staff answered after her card, inside the window: compare and say it once. */
   staffAfter(m) {
     const windowMs = (this.config.shadowCompareMinutes ?? 60) * 60000;
     const at = this.now();
-    const c = [...this.store.d.cards].reverse().find((x) => x.groupId === m.groupId && !x.staffAt && ['answer', 'ask-quantity', 'manager'].includes(x.action) && at - x.at <= windowMs);
+    const c = [...this.store.d.cards].reverse().find((x) => x.groupId === m.groupId && !x.staffAt && ANSWERING.includes(x.action) && at - x.at <= windowMs);
     if (!c || !m.text) return;
-    c.staffAt = at; c.staffText = m.text;
-    c.verdict = c.reply ? compareAnswers(c.reply, m.text) : 'unknown';
-    const day = this.store.day(localParts(c.at, this.tz()).day);
-    day[c.verdict === 'same' ? 'agreed' : c.verdict === 'different' ? 'differed' : 'unknown']++;
-    const g = day.by[`${c.group}|${c.lang || '-'}`]; if (g && c.verdict !== 'unknown') g[c.verdict === 'same' ? 'agreed' : 'differed']++;
-    day.staffN++; day.staffMs += Math.max(0, at - c.customerAt);
-    if (at > c.at) { day.fasterN++; day.fasterMs += at - c.at; }
+    this.attachStaff(c, m.text, at, false);
     this.store.save();
-    return this.post(followUpText(c));
+    this.queue = this.queue.then(() => this.post(followUpText(c))).catch((e) => this.log(`shadow follow-up failed: ${e.message}`));
+    return this.queue;
   }
 }
 
 const fmtMin = (ms, n) => (n ? `${Math.round(ms / n / 60000)} min` : '—');
+const unanswered = (store, days, windowMinutes, now) => store.d.cards.filter((c) => days.includes(localParts(c.at, 'Asia/Dubai').day) && ANSWERING.includes(c.action) && !c.staffAt && now - c.at > windowMinutes * 60000).length;
 
-/** The one line for a day: questions, agreed, differed, not answered by staff, staff's average time. */
+/** The one line for a day: questions, agreed, differed, not answered by staff, staff's average time, and the ones that need a photo. */
 export function dayLine(store, day, windowMinutes = 60, now = Date.now()) {
   const d = store.d.days[day];
   if (!d) return '';
-  const noStaff = store.d.cards.filter((c) => localParts(c.at, 'Asia/Dubai').day === day && ['answer', 'ask-quantity', 'manager'].includes(c.action) && !c.staffAt && now - c.at > windowMinutes * 60000).length;
   const capNote = d.capHit ? ', ' + d.capHit + ' not shown (card cap)' : '';
-  return `Shadow ${day}: ${d.questions} questions, ${d.agreed} agreed, ${d.differed} differed, ${d.unknown + d.silent} unknown, ${noStaff} not answered by staff, staff average ${fmtMin(d.staffMs, d.staffN)}${capNote}`;
+  const mediaNote = d.needsMedia ? ', ' + d.needsMedia + ' need a photo or voice note (counted apart)' : '';
+  return `Shadow ${day}: ${d.questions} questions, ${d.agreed} agreed, ${d.differed} differed, ${d.unknown} unknown, ${unanswered(store, [day], windowMinutes, now)} not answered by staff, staff average ${fmtMin(d.staffMs, d.staffN)}${mediaNote}${capNote}`;
 }
 
 /** The summary of the last seven days, per group and language: the owner's decision data. */
 export function weekSummary(store, today, now = Date.now()) {
   const days = Object.keys(store.d.days).filter((k) => k <= today).sort().slice(-7);
-  const t = { questions: 0, agreed: 0, differed: 0, unknown: 0, silent: 0, staffMs: 0, staffN: 0, fasterMs: 0, fasterN: 0, calls: 0 };
+  const t = { questions: 0, agreed: 0, differed: 0, unknown: 0, needsMedia: 0, staffMs: 0, staffN: 0, fasterMs: 0, fasterN: 0, calls: 0 };
   const by = {};
   for (const k of days) {
     const d = store.d.days[k];
     for (const f of Object.keys(t)) t[f] += d[f] || 0;
     for (const [key, v] of Object.entries(d.by || {})) { const g = (by[key] ||= { q: 0, agreed: 0, differed: 0 }); g.q += v.q; g.agreed += v.agreed; g.differed += v.differed; }
   }
-  const noStaff = store.d.cards.filter((c) => days.includes(localParts(c.at, 'Asia/Dubai').day) && ['answer', 'ask-quantity', 'manager'].includes(c.action) && !c.staffAt && now - c.at > 3600000).length;
-  const lines = [`Shadow week (${days.length} day${days.length === 1 ? '' : 's'}): ${t.questions} questions, ${t.agreed} agreed, ${t.differed} differed, ${t.unknown + t.silent} unknown, ${noStaff} not answered by staff; staff average ${fmtMin(t.staffMs, t.staffN)}; she would have been faster in ${t.fasterN} cases${t.fasterN ? ` (by ${fmtMin(t.fasterMs, t.fasterN)} on average)` : ''}; model calls ${t.calls}`];
+  const lines = [`Shadow week (${days.length} day${days.length === 1 ? '' : 's'}): ${t.questions} questions, ${t.agreed} agreed, ${t.differed} differed, ${t.unknown} unknown, ${unanswered(store, days, 60, now)} not answered by staff; staff average ${fmtMin(t.staffMs, t.staffN)}; she would have been faster in ${t.fasterN} cases${t.fasterN ? ` (by ${fmtMin(t.fasterMs, t.fasterN)} on average)` : ''}; ${t.needsMedia} requests depend on a photo or voice note (not read, counted apart); model calls ${t.calls}`];
   for (const [key, v] of Object.entries(by).sort((a, b) => b[1].q - a[1].q).slice(0, 12)) {
     const [group, lang] = key.split('|');
     lines.push(`- ${group} (${lang}): ${v.q} questions, ${v.agreed} agreed, ${v.differed} differed`);
   }
   return lines.join('\n');
+}
+
+/** Cards that were numbered but never reached the group, and gaps in the numbering (for the status command). */
+export function postingProblems(store) {
+  const cards = store.d.cards;
+  const unposted = cards.filter((c) => c.posted === false).map((c) => c.id);
+  const ids = cards.map((c) => c.id).filter(Boolean).sort((a, b) => a - b);
+  const gaps = [];
+  for (let i = 1; i < ids.length; i++) for (let n = ids[i - 1] + 1; n < ids[i]; n++) gaps.push(n);
+  return { unposted, gaps };
 }
 
 /** "سایه وضعیت" | "سایه خاموش" | "سایه روشن" -> { type }; else null. */

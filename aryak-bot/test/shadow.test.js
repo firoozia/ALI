@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ShadowDesk, ShadowStore, cardText, compareAnswers, dayLine, followUpText, looksLikeRequest, mask, parseCardCorrection, parseShadowCommand, weekSummary } from '../src/shadow.js';
+import { ShadowDesk, ShadowStore, cardText, compareAnswers, dayLine, followUpText, looksLikeRequest, mask, parseCardCorrection, parseShadowCommand, postingProblems, weekSummary } from '../src/shadow.js';
 import { guardedSend, shadowGroup } from '../src/guard.js';
 
 const T0 = Date.parse('2026-11-05T06:00:00Z');
@@ -17,7 +17,7 @@ function make(analyzeImpl, extra = {}) {
     analyze: analyzeImpl || (async () => ({ action: 'answer', reply: 'Yes, available', lang: 'en', calls: 1 })),
     setTimer: (fn) => { timers.push(fn); return timers.length - 1; }, clearTimer: (i) => { timers[i] = null; }, now: () => clock,
   });
-  const fire = async () => { for (const [i, fn] of timers.entries()) if (fn) { timers[i] = null; await fn(); } };
+  const fire = async () => { for (const [i, fn] of timers.entries()) if (fn) { timers[i] = null; await fn(); } await desk.idle(); };
   return { desk, posts, fire, tick: (ms) => { clock += ms; } };
 }
 const cust = (text, at = T0, extra = {}) => ({ groupId: 'g1', subject: 'Master Wood - ARYAK', label: 'Master Wood', staff: false, fromMe: false, text, at, ...extra });
@@ -62,15 +62,67 @@ test('the daily card cap and the daily model budget', async () => {
   assert.deepEqual(budget.posts.map((p) => /not analysed/.test(p)), [false, false, true, true]); // the 3rd and 4th are not analysed
 });
 
-test('staff answered first: a card that she would stay silent, and no model call', async () => {
+test('staff answered first: she still shows what she WOULD answer, next to what staff said and whether it agrees', async () => {
   let called = 0;
-  const { desk, posts } = make(async () => { called++; return { action: 'answer', reply: 'x', calls: 1 }; });
+  const { desk, posts } = make(async () => { called++; return { action: 'answer', reply: 'Yes, available', lang: 'en', calls: 1 }; });
   desk.onMessage(cust('508 available?'));
   desk.onMessage(staff('yes available', T0 + 30000));
-  assert.equal(called, 0);
+  await desk.idle();
+  assert.equal(called, 1);
   assert.equal(posts.length, 1);
-  assert.match(posts[0], /Action: would stay silent because staff already answered/);
-  assert.match(posts[0], /Staff said: yes available/);
+  assert.match(posts[0], /Action: would answer\nReply \(en\): Yes, available\nStaff said: yes available — same/);
+  assert.ok(!/stay silent/.test(posts[0]));
+  assert.equal(desk.store.day('2026-11-05').agreed, 1);
+});
+
+test('a bare availability question: the sheet stance (free lookup) is compared with staff, not the "how many metres" draft', async () => {
+  const mk = (stance) => make(async () => ({ action: 'ask-quantity', reply: 'AR-221: how many metres or rolls do you need?', lang: 'en', stance, note: 'Sheet check: 221 in stock', calls: 1 }));
+  const yes = mk('yes');
+  yes.desk.onMessage(cust('Ar-221 available'));
+  yes.desk.onMessage(staff('Yea', T0 + 20000));
+  await yes.desk.idle();
+  assert.match(yes.posts[0], /Action: would ask for the quantity\nSheet check: 221 in stock\nReply \(en\): AR-221: how many metres or rolls do you need\?\nStaff said: Yea — same/);
+  const no = mk('no');
+  no.desk.onMessage(cust('201/204 both are available?'));
+  no.desk.onMessage(staff('201 yes', T0 + 20000));
+  await no.desk.idle();
+  assert.match(no.posts[0], /Staff said: 201 yes — different/);
+  const mixed = mk('mixed');
+  mixed.desk.onMessage(cust('201/204 both are available?'));
+  mixed.desk.onMessage(staff('201 yes', T0 + 20000));
+  await mixed.desk.idle();
+  assert.match(mixed.posts[0], /— unknown/);
+});
+
+test('a question that depends on a photo or voice note she did not read: no proposed reply, left out of agreed and differed, counted apart', async () => {
+  const { desk, posts } = make(async () => ({ action: 'needs-media', note: 'photo not read: the question depends on it', calls: 0 }));
+  desk.onMessage(cust('Available', T0, { hasImage: true }));
+  desk.onMessage(staff('yes', T0 + 20000));
+  await desk.idle();
+  assert.match(posts[0], /^#1 Master Wood\nCustomer: Available\nAction: needs the photo \(not read\)\nphoto not read: the question depends on it\nStaff said: yes$/);
+  assert.ok(!/Reply/.test(posts[0]));
+  const d = desk.store.day('2026-11-05');
+  assert.deepEqual([d.questions, d.agreed, d.differed, d.unknown, d.needsMedia], [0, 0, 0, 0, 1]);
+  assert.match(dayLine(desk.store, '2026-11-05', 60, T0 + 3600000), /1 need a photo or voice note \(counted apart\)/);
+  assert.match(weekSummary(desk.store, '2026-11-05', T0 + 3600000), /1 requests depend on a photo or voice note \(not read, counted apart\)/);
+});
+
+test('the cards are numbered in the order they are posted, without gaps; a failed post is tried again and shown by the status', async () => {
+  let fail = 1;
+  const posts = [];
+  const timers = [];
+  const desk = new ShadowDesk({
+    store: new ShadowStore(), config: cfg, analyze: async () => ({ action: 'answer', reply: 'Yes', lang: 'en', calls: 0 }),
+    post: async (t) => { if (fail && /^#2 /.test(t)) { fail--; throw new Error('offline'); } posts.push(t); },
+    setTimer: (fn) => { timers.push(fn); return timers.length - 1; }, clearTimer: (i) => { timers[i] = null; }, now: () => T0,
+  });
+  for (let g = 1; g <= 3; g++) desk.onMessage({ ...cust(`50${g} available?`), groupId: `g${g}` });
+  for (const fn of timers) await fn();
+  await desk.idle();
+  assert.deepEqual(posts.map((t) => Number(/^#(\d+)/.exec(t)[1])), [1, 2, 3]); // #2 was posted on the second try
+  assert.deepEqual(postingProblems(desk.store), { unposted: [], gaps: [] });
+  desk.store.d.cards[1].posted = false;
+  assert.deepEqual(postingProblems(desk.store).unposted, [2]);
 });
 
 test('staff answer after her card: same, different, unknown, and whether she would have been faster', async () => {
@@ -78,19 +130,19 @@ test('staff answer after her card: same, different, unknown, and whether she wou
   same.desk.onMessage(cust('508 available?'));
   await same.fire();
   same.tick(14 * 60000);
-  same.desk.onMessage(staff('yes available', T0 + 14 * 60000));
+  same.desk.onMessage(staff('yes available', T0 + 14 * 60000)); await same.desk.idle();
   assert.match(same.posts[1], /^#1 staff said: yes available — same; she would have been faster by 14 min$/);
   const diff = make(async () => ({ action: 'answer', reply: 'Yes, available', lang: 'en', calls: 1 }));
   diff.desk.onMessage(cust('508 available?'));
   await diff.fire();
   diff.tick(5 * 60000);
-  diff.desk.onMessage(staff('sorry not available', T0 + 5 * 60000));
+  diff.desk.onMessage(staff('sorry not available', T0 + 5 * 60000)); await diff.desk.idle();
   assert.match(diff.posts[1], /— different;/);
   const late = make();
   late.desk.onMessage(cust('508 available?'));
   await late.fire();
   late.tick(90 * 60000); // outside the 60 minute window
-  late.desk.onMessage(staff('yes', T0 + 90 * 60000));
+  late.desk.onMessage(staff('yes', T0 + 90 * 60000)); await late.desk.idle();
   assert.equal(late.posts.length, 1);
   assert.equal(compareAnswers('Yes, available', 'we will see tomorrow'), 'unknown');
   assert.equal(compareAnswers('نعم متوفر', 'not available'), 'different');
@@ -104,12 +156,12 @@ test('the daily line and the week summary carry the owner\'s decision data per g
   tick(10 * 60000);
   desk.onMessage(staff('yes available', T0 + 10 * 60000));
   desk.onMessage(cust('509 available?', T0 + 20 * 60000));
-  desk.onMessage(staff('no', T0 + 20 * 60000 + 30000));
+  desk.onMessage(staff('no', T0 + 20 * 60000 + 30000)); await desk.idle();
   const line = dayLine(desk.store, '2026-11-05', 60, T0 + 5 * 3600000);
-  assert.match(line, /Shadow 2026-11-05: 2 questions, 1 agreed, 0 differed, 1 unknown, 0 not answered by staff, staff average \d+ min/);
+  assert.match(line, /Shadow 2026-11-05: 2 questions, 1 agreed, 1 differed, 0 unknown, 0 not answered by staff, staff average \d+ min/);
   const week = weekSummary(desk.store, '2026-11-05', T0 + 5 * 3600000);
   assert.match(week, /^Shadow week \(1 day\): 2 questions, 1 agreed/);
-  assert.match(week, /- Master Wood \(en\): 1 questions, 1 agreed, 0 differed/);
+  assert.match(week, /- Master Wood \(en\): 2 questions, 1 agreed, 1 differed/);
   assert.match(followUpText({ id: 3, at: T0, staffAt: T0 - 1000, staffText: 'x', verdict: 'same' }), /staff were first/);
 });
 
