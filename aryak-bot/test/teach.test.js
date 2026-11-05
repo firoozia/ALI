@@ -221,7 +221,7 @@ test('one model call: the answer is read as JSON; garbage is nothing', async () 
 });
 
 test('the wiring: only the owner teaches (including the old rules path), only in his own chat, the sentence is never a customer group message', () => {
-  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   const owner = "isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })";
   const early = src.slice(src.indexOf('TEACHING IN WORDS (his own chat'), src.indexOf('const rc = parseRuleCommand(text);'));
   assert.ok(early.includes('!group && isSelf') && early.includes(owner));

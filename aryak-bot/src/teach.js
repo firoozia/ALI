@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { groupAllowed, shadowGroup } from './guard.js';
 import { nameKey, rowGroups } from './customergroups.js';
+import { ruleFrom } from './rules.js';
 
 const PENDING_MS = 10 * 60 * 1000;
 const MAX_CHANGES = 8;
@@ -20,7 +21,8 @@ const plain = (s) => latin(String(s || '')).replace(/[‌‎‏]/g, ' ').replace
 
 // ---------------------------------------------------------------------------------------------------------------- the words
 /** A message that starts like a teaching: "یاد بگیر", "یادت باشد", "از این به بعد", "remember", "from now on". */
-export const isExplicitTeaching = (text) => /^(?:آتوسا[\s،,:]*|atossa[\s,:]*)?(?:یاد\s*بگیر|یادت\s*باش[دە]?|یادت\s*باشه|از\s+این\s+به\s+بعد|از\s+حالا\s+به\s+بعد|remember\b|learn\b|from\s+now\s+on|تذكر|تعلم|من\s+الآن)/iu.test(String(text || '').trim());
+export const isExplicitTeaching = (text) => /^(?:آتوسا[\s،,:]*|atossa[\s,:]*)?(?:یاد\s*بگیر|یادت\s*باش[دە]?|یادت\s*باشه|از\s+این\s+به\s+بعد|از\s+حالا\s+به\s+بعد|remember\b|learn\b|from\s+now\s+on|تذكر|تعلم|من\s+الآن)/iu.test(String(text || '').trim())
+  || ruleFrom(text, []) !== ''; // and every old trigger of the rules path ("در نظر نگیر", "حساب نکن", "فراموش نکن", "do not take ...") anywhere in a statement
 
 const INSTRUCTION = /یکی\s*(?:است|هست|هستند|می‌?باشد)|همان\s*(?:است|هست|مشتری)|یک\s+مشتری|نام\s+دیگر|اسم\s+دیگر|(?:نام|اسم)[^\n]{0,40}(?:عوض|تغییر|شد)|عوض\s+شد|تغییر\s+(?:کرد|نام)|گروه[^\n]{0,60}(?:برود|بره|برو|بفرست|بگذار|اضافه|زیر\s*نظر|بشود|بشه)|فاکتور[^\n]{0,60}گروه|یعنی|معنی|هم‌?معنی|مخفف|همیشه|هرگز|باید|نباید|\b(?:is|are)\s+(?:the\s+)?same|same\s+customer|renam|now\s+called|\bmeans\b|stands\s+for|go(?:es)?\s+to\s+(?:the\s+)?group|add\s+(?:the\s+)?group|\balways\b|\bnever\b|\bmust\b|\bshould\b|نفس\s+العميل|هو\s+نفسه|يعني|تذكر|دائما|أبدا/iu;
 
@@ -32,8 +34,23 @@ export function looksLikeTeaching(text) {
 }
 
 /** What teaching must never do: widen who may command, the guard, sending without his yes, the one-shot rule. */
-export const WIDENING = /بدون\s*(?:تأیید|تایید|پرسیدن|پرسش|بله|اجازه)|خودکار\s*(?:بفرست|ارسال|می‌?فرست)|ارسال\s*خودکار|به\s*همه\s*(?:ی\s*)?گروه|همه\s*(?:ی\s*)?گروه‌?ها|ادمین|اجازهٔ?\s*(?:دستور|فرمان)|نپرس|ALLOW_|\bguard\b|one[- ]?shot|without\s+(?:asking|confirm\w*|my\s+(?:yes|ok|approval))|auto(?:matic(?:ally)?)?[- ]?send|send\s+(?:it\s+)?to\s+all|who\s+(?:can|may)\s+(?:command|order)|\badmins?\b|permission|بدون\s*إذن|تلقائي|أي\s+شخص\s+يأمر/iu;
+const WIDENING_WORDS = /بدون\s*(?:تأیید|تایید|پرسیدن|پرسش|بله|اجازه)|خودکار\s*(?:بفرست|ارسال|می‌?فرست)|ارسال\s*خودکار|به\s*همه\s*(?:ی\s*)?گروه|همه\s*(?:ی\s*)?گروه‌?ها|ادمین|اجازهٔ?\s*(?:دستور|فرمان)|نپرس|ALLOW_|\bguard\b|one[- ]?shot|without\s+(?:asking|confirm\w*|my\s+(?:yes|ok|approval))|auto(?:matic(?:ally)?)?[- ]?send|send\s+(?:it\s+)?to\s+all|who\s+(?:can|may)\s+(?:command|order)|\badmins?\b|permission|بدون\s*إذن|تلقائي|أي\s+شخص\s+يأمر/iu;
 export const PRICE = /قیمت|تخفیف|فهرست\s*قیمت|\bprices?\b|\bdiscounts?\b|سعر|أسعار|خصم/iu;
+
+// "who may ..." in any wording: a word of permission together with a word of sending or commanding (Persian, English, Arabic), so "let the manager send
+// invoices", "مدیر فروش هم بتواند فاکتور را به گروه مشتری بفرستد" and "يمكن لمدير المبيعات إرسال الفواتير" are all caught without naming one role.
+const PERMIT = /بتوان(?:د|ند)|می‌?توان(?:د|ند)|مجاز|اجازه|اختیار|دسترسی|حق\s+دارد|\b(?:can|may|allow(?:ed|s)?|let|lets|permit(?:ted|s)?|authori[sz]e[ds]?|enable[ds]?|entitled)\b|يمكن|يسمح|السماح|يستطيع|مسموح|صلاحية|اسمح|دع\b/iu;
+const ACT = /بفرست|بفرستد|بفرستند|ارسال|می‌?فرست|بده(?:د|ند)?\b|دستور|فرمان|تأیید\s*کن|\b(?:send|sends|sending|forward|post|command|commands|approve|approves)\b|يرسل|ارسال|إرسال|أرسل|يأمر|أمر|يوافق/iu;
+// sending to every or all groups, or sending on its own
+const EVERY_GROUP = /\bsend\w*[^.\n]{0,60}\b(?:every|all)\s+(?:customer\s+)?groups?\b|\bsend\w*[^.\n]{0,40}automatic|به\s+هر\s+گروه(?:ی)?\s+[^.\n]{0,30}(?:بفرست|ارسال)|إلى\s+كل\s+المجموعات/iu;
+const TOKEN = /نگهبان|گارد|توکن|نشان\s*یک[‌\s]?بار|\btokens?\b|حفاظ|الحارس/iu;
+
+/** Does this wording try to widen who commands, who sends to customers, the guard or the token? (checked before any model call, and again on what the model wrote) */
+export function wideningIn(text) {
+  const s = String(text || '');
+  return WIDENING_WORDS.test(s) || TOKEN.test(s) || EVERY_GROUP.test(s) || (PERMIT.test(s) && ACT.test(s));
+}
+export const WIDENING = { test: wideningIn };
 
 export const WIDENING_REPLY = 'این کار تغییر در کد می‌خواهد و از راه آموزش ممکن نیست (دستور دادن، نگهبان ارسال، ارسال بدون «بله» و فرستادن به گروه مشتری). چیزی ذخیره نشد.';
 export const PRICE_REPLY = 'قیمت‌ها مسیر خودشان را دارند؛ فهرست قیمت را از همان مسیر قیمت وارد کنید، نه از راه آموزش. این مورد ذخیره نشد.';
@@ -208,17 +225,22 @@ export class TeachDesk {
 
   set pending(v) { this.store.d.pending = v; this.store.persist(); }
 
-  /** The parsed command when this desk should take the message (an answer needs a live pending), else null. */
-  wants(text) {
+  /**
+   * The parsed command when this desk should take the message (an answer needs a live pending), else null. While a question of hers waits
+   * ("which one?"), his next plain message is { type: 'answer' } unless another command takes it ([other]) or it starts a new teaching.
+   */
+  wants(text, { other = false } = {}) {
     const p = parseTeachCommand(text);
-    if (!p) return null;
-    if (['yes', 'no', 'drop'].includes(p.type)) return this.pending ? p : null;
-    return p;
+    if (p) { if (['yes', 'no', 'drop'].includes(p.type)) return this.pending ? p : null; return p; }
+    const pend = this.pending;
+    const s = String(text || '').trim();
+    if (!other && pend?.kind === 'save' && pend.questions?.length && s && s.length <= 400 && !s.startsWith('🤖') && !isExplicitTeaching(s)) return { type: 'answer', text: s };
+    return null;
   }
 
-  /** What he said as numbered items to confirm. Returns the message; nothing is saved. */
-  propose(items, questions = []) {
-    this.pending = { kind: 'save', items: items.map((i) => ({ ...i })), at: this.now() };
+  /** What he said as numbered items to confirm (and the questions still open). Returns the message; nothing is saved. */
+  propose(items, questions = [], meta = {}) {
+    this.pending = { kind: 'save', items: items.map((i) => ({ ...i })), questions: questions.slice(), original: meta.original || '', round: meta.round || 1, at: this.now() };
     return this.confirmText(items, questions);
   }
 
@@ -227,7 +249,8 @@ export class TeachDesk {
       items.length ? 'این را فهمیدم؛ بعد از «بله» ذخیره می‌شود:' : '',
       ...items.map((it, i) => `${fa(i + 1)}. ${it.text}`),
       ...questions.map((q) => `❓ ${q}`),
-      items.length ? 'بله، یا «۲ نه» برای کنار گذاشتن یک مورد، یا نه (تا ۱۰ دقیقه معتبر است). چیزی فرستاده نمی‌شود.' : '',
+      questions.length ? `به پرسش‌ها پاسخ بدهید${items.length ? '؛ یا «بله» برای ذخیرهٔ همین موارد' : ''}، یا نه (تا ۱۰ دقیقه معتبر است). چیزی فرستاده نمی‌شود.` : '',
+      items.length && !questions.length ? 'بله، یا «۲ نه» برای کنار گذاشتن یک مورد، یا نه (تا ۱۰ دقیقه معتبر است). چیزی فرستاده نمی‌شود.' : '',
     ].filter(Boolean).join('\n');
   }
 
@@ -235,7 +258,14 @@ export class TeachDesk {
     switch (p.type) {
       case 'learned': {
         const items = this.store.active();
-        return [items.length ? ['چیزهایی که یاد گرفته‌ام:', ...items.map((i) => `${fa(i.id)}. ${i.text}`), 'برای برداشتن: فراموش کن <شماره>'].join('\n') : 'هنوز چیزی یاد نگرفته‌ام. یک جمله بنویسید، مثلاً «اسم دیگر فلان مشتری بهمان است».'];
+        const rows = fx.customerGroups?.size || 0;
+        const al = Object.values(fx.aliases?.map || {});
+        const counts = [
+          rows ? `ردیف مشتری و گروه: ${fa(rows)} (برای دیدن: فهرست مشتری و گروه)` : '',
+          al.length ? `نام دیگر برای مشتری: ${fa(al.reduce((n, o) => n + o.length, 0))} نام برای ${fa(al.length)} مشتری (برای دیدن: اسم‌های دیگر)` : '',
+        ].filter(Boolean);
+        if (!items.length && !counts.length) return ['هنوز چیزی یاد نگرفته‌ام. یک جمله بنویسید، مثلاً «اسم دیگر فلان مشتری بهمان است».'];
+        return [[...(counts.length ? ['آنچه تا امروز دارم:', ...counts.map((c) => `• ${c}`)] : []), items.length ? 'یاد گرفته‌شده با جمله:' : 'با جمله چیزی یاد نگرفته‌ام.', ...items.map((i) => `${fa(i.id)}. ${i.text}`), items.length ? 'برای برداشتن: فراموش کن <شماره>' : ''].filter(Boolean).join('\n')];
       }
       case 'forget': {
         const it = this.store.get(p.id);
@@ -249,11 +279,12 @@ export class TeachDesk {
         pend.items.splice(p.n - 1, 1);
         if (!pend.items.length) { this.pending = null; return ['همه کنار گذاشته شد. چیزی ذخیره نشد.']; }
         this.pending = pend;
-        return [`کنار گذاشته شد.\n${this.confirmText(pend.items)}`];
+        return [`کنار گذاشته شد.\n${this.confirmText(pend.items, pend.questions || [])}`];
       }
       case 'no': this.pending = null; return ['انجام نشد. چیزی ذخیره یا برداشته نشد.'];
       case 'yes': {
         const pend = this.pending;
+        if (pend.kind === 'save' && !pend.items.length) return ['هنوز چیزی برای ذخیره نیست؛ به پرسش‌ها پاسخ بدهید یا بنویسید نه.'];
         this.pending = null;
         if (pend.kind === 'forget') {
           const it = this.store.get(pend.id);
@@ -273,4 +304,38 @@ export class TeachDesk {
       default: return [];
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------- one teaching, start to proposal
+const keyOf = (i) => `${i.kind}|${JSON.stringify(i.data)}`;
+
+/**
+ * The whole path of one message of teaching, without sending or saving anything. [previous] = the open proposal when he is answering her
+ * questions ({ original, items, questions, round }): its items are KEPT and the answer is read together with his first sentence. A widening
+ * or price wording is refused before any model call and again on what the model wrote; an explicit teaching the model found nothing in is
+ * offered as a rule in his own words ([fallbackRule]) for his yes: nothing is ever stored at once.
+ * Returns { kind: 'refuse', message } | { kind: 'none' } | { kind: 'propose', items, questions, original, round, note }.
+ */
+export async function runTeaching({ text, previous = null, explicit = false, client, config, customers, groups, fallbackRule = '' }) {
+  const userText = previous ? `${previous.original}\n${text}` : text;
+  if (wideningIn(userText)) return { kind: 'refuse', message: WIDENING_REPLY };
+  if (PRICE.test(userText)) return { kind: 'refuse', message: PRICE_REPLY };
+  const asked = previous
+    ? `${previous.original}\n\nThe assistant asked: ${previous.questions.map((q, i) => `(${i + 1}) ${q}`).join(' ')}\nHis answer: ${text}`
+    : text;
+  let raw = null;
+  try { raw = await understandTeaching({ client, config, text: asked, customers, groups }); } catch { raw = null; }
+  const v = validateChanges(raw, { customers, groups, config }, userText);
+  if (v.refused.includes('widening')) return { kind: 'refuse', message: WIDENING_REPLY };
+  if (v.refused.includes('price')) return { kind: 'refuse', message: PRICE_REPLY };
+  const note = v.refused.includes('internal') ? 'یک گروه داخلی بود و نمی‌شود آن را زیر نظر یا برای فاکتور مشتری گذاشت؛ کنار گذاشته شد.' : '';
+  const items = [...(previous?.items || [])];
+  for (const it of v.items) if (!items.some((x) => keyOf(x) === keyOf(it))) items.push(it);
+  const round = (previous?.round || 0) + 1;
+  const questions = round > 3 ? [] : v.questions;
+  if (!items.length && !questions.length && explicit && fallbackRule) items.push({ kind: 'rule', data: { text: fallbackRule }, text: `قانون: ${fallbackRule}` });
+  if (!items.length && !questions.length && !note) return { kind: 'none' };
+  const order = { watch: 0, alias: 1, row: 2, rule: 3, term: 4 };
+  items.sort((a, b) => order[a.kind] - order[b.kind]);
+  return { kind: 'propose', items, questions, original: previous?.original || text, round, note };
 }

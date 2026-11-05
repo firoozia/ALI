@@ -26,7 +26,7 @@ import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, 
 import { cleanOutgoing } from './outgoing.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, mergeSources } from './customergroups.js';
-import { PRICE, PRICE_REPLY, TaughtStore, TeachDesk, WIDENING, WIDENING_REPLY, isExplicitTeaching, looksLikeTeaching, understandTeaching, validateChanges } from './teach.js';
+import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
 import { WatchList } from './watchlist.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
@@ -585,23 +585,19 @@ const taught = new TaughtStore(path.join(config.authDir, 'taught')); // what the
 const teachDesk = new TeachDesk({ store: taught });
 const teachFx = () => ({ aliases, customerGroups, rules, watchList, config });
 
-/** The owner's sentence of teaching: one paid call (his own message only) -> checked changes -> numbered confirmation. Saves nothing. false = nothing to teach. */
-async function teachFlow({ text, reply }) {
-  if (WIDENING.test(text)) { await reply(WIDENING_REPLY); return true; }
-  if (PRICE.test(text)) { await reply(PRICE_REPLY); return true; }
+/** The owner's sentence of teaching (or his answer to her question): checked changes -> numbered confirmation. Saves nothing, sends nothing. false = nothing to teach. */
+async function teachFlow({ text, reply, previous = null, explicit = false }) {
   const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
   const names = mergeSources(customerNames.names(), { ...knownInvoiceCustomers() }).customers;
   const customers = [...new Set([...names, ...customerGroups.rows().map((r) => r.customer), ...Object.keys(aliases.map)])];
-  let raw = null;
-  try { raw = await understandTeaching({ client, config, text, customers, groups: all }); } catch (e) { logger.warn(`teach: the sentence could not be understood (${e.message})`); return false; }
-  const v = validateChanges(raw, { customers, groups: all, config }, text);
-  if (v.refused.includes('widening')) { await reply(WIDENING_REPLY); return true; }
-  if (v.refused.includes('price')) { await reply(PRICE_REPLY); return true; }
-  const note = v.refused.includes('internal') ? ['یک گروه داخلی بود و نمی‌شود آن را زیر نظر یا برای فاکتور مشتری گذاشت؛ کنار گذاشته شد.'] : [];
-  if (!v.items.length && !v.questions.length && !note.length) return false;
-  if (!v.items.length) { await reply([...v.questions.map((q) => `❓ ${q}`), ...note].join('\n')); return true; }
+  const r = await runTeaching({ text, previous, explicit, client, config, customers, groups: all, fallbackRule: ruleFrom(text, config.botNames) });
+  if (r.kind === 'refuse') { await reply(r.message); return true; }
+  if (r.kind === 'none') {
+    if (previous) { await reply('پاسخ را نفهمیدم؛ دوباره بنویسید یا بنویسید نه. چیزی ذخیره نشد.'); return true; }
+    return false;
+  }
   customerDesk.pending = null; // this confirmation is the open question now
-  await reply([teachDesk.propose(v.items, v.questions), ...note].join('\n'));
+  await reply([teachDesk.propose(r.items, r.questions, { original: r.original, round: r.round }), r.note].filter(Boolean).join('\n'));
   return true;
 }
 const knownInvoiceCustomers = () => collectCustomers({ reads: nameStore.d.reads, events: tracker.events, aliasMap: aliases.map });
@@ -1139,16 +1135,17 @@ async function handleStaffChat(raw, chatId, group) {
   // TEACHING IN WORDS (his own chat, the owner only): the answers to a confirmation, "what have you learned", "forget N", and a sentence that
   // starts like a teaching. One call understands the sentence; nothing is saved before his yes. No explicit start -> after every other command.
   if (config.ownerTeach && text && !audio && !image && !group && isSelf && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
-    const tp = teachDesk.wants(text);
-    if (tp) { for (const part of teachDesk.handle(tp, teachFx())) await reply(part); return true; }
-    if (isExplicitTeaching(text) && (await teachFlow({ text, reply }))) return true;
+    const tp = teachDesk.wants(text, { other: !!(customerDesk.wants(text) || parseAliasCommand(text) || parseRuleCommand(text) || parseSendCommand(text)) });
+    if (tp?.type === 'answer') { if (await teachFlow({ text: tp.text, reply, previous: teachDesk.pending })) return true; } // his answer to her question: the open items are kept
+    else if (tp) { for (const part of teachDesk.handle(tp, teachFx())) await reply(part); return true; }
+    if (isExplicitTeaching(text) && (await teachFlow({ text, reply, explicit: true }))) return true; // every trigger (old and new) goes through his yes
   }
   // The owner teaches a rule in words: only HE can add or remove one (typed on this account, not sent by the program, not forwarded).
   if (admin && addressed && !audio && !image && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
     const rc = parseRuleCommand(text);
     if (rc) { await reply(rc.list ? rules.list() : rules.remove(rc.remove) ? `قانون ${rc.remove} برداشته شد.` : 'قانونی با این شماره نبود.'); return true; }
-    const rule = ruleFrom(text, config.botNames);
-    if (rule) { const r = rules.add(rule); trace(where, role, `owner rule ${r.id} stored`); await reply(`ثبت شد (قانون ${r.id}): ${r.text}`); return true; }
+    // Nothing is stored at once any more: a teaching is understood, shown and saved only after his yes, in his own chat.
+    if (ruleFrom(text, config.botNames)) { await reply('برای یاد دادن، در گفتگوی خودتان با من بنویسید: اول می‌گویم چه فهمیدم و فقط بعد از «بله» ذخیره می‌کنم. چیزی ذخیره نشد.'); return true; }
   }
   if (admin && (!group || group.command || group.test)) {
     const sc = parseShadowCommand(text);

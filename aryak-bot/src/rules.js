@@ -1,6 +1,7 @@
 // Rules the owner teaches the assistant in words ("Atossa, from now on ... / do not take ... into account"). An instruction
-// from an admin is stored at once as a durable, versioned rule: listed by a command, removable, put into the prompt. A
-// colleague's teaching never comes here; it goes to the review list of the learning store.
+// from the owner becomes a durable, versioned rule only after his "yes" (teach.js shows what was understood first): listed by a
+// command, removable, put into the prompt. Nothing is stored at once. A colleague's teaching never comes here; it goes to the
+// review list of the learning store.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,7 +70,7 @@ export class Rules {
 
   list() {
     return this.items.length ? ['قانون‌هایی که مالک آموخته است:', ...this.items.map((r) => `${r.id}. ${r.text}`), 'برای برداشتن: حذف قانون <شماره>'].join('\n')
-      : 'قانونی ثبت نشده است. هر دستور مالک که با «از این به بعد» یا «در نظر نگیر» بیاید همان لحظه ثبت می‌شود.';
+      : 'قانونی ثبت نشده است. قانون را مالک در گفتگوی خودش با یک جمله یاد می‌دهد (مثلاً «از این به بعد …»)؛ اول می‌گویم چه فهمیدم و فقط بعد از «بله» ذخیره می‌شود.';
   }
 
   promptText() {
