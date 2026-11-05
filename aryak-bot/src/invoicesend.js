@@ -70,9 +70,25 @@ export function targetGroups(customer, groups, config) {
   return groups.filter((g) => shadowGroup(g.subject, config) && looseName(customer, String(g.subject).replace(/aryak/gi, ' ')));
 }
 
+/**
+ * The group(s) for an invoice: the owner's APPROVED row first (that group only; its jid must still be a customer group now), else the loose
+ * match. [row]: the approved row of this customer or null. { groups, mapped, stale, unconfirmed }: stale = a row exists but its group is gone
+ * or no longer a customer group (nothing is sent, no fallback); unconfirmed = the loose match was used for a real customer.
+ */
+export function resolveGroups(customer, groups, config, row = null) {
+  if (isTestCustomer(customer, config.testCustomerName)) return { groups: targetGroups(customer, groups, config), mapped: false, stale: false, unconfirmed: false };
+  if (row) {
+    const g = groups.find((x) => x.id === row.jid);
+    if (g && shadowGroup(g.subject, config)) return { groups: [g], mapped: true, stale: false, unconfirmed: false };
+    return { groups: [], mapped: true, stale: true, unconfirmed: false };
+  }
+  return { groups: targetGroups(customer, groups, config), mapped: false, stale: false, unconfirmed: true };
+}
+
 // ---------------------------------------------------------------------------------------------------------------- the confirmation
-export function confirmText({ read, fileName, group, alreadySent }) {
+export function confirmText({ read, fileName, group, alreadySent, unconfirmed = false }) {
   const lines = [];
+  if (unconfirmed) lines.push('⚠️ This group was not confirmed in the list.');
   if (read.checked === false) lines.push('⚠️ This invoice was not checked.');
   if (read.urgent > 0) lines.push(`⚠️ This invoice has ${read.urgent} unresolved urgent problem${read.urgent === 1 ? '' : 's'}${(read.points || []).length ? `: ${read.points.slice(0, 4).join('; ')}` : ''}.`);
   if (read.noOrder) lines.push('⚠️ No matching purchase order was found for this invoice.');

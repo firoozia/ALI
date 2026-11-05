@@ -24,7 +24,8 @@ import { UsageMeter, hasVisual } from './usage.js';
 import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
-import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, sendFileName, targetGroups } from './invoicesend.js';
+import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
+import { CustomerGroupDesk, CustomerGroups, altNames, collectCustomers } from './customergroups.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
 import { differences, reconcileSheet, sameName, sheetFindingText } from './sheetcheck.js';
 import { parseReceivedQuery, receivedFrom, receivedSummary } from './received.js';
@@ -304,7 +305,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [usage.line(), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -573,6 +574,9 @@ async function checkForSend(buf) {
   return { number: r.invoice_number || inv.number || '', customer: r.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: urgent.length, noOrder: problems.some((p) => p.kind === 'order-note'), points: urgent.map(shortPoint).slice(0, 6) };
 }
 
+const customerGroups = new CustomerGroups(path.join(config.authDir, 'customer-groups')); // the owner's approved list: customer on the invoice -> group
+const customerDesk = new CustomerGroupDesk({ list: customerGroups, config });
+const knownInvoiceCustomers = () => collectCustomers({ reads: nameStore.d.reads, events: tracker.events, aliasMap: aliases.map });
 const oneShot = new OneShot();
 const sendDesk = new SendDesk();
 
@@ -604,11 +608,13 @@ async function startOwnerSend({ chatId, parsed, ctx, reply }) {
   }
   if (!found) { await reply(qdoc ? 'I could not read this invoice, so I send nothing.' : 'I do not have that invoice among the files I kept. Please reply to the PDF with the command. Nothing was sent.'); return; }
   const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
-  const groups = targetGroups(found.read.customer, all, config);
+  const row = customerGroups.find(found.read.customer, altNames(aliases.map, found.read.customer));
+  const { groups, stale, unconfirmed } = resolveGroups(found.read.customer, all, config, row);
+  if (stale) { await reply(`The group saved in the list for ${found.read.customer} ("${row.subject}") is not there any more, or is no longer a customer group. Nothing was sent. Fix the list first.`); return; }
   if (!groups.length) { await reply(`I found no customer group for ${found.read.customer}. Nothing was sent.`); return; }
-  if (groups.length > 1) { sendDesk.start(chatId, { step: 'choose', invoice: found, groups }); await reply(chooseText(groups)); return; }
-  sendDesk.start(chatId, { step: 'confirm', invoice: found, group: groups[0] });
-  await reply(confirmText({ read: found.read, fileName: sendFileName(found.read), group: groups[0].subject, alreadySent: nameStore.sentTo(found.read.number, groups[0].id) ? 'before' : '' }));
+  if (groups.length > 1) { sendDesk.start(chatId, { step: 'choose', invoice: found, groups, unconfirmed }); await reply(chooseText(groups)); return; }
+  sendDesk.start(chatId, { step: 'confirm', invoice: found, group: groups[0], unconfirmed });
+  await reply(confirmText({ read: found.read, fileName: sendFileName(found.read), group: groups[0].subject, alreadySent: nameStore.sentTo(found.read.number, groups[0].id) ? 'before' : '', unconfirmed }));
 }
 
 /** The owner's yes: send the same PDF bytes under the readable name to the one group, once, through the guard's one-shot token. */
@@ -1139,6 +1145,17 @@ async function handleStaffChat(raw, chatId, group) {
     const rq = parseReceivedQuery(text);
     if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
   }
+  // THE OWNER'S FIXED LIST "customer on the invoice -> group": proposal, answers and later changes. Only the owner, only in his own chat; free code.
+  // Approving a row sends nothing (it only says which group an ordered invoice goes to; the order, the check and his yes stay as they are).
+  if (config.ownerInvoiceSend && text && !audio && !image && !group && isSelf) {
+    const wanted = customerDesk.wants(text);
+    if (wanted) {
+      if (!isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) { trace(where, 'owner', 'ignored: the customer-group list answers only the owner'); return true; }
+      const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
+      for (const part of customerDesk.handle(wanted, { groups: all, known: { ...knownInvoiceCustomers(), aliasMap: aliases.map } })) await reply(part);
+      return true;
+    }
+  }
   // THE OWNER ORDERS AN INVOICE INTO A CUSTOMER'S GROUP. Only a message typed on this account (never one she sent, never a forwarded one),
   // only in the Invoices group, the test group or his own chat; anyone else is told only the owner can; nothing is sent without his yes.
   if (config.ownerInvoiceSend && text && !audio && !image && (group?.invoice || group?.test || (!group && isSelf))) {
@@ -1148,8 +1165,8 @@ async function handleStaffChat(raw, chatId, group) {
       const a = sendDesk.answer(chatId, text, true);
       if (a?.type === 'choose') {
         const g = waiting.groups[a.index];
-        sendDesk.start(chatId, { step: 'confirm', invoice: waiting.invoice, group: g });
-        await reply(confirmText({ read: waiting.invoice.read, fileName: sendFileName(waiting.invoice.read), group: g.subject, alreadySent: nameStore.sentTo(waiting.invoice.read.number, g.id) ? 'before' : '' }));
+        sendDesk.start(chatId, { step: 'confirm', invoice: waiting.invoice, group: g, unconfirmed: !!waiting.unconfirmed });
+        await reply(confirmText({ read: waiting.invoice.read, fileName: sendFileName(waiting.invoice.read), group: g.subject, alreadySent: nameStore.sentTo(waiting.invoice.read.number, g.id) ? 'before' : '', unconfirmed: !!waiting.unconfirmed }));
         return true;
       }
       if (a?.type === 'yes') { sendDesk.clear(chatId); await finishOwnerSend({ chatId, pending: waiting, reply }); return true; }
