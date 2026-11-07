@@ -24,7 +24,7 @@ const addr = (a) => (a ? [a.Line1, a.Line2, a.Line3, [a.City, a.CountrySubDivisi
  * The statement as plain data. [company]: CompanyInfo; [customer]: Customer; [invoices], [payments], [credits]: all the customer's rows;
  * [today]: yyyy-mm-dd; [days]: the length of the period.
  */
-export function buildStatementData({ company, customer, invoices = [], payments = [], credits = [], today, days = 90 }) {
+export function buildStatementData({ company, customer, preferences = null, invoices = [], payments = [], credits = [], today, days = 90 }) {
   const end = dayNum(today);
   const start = end - days;
   const startIso = new Date(start * DAY).toISOString().slice(0, 10);
@@ -48,24 +48,31 @@ export function buildStatementData({ company, customer, invoices = [], payments 
     const k = past <= 0 ? 'current' : past <= 30 ? 'd1_30' : past <= 60 ? 'd31_60' : past <= 90 ? 'd61_90' : 'd91';
     ageing[k] += fils(i.Balance);
   }
+  // the open invoices one by one, so every bucket can be checked against its own invoice
+  const openItems = open.map((i) => ({ ref: i.DocNumber || '', due: i.DueDate || i.TxnDate || '', past: end - dayNum(i.DueDate || i.TxnDate), balance: fils(i.Balance) })).sort((a, b) => (a.due < b.due ? -1 : 1));
   const credit = -(unappliedPayments + creditBalance);
-  const home = company?.Country === 'AE' ? 'AED' : '';
-  const foreign = [...invoices, ...payments, ...credits].some((t) => t.CurrencyRef?.value && home && t.CurrencyRef.value !== home);
+  // The currency is the company's own (Preferences HomeCurrency; the country only if that cannot be read); a customer with his own currency
+  // (multicurrency on) uses it, and then every amount of his is in it.
+  const home = preferences?.CurrencyPrefs?.HomeCurrency?.value || ({ AE: 'AED', US: 'USD', GB: 'GBP', SA: 'SAR', OM: 'OMR' })[company?.Country] || '';
+  const currency = customer?.CurrencyRef?.value || home;
+  const foreign = [...invoices, ...payments, ...credits].some((t) => t.CurrencyRef?.value && currency && t.CurrencyRef.value !== currency);
   const qbBalance = customer?.Balance === undefined ? null : fils(customer.Balance);
   return {
     company: { name: company?.CompanyName || company?.LegalName || '', lines: addr(company?.CompanyAddr), email: company?.Email?.Address || '' },
     customer: { name: customer?.DisplayName || customer?.CompanyName || '', lines: addr(customer?.BillAddr) },
-    today, start: startIso, opening, lines, closing, ageing, credit,
+    today, start: startIso, currency, opening, lines, closing, ageing, credit, openItems,
     ageingTotal: Object.values(ageing).reduce((s, v) => s + v, 0) + credit,
     balanceCheck: { qbo: qbBalance, matches: qbBalance === null ? null : qbBalance === closing },
-    warnings: foreign ? ['Some transactions are in another currency; the amounts are in the transaction currency.'] : [],
+    warnings: foreign ? [`Some transactions are in another currency than ${currency}; their amounts are in the transaction currency.`] : [],
   };
 }
 
 const dmy = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${y}`; };
 
 /** The statement as a PDF (bytes). [sandbox]: the test footer is printed. */
-export function statementPdf(data, { sandbox = false, currency = 'AED' } = {}) {
+export function statementPdf(data, { sandbox = false } = {}) {
+  const currency = data.currency || '';
+  const cur = currency ? ` (${currency})` : '';
   const pdf = new MiniPdf();
   const L = 40; const R = 555;
   const page = (n, total) => {
@@ -77,7 +84,7 @@ export function statementPdf(data, { sandbox = false, currency = 'AED' } = {}) {
     pdf.text(R, 68, `Date: ${dmy(data.today)}`, { size: 10, align: 'right' });
     pdf.text(R, 82, `Page ${n} of ${total}`, { size: 9, align: 'right', gray: 0.4 });
     pdf.line(L, 125, R, 125, 1);
-    if (sandbox) pdf.text(W / 2, 826, 'test, built by Atossa', { size: 9, align: 'center', gray: 0.45 });
+    if (sandbox) pdf.text(W / 2, 822, 'test, built by Atossa', { size: 10, bold: true, align: 'center', gray: 0.3 }); // every page of a sandbox statement
   };
   const W = pdf.width;
   const perFirst = 28; const perNext = 48;
@@ -94,7 +101,7 @@ export function statementPdf(data, { sandbox = false, currency = 'AED' } = {}) {
       pdf.text(R, y, 'Statement period', { size: 9, gray: 0.4, align: 'right' });
       pdf.text(R, y + 14, `${dmy(data.start)} to ${dmy(data.today)}`, { size: 10, align: 'right' });
       pdf.box(330, y + 28, R - 330, 44, 0.94);
-      pdf.text(340, y + 44, `Balance due (${currency})`, { size: 9, gray: 0.35 });
+      pdf.text(340, y + 44, `Balance due${cur}`, { size: 9, gray: 0.35 });
       pdf.text(R - 10, y + 64, money(data.closing), { size: 15, bold: true, align: 'right' });
       y += 100;
     }
@@ -125,7 +132,7 @@ export function statementPdf(data, { sandbox = false, currency = 'AED' } = {}) {
     if (idx === total - 1) {
       pdf.line(L, y - 6, R, y - 6, 0.6);
       pdf.text(cols.type, y + 6, 'Balance due', { size: 10, bold: true });
-      pdf.text(cols.balance, y + 6, `${currency} ${money(data.closing)}`, { size: 10, bold: true, align: 'right' });
+      pdf.text(cols.balance, y + 6, `${currency ? `${currency} ` : ''}${money(data.closing)}`, { size: 10, bold: true, align: 'right' });
       y += 36;
       const a = data.ageing;
       const heads = ['Current', '1-30 days', '31-60 days', '61-90 days', 'Over 90 days', 'Total'];
@@ -138,6 +145,22 @@ export function statementPdf(data, { sandbox = false, currency = 'AED' } = {}) {
       if (data.credit) pdf.text(L, y, `Ageing includes unapplied payments and credit memos: ${money(data.credit)}`, { size: 8, gray: 0.4 });
       if (data.balanceCheck.matches === false) pdf.text(L, y + 12, `QuickBooks shows a customer balance of ${money(data.balanceCheck.qbo)}; this statement differs.`, { size: 8, bold: true });
       for (const [i, w] of data.warnings.entries()) pdf.text(L, y + 24 + i * 11, w, { size: 8, gray: 0.4 });
+      // the open invoices with their days overdue (zero or less = not yet due), when there is room on the page
+      const items = data.openItems.slice(0, 10);
+      const top = y + 40 + data.warnings.length * 11;
+      if (items.length && top + 12 + items.length * 12 < 805) {
+        pdf.text(L, top, 'Open invoices', { size: 9, bold: true });
+        pdf.text(L + 150, top, 'Due', { size: 8, gray: 0.4 });
+        pdf.text(L + 230, top, 'Days overdue', { size: 8, gray: 0.4 });
+        pdf.text(R - 4, top, 'Balance', { size: 8, gray: 0.4, align: 'right' });
+        items.forEach((it, k) => {
+          const yy = top + 12 * (k + 1);
+          pdf.text(L, yy, String(it.ref).slice(0, 18), { size: 8 });
+          pdf.text(L + 150, yy, dmy(it.due), { size: 8 });
+          pdf.text(L + 230, yy, it.past > 0 ? String(it.past) : 'not yet due', { size: 8 });
+          pdf.text(R - 4, yy, money(it.balance), { size: 8, align: 'right' });
+        });
+      }
     }
   });
   return pdf.build();
@@ -146,14 +169,15 @@ export function statementPdf(data, { sandbox = false, currency = 'AED' } = {}) {
 /** All the rows QuickBooks holds for one customer, as read-only queries. */
 export async function loadCustomerData(qbo, customerId) {
   const id = qboEscape(customerId);
-  const [customers, invoices, payments, credits, company] = await Promise.all([
+  const [customers, invoices, payments, credits, company, preferences] = await Promise.all([
     qbo.query(`select * from Customer where Id = '${id}'`),
     qbo.query(`select * from Invoice where CustomerRef = '${id}'`),
     qbo.query(`select * from Payment where CustomerRef = '${id}'`),
     qbo.query(`select * from CreditMemo where CustomerRef = '${id}'`),
     qbo.companyInfo(),
+    qbo.get('preferences').then((j) => j?.Preferences || null).catch(() => null), // the company's home currency; the country is the fallback
   ]);
-  return { company, customer: customers[0] || null, invoices, payments, credits };
+  return { company, customer: customers[0] || null, preferences, invoices, payments, credits };
 }
 
 export { textWidth };

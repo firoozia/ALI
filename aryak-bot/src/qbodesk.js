@@ -218,9 +218,10 @@ export class QboDesk {
     const data = buildStatementData({ ...(await loadCustomerData(this.qbo, r.id)), today: this.today() });
     const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox' });
     const safe = (data.customer.name || r.ours).replace(/[^\w.-]+/g, '_').slice(0, 40) || 'customer';
-    const caption = `Statement - ${data.customer.name || r.ours} - balance AED ${money(data.closing)}${data.balanceCheck.matches === false ? ` (QuickBooks balance differs: AED ${money(data.balanceCheck.qbo)})` : ''}`;
+    const cur = data.currency ? `${data.currency} ` : '';
+    const caption = `Statement - ${data.customer.name || r.ours} - balance ${cur}${money(data.closing)}${data.balanceCheck.matches === false ? ` (QuickBooks balance differs: ${cur}${money(data.balanceCheck.qbo)})` : ''}`;
     await this.post(target.id, pdf, `statement-${safe}.pdf`, caption);
-    return { ok: true, text: `صورت‌حساب «${data.customer.name || r.ours}» به گروه آزمایشی رفت (مانده ${money(data.closing)} درهم${data.balanceCheck.matches === false ? '؛ با مانده کوییک‌بوکس نمی‌خواند' : ''}).` };
+    return { ok: true, text: `صورت‌حساب «${data.customer.name || r.ours}» به گروه آزمایشی رفت (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${data.balanceCheck.matches === false ? '؛ با مانده کوییک‌بوکس نمی‌خواند' : ''}).` };
   }
 
   async statement(typed) {
