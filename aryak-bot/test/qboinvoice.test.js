@@ -17,12 +17,12 @@ const REALM = '9130000000';
 const OWNER_JID = '971500000000@s.whatsapp.net';
 const GROUPS = [{ id: 'test@g.us', subject: 'TEST ARYAK BOT' }, { id: 'orion@g.us', subject: 'ORION - ARYAK' }, { id: 'staff@g.us', subject: 'Aryak Staff' }];
 const ITEMS = [
-  { Id: '1', Name: 'Hinge 35mm', Sku: 'H35', UnitPrice: 2.5, Type: 'Inventory', Active: true },
+  { Id: '1', Name: 'Hinge 35mm', Sku: 'H35', UnitPrice: 2.5, Type: 'Inventory', Active: true, Description: '35 mm soft-close hinge' },
   { Id: '2', Name: 'Edge Tape White', Sku: 'ET-W', UnitPrice: 1.2, Type: 'Inventory', Active: true },
   { Id: '3', Name: 'Handle Steel', Sku: 'HS-1', UnitPrice: 0, Type: 'Inventory', Active: true },
   { Id: '4', Name: 'Hinge', Sku: 'H', UnitPrice: 1, Type: 'Inventory', Active: true },
 ];
-const CUSTOMERS = [{ Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0 }, { Id: '59', DisplayName: 'Cedar Wood Works', Balance: 0 }];
+const CUSTOMERS = [{ Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0, SalesTermRef: { value: '3' }, PrimaryEmailAddr: { Address: 'office@orion.test' } }, { Id: '59', DisplayName: 'Cedar Wood Works', Balance: 0 }];
 const TAXCODES = [
   { Id: '11', Name: '5% S', Taxable: true, Active: true, SalesTaxRateList: { TaxRateDetail: [{ TaxRateRef: { value: '5' } }] } },
   { Id: '12', Name: 'Zero rated', Taxable: true, Active: true, SalesTaxRateList: { TaxRateDetail: [{ TaxRateRef: { value: '6' } }] } },
@@ -50,17 +50,25 @@ function mockQbo(opts = {}) {
       if (requestId && byRequest.has(requestId)) return res(200, { Invoice: byRequest.get(requestId) }); // Intuit returns the same invoice for the same request id
       const n = invoices.size + 1;
       const sum = Math.round(JSON.parse(init.body).Line.reduce((s, l) => s + l.Amount * 100, 0));
-      const inv = { Id: String(900 + n), DocNumber: String(2000 + n), TotalAmt: opts.totalOverride ?? Math.round(sum * 1.05) / 100 };
-      invoices.set(inv.Id, inv); if (requestId) byRequest.set(requestId, inv);
+      const body0 = JSON.parse(init.body);
+      if (body0.DocNumber && (opts.docNumbers || []).includes(body0.DocNumber)) return res(400, { Fault: { Error: [{ Message: 'Duplicate Document Number Error' }] } });
+      const inv = { Id: String(900 + n), DocNumber: body0.DocNumber || String(2000 + n), TotalAmt: opts.totalOverride ?? Math.round(sum * 1.05) / 100 };
+      invoices.set(inv.Id, inv); if (requestId) byRequest.set(requestId, inv); if (body0.DocNumber) (opts.docNumbers ||= []).unshift(body0.DocNumber);
       return res(200, { Invoice: inv });
     }
     if (p.endsWith('/pdf')) return opts.pdfFails ? res(500, {}) : res(200, {}, { bytes: '%PDF-1.4 fake invoice' });
     const one = /\/invoice\/(\d+)$/.exec(p);
     if (one) return res(200, { Invoice: invoices.get(one[1]) });
-    if (p.includes('/preferences')) return res(200, { Preferences: { CurrencyPrefs: { HomeCurrency: { value: 'AED' } } } });
+    if (p.includes('/preferences')) return res(200, { Preferences: { CurrencyPrefs: { HomeCurrency: { value: 'AED' } }, SalesFormsPrefs: { CustomTxnNumbers: !!opts.customTxn } } });
     if (p.includes('/companyinfo/')) return res(200, { CompanyInfo: { CompanyName: 'The Test Workshop', Country: 'AE' } });
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
+    const used = opts.docNumbers || (opts.docNumbers = []);
+    if (ent === 'Invoice' && sql.includes('MetaData.CreateTime')) return res(200, { QueryResponse: { Invoice: used.map((n, i) => ({ Id: String(i + 1), DocNumber: n })) } });
+    const dn = /DocNumber = '([^']*)'/.exec(sql);
+    if (ent === 'Invoice' && dn) return res(200, { QueryResponse: { Invoice: used.includes(dn[1]) ? [{ Id: '1' }] : [] } });
+    const byId = /from Customer where Id = '(\d+)'/i.exec(sql);
+    if (byId) return res(200, { QueryResponse: { Customer: (opts.customers || CUSTOMERS).filter((c) => c.Id === byId[1]) } });
     const rows = { Customer: opts.customers || CUSTOMERS, Item: opts.items || ITEMS, TaxCode: opts.taxCodes || TAXCODES, TaxRate: TAXRATES, Invoice: opts.invoices || RECENT, Payment: [], CreditMemo: [] }[ent] || [];
     return res(200, { QueryResponse: { [ent]: rows } });
   };
@@ -536,4 +544,58 @@ test('all the stops come in ONE reply: customer, items and tax; the minority tax
   const ar = await auth.inv.request({ text: 'فاکتور بساز Orion Furniture\nNo Such Item, 2, 3', requester: '971501112222' });
   assert.ok(ar.requester.includes('کالاها:') && ar.requester.includes('مالک باید کد را انتخاب کند') && !ar.requester.includes('Zero rated'));
   assert.ok(ar.owner.includes('971501112222') && ar.owner.includes('Zero rated (1 سطر)'));
+});
+
+test('when the company numbers invoices by hand: the next number of the office\'s own pattern is in the preview, checked again before the create, and an invoice is never made without one', async () => {
+  const t = mk({ customTxn: true, docNumbers: ['inv-8996', 'inv-8973', 'inv-8956'] });
+  const r = await t.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(r.owner.includes('شمارهٔ فاکتور: inv-8997'), r.requester);
+  assert.equal(t.store.get('Q1').docNumber, 'inv-8997');
+  // a second preview waiting takes the next one, not the same
+  const r2 = await t.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(r2.owner.includes('شمارهٔ فاکتور: inv-8998'));
+  // the create carries it
+  const out = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
+  assert.equal(t.m.posts[0].body.DocNumber, 'inv-8997');
+  assert.ok(out.includes('inv-8997') && !out.includes('بی‌شماره'));
+  // the line description, the terms and the e-mail of the customer
+  assert.deepEqual(t.m.posts[0].body.Line.map((l) => l.Description), ['35 mm soft-close hinge', undefined]); // only where QuickBooks has one
+  assert.deepEqual([t.m.posts[0].body.SalesTermRef, t.m.posts[0].body.BillEmail], [{ value: '3' }, { Address: 'office@orion.test' }]);
+});
+
+test('hand numbering: a number taken before the yes is renumbered and nothing is created; an unreadable pattern stops; auto-numbering companies get no DocNumber', async () => {
+  const docNumbers = ['inv-8996'];
+  const t = mk({ customTxn: true, docNumbers });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  assert.equal(t.store.get('Q1').docNumber, 'inv-8997');
+  docNumbers.unshift('inv-8997'); // the office typed that number by hand in the meantime
+  const again = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
+  assert.ok(again.includes('inv-8997') && again.includes('inv-8998') && again.includes('دوباره «بله #Q1»'));
+  assert.equal(t.m.posts.length, 0);
+  assert.equal(t.store.get('Q1').docNumber, 'inv-8998');
+  assert.equal(t.store.get('Q1').status, 'pending');
+  assert.ok(t.audit.last(3).some((x) => x.event === 'renumber'));
+  assert.ok((await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('ساخته شد'));
+  assert.equal(t.m.posts[0].body.DocNumber, 'inv-8998');
+  // leading zeros keep their width; another prefix of the office is not mixed in
+  const z = mk({ customTxn: true, docNumbers: ['INV-0099', 'CN-500', 'INV-0098'] });
+  assert.ok((await z.inv.request({ text: REQ, requester: 'owner' })).owner.includes('شمارهٔ فاکتور: INV-0100'));
+  // the pattern cannot be read: no preview, the stop says so (together with the other stops)
+  const none = mk({ customTxn: true, docNumbers: [] });
+  const stop = await none.inv.request({ text: REQ, requester: 'owner' });
+  assert.equal(stop.owner, null);
+  assert.ok(stop.requester.includes('شمارهٔ فاکتور:') && stop.requester.includes('الگوی شمارهٔ فاکتورهای دفتر'));
+  assert.equal(none.store.d.n, 0);
+  // a company that numbers by itself: no DocNumber is sent
+  const auto = mk({ customTxn: false });
+  const ar = await auto.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(!ar.owner.includes('شمارهٔ فاکتور:'));
+  await auto.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal('DocNumber' in auto.m.posts[0].body, false);
+  // a preview made while hand numbering was on but without a number is refused at the yes
+  const odd = mk({ customTxn: false });
+  await odd.inv.request({ text: REQ, requester: 'owner' });
+  odd.store.get('Q1').customTxn = true;
+  assert.ok((await odd.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('شماره ندارد'));
+  assert.equal(odd.m.posts.length, 0);
 });

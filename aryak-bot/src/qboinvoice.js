@@ -246,7 +246,7 @@ export class QboInvoiceDesk {
    */
   constructor({ qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
     Object.assign(this, { qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
-    this.cache = { at: 0, items: [], codes: new Map(), currency: '' };
+    this.cache = { at: 0, items: [], codes: new Map(), currency: '', customTxn: false };
     this.inflight = new Set(); // previews being created right now: a yes that arrives meanwhile does not start a second attempt
   }
 
@@ -258,8 +258,35 @@ export class QboInvoiceDesk {
       this.qbo.query('select * from TaxRate').catch(() => []),
       this.qbo.get('preferences').then((j) => j?.Preferences || null).catch(() => null),
     ]);
-    this.cache = { at: this.now(), items, codes: taxCodeMap(taxCodes, taxRates), currency: prefs?.CurrencyPrefs?.HomeCurrency?.value || '' };
+    this.cache = { at: this.now(), items, codes: taxCodeMap(taxCodes, taxRates), currency: prefs?.CurrencyPrefs?.HomeCurrency?.value || '', customTxn: prefs?.SalesFormsPrefs?.CustomTxnNumbers === true };
     return this.cache;
+  }
+
+  async customerRecord(id) { return (await this.qbo.query(`select * from Customer where Id = '${qboEscape(id)}'`))[0] || null; }
+
+  /** Is this document number already used by an invoice? */
+  async docNumberTaken(n) { return (await this.qbo.query(`select Id from Invoice where DocNumber = '${qboEscape(n)}'`)).length > 0; }
+
+  /**
+   * The next invoice number when the company numbers by hand: the pattern of the office (the prefix and digits of its newest invoice, "inv-8996"),
+   * the highest number of that pattern among the last invoices and the previews still waiting, plus one, and free. { docNumber } or { error }.
+   */
+  async nextDocNumber(exceptId = '') {
+    const j = await this.qbo.get('query', { query: 'select Id, DocNumber from Invoice ORDERBY MetaData.CreateTime DESC STARTPOSITION 1 MAXRESULTS 60' });
+    const numbers = (j?.QueryResponse?.Invoice || []).map((r) => String(r.DocNumber || '')).filter(Boolean);
+    const pat = (n) => /^(.*?)(\d+)$/.exec(n);
+    const newest = numbers.map(pat).find(Boolean);
+    if (!newest) return { error: 'الگوی شمارهٔ فاکتورهای دفتر از آخرین فاکتورها خوانده نشد' };
+    const [, prefix, digits] = newest;
+    const waiting = Object.values(this.store.d.previews).filter((q) => q.id !== exceptId && ['pending', 'creating'].includes(q.status) && q.docNumber && this.now() - q.at <= EXPIRY_MS).map((q) => q.docNumber);
+    const same = [...numbers, ...waiting].map(pat).filter((m) => m && m[1].toLowerCase() === prefix.toLowerCase());
+    let next = Math.max(...same.map((m) => Number(m[2]))) + 1;
+    const pad = digits.startsWith('0') ? digits.length : 0;
+    for (let tries = 0; tries < 20; tries++, next++) {
+      const candidate = `${prefix}${String(next).padStart(pad, '0')}`;
+      if (!(await this.docNumberTaken(candidate))) return { docNumber: candidate };
+    }
+    return { error: 'شمارهٔ آزاد بعدی پیدا نشد' };
   }
 
   /** A tax code by its name or id (case-insensitive, exact). */
@@ -380,14 +407,22 @@ export class QboInvoiceDesk {
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
       if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`);
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
-      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', qty: l.qty, price, amount, via: l.via });
+      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via });
     }
     let tax = null;
     if (cust.id) { tax = await this.taxFor(cust, cat, recent); if (tax.error) problems.tax = tax.error; } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
+    // the company numbers invoices by hand: the next number of the office's own pattern (an invoice is never made without one)
+    let docNumber = '';
+    if (cat.customTxn && !problems.customer && !problems.items.length && !(problems.tax && cust.id)) {
+      const n = await this.nextDocNumber();
+      if (n.error) problems.number = `${n.error}. شمارهٔ فاکتور را نمی‌توانم حدس بزنم؛ آخرین شماره‌ها را در کوییک‌بوکس ببینید و به مالک خبر بدهید.`; else docNumber = n.docNumber;
+    }
+    const rec = cust.id ? await this.customerRecord(cust.id) : null;
     // every stop in ONE reply: customer, items, tax
     const parts = [];
     if (problems.customer) parts.push(`مشتری:\n${problems.customer}`);
     if (problems.items.length) parts.push(`کالاها:\n${problems.items.join('\n')}`);
+    if (problems.number) parts.push(`شمارهٔ فاکتور:\n${problems.number}`);
     const taxReal = !!problems.tax && !!cust.id;
     if (problems.tax && !taxReal) parts.push(`مالیات:\n${problems.tax}`);
     if (taxReal && requester === 'owner') parts.push(`مالیات:\n${problems.tax}`);
@@ -405,6 +440,7 @@ export class QboInvoiceDesk {
     if (tax.source === 'invoices' && tax.others?.length) warnings.push(`در فاکتورهای قبلی این مشتری چند سطر کد دیگری داشت: ${tax.others.map((x) => `${x.name} (${x.n} سطر)`).join('، ')}`);
     const preview = {
       id, nonce: randomBytes(5).toString('hex'), at: this.now(), status: 'pending', requester, customer: { ours: cust.ours, id: cust.id, name: cust.name, from: cust.loose ? cust.typed : '' },
+      docNumber, customTxn: cat.customTxn, termId: rec?.SalesTermRef?.value ? String(rec.SalesTermRef.value) : '', billEmail: rec?.PrimaryEmailAddr?.Address || '',
       lines: out, tax: { id: tax.id, name: tax.name, rate: tax.rate, source: tax.source, n: tax.n, total: tax.total }, ...t, currency: cat.currency, warnings,
     };
     this.store.add(preview);
@@ -436,6 +472,7 @@ export class QboInvoiceDesk {
     return [
       `پیش‌نمایش فاکتور #${p.id} (درخواست از ${who}) — هنوز چیزی در کوییک‌بوکس ساخته نشده`,
       `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
+      ...(p.docNumber ? [`شمارهٔ فاکتور: ${p.docNumber}`] : []),
       ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : ''}`),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
       p.tax.source === 'invoices' ? `مالیات: ${p.tax.name} ${p.tax.rate}٪ (از ${fa(p.tax.n)} سطر از ${fa(p.tax.total)} سطر فاکتورهای قبلی): ${money(p.vat)}` : `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
@@ -466,6 +503,16 @@ export class QboInvoiceDesk {
     const c = this.store.counts(this.now());
     if (c.hour >= CAP_HOUR || c.day >= CAP_DAY) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'cap' }); return [`سقف ساخت فاکتور پر است (${fa(CAP_HOUR)} در ساعت، ${fa(CAP_DAY)} در روز). بعداً دوباره «بله #${p.id}» بنویسید.`]; }
     if (this.inflight.has(p.id)) return [`فاکتور ${p.id} همین حالا در حال ساخته شدن است؛ چند لحظه صبر کنید.`];
+    if (p.customTxn && !p.docNumber) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'no-number' }); return ['شرکت فاکتورها را دستی شماره می‌زند و این پیش‌نمایش شماره ندارد؛ ساخته نشد. دوباره درخواست کنید.']; }
+    if (p.docNumber) {
+      let taken = true;
+      try { taken = await this.docNumberTaken(p.docNumber); } catch (e) { this.log(`invoice number check failed: ${e.name}`); return ['بررسی آزاد بودن شمارهٔ فاکتور نشد؛ ساخته نشد. دوباره «بله» بنویسید.']; }
+      if (taken) {
+        const n = await this.nextDocNumber(p.id).catch(() => ({ error: 'x' }));
+        if (n.docNumber) { const old = p.docNumber; p.docNumber = n.docNumber; this.store.save(); this.audit.add({ event: 'renumber', previewId: p.id, reason: `${old}->${n.docNumber}` }); return [`شمارهٔ ${old} در این فاصله مصرف شد. شمارهٔ تازه ${n.docNumber} شد و چیزی ساخته نشد؛ اگر با آن موافقید دوباره «بله #${p.id}» بنویسید.`]; }
+        return ['شمارهٔ فاکتور مصرف شده و شمارهٔ تازه پیدا نشد؛ ساخته نشد. دوباره درخواست کنید.'];
+      }
+    }
     // the attempt is counted and remembered BEFORE the call; the request id belongs to the preview, so a retry returns the same invoice
     p.status = 'creating'; this.store.recordCreate(this.now()); this.store.save();
     this.inflight.add(p.id);
@@ -507,12 +554,16 @@ export class QboInvoiceDesk {
   invoiceBody(p) {
     return {
       CustomerRef: { value: p.customer.id },
+      ...(p.docNumber ? { DocNumber: p.docNumber } : {}),
       TxnDate: this.today(),
       GlobalTaxCalculation: 'TaxExcluded',
       PrivateNote: `Atossa ${p.id}`,
+      ...(p.termId ? { SalesTermRef: { value: p.termId } } : {}),
+      ...(p.billEmail ? { BillEmail: { Address: p.billEmail } } : {}),
       Line: p.lines.map((l) => ({
         DetailType: 'SalesItemLineDetail',
         Amount: l.amount / 100,
+        ...(l.description ? { Description: l.description } : {}),
         SalesItemLineDetail: { ItemRef: { value: l.itemId }, Qty: l.qty, UnitPrice: l.price, TaxCodeRef: { value: p.tax.id } },
       })),
     };
