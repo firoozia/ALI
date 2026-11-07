@@ -333,12 +333,19 @@ export class Qbo {
    */
   async write(method, pathPart, body, { requestId = '' } = {}) {
     if (!this.writeOn) throw new QboError('QuickBooks writes are switched off (QBO_WRITE)');
-    // the one other write: a SPARSE update of a customer's name (Id + SyncToken + DisplayName and/or CompanyName). No create, no other field, no delete.
-    if (method === 'POST' && pathPart === 'customer') {
+    // the other writes are SPARSE updates only (Id + SyncToken + sparse + ONE job's fields); no create, no delete, no inactivate:
+    //   customer: the name (DisplayName, CompanyName), or the e-mail (PrimaryEmailAddr), or the mobile (Mobile); never a mix of the jobs
+    //   item: the sales tax code (SalesTaxCodeRef), or the base price (UnitPrice); never a mix
+    const SPARSE = {
+      customer: [['DisplayName', 'CompanyName'], ['PrimaryEmailAddr'], ['Mobile']],
+      item: [['SalesTaxCodeRef'], ['UnitPrice']],
+    };
+    if (method === 'POST' && SPARSE[pathPart]) {
       const keys = Object.keys(body || {});
-      const okKeys = keys.every((k) => ['Id', 'SyncToken', 'sparse', 'DisplayName', 'CompanyName'].includes(k));
-      if (body?.sparse !== true || !body.Id || body.SyncToken === undefined || !okKeys || !(keys.includes('DisplayName') || keys.includes('CompanyName'))) throw new QboError('QuickBooks: only a sparse update of a customer name is allowed');
-      return this.send('POST', 'customer', {}, body);
+      const data = keys.filter((k) => !['Id', 'SyncToken', 'sparse'].includes(k));
+      const okJob = SPARSE[pathPart].some((job) => data.length > 0 && data.every((k) => job.includes(k)));
+      if (body?.sparse !== true || !body.Id || body.SyncToken === undefined || !okJob) throw new QboError(`QuickBooks: only a sparse update of one allowed field set of a ${pathPart} is allowed`);
+      return this.send('POST', pathPart, {}, body);
     }
     if (method !== 'POST' || pathPart !== 'invoice') throw new QboError('QuickBooks: only creating an invoice is allowed');
     return this.send('POST', 'invoice', requestId ? { requestid: requestId } : {}, body);

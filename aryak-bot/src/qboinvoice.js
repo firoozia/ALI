@@ -33,7 +33,22 @@ export function parseInvoiceCommand(text) {
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);
   if (m) return { type: 'request', customer: m[1].trim(), lines: raw.split('\n').slice(1).map((l) => l.trim()).filter(Boolean) };
   const s = plain(raw).replace(/[.!؟?]+$/u, '').trim();
-  if ((m = /^(بله|اره|آره|نه|خیر|yes|no)\s*#?\s*([QN])\s*(\d+)$/iu.exec(s))) return { type: /^(?:بله|اره|آره|yes)$/iu.test(m[1]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+  if ((m = /^(بله|اره|آره|نه|خیر|yes|no)\s*#?\s*([QNEMTP])\s*(\d+)$/iu.exec(s))) return { type: /^(?:بله|اره|آره|yes)$/iu.test(m[1]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+  // the owner's bulk QuickBooks jobs (see qbobulk.js)
+  if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
+  if (/^موبایل\s+مشتری(?:\s*ها)?$/u.test(s)) return { type: 'bulk_mobile' };
+  if (/^مالیات\s+کالاها(?:\s+دبی)?$/u.test(s)) return { type: 'bulk_tax' };
+  if (/^شروع\s+کن$/u.test(s)) return { type: 'price_start' };
+  if (/^لیست\s+قیمت$/u.test(s)) return { type: 'price_list' };
+  if ((m = /^حذف\s+قیمت\s+(.+)$/u.exec(s))) return { type: 'price_remove', code: m[1].trim() };
+  {
+    const rows = raw.split('\n').map((l) => plain(l)).filter(Boolean);
+    const pr = rows.map((l) => /^قیمت\s+(.+?)\s*=\s*([\d.,]+)$/u.exec(l));
+    if (rows.length && rows.length <= 60 && pr.every(Boolean)) {
+      const lines = pr.map((x) => ({ code: x[1].trim(), price: Number(x[2].replace(/,/g, '')) }));
+      return { type: 'price_set', lines: lines.filter((l) => l.price >= 0 && l.price <= 10000000), bad: lines.filter((l) => !(l.price >= 0 && l.price <= 10000000)).length };
+    }
+  }
   if (new RegExp(`^نام\\s+مشتری(?:\\s*ها)?\\s+با\\s+حروف\\s+بزرگ$`, 'u').test(s)) return { type: 'names_plan' };
   if (new RegExp(`^توقف\\s*${QB}$`, 'u').test(s)) return { type: 'pause' };
   if (new RegExp(`^ادامه\\s*${QB}$`, 'u').test(s)) return { type: 'resume' };
@@ -302,7 +317,7 @@ export class QboInvoiceDesk {
     return j?.QueryResponse?.Invoice || [];
   }
 
-  async taxFor(cust, cat, recent) {
+  async taxFor(cust, cat, recent, items = []) {
     const names = [...cat.codes.values()].map((c) => `${c.name} (${c.rate}%)`).join(' | ');
     const ask = `کد را خودتان بگویید: «کد مالیات ${cust.name} = <نام کد>». کدهای موجود: ${names}`;
     if (this.config.qboTaxCode) {
@@ -311,6 +326,9 @@ export class QboInvoiceDesk {
     }
     const chosen = this.taxChoices.get(cust.id);
     if (chosen && cat.codes.has(String(chosen.codeId))) return { ...cat.codes.get(String(chosen.codeId)), source: 'owner' };
+    // the items' own tax code: when every item of the invoice carries the SAME known code, that is the code (the Dubai standard-rated code after the bulk job)
+    const own = items.map((i) => String(i?.SalesTaxCodeRef?.value || ''));
+    if (own.length && own[0] && own.every((x) => x === own[0]) && cat.codes.has(own[0])) return { ...cat.codes.get(own[0]), source: 'item' };
     const r = codeFromInvoices(recent, cat.codes);
     if (r.code) return { ...r.code, source: 'invoices', n: r.n, total: r.total, others: r.found.filter((f) => f.id !== r.code.id) };
     if (r.error === 'none') return { error: `برای «${cust.name}» فاکتور قبلی با کد مالیات در کوییک‌بوکس نیست تا از دفتر خوانده شود. ${ask}` };
@@ -411,7 +429,7 @@ export class QboInvoiceDesk {
       out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via });
     }
     let tax = null;
-    if (cust.id) { tax = await this.taxFor(cust, cat, recent); if (tax.error) problems.tax = tax.error; } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
+    if (cust.id) { tax = await this.taxFor(cust, cat, recent, lines.map((l) => l.item)); if (tax.error) problems.tax = tax.error; } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
     // the company numbers invoices by hand: the next number of the office's own pattern (an invoice is never made without one)
     let docNumber = '';
     if (cat.customTxn && !problems.customer && !problems.items.length && !(problems.tax && cust.id)) {
@@ -476,7 +494,7 @@ export class QboInvoiceDesk {
       ...(p.docNumber ? [`شمارهٔ فاکتور: ${p.docNumber}`] : []),
       ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : ''}`),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
-      p.tax.source === 'invoices' ? `مالیات: ${p.tax.name} ${p.tax.rate}٪ (از ${fa(p.tax.n)} سطر از ${fa(p.tax.total)} سطر فاکتورهای قبلی): ${money(p.vat)}` : `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
+      p.tax.source === 'invoices' ? `مالیات: ${p.tax.name} ${p.tax.rate}٪ (از ${fa(p.tax.n)} سطر از ${fa(p.tax.total)} سطر فاکتورهای قبلی): ${money(p.vat)}` : `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'item' ? '، کد خود کالا' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
       `جمع کل: ${money(p.total)}${p.currency ? ` ${p.currency}` : ''}`,
       ...(p.warnings.length ? ['⚠️ هشدارها:', ...p.warnings.map((w) => `• ${w}`)] : []),
       `برای ساخت: «بله #${p.id}» — برای لغو: «نه #${p.id}» (۲۴ ساعت اعتبار)`,

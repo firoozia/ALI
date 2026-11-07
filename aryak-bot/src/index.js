@@ -30,6 +30,7 @@ import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
 import { Audit, AuthStore, InvoiceStore, ItemCodes, QboInvoiceDesk, TaxChoices, parseInvoiceCommand } from './qboinvoice.js';
 import { extractInvoiceRequest } from './qboextract.js';
 import { NamePreviews, QboNameDesk } from './qbonames.js';
+import { BulkPreviews, PriceDraft, QboBulkDesk } from './qbobulk.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
@@ -621,12 +622,21 @@ const qboInvoices = new QboInvoiceDesk({
 });
 // The one-off upper-casing of the QuickBooks customer names: a preview (#N1) and the owner's yes; a sparse update of the two name fields only.
 const qboNames = new QboNameDesk({ qbo, desk: qboDesk, audit: qboInvoices.audit, store: new NamePreviews(path.join(config.authDir, 'qbo')), log: (s) => logger.info(s) });
+// The owner's other bulk jobs (e-mail #E, mobile #M, item tax code #T, base prices #P): same pattern, each changes only its own fields.
+const qboBulk = new QboBulkDesk({ qbo, desk: qboDesk, audit: qboInvoices.audit, store: new BulkPreviews(path.join(config.authDir, 'qbo')), draft: new PriceDraft(path.join(config.authDir, 'qbo')), itemCodes: qboInvoices.itemCodes, config, log: (s) => logger.info(s) });
 /** The owner's invoice commands (his own chat): request, yes, no, pause, resume, audit, and the list of people allowed to ask. */
 async function qboInvoiceCommand(ic, text) {
   switch (ic.type) {
     case 'names_plan': return qboNames.plan();
+    case 'bulk_email': return qboBulk.planEmails(ic.email);
+    case 'bulk_mobile': return qboBulk.planMobiles();
+    case 'bulk_tax': return qboBulk.planItemTax();
+    case 'price_set': return ic.lines.length ? qboBulk.addPrices(ic.lines) : ['قیمت درست نیست (عدد ۰ تا ۱۰٬۰۰۰٬۰۰۰).'];
+    case 'price_list': return qboBulk.showDraft() || null;
+    case 'price_remove': return qboBulk.removePrice(ic.code);
+    case 'price_start': return qboBulk.planPrices();
     case 'request': { const r = await qboInvoices.request({ text, requester: 'owner' }); return [r.owner || r.requester]; }
-    case 'yes': case 'no': return ic.id.startsWith('N') ? qboNames.decide({ verb: ic.type, id: ic.id }) : qboInvoices.decide({ verb: ic.type, id: ic.id });
+    case 'yes': case 'no': return ic.id.startsWith('N') ? qboNames.decide({ verb: ic.type, id: ic.id }) : /^[EMTP]/.test(ic.id) ? qboBulk.decide({ verb: ic.type, id: ic.id }) : qboInvoices.decide({ verb: ic.type, id: ic.id });
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
     case 'resume': qbo.setPaused(false); qboInvoices.audit.add({ event: 'resume', approver: 'owner' }); return ['کوییک‌بوکس ادامه یافت.'];
     case 'audit': return [qboInvoices.auditText(10)];
@@ -1302,8 +1312,9 @@ async function handleStaffChat(raw, chatId, group) {
     const ic = parseInvoiceCommand(text);
     if (ic && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
       qboNames.finish = async (parts) => { for (const part of parts) await reply(part); }; // the report at the end of a long update
-      for (const part of await qboInvoiceCommand(ic, text)) await reply(part);
-      return true;
+      qboBulk.finish = qboNames.finish;
+      const parts = await qboInvoiceCommand(ic, text);
+      if (parts) { for (const part of parts) await reply(part); return true; } // null: not ours (the older price list answers)
     }
   }
   // "وضعیت سفارش‌ها" (his own chat, owner only): counts of orders by source and of invoices in each state, last seven days, no names.
