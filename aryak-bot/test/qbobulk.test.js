@@ -561,74 +561,91 @@ test('the QuickBooks fault (code, message, detail, element) is in the error and 
   assert.doesNotMatch(log, /ACCESS-X|REFRESH-X|Bearer/);
 });
 
-// ---- job C: the category PVC FILM, the moves, the SKUs
+// ---- job C: the categories (PVC FILM, EDGE BANDING and its two widths), the moves, the SKUs
 const catItems = (extra = []) => [
   I(50, 'PVC FLIM', { Type: 'Category' }),
   I(108, 'PVC FILM108', { Sku: '108', UnitPrice: 10 }), I(109, 'PVC FILM109', { Sku: 'PVC-109', ParentRef: { value: '50' }, SubItem: true }),
   I(1810, 'PVC 1810', { Sku: '1810', UnitPrice: 20 }), I(120, 'PVC FILM120', { UnitPrice: 11 }), // no SKU yet
   I(900, 'pvc flim 0.1 roll', { Sku: 'R1' }), // looks like PVC, no code: unsure
   I(901, 'Hinge', { Sku: 'H1' }),
-  I(701, 'EDGE 1801 white', { Sku: 'EDGE 1801' }), I(702, 'EDGE 1802 grey', { Sku: 'EDGE 1802' }), I(703, 'Taken edge', { Sku: 'EDGE-1802' }),
+  I(701, 'EDGE 1801 WHITE 1MM*22', { Sku: 'EDGE 1801' }), // width 22
+  I(702, 'EDGE 1801 WHITE', { Sku: 'EDGE 1801', Description: 'edge banding 0.8*50' }), // width 50 from the description
+  I(703, 'EDGE 3019', { Description: 'EDGE BANDING 0.18 THICKNESS' }), // a thickness only: no width
+  I(704, 'EDGE 2000 22MM 50MM'), // both widths
+  I(705, 'EDGE 2001 45MM'), // 45: never guessed
+  I(706, 'EDGE 3020 x22'), I(707, 'EDGE 3021 22', { Sku: 'EDGE22-3020' }), // already EDGE22-3020 (the colour is read from the SKU first); 706 would get the same: a clash
   ...extra,
 ];
 
-test('C plan: rename the misspelled category, move the PVC family, SKUs, edge SKUs, clashes and unsure ones listed', () => {
+test('C plan: categories, moves per category, SKUs per family, clashes and the unsure ones listed', () => {
   const r = planCatalog(catItems());
-  assert.deepEqual([r.category.mode, r.category.id], ['rename', '50']);
-  assert.deepEqual(r.moves.map((m) => m.id).sort(), ['108', '120', '1810']); // 109 is already inside
+  assert.deepEqual(r.cats.map((c) => [c.key, c.mode]), [['pvc', 'rename'], ['edge', 'create'], ['e22', 'create'], ['e50', 'create']]);
+  assert.deepEqual(r.moves.filter((m) => m.cat === 'pvc').map((m) => m.id).sort(), ['108', '120', '1810']); // 109 is already inside
+  assert.deepEqual(r.moves.filter((m) => m.cat === 'e22').map((m) => m.id).sort(), ['701', '706', '707']);
+  assert.deepEqual(r.moves.filter((m) => m.cat === 'e50').map((m) => m.id), ['702']);
   assert.deepEqual(r.skus.map((s) => [s.id, s.old, s.new]).sort(), [['108', '108', 'PVC-108'], ['120', '', 'PVC-120'], ['1810', '1810', 'PVC-1810']]);
-  assert.deepEqual(r.edge.map((s) => [s.id, s.new]), [['701', 'EDGE-1801']]);
-  assert.deepEqual(r.clashes.map((c) => [c.id, c.new]), [['702', 'EDGE-1802']]); // another item holds EDGE-1802
-  assert.deepEqual(r.unsure.map((u) => u.id), ['900']);
-  assert.equal(r.unchanged, 2); // 109: moved and SKU right
+  assert.deepEqual(r.edgeSkus.map((s) => [s.id, s.new]).sort(), [['701', 'EDGE22-1801'], ['702', 'EDGE50-1801']]);
+  assert.deepEqual(r.clashes.map((c) => [c.id, c.new]), [['706', 'EDGE22-3020']]);
+  assert.deepEqual(r.unsure.map((u) => u.id).sort(), ['703', '704', '705', '900']);
+  assert.match(r.unsure.find((u) => u.id === '703').why, /پهنا/);
+  assert.match(r.unsure.find((u) => u.id === '704').why, /هر دو/);
+  assert.match(r.unsure.find((u) => u.id === '705').why, /۴۵/);
 });
 
-test('C plan: an exact PVC FILM category is kept, none means create, two variants mean stop; case variants count', () => {
-  assert.equal(planCatalog([I(1, 'PVC FILM', { Type: 'Category' }), I(2, 'PVC FLIM', { Type: 'Category' }), I(108, 'PVC FILM108')]).category.mode, 'exists');
-  assert.equal(planCatalog([I(108, 'PVC FILM108')]).category.mode, 'create');
+test('edge width and colour are read from the name, the SKU and the descriptions; a thickness is not a width', async () => {
+  const { edgeSize, edgeCode, isEdgeItem } = await import('../src/qbobulk.js');
+  for (const [name, size] of [['EDGE 1801 22', 22], ['EDGE 1801 *22', 22], ['E 1801 x22', 22], ['EDGE 1801 1MM*22', 22], ['EDGE 1801 0.8*22', 22], ['EDGE 1801 22MM', 22], ['EDGE 1801 50', 50], ['EDGE 1801 0.8*50', 50]]) assert.equal(edgeSize({ Name: name }).size, size, name);
+  assert.equal(edgeSize({ Name: 'EDGE 1801', Description: 'EDGE BANDING 0.18 THICKNESS' }).why, 'unknown');
+  assert.equal(edgeSize({ Name: 'EDGE 1801 22', Description: '0.8*50' }).why, 'both');
+  assert.equal(edgeSize({ Name: 'EDGE 1801 45' }).why, 'other');
+  assert.equal(edgeSize({ Name: 'EDGE 1822' }).why, 'unknown'); // 22 inside a longer number is no width
+  assert.equal(edgeCode({ Sku: 'EDGE22-1801' }), '1801'); assert.equal(edgeCode({ Sku: 'EDGE 3019', Name: 'x' }), '3019'); assert.equal(edgeCode({ Name: 'EDGE 3019 0.8*22' }), '3019');
+  assert.equal(isEdgeItem({ Name: 'Wood roll', Description: 'EDGE BANDING 0.45' }), true);
+  assert.equal(isEdgeItem({ Name: 'PVC FILM108' }), false);
+});
+
+test('C plan: existing categories are kept, spelling and case variants (also * for x) are renamed, two variants stop', () => {
+  const c = planCatalog([I(1, 'PVC FILM', { Type: 'Category' }), I(2, 'PVC FLIM', { Type: 'Category' }), I(3, 'edge banding', { Type: 'Category' }), I(4, 'EDGE 0.8*22', { Type: 'Category' }), I(108, 'PVC FILM108')]);
+  assert.deepEqual(c.cats.map((x) => [x.key, x.mode, x.id]), [['pvc', 'exists', '1'], ['edge', 'rename', '3'], ['e22', 'rename', '4'], ['e50', 'create', '']]);
   assert.ok(planCatalog([I(1, 'pvc flim', { Type: 'Category' }), I(2, 'Pvc Film ', { Type: 'Category' })]).stop);
   assert.equal(categoryCandidates([I(1, 'Hardware', { Type: 'Category' })]).variants.length, 0);
-  // two items that would get the same SKU are both skipped
-  const r = planCatalog([I(1, 'PVC FILM', { Type: 'Category' }), I(2, 'PVC FILM108'), I(3, 'PVC 108')]);
+  const r = planCatalog([I(1, 'PVC FILM', { Type: 'Category' }), I(2, 'PVC FILM108'), I(3, 'PVC 108')]); // two items for one SKU: both skipped
   assert.equal(r.clashes.length, 2); assert.equal(r.skus.length, 0);
 });
 
-test('C run: renames the category (Name and Type only), moves (ParentRef and SubItem only), sets SKUs (Sku only); idempotent', async () => {
+test('C run: renames and creates only categories, moves and SKUs only those fields; idempotent; the names stay', async () => {
   const t = mk({ items: catItems() });
   const [pv] = await t.bulk.planCatalog();
   assert.match(pv, /#C1/);
   assert.match(pv, /فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا/);
   assert.match(pv, /تغییر نام می‌دهد/);
+  assert.match(pv, /۳ دستهٔ تازه/);
+  assert.match(pv, /مطمئن نیستم/);
   assert.equal(t.m.posts.length, 0);
   const done = t.finished();
   await t.bulk.decide({ verb: 'yes', id: 'C1' });
   await done;
   const keysOf = (p) => Object.keys(p.body).sort().join();
-  assert.ok(t.m.posts.every((p) => ['Id,Name,SyncToken,Type,sparse', 'Id,ParentRef,SubItem,SyncToken,sparse', 'Id,Sku,SyncToken,sparse'].includes(keysOf(p))), t.m.posts.map(keysOf).join(' | '));
+  const allowed = ['Id,Name,SyncToken,Type,sparse', 'Id,ParentRef,SubItem,SyncToken,sparse', 'Id,Sku,SyncToken,sparse', 'Name,Type', 'Name,ParentRef,SubItem,Type'];
+  assert.ok(t.m.posts.every((p) => allowed.includes(keysOf(p))), t.m.posts.map(keysOf).join(' | '));
   const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  const cat = (n) => t.m.db.Item.find((i) => i.Type === 'Category' && i.Name === n);
   assert.equal(by(50).Name, 'PVC FILM');
+  const edge = cat('EDGE BANDING'); const e22 = cat('EDGE 0.8x22'); const e50 = cat('EDGE 0.8x50');
+  assert.ok(edge && e22 && e50);
+  assert.equal(e22.ParentRef.value, edge.Id); assert.equal(e22.SubItem, true); assert.equal(e50.ParentRef.value, edge.Id);
   for (const id of [108, 120, 1810]) { assert.equal(by(id).ParentRef.value, '50'); assert.equal(by(id).SubItem, true); }
+  for (const id of [701, 706, 707]) assert.equal(by(id).ParentRef.value, e22.Id);
+  assert.equal(by(702).ParentRef.value, e50.Id);
   assert.equal(by(108).FullyQualifiedName, 'PVC FILM:PVC FILM108');
-  assert.equal(by(108).Name, 'PVC FILM108'); // the name is never touched
-  assert.equal(by(108).UnitPrice, 10);
-  assert.deepEqual([by(108).Sku, by(120).Sku, by(1810).Sku, by(701).Sku, by(702).Sku], ['PVC-108', 'PVC-120', 'PVC-1810', 'EDGE-1801', 'EDGE 1802']);
-  assert.equal(by(900).ParentRef, undefined); assert.equal(by(901).Sku, 'H1');
+  assert.equal(by(108).Name, 'PVC FILM108'); assert.equal(by(108).UnitPrice, 10);
+  assert.deepEqual([108, 120, 1810, 701, 702, 707, 706].map((id) => by(id).Sku), ['PVC-108', 'PVC-120', 'PVC-1810', 'EDGE22-1801', 'EDGE50-1801', 'EDGE22-3020', undefined]);
+  for (const id of [703, 704, 705, 900, 901]) assert.equal(by(id).ParentRef, undefined, String(id)); // unsure ones are not moved
+  assert.equal(by(703).Sku, undefined);
   const n = t.m.posts.length;
   await t.bulk.decide({ verb: 'yes', id: 'C1' });
   assert.equal(t.m.posts.length, n);
-});
-
-test('C run: no category yet creates it once (the only create)', async () => {
-  const t = mk({ items: [I(108, 'PVC FILM108', { Sku: '108' }), I(109, 'PVC FILM109', { Sku: '109' })] });
-  const [pv] = await t.bulk.planCatalog();
-  assert.match(pv, /ساخته می‌شود/);
-  const done = t.finished();
-  await t.bulk.decide({ verb: 'yes', id: 'C1' });
-  await done;
-  const cats = t.m.db.Item.filter((i) => i.Type === 'Category');
-  assert.equal(cats.length, 1); assert.equal(cats[0].Name, 'PVC FILM');
-  assert.deepEqual(t.m.posts[0].body, { Name: 'PVC FILM', Type: 'Category' });
-  assert.ok(t.m.db.Item.filter((i) => i.Type !== 'Category').every((i) => i.ParentRef.value === cats[0].Id && /^PVC-\d+$/.test(i.Sku)));
+  assert.equal(t.m.db.Item.filter((i) => i.Type === 'Category').length, 4); // no second category
 });
 
 test('C run: an item QuickBooks refuses (a memorised transaction) is skipped with its message and the rest go on', async () => {
@@ -642,7 +659,7 @@ test('C run: an item QuickBooks refuses (a memorised transaction) is skipped wit
   assert.equal(t.m.db.Item.find((i) => i.Id === '1810').Sku, 'PVC-1810');
 });
 
-test('after the move: matching still uses the item name, the new SKU and the bare code; a category is never an invoice item', async () => {
+test('after the job: matching uses the name, the new SKU, the bare code and the size words; a category is never an invoice item', async () => {
   const { pickItem, itemsNamed, itemsContaining } = await import('../src/qboinvoice.js');
   const t = mk({ items: catItems() });
   await t.bulk.planCatalog();
@@ -652,14 +669,22 @@ test('after the move: matching still uses the item name, the new SKU and the bar
   const items = t.m.db.Item;
   for (const q of ['PVC FILM108', 'pvc film108', 'PVC-108', 'pvc-108', 'PVC FILM:PVC FILM108', '108']) assert.equal(pickItem(q, { items }).item?.Id, '108', q);
   assert.equal(pickItem('1810', { items }).item?.Id, '1810');
-  assert.equal(pickItem('EDGE-1801', { items }).item?.Id, '701');
+  assert.equal(pickItem('EDGE22-1801', { items }).item?.Id, '701');
+  assert.equal(pickItem('edge50-1801', { items }).item?.Id, '702');
+  assert.equal(pickItem('نوار لبه 1801 سایز 22', { items }).item?.Id, '701');
+  assert.equal(pickItem('1801 50', { items }).item?.Id, '702');
+  assert.equal(pickItem('EDGE 1801 size 50', { items }).item?.Id, '702');
+  // both sizes exist: the bare colour number asks for the size
+  const bare = pickItem('1801', { items });
+  assert.equal(bare.item, undefined);
+  assert.match(bare.stop(1), /EDGE22-1801[\s\S]*EDGE50-1801|EDGE50-1801[\s\S]*EDGE22-1801/);
   assert.equal(itemsNamed(items, 'PVC FILM').length, 0); // the category is not an item
-  assert.ok(itemsContaining(items, 'PVC FILM').every((i) => i.Type !== 'Category'));
+  assert.ok(itemsContaining(items, 'EDGE BANDING').every((i) => i.Type !== 'Category'));
   const [r] = await t.bulk.addPrices([{ series: 100, price: 12 }]); // the price series still finds the items by their names
   assert.match(r, /سری 100/);
 });
 
-test('Qbo.write for categories: only the category create, a Name only with Type Category, nothing for a normal item name', async () => {
+test('Qbo.write for categories: only category creates (a sub-category with its parent and SubItem), a Name only with Type Category', async () => {
   const t = mk({ items: catItems() });
   const base = { Id: '108', SyncToken: '0', sparse: true };
   await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Name: 'x' }), /only/);
@@ -667,6 +692,9 @@ test('Qbo.write for categories: only the category create, a Name only with Type 
   await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Name: 'x', Type: 'Category', UnitPrice: 1 }), /only/);
   await assert.rejects(() => t.qbo.write('POST', 'item', { Name: 'New thing', Type: 'Inventory' }), /only/);
   await assert.rejects(() => t.qbo.write('POST', 'item', { Name: 'New', Type: 'Category', UnitPrice: 1 }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Name: 'New', Type: 'Category', ParentRef: { value: '5' } }), /only/); // a parent needs SubItem true
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Name: 'New', Type: 'Category', SubItem: true }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Name: 'New', Type: 'Inventory', ParentRef: { value: '5' }, SubItem: true }), /only/);
   await assert.rejects(() => t.qbo.write('POST', 'item', { UnitPrice: 5 }), /only/);
   await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, ParentRef: { value: '50' }, Sku: 'x' }), /only/);
   assert.equal(t.m.posts.length, 0);
@@ -674,7 +702,8 @@ test('Qbo.write for categories: only the category create, a Name only with Type 
   await t.qbo.write('POST', 'item', { ...base, Sku: 'PVC-108' });
   await t.qbo.write('POST', 'item', { Id: '50', SyncToken: '0', sparse: true, Name: 'PVC FILM', Type: 'Category' });
   await t.qbo.write('POST', 'item', { Name: 'PVC FILM', Type: 'Category' });
-  assert.equal(t.m.posts.length, 4);
+  await t.qbo.write('POST', 'item', { Name: 'EDGE 0.8x22', Type: 'Category', ParentRef: { value: '50' }, SubItem: true });
+  assert.equal(t.m.posts.length, 5);
 });
 
 test('the words: the catalog job and the yes with C', () => {

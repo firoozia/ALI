@@ -345,10 +345,11 @@ export class Qbo {
       customer: [['DisplayName', 'CompanyName'], ['PrimaryEmailAddr'], ['Mobile']],
       item: [['SalesTaxCodeRef'], ['UnitPrice'], ['ParentRef', 'SubItem'], ['Sku'], ['Type', 'Name']],
     };
-    // the only create: a Category item (Name + Type only, no Id)
+    // the only create: a Category item (Name + Type, and for a sub-category its ParentRef with SubItem true; no Id)
     if (method === 'POST' && pathPart === 'item' && body && body.Id === undefined) {
       const keys = Object.keys(body);
-      if (body.Type !== 'Category' || typeof body.Name !== 'string' || !body.Name.trim() || body.Name.length > 100 || keys.some((k) => !['Name', 'Type'].includes(k))) throw new QboError('QuickBooks: only creating a category is allowed');
+      const subOk = !keys.includes('ParentRef') || (keys.includes('SubItem') && body.SubItem === true && body.ParentRef?.value);
+      if (body.Type !== 'Category' || typeof body.Name !== 'string' || !body.Name.trim() || body.Name.length > 100 || keys.some((k) => !['Name', 'Type', 'ParentRef', 'SubItem'].includes(k)) || !subOk || (keys.includes('SubItem') && !keys.includes('ParentRef'))) throw new QboError('QuickBooks: only creating a category is allowed');
       return this.send('POST', 'item', {}, body);
     }
     if (method === 'POST' && SPARSE[pathPart]) {

@@ -151,6 +151,9 @@ export function pickItem(name, ctx = {}) {
   const items = ctx.items || [];
   const taught = ctx.taught?.(name);
   if (taught) return { item: taught, via: 'taught' };
+  // "نوار لبه 1801 سایز 22": the colour number and the width name the one edge banding item whose SKU is EDGE22-1801
+  const sz = /^(?:نوار\s*لبه\s+|edge\s+)?(\d{3,5})\s+(?:سایز\s+|size\s+|عرض\s+)?(22|50)$/iu.exec(nameKey(name).replace(/(\d)\s*mm\b/g, '$1'));
+  if (sz) { const bySize = items.filter((i) => i.Type !== 'Category' && norm(i.Sku) === `edge${sz[2]}-${sz[1]}`); if (bySize.length === 1) return { item: bySize[0], via: 'size' }; }
   const exact = itemsNamed(items, name);
   if (exact.length === 1) return { item: exact[0], via: '' };
   const cands = exact.length ? exact : itemsContaining(items, name);

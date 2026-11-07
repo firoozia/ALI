@@ -138,34 +138,78 @@ export function planPrices(lines, items) {
 
 // ---------------------------------------------------------------------------------------------------------------- categories and SKUs (job C)
 export const CAT_NAME = 'PVC FILM';
-const letters = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '').split('').sort().join('');
-const CAT_LETTERS = letters(CAT_NAME);
+export const EDGE_CAT = 'EDGE BANDING';
+export const EDGE_SIZES = { 22: 'EDGE 0.8x22', 50: 'EDGE 0.8x50' };
+/** The categories of the job in creation order (a parent before its children); [key] is what the item moves name. */
+export const CATS = [
+  { key: 'pvc', name: CAT_NAME, parent: '' },
+  { key: 'edge', name: EDGE_CAT, parent: '' },
+  { key: 'e22', name: EDGE_SIZES[22], parent: 'edge' },
+  { key: 'e50', name: EDGE_SIZES[50], parent: 'edge' },
+];
 const inFamily = (c) => c !== null && ((c >= 101 && c <= 799) || (c >= 1801 && c <= 1899));
-/** The categories that are "PVC FILM" spelled differently (case, spaces, two letters swapped as in PVC FLIM): { exact, variants }. */
-export function categoryCandidates(items) {
+/** A name reduced to its letters and digits, sorted: "PVC FLIM", "pvc film " and "PVC FILM" are the same (case, spaces, two letters swapped; * and x alike). */
+const catKey = (s) => String(s || '').toLowerCase().replace(/[*×]/g, 'x').replace(/[^a-z0-9]/g, '').split('').sort().join('');
+/** The category that is [name] exactly or spelled differently: { exact, variants }. */
+export function categoryCandidates(items, name = CAT_NAME) {
   const cats = items.filter((i) => i.Type === 'Category' && i.Active !== false);
-  const like = cats.filter((c) => letters(c.Name) === CAT_LETTERS && String(c.Name).toLowerCase().replace(/[^a-z]/g, '').startsWith('pvc'));
-  return { exact: like.find((c) => c.Name === CAT_NAME) || null, variants: like.filter((c) => c.Name !== CAT_NAME) };
+  const like = cats.filter((c) => catKey(c.Name) === catKey(name));
+  return { exact: like.find((c) => c.Name === name) || null, variants: like.filter((c) => c.Name !== name) };
 }
-/** What would change: the category (rename / create / exists), the PVC film items to move into it, their SKUs, the edge banding SKUs; clashes and unsure ones listed. */
+
+// ---- edge banding: the width is read from the name, the SKU and the descriptions; a thickness alone ("0.18") is not a width
+const textsOf = (i) => [i?.Name, i?.Sku, i?.Description, i?.PurchaseDesc].map((x) => String(x || ''));
+const WIDTH = /(?<![\d.])(22|50|45)(?![\d.])/g;
+/** Is this an edge banding item (and not a PVC film)? */
+export function isEdgeItem(i) {
+  if (inFamily(pvcCode(i))) return false;
+  const [name, sku, desc, pdesc] = textsOf(i);
+  return /edge/i.test(name) || /^edge/i.test(sku) || /edge\s*band/i.test(desc) || /edge\s*band/i.test(pdesc);
+}
+/** The width of an edge banding item: { size: 22 | 50 } or { why: 'unknown' | 'both' | 'other' } (45 and a clash between fields are never guessed). */
+export function edgeSize(i) {
+  const found = new Set();
+  for (const t of textsOf(i)) for (const m of t.matchAll(WIDTH)) found.add(Number(m[1]));
+  if (!found.size) return { why: 'unknown' };
+  if (found.size > 1) return { why: 'both' };
+  const [s] = [...found];
+  return s === 22 || s === 50 ? { size: s } : { why: 'other' };
+}
+/** The colour number of an edge banding item (1801, 3019): the first 3 to 5 digit number of the SKU, else of the name. */
+export function edgeCode(i) {
+  for (const t of [String(i?.Sku || ''), String(i?.Name || '')]) { const m = /(?<![\d.])(\d{3,5})(?![\d.])/.exec(t); if (m) return m[1]; }
+  return '';
+}
+
+/** What would change: the categories (exists / rename / create), the PVC film and edge banding items to move, their SKUs; clashes and unsure ones listed. */
 export function planCatalog(items) {
-  const { exact, variants } = categoryCandidates(items);
-  const out = { category: null, moves: [], skus: [], edge: [], clashes: [], unsure: [], unchanged: 0, stop: '' };
-  if (exact) out.category = { mode: 'exists', id: String(exact.Id), name: exact.Name };
-  else if (variants.length === 1) out.category = { mode: 'rename', id: String(variants[0].Id), name: variants[0].Name };
-  else if (variants.length > 1) { out.stop = `چند دستهٔ شبیه «${CAT_NAME}» هست (${variants.map((v) => v.Name).join('، ')}) و بین آن‌ها حدس نمی‌زنم؛ در کوییک‌بوکس یکی را نگه دارید.`; return out; }
-  else out.category = { mode: 'create', id: '', name: CAT_NAME };
-  const catId = out.category.id;
-  const real = items.filter((i) => i.Type !== 'Category' && i.Active !== false);
-  const family = real.filter((i) => ITEM_TYPES.includes(i.Type) && inFamily(pvcCode(i)));
-  for (const i of real) if (ITEM_TYPES.includes(i.Type) && !inFamily(pvcCode(i)) && /pvc|flim/i.test(String(i.Name))) out.unsure.push({ id: String(i.Id), label: i.Name });
-  for (const i of family) {
-    if (catId && String(i.ParentRef?.value || '') === catId && i.SubItem) out.unchanged += 1; else out.moves.push({ op: 'move', id: String(i.Id), label: i.Name, old: String(i.ParentRef?.value || ''), new: CAT_NAME });
+  const out = { cats: [], moves: [], skus: [], edgeSkus: [], clashes: [], unsure: [], unchanged: 0, stop: '' };
+  for (const spec of CATS) {
+    const { exact, variants } = categoryCandidates(items, spec.name);
+    if (exact) out.cats.push({ ...spec, mode: 'exists', id: String(exact.Id), oldName: exact.Name });
+    else if (variants.length === 1) out.cats.push({ ...spec, mode: 'rename', id: String(variants[0].Id), oldName: variants[0].Name });
+    else if (variants.length > 1) { out.stop = `چند دستهٔ شبیه «${spec.name}» هست (${variants.map((v) => v.Name).join('، ')}) و بین آن‌ها حدس نمی‌زنم؛ در کوییک‌بوکس یکی را نگه دارید.`; return out; }
+    else out.cats.push({ ...spec, mode: 'create', id: '', oldName: '' });
   }
-  // SKUs: PVC-<code>; EDGE <digits> -> EDGE-<digits>; a SKU another item holds (or two items would get) is a clash and is skipped
-  const wanted = [];
-  for (const i of family) wanted.push({ op: 'sku', id: String(i.Id), label: i.Name, old: String(i.Sku || ''), new: `PVC-${pvcCode(i)}`, edge: false });
-  for (const i of real) { const m = /^EDGE\s+(\d+)$/i.exec(String(i.Sku || '').trim()); if (m) wanted.push({ op: 'sku', id: String(i.Id), label: i.Name, old: String(i.Sku), new: `EDGE-${m[1]}`, edge: true }); }
+  const idOf = (key) => out.cats.find((c) => c.key === key).id;
+  const real = items.filter((i) => i.Type !== 'Category' && i.Active !== false && ITEM_TYPES.includes(i.Type));
+  const inPlace = (i, key) => idOf(key) && String(i.ParentRef?.value || '') === idOf(key) && i.SubItem;
+  const wanted = []; // { op:'sku', ... }
+  for (const i of real) {
+    const code = pvcCode(i);
+    if (inFamily(code)) {
+      if (inPlace(i, 'pvc')) out.unchanged += 1; else out.moves.push({ op: 'move', cat: 'pvc', id: String(i.Id), label: i.Name, old: String(i.ParentRef?.value || ''), new: CAT_NAME });
+      wanted.push({ op: 'sku', id: String(i.Id), label: i.Name, old: String(i.Sku || ''), new: `PVC-${code}`, edge: false });
+    } else if (isEdgeItem(i)) {
+      const sz = edgeSize(i); const col = edgeCode(i);
+      if (!sz.size) { out.unsure.push({ id: String(i.Id), label: i.Name, why: sz.why === 'unknown' ? 'اندازهٔ پهنا خوانده نشد' : sz.why === 'both' ? 'هر دو اندازه یا اندازهٔ ناهمخوان' : 'پهنای دیگر (۴۵) حدس زده نمی‌شود' }); continue; }
+      const key = sz.size === 22 ? 'e22' : 'e50';
+      if (inPlace(i, key)) out.unchanged += 1; else out.moves.push({ op: 'move', cat: key, id: String(i.Id), label: i.Name, old: String(i.ParentRef?.value || ''), new: EDGE_SIZES[sz.size] });
+      if (!col) out.unsure.push({ id: String(i.Id), label: i.Name, why: 'کد رنگ خوانده نشد؛ کد کالا عوض نمی‌شود' });
+      else wanted.push({ op: 'sku', id: String(i.Id), label: i.Name, old: String(i.Sku || ''), new: `EDGE${sz.size}-${col}`, edge: true });
+    } else if (/pvc|flim/i.test(String(i.Name))) out.unsure.push({ id: String(i.Id), label: i.Name, why: 'شبیه پی‌وی‌سی ولی کدش در دامنه نیست' });
+  }
+  // a SKU another item holds (or two items would get) is a clash and is skipped
   const heldBy = new Map(); for (const i of items) if (i.Sku) heldBy.set(String(i.Sku).toLowerCase(), [...(heldBy.get(String(i.Sku).toLowerCase()) || []), String(i.Id)]);
   const planned = new Map(); for (const w of wanted) planned.set(w.new.toLowerCase(), [...(planned.get(w.new.toLowerCase()) || []), w.id]);
   for (const w of wanted) {
@@ -173,7 +217,7 @@ export function planCatalog(items) {
     const others = (heldBy.get(w.new.toLowerCase()) || []).filter((x) => x !== w.id);
     if (others.length) { out.clashes.push({ ...w, why: 'این کد را کالای دیگری دارد' }); continue; }
     if ((planned.get(w.new.toLowerCase()) || []).length > 1) { out.clashes.push({ ...w, why: 'دو کالا این کد را می‌گیرند' }); continue; }
-    (w.edge ? out.edge : out.skus).push(w);
+    (w.edge ? out.edgeSkus : out.skus).push(w);
   }
   return out;
 }
@@ -222,13 +266,14 @@ const JOBS = {
   C: {
     title: 'دسته و کد کالاها', entity: 'item', fields: ['Type', 'Name', 'ParentRef', 'SubItem', 'Sku'],
     body: (cur, ch, p) => {
-      if (ch.op === 'rename') return cur.Type === 'Category' && cur.Name !== CAT_NAME ? { Type: 'Category', Name: CAT_NAME } : null;
+      if (ch.op === 'rename') return cur.Type === 'Category' && cur.Name !== ch.new ? { Type: 'Category', Name: ch.new } : null;
       if (cur.Type === 'Category') return null; // a category is only ever renamed
-      if (ch.op === 'move') return String(cur.ParentRef?.value || '') === String(p.params.catId || '') && cur.SubItem ? null : (p.params.catId ? { ParentRef: { value: String(p.params.catId) }, SubItem: true } : null);
+      const cid = String(p.params.cats?.[ch.cat] || '');
+      if (ch.op === 'move') return cid && !(String(cur.ParentRef?.value || '') === cid && cur.SubItem) ? { ParentRef: { value: cid }, SubItem: true } : null;
       if (ch.op === 'sku') return String(cur.Sku || '') === ch.new ? null : { Sku: ch.new };
       return null;
     },
-    audit: (cur, body, p, ch) => ({ field: ch.op, old: ch.op === 'sku' ? String(cur.Sku || '') : ch.op === 'rename' ? cur.Name : String(cur.ParentRef?.value || ''), new: ch.op === 'sku' ? ch.new : ch.op === 'rename' ? CAT_NAME : String(p.params.catId) }),
+    audit: (cur, body, p, ch) => ({ field: ch.op, old: ch.op === 'sku' ? String(cur.Sku || '') : ch.op === 'rename' ? cur.Name : String(cur.ParentRef?.value || ''), new: ch.op === 'sku' || ch.op === 'rename' ? ch.new : String(p.params.cats?.[ch.cat] || '') }),
   },
   P: {
     title: 'قیمت پایهٔ کالاها', entity: 'item', fields: ['UnitPrice'],
@@ -339,23 +384,31 @@ export class QboBulkDesk {
     const r = planCatalog(items);
     if (r.stop) return [r.stop];
     const changes = [];
-    if (r.category.mode === 'rename') changes.push({ op: 'rename', id: r.category.id, label: r.category.name, old: r.category.name, new: CAT_NAME });
-    if (r.category.mode === 'create') changes.push({ op: 'cat-create', id: '', label: CAT_NAME, old: '', new: CAT_NAME });
-    changes.push(...r.moves, ...r.skus, ...r.edge);
-    if (!changes.length) return [`دسته و کد کالاها از پیش درست است (${fa(r.unchanged)} مورد)${r.clashes.length ? `؛ ${fa(r.clashes.length)} برخورد کد هست و رد شد` : ''}.`];
-    const sample = (arr, f, n = 5) => arr.slice(0, n).map(f);
-    const catLine = { rename: `دستهٔ «${r.category.name}» به «${CAT_NAME}» تغییر نام می‌دهد (فقط نام آن دسته)`, create: `دستهٔ «${CAT_NAME}» ساخته می‌شود (تنها ساختی که این کار دارد)`, exists: `دستهٔ «${CAT_NAME}» از پیش هست` }[r.category.mode];
+    for (const c of r.cats) {
+      if (c.mode === 'rename') changes.push({ op: 'rename', cat: c.key, id: c.id, label: c.oldName, old: c.oldName, new: c.name });
+      if (c.mode === 'create') changes.push({ op: 'cat-create', cat: c.key, parent: c.parent, id: '', label: c.name, old: '', new: c.name });
+    }
+    changes.push(...r.moves, ...r.skus, ...r.edgeSkus);
+    if (!changes.length) return [`دسته و کد کالاها از پیش درست است (${fa(r.unchanged)} مورد)${r.clashes.length ? `؛ ${fa(r.clashes.length)} برخورد کد هست و رد شد` : ''}${r.unsure.length ? `؛ ${fa(r.unsure.length)} کالا نامطمئن است و جابه‌جا نمی‌شود` : ''}.`];
+    const sample = (arr, f, n = 4) => arr.slice(0, n).map(f);
+    const catLines = r.cats.map((c) => ({ rename: `دسته «${c.oldName}» به «${c.name}» تغییر نام می‌دهد (فقط نام آن دسته)`, create: `دستهٔ «${c.name}»${c.parent ? ` زیر «${EDGE_CAT}»` : ''} ساخته می‌شود`, exists: `دستهٔ «${c.name}» از پیش هست` }[c.mode]));
+    const perCat = (key) => r.moves.filter((m) => m.cat === key);
+    const skuPvc = r.skus; const skuEdge = (n) => r.edgeSkus.filter((s) => s.new.startsWith(`EDGE${n}-`));
+    const makes = r.cats.filter((c) => c.mode === 'create').length;
+    const cats = Object.fromEntries(r.cats.filter((c) => c.id).map((c) => [c.key, c.id]));
     return this.make('C', { changes, skipped: [...r.clashes, ...r.unsure.map((u) => ({ ...u, why: 'unsure' }))], unchanged: r.unchanged }, {
-      header: 'دسته و کد کالاها', params: { catId: r.category.id },
-      summary: `فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا. ${catLine}. ${fa(r.moves.length)} کالای پی‌وی‌سی به این دسته می‌رود، ${fa(r.skus.length)} کد پی‌وی‌سی و ${fa(r.edge.length)} کد نوار لبه تغییر می‌کند، ${fa(r.unchanged)} از پیش درست است. نام، قیمت، مالیات و حساب هیچ کالایی عوض نمی‌شود.`,
+      header: 'دسته و کد کالاها', params: { cats },
+      summary: `فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا. نام، قیمت، مالیات و حساب هیچ کالایی عوض نمی‌شود.\nدسته‌ها: ${catLines.join('؛ ')}${makes ? ` (جمعاً ${fa(makes)} دستهٔ تازه؛ تنها ساختی که این کار دارد)` : ''}.\nانتقال: ${fa(perCat('pvc').length)} کالای پی‌وی‌سی، ${fa(perCat('e22').length)} نوار لبهٔ ۲۲ و ${fa(perCat('e50').length)} نوار لبهٔ ۵۰.\nکد کالا: ${fa(skuPvc.length)} پی‌وی‌سی، ${fa(skuEdge(22).length)} نوار لبهٔ ۲۲، ${fa(skuEdge(50).length)} نوار لبهٔ ۵۰. ${fa(r.unchanged)} مورد از پیش درست است.`,
       lines: [
-        ...sample(r.moves, (c) => `انتقال: ${c.label} ← ${CAT_NAME}`),
-        ...sample(r.skus, (c) => `کد: ${c.label}: ${c.old || '—'} → ${c.new}`),
-        ...sample(r.edge, (c) => `کد نوار لبه: ${c.label}: ${c.old} → ${c.new}`),
+        ...sample(perCat('pvc'), (c) => `انتقال: ${c.label} ← ${CAT_NAME}`),
+        ...sample(perCat('e22'), (c) => `انتقال: ${c.label} ← ${EDGE_SIZES[22]}`),
+        ...sample(perCat('e50'), (c) => `انتقال: ${c.label} ← ${EDGE_SIZES[50]}`),
+        ...sample(skuPvc, (c) => `کد: ${c.label}: ${c.old || '—'} → ${c.new}`),
+        ...sample(r.edgeSkus, (c) => `کد نوار لبه: ${c.label}: ${c.old || '—'} → ${c.new}`),
       ].map((x, i) => `${fa(i + 1)}. ${x}`),
       extra: [
         ...(r.clashes.length ? [`رد شد (برخورد کد): ${r.clashes.slice(0, 10).map((c) => `${c.label} (${c.new}: ${c.why})`).join('، ')}${r.clashes.length > 10 ? ` و ${fa(r.clashes.length - 10)} مورد دیگر` : ''}`] : []),
-        ...(r.unsure.length ? [`شبیه پی‌وی‌سی ولی مطمئن نیستم و جابه‌جا نمی‌شود: ${r.unsure.slice(0, 10).map((u) => u.label).join('، ')}${r.unsure.length > 10 ? ` و ${fa(r.unsure.length - 10)} مورد دیگر` : ''}`] : []),
+        ...(r.unsure.length ? [`مطمئن نیستم و جابه‌جا یا بی‌تغییر می‌ماند (${fa(r.unsure.length)} کالا): ${r.unsure.slice(0, 30).map((u) => `${u.label} [${u.why}]`).join('، ')}${r.unsure.length > 30 ? ` و ${fa(r.unsure.length - 30)} مورد دیگر` : ''}`] : []),
       ],
     });
   }
@@ -468,14 +521,17 @@ export class QboBulkDesk {
     const done = [];
     try {
       for (const [i, ch] of p.changes.entries()) {
-        if (ch.op === 'cat-create') { // the only create: the category (looked for again first, so a re-run never makes a second one)
+        if (ch.op === 'cat-create') { // the only creates: the categories (looked for again first, so a re-run never makes a second one)
           try {
-            const have = categoryCandidates(await this.items(true));
-            if (have.exact) { p.params.catId = String(have.exact.Id); r.skipped += 1; continue; }
-            const made = await this.qbo.write('POST', 'item', { Name: CAT_NAME, Type: 'Category' });
-            p.params.catId = String(made?.Item?.Id || '');
-            if (!p.params.catId) throw new Error('the category was made but its id is missing');
-            r.changed += 1; this.audit.add({ event: 'bulk-change', kind: p.kind, previewId: p.id, approver: 'owner', qboId: p.params.catId, field: 'category-create', new: CAT_NAME });
+            p.params.cats = p.params.cats || {};
+            const have = categoryCandidates(await this.items(true), ch.new);
+            if (have.exact) { p.params.cats[ch.cat] = String(have.exact.Id); r.skipped += 1; continue; }
+            const parentId = ch.parent ? String(p.params.cats[ch.parent] || '') : '';
+            if (ch.parent && !parentId) throw new Error('the parent category has no id');
+            const made = await this.qbo.write('POST', 'item', { Name: ch.new, Type: 'Category', ...(parentId ? { ParentRef: { value: parentId }, SubItem: true } : {}) });
+            p.params.cats[ch.cat] = String(made?.Item?.Id || '');
+            if (!p.params.cats[ch.cat]) throw new Error('the category was made but its id is missing');
+            r.changed += 1; this.audit.add({ event: 'bulk-change', kind: p.kind, previewId: p.id, approver: 'owner', qboId: p.params.cats[ch.cat], field: 'category-create', new: ch.new });
           } catch (e) { this.stop(r, p, i, e); break; }
           if (this.gapMs) await this.sleep(this.gapMs);
           continue;
