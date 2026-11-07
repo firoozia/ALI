@@ -25,7 +25,7 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
-import { Qbo } from './qbo.js';
+import { Qbo, looksLikeConnectLine, parseConnectLine } from './qbo.js';
 import { QboDesk, QboMap, parseQboCommand } from './qbodesk.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
@@ -593,7 +593,12 @@ const customerGroups = new CustomerGroups(path.join(config.authDir, 'customer-gr
 const customerNames = new NameBook(path.join(config.authDir, 'customer-groups')); // the names the owner imported from his accounting export (names only, on the VM)
 const customerDesk = new CustomerGroupDesk({ list: customerGroups, config, book: customerNames });
 // QuickBooks Online: READ ONLY. Statements go only to the test group; nothing is written to QuickBooks (QBO_WRITE is off).
-const qbo = new Qbo({ config, dir: path.join(config.authDir, 'qbo'), log: (s) => logger.info(s) });
+const qbo = new Qbo({
+  config, dir: path.join(config.authDir, 'qbo'), log: (s) => logger.info(s),
+  // an expired, revoked or invalid refresh token: the owner is told ONCE in his own chat, and no call is made until he reconnects
+  onReconnect: () => { const own = ownIds()[0]; if (own && sock) sock.sendMessage(own, { text: '🤖 کوییک‌بوکس باید دوباره وصل شود. بنویسید: اتصال کوییک‌بوکس' }).catch(() => {}); },
+});
+setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); // refresh before the access token expires, not only when a call finds it expired
 const qboDesk = new QboDesk({
   qbo, list: customerGroups, aliases, map: new QboMap(path.join(config.authDir, 'qbo')), config,
   groups: async () => Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' })),
@@ -1090,6 +1095,11 @@ async function handleStaffChat(raw, chatId, group) {
   const where = group ? `group "${(await groupInfo(chatId)).subject}"` : 'private';
   const own = ownIds();
   const isSelf = own.some((o) => jidDigits(o) === jidDigits(chatId));
+  // The line from the public QuickBooks page carries an authorization code: only the owner's own chat may take it, and it never reaches a model, a trace or anyone else.
+  if (text && looksLikeConnectLine(text) && !(isSelf && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(((content.extendedTextMessage || audio || image)?.contextInfo || {}).isForwarded) }))) {
+    trace(where, 'owner', 'ignored: a QuickBooks connect line that is not from the owner\'s own chat');
+    return true;
+  }
   if (!group && raw.key.fromMe && !isSelf) { trace(where, 'owner', 'ignored: the owner talking to someone else'); return false; } // from the bot's phone
   let admin = !!raw.key.fromMe;
   let ownerPerson = !!raw.key.fromMe; // typed on the account's own phone counts as the owner
@@ -1210,7 +1220,12 @@ async function handleStaffChat(raw, chatId, group) {
     const rq = parseReceivedQuery(text);
     if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
   }
-  // QuickBooks (his own chat, owner only): status, the match table, one statement or all (to the test group only). Read only.
+  // The connect line (his own chat, owner only; checked above): state, code exchange, company name.
+  if (text && !audio && !image && !group && isSelf && parseConnectLine(text)) {
+    for (const part of await qboDesk.handleLine(parseConnectLine(text))) await reply(part);
+    return true;
+  }
+  // QuickBooks (his own chat, owner only): status, connect, disconnect, the match table, one statement or all (to the test group only). Read only.
   if (text && !audio && !image && !group && isSelf) {
     const qc = parseQboCommand(text);
     if (qc && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {

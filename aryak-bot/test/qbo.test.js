@@ -34,6 +34,8 @@ function mockIntuit(db = {}) {
       if (db.rejectRefresh) return res(400, { error: 'invalid_grant' });
       return res(200, { access_token: `ACCESS-${tokens.n}`, refresh_token: `REFRESH-${tokens.n}`, expires_in: 3600, x_refresh_token_expires_in: 8640000 });
     }
+    if (String(url).includes('developer.intuit.com/.well-known')) return res(200, { authorization_endpoint: 'https://appcenter.intuit.com/connect/oauth2', token_endpoint: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', revocation_endpoint: 'https://developer.api.intuit.com/v2/oauth2/tokens/revoke' });
+    if (String(url).includes('tokens/revoke')) { tokens.revoked = (tokens.revoked || []); tokens.revoked.push(JSON.parse(init.body).token); return res(db.revokeStatus || 200, {}); }
     if (db.script) { const r = db.script.shift(); if (r) return r(String(url), init); }
     const u = new URL(String(url));
     if (u.pathname.includes('/companyinfo/')) return res(200, { CompanyInfo: db.company || { CompanyName: 'The Test Workshop', Country: 'AE', CompanyAddr: { Line1: 'Industrial Area 1', City: 'Sharjah', Country: 'UAE' } } });
@@ -116,7 +118,7 @@ test('no token, secret or Authorization header ever reaches a log or an error me
   try { await fail.qbo.get('companyinfo/9130000000'); } catch (e) { message = e.message; }
   const all = [...logs, ...fail.logs, message].join('\n');
   for (const secret of [SECRET, INIT, 'ACCESS-1', 'REFRESH-1', 'Bearer', 'Basic', 'Authorization', Buffer.from(`${CID}:${SECRET}`).toString('base64')]) assert.ok(!all.includes(secret), secret);
-  assert.ok(logs.some((l) => /QuickBooks GET companyinfo -> 200/.test(l)) && /login failed \(400/.test(message));
+  assert.ok(logs.some((l) => /QuickBooks GET companyinfo -> 200/.test(l)) && /needs reconnecting/.test(message));
 });
 
 test('writes are refused while QBO_WRITE is off, and nothing is sent; every read is a GET', async () => {
@@ -144,7 +146,7 @@ test('a query is paged and the base URL, minor version and company follow the se
   const prod = mk(baseConfig({ qboEnv: 'production' }));
   await prod.qbo.companyInfo();
   assert.ok(prod.m.calls.at(-1).url.startsWith('https://quickbooks.api.intuit.com/v3/company/9130000000/'));
-  assert.deepEqual(mk(baseConfig({ qboClientId: '', qboRealmId: '' })).qbo.missing, ['QBO_CLIENT_ID', 'QBO_REALM_ID']);
+  assert.deepEqual(mk(baseConfig({ qboClientId: '', qboClientSecret: '' })).qbo.missing, ['QBO_CLIENT_ID', 'QBO_CLIENT_SECRET']);
 });
 
 // ------------------------------------------------------------------------------------------------------------------ the statement
@@ -311,7 +313,7 @@ test('the status shows connected or not, the environment, the company and the la
   off.qbo.config.qboClientId = '';
   off.qbo.config.qboRefreshInit = '';
   const miss = (await off.desk.handle({ type: 'status' })).join('\n');
-  assert.ok(miss.includes('وصل نیست') && miss.includes('QBO_CLIENT_ID') && miss.includes('QBO_REFRESH_TOKEN_INIT'));
+  assert.ok(miss.includes('وصل نیست') && miss.includes('QBO_CLIENT_ID') && !miss.includes('QBO_REFRESH_TOKEN_INIT'));
   assert.ok(!miss.includes(SECRET));
   assert.ok((await off.desk.handle({ type: 'statement', name: 'x' })).join('').includes('تنظیم نشده'));
 });

@@ -20,6 +20,8 @@ export function parseQboCommand(text) {
   if (!s) return null;
   if (new RegExp(`^وضعیت\\s*${QB}$`, 'u').test(s)) return { type: 'status' };
   if (new RegExp(`^تطبیق\\s*${QB}$`, 'u').test(s)) return { type: 'match' };
+  if (new RegExp(`^اتصال\\s*${QB}$`, 'u').test(s)) return { type: 'connect' };
+  if (new RegExp(`^قطع\\s*${QB}$`, 'u').test(s)) return { type: 'disconnect' };
   let m = /^تطبیق\s+(\d+)\s*=\s*(\d+)$/u.exec(s);
   if (m) return { type: 'pick', n: Number(m[1]), option: Number(m[2]) };
   if ((m = /^تطبیق\s+(\d+)\s*نه$/u.exec(s))) return { type: 'skip', n: Number(m[1]) };
@@ -86,8 +88,39 @@ export class QboDesk {
 
   get rows() { return this.list.rows(); }
 
+  /** The one line the public page put in his chat: check the state, exchange the code at once, say which company. Owner only (the caller checks). */
+  async handleLine({ state, realmId, code }) {
+    if (!this.qbo.configured) return [`کوییک‌بوکس هنوز تنظیم نشده است. تنظیم‌های کم: ${this.qbo.missing.join('، ')}`];
+    if (!this.qbo.takeState(state)) return ['اتصال رد شد: نشانهٔ امنیتی نادرست یا کهنه (بیش از ۱۵ دقیقه) یا قبلاً مصرف شده است. دوباره بنویسید: اتصال کوییک‌بوکس'];
+    try {
+      await this.qbo.exchange({ code, realmId });
+      this.cache = { at: 0, customers: [] };
+      let name = '';
+      try { name = (await this.qbo.companyInfo())?.CompanyName || ''; } catch { /* connected even if the name cannot be read */ }
+      return [`کوییک‌بوکس وصل شد${name ? `: ${name}` : ''} (محیط ${this.qbo.env === 'production' ? 'اصلی' : 'آزمایشی'}). فقط خواندن؛ چیزی در کوییک‌بوکس نوشته نمی‌شود.`];
+    } catch (e) {
+      this.log(`QuickBooks connect failed: ${e.name} ${e.status || ''}`);
+      return [`اتصال نشد: ${e.message}. دوباره بنویسید: اتصال کوییک‌بوکس`];
+    }
+  }
+
   async handle(c) {
     if (!this.qbo.configured && c.type !== 'status') return [`کوییک‌بوکس هنوز تنظیم نشده است. تنظیم‌های کم: ${this.qbo.missing.join('، ')}`];
+    if (c.type === 'connect') {
+      try {
+        const { url } = await this.qbo.connectLink();
+        return ['برای وصل کردن کوییک‌بوکس این پیوند را باز کنید، وارد شوید و اجازه بدهید (۱۵ دقیقه معتبر است). صفحهٔ بعد یک پیام آماده برای شما باز می‌کند؛ همان را در همین گفتگو بفرستید.', url];
+      } catch (e) { return [`خطا: ${e.message}`]; }
+    }
+    if (c.type === 'disconnect') {
+      const { revoked } = await this.qbo.disconnect();
+      this.cache = { at: 0, customers: [] };
+      return [`کوییک‌بوکس قطع شد: ${revoked ? 'دسترسی در اینتوییت لغو شد و' : 'لغو در اینتوییت انجام نشد (یا توکنی نبود)، ولی'} توکن‌های ذخیره‌شده پاک شدند. برای وصل دوباره: اتصال کوییک‌بوکس`];
+    }
+    if (c.type !== 'status') {
+      if (this.qbo.needsReconnect) return ['کوییک‌بوکس باید دوباره وصل شود؛ بنویسید: اتصال کوییک‌بوکس'];
+      if (!this.qbo.connected) return ['کوییک‌بوکس وصل نیست؛ بنویسید: اتصال کوییک‌بوکس'];
+    }
     try {
       switch (c.type) {
         case 'status': return [await this.status()];
@@ -100,12 +133,15 @@ export class QboDesk {
       }
     } catch (e) {
       this.log(`QuickBooks command failed: ${e.name} ${e.status || ''}`);
+      if (e.reconnect) return ['کوییک‌بوکس باید دوباره وصل شود؛ بنویسید: اتصال کوییک‌بوکس'];
       return [`خطا در کوییک‌بوکس: ${e.message}. چیزی نوشته نشد.`];
     }
   }
 
   async status() {
     if (!this.qbo.configured) return `کوییک‌بوکس وصل نیست. تنظیم‌های کم: ${this.qbo.missing.join('، ')}\nمحیط: ${this.qbo.env === 'production' ? 'اصلی' : 'آزمایشی'}`;
+    if (this.qbo.needsReconnect) return `کوییک‌بوکس باید دوباره وصل شود؛ بنویسید: اتصال کوییک‌بوکس\nمحیط: ${this.qbo.env === 'production' ? 'اصلی' : 'آزمایشی'}`;
+    if (!this.qbo.connected) return `کوییک‌بوکس وصل نیست؛ بنویسید: اتصال کوییک‌بوکس\nمحیط: ${this.qbo.env === 'production' ? 'اصلی' : 'آزمایشی'}`;
     let name = '';
     let ok = false;
     try { name = (await this.qbo.companyInfo())?.CompanyName || ''; ok = true; } catch (e) { name = e.message; }

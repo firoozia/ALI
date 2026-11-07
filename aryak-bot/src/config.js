@@ -110,6 +110,7 @@ export function loadConfig(env = process.env) {
     qboRefreshInit: (env.QBO_REFRESH_TOKEN_INIT || '').trim(), // used once; after that the rotating token lives in a file under authDir
     qboWrite: /^(1|true|on|yes)$/i.test((env.QBO_WRITE || '').trim()), // off: no write to QuickBooks is possible
     qboMinorVersion: Number(env.QBO_MINOR_VERSION) || 75,
+    qboRedirectUri: (env.QBO_REDIRECT_URI || 'https://firoozia.github.io/atossa/connect.html').trim(), // the public page Intuit sends the owner back to
     testCustomerName: (env.TEST_CUSTOMER_NAME || 'test customer').trim().toLowerCase(),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
