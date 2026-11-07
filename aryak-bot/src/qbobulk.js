@@ -75,16 +75,22 @@ export function planItemTax(items, code) {
 }
 
 // ---- the PVC film series: the code of an item is the three-digit number in its name (PVC FILM108 -> 108); a series 100 is the codes 101 to 199
-/** The three-digit code of a PVC film item, or null (edge banding, boards and four-digit codes are never in a series). */
+/** The code (three or four digits) of a PVC item (PVC FILM108 -> 108, PVC 1810 -> 1810), or null (edge banding, boards and the like are never in a series). */
 export function pvcCode(i) {
   const name = String(i?.Name || '');
-  if (!/pvc\s*film/i.test(name)) return null;
-  const m = /pvc\s*film\s*(\d{3})(?!\d)/i.exec(name) || /^(\d{3})$/.exec(String(i.Sku || '').trim());
+  const m = /pvc\s*(?:film\s*)?(\d{3,4})(?!\d)/i.exec(name) || (/pvc/i.test(name) ? /^(\d{3,4})$/.exec(String(i.Sku || '').trim()) : null);
   return m ? Number(m[1]) : null;
 }
-/** The active PVC film items whose code is lo..hi: [{ item, code }] by code. */
+const inRange = (items, lo, hi) => items.filter((i) => i.Active !== false && ITEM_TYPES.includes(i.Type)).map((item) => ({ item, code: pvcCode(item) })).filter((x) => x.code !== null && x.code >= lo && x.code <= hi);
+/** The codes in lo..hi that have SEVERAL active PVC items: { code -> [items] }. They are never taken. */
+export function seriesAmbiguous(items, lo, hi) {
+  const by = new Map(); for (const x of inRange(items, lo, hi)) by.set(x.code, [...(by.get(x.code) || []), x.item]);
+  return new Map([...by].filter(([, v]) => v.length > 1));
+}
+/** The active PVC items whose code is lo..hi, one item per code (a code with several items is left out, see seriesAmbiguous): [{ item, code }] by code. */
 export function seriesItems(items, lo, hi) {
-  return items.filter((i) => i.Active !== false && ITEM_TYPES.includes(i.Type)).map((item) => ({ item, code: pvcCode(item) })).filter((x) => x.code !== null && x.code >= lo && x.code <= hi).sort((a, b) => a.code - b.code);
+  const dup = seriesAmbiguous(items, lo, hi);
+  return inRange(items, lo, hi).filter((x) => !dup.has(x.code)).sort((a, b) => a.code - b.code);
 }
 /** "۱۰۱ تا ۱۲۶، بدون ۱۱۳": the range found, with the gaps inside it. */
 export function rangeText(codes) {
@@ -289,12 +295,13 @@ export class QboBulkDesk {
       const { code, price } = ln;
       if (code === undefined) {
         const b = seriesBounds(ln);
-        if (!b) { out.push(`✖ «سری ${ln.series}» درست نیست؛ سری‌ها صدتا صدتاست (سری ۱۰۰، سری ۲۰۰، …). این خط گرفته نشد.`); continue; }
+        if (!b) { out.push(`✖ «سری ${ln.series}» درست نیست؛ سری‌ها صدتا صدتاست (سری ۱۰۰، سری ۲۰۰، سری ۱۸۰۰، …). این خط گرفته نشد.`); continue; }
         const found = seriesItems(items, b.lo, b.hi);
         if (!found.length) { out.push(`✖ ${b.label}: هیچ کالای فیلم پی‌وی‌سی با این کدها پیدا نشد. این خط گرفته نشد.`); continue; }
         this.draft.setSeries({ lo: b.lo, hi: b.hi, price, label: b.label });
         const own = found.filter((x) => this.draft.lines.some((l) => String(l.itemId) === String(x.item.Id)));
-        out.push(`✓ ${b.label}: ${rangeText(found.map((x) => x.code))}، ${fa(found.length)} کالا؛ ${oldGroups(found.map((x) => x.item), price)}${own.length ? `\n   ${fa(own.length)} کالای آن خط جدا دارد و قیمت خط جدا را می‌گیرد` : ''}`);
+        const dup = seriesAmbiguous(items, b.lo, b.hi);
+        out.push(`✓ ${b.label}: ${rangeText(found.map((x) => x.code))}، ${fa(found.length)} کالا؛ ${oldGroups(found.map((x) => x.item), price)}${own.length ? `\n   ${fa(own.length)} کالای آن خط جدا دارد و قیمت خط جدا را می‌گیرد` : ''}${dup.size ? `\n   ⚠️ این کدها چند کالای پی‌وی‌سی دارند و گرفته نشدند: ${[...dup].map(([c, v]) => `${fa(c)} (${v.map((i) => i.Name).join(' | ')})`).join('، ')}\n   برای هرکدام جدا بنویسید: قیمت <نام دقیق کالا> = <عدد>` : ''}`);
         continue;
       }
       const r = pickItem(code, ctx);

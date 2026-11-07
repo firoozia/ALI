@@ -351,7 +351,8 @@ test('the series code rule: only three-digit PVC film codes; never edge banding,
   const f = seriesItems(items, 101, 199);
   assert.equal(f.length, 25);
   assert.ok(f.every((x) => /PVC FILM1\d\d$/.test(x.item.Name)));
-  assert.equal(seriesItems(items, 1001, 1999).length, 0); // 1810 has four digits
+  assert.equal(seriesItems(items, 1801, 1899).length, 1); // 1810 is a four-digit code: in series 1800 only
+  assert.equal(seriesItems(items, 101, 199).some((x) => x.code === 1810), false);
   assert.equal(seriesItems(items, 150, 160).length, 0); // the edge band and the inactive one
 });
 
@@ -470,4 +471,36 @@ test('intake: the owner\'s late private message from a sync is taken once, a rep
   assert.equal(shouldProcess({ type: 'append', raw: msg('m1'), seen: new Set(), now, ownerSeen: b }).ok, false);
   assert.equal(shouldProcess({ type: 'notify', raw: msg('m1'), seen: new Set(), now, ownerSeen: b }).ok, false);
   assert.equal(shouldProcess({ type: 'notify', raw: msg('m5'), seen: new Set(), now, ownerSeen: b }).ok, true); // a new live one still passes
+});
+
+// ---- the owner's second message (eight series, a four-digit series, Latin 8 among Persian digits)
+test('the owner\'s exact eight-series message is fully taken, header ignored, Latin 8 beside Persian digits', () => {
+  const text = 'آتوسا قیمت ها به درهم است\nقیمت سری ۱۰۰ =۱۳\nقیمت سری ۲۰۰ =۱۴\nقیمت سری ۳۰۰=۱۴\nقیمت سری ۴۰۰=۱۳\nقیمت سری ۵۰۰=۱۱\nقیمت سری ۶۰۰=۱۶\nقیمت سری ۷۰۰=۱۴\nقیمت سری ۱۸۰۰=8';
+  const ic = parseInvoiceCommand(text);
+  assert.equal(ic.type, 'price_set');
+  assert.deepEqual(ic.lines.map((l) => [l.series, l.price]), [[100, 13], [200, 14], [300, 14], [400, 13], [500, 11], [600, 16], [700, 14], [1800, 8]]);
+  assert.deepEqual(ic.unread, []);
+  // a greeting that is not a price line is set aside and named, the prices are all taken
+  const g = parseInvoiceCommand('سلام آتوسا\nقیمت سری ۱۰۰ =۱۳\nقیمت سری ۲۰۰ =۱۴');
+  assert.equal(g.lines.length, 2); assert.deepEqual(g.unread, ['سلام آتوسا']);
+});
+
+test('series 1800 is the four-digit codes 1801 to 1899; a code with several PVC items is listed and not taken', async () => {
+  const items = [...pvcItems(), I(1811, 'PVC 1811', { UnitPrice: 7 }), I(1812, 'PVC 1812', { UnitPrice: 7 }), I(1813, 'PVC FILM1812', { UnitPrice: 9 })];
+  const t = mk({ items });
+  const [r] = await t.bulk.addPrices([{ series: 1800, price: 8 }]);
+  assert.match(r, /سری 1800: ۱۸۰۱ تا ۱۸۱۱|سری 1800: ۱۸۱۰ تا ۱۸۱۱/); // 1810 and 1811 (1812 is double)
+  assert.match(r, /چند کالای پی‌وی‌سی دارند/);
+  assert.match(r, /۱۸۱۲/);
+  const [pv] = await t.bulk.planPrices();
+  assert.match(pv, /سری 1800/);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'P1' });
+  await done;
+  const by = (n) => t.m.db.Item.find((i) => i.Name === n).UnitPrice;
+  assert.equal(by('PVC 1811'), 8);
+  assert.equal(by('PVC FILM1810'), 8);
+  assert.equal(by('PVC 1812'), 7); // double: untouched
+  assert.equal(by('PVC FILM1812'), 9);
+  assert.equal(by('PVC FILM101'), 10); // the three-digit series is not touched
 });

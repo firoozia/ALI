@@ -634,7 +634,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_tax': return qboBulk.planItemTax();
     case 'price_set': {
       const out = ic.lines.length ? await qboBulk.addPrices(ic.lines) : ['قیمت درست نیست (عدد ۰ تا ۱۰٬۰۰۰٬۰۰۰).'];
-      if (ic.unread?.length) out.push(`این خط‌ها را نفهمیدم و نگرفتم: ${ic.unread.slice(0, 10).map((x) => `«${x.slice(0, 40)}»`).join(' ')}\nقالب: قیمت <کد یا سری ۱۰۰> = <عدد>`);
+      if (ic.unread?.length) out.push(`این خط‌ها قیمت نبود و کنار گذاشته شد: ${ic.unread.slice(0, 10).map((x) => `«${x.slice(0, 40)}»`).join(' ')}\nقالب: قیمت <کد یا سری ۱۰۰> = <عدد>`);
       return out;
     }
     case 'price_list': return qboBulk.showDraft() || null;
