@@ -157,20 +157,27 @@ export function taxCodeMap(taxCodes, taxRates) {
   return out;
 }
 
-/** The tax code the office itself used on a customer's recent invoices: one code if they all agree, else the list of what was found. */
+/**
+ * The tax code the office itself used on a customer's recent invoices (newest first): the code of at least 90% of all their lines AND the code
+ * of the most recent invoice. Otherwise { error } with what was found (no history, or no such majority), so the owner picks.
+ */
 export function codeFromInvoices(invoices, codes) {
   const count = new Map();
-  for (const inv of invoices) {
-    for (const l of inv.Line || []) {
-      const id = l.SalesItemLineDetail?.TaxCodeRef?.value;
-      if (id !== undefined && id !== null && id !== '') count.set(String(id), (count.get(String(id)) || 0) + 1);
-    }
-  }
-  const found = [...count.entries()].map(([id, n]) => ({ id, n, name: codes.get(id)?.name || `(${id})`, known: codes.has(id) }));
+  const codesOf = (inv) => (inv.Line || []).map((l) => l.SalesItemLineDetail?.TaxCodeRef?.value).filter((id) => id !== undefined && id !== null && id !== '').map(String);
+  for (const inv of invoices) for (const id of codesOf(inv)) count.set(id, (count.get(id) || 0) + 1);
+  const found = [...count.entries()].map(([id, n]) => ({ id, n, name: codes.get(id)?.name || `(${id})`, known: codes.has(id) })).sort((x, y) => y.n - x.n);
+  const total = found.reduce((sum, f) => sum + f.n, 0);
   if (!found.length) return { error: 'none', found };
-  if (found.length > 1) return { error: 'disagree', found };
-  if (!found[0].known) return { error: 'unknown', found };
-  return { code: codes.get(found[0].id), invoices: invoices.length };
+  const top = found[0];
+  // the code of the most recent invoice that has any tax line: its own most frequent code
+  const newest = invoices.map(codesOf).find((c) => c.length);
+  const tally = new Map();
+  for (const id of newest || []) tally.set(id, (tally.get(id) || 0) + 1);
+  const lead = [...tally.entries()].sort((x, y) => y[1] - x[1]);
+  const newestCode = lead.length && (lead.length === 1 || lead[0][1] > lead[1][1]) ? lead[0][0] : '';
+  if (top.n / total < 0.9 || top.id !== newestCode) return { error: 'disagree', found };
+  if (!top.known) return { error: 'unknown', found };
+  return { code: codes.get(top.id), n: top.n, total, found, invoices: invoices.length };
 }
 
 /** Totals in fils, the way QuickBooks adds them: each line rounded, the VAT on the sum of the taxable lines. */
@@ -277,10 +284,10 @@ export class QboInvoiceDesk {
     const chosen = this.taxChoices.get(cust.id);
     if (chosen && cat.codes.has(String(chosen.codeId))) return { ...cat.codes.get(String(chosen.codeId)), source: 'owner' };
     const r = codeFromInvoices(recent, cat.codes);
-    if (r.code) return { ...r.code, source: 'invoices' };
+    if (r.code) return { ...r.code, source: 'invoices', n: r.n, total: r.total, others: r.found.filter((f) => f.id !== r.code.id) };
     if (r.error === 'none') return { error: `برای «${cust.name}» فاکتور قبلی با کد مالیات در کوییک‌بوکس نیست تا از دفتر خوانده شود. ${ask}` };
     const seen = r.found.map((f) => `${f.name} (${f.n} سطر)`).join('، ');
-    return { error: `کد مالیات فاکتورهای اخیر «${cust.name}» ${r.error === 'unknown' ? 'ناشناخته است' : 'یکی نیست'}: ${seen}. ${ask}` };
+    return { error: `کد مالیات فاکتورهای اخیر «${cust.name}» ${r.error === 'unknown' ? 'ناشناخته است' : 'اکثریت روشنی ندارد (دست‌کم ۹۰٪ سطرها و کد آخرین فاکتور باید یکی باشد)'}: ${seen}. ${ask}` };
   }
 
   /** "کد مالیات <مشتری> = <کد>": the owner chooses the code of a customer (stored on the VM). */
@@ -345,24 +352,27 @@ export class QboInvoiceDesk {
 
   async makePreview({ customerText, entries, requester, stop }) {
     const cust = await this.desk.resolveLoose(customerText);
+    const problems = { customer: '', items: [], tax: '' };
     if (!cust.id) {
-      if (cust.candidates) return stop(`مشتری «${cust.ours}» با چند مشتری می‌خواند و بین آن‌ها حدس نمی‌زنم:\n${cust.candidates.map((c, i) => `${fa(i + 1)}) ${c}`).join('\n')}\nنام کامل یکی را بنویسید.`);
-      const how = cust.ambiguous ? `چند مشتری با این نام دقیق هست: ${cust.ambiguous.map((c) => c.DisplayName).join(' | ')}` : cust.options?.length ? `نزدیک‌ها: ${cust.options.map((o) => o.name).join(' | ')}` : 'مشتری مشابهی هم پیدا نشد';
-      return stop(`مشتری «${cust.ours}» با نام دقیق یا انتخاب تأییدشدهٔ مالک در کوییک‌بوکس نیست؛ اول معرفی شود (تطبیق کوییک‌بوکس). ${how}`);
+      if (cust.candidates) problems.customer = `مشتری «${cust.ours}» با چند مشتری می‌خواند و بین آن‌ها حدس نمی‌زنم:\n${cust.candidates.map((c, i) => `   ${fa(i + 1)}) ${c}`).join('\n')}\n   نام کامل یکی را بنویسید.`;
+      else {
+        const how = cust.ambiguous ? `چند مشتری با این نام دقیق هست: ${cust.ambiguous.map((c) => c.DisplayName).join(' | ')}` : cust.options?.length ? `نزدیک‌ها: ${cust.options.map((o) => o.name).join(' | ')}` : 'مشتری مشابهی هم پیدا نشد';
+        problems.customer = `مشتری «${cust.ours}» با نام دقیق یا انتخاب تأییدشدهٔ مالک در کوییک‌بوکس نیست؛ اول معرفی شود (تطبیق کوییک‌بوکس). ${how}`;
+      }
     }
     const cat = await this.catalog();
-    const recent = await this.recentInvoices(cust.id);
-    // what this customer bought before settles a code that fits several items
+    // what this customer bought and was taxed with before (only when the customer is known)
+    const recent = cust.id ? await this.recentInvoices(cust.id) : [];
     const history = new Set();
     for (const inv of recent) for (const l of inv.Line || []) { const id = l.SalesItemLineDetail?.ItemRef?.value; if (id !== undefined && id !== null) history.add(String(id)); }
-    const taught = (code) => { const t = this.itemCodes.get(cust.id, code); return t ? cat.items.find((i) => String(i.Id) === String(t.itemId)) || null : null; };
+    const taught = (code) => { if (!cust.id) return null; const t = this.itemCodes.get(cust.id, code); return t ? cat.items.find((i) => String(i.Id) === String(t.itemId)) || null : null; };
     const { lines, stops } = resolveEntries(entries, { items: cat.items, history, taught });
-    if (stops.length) return stop(`فاکتور ساخته نمی‌شود؛ این‌ها را درست کنید:\n${stops.join('\n')}`);
+    problems.items.push(...stops);
     const warnings = []; const out = [];
     for (const l of lines) {
       const listed = Number(l.item.UnitPrice) > 0 ? Number(l.item.UnitPrice) : null; // no price in QuickBooks (or zero) = no price to default to
       const price = l.price ?? listed;
-      if (price === null || Number.isNaN(price)) { return stop(`برای کالای «${l.item.Name}» در کوییک‌بوکس قیمتی نیست؛ قیمت را در همان سطر بنویسید.`); }
+      if (price === null || Number.isNaN(price)) { problems.items.push(`سطر ${fa(l.n)}: برای کالای «${l.item.Name}» در کوییک‌بوکس قیمتی نیست؛ قیمت را در همان سطر بنویسید.`); continue; }
       const amount = fils(l.qty * price);
       const w = [];
       if (listed !== null && l.price !== null && l.price < listed - 0.005) w.push(`قیمت کمتر از قیمت کوییک‌بوکس (${listed})`);
@@ -372,17 +382,30 @@ export class QboInvoiceDesk {
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
       out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', qty: l.qty, price, amount, via: l.via });
     }
-    const tax = await this.taxFor(cust, cat, recent);
-    if (tax.error) {
-      // the owner must pick: he is told what was found; an authorized person is told only that the owner was asked
-      if (requester === 'owner') return stop(tax.error);
-      return { requester: 'The tax code for this customer must be chosen by the owner first; he has been told. Please ask again afterwards.', owner: `درخواست فاکتور برای «${cust.name}» (از شمارهٔ ${requester}) متوقف شد.\n${tax.error}` };
+    let tax = null;
+    if (cust.id) { tax = await this.taxFor(cust, cat, recent); if (tax.error) problems.tax = tax.error; } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
+    // every stop in ONE reply: customer, items, tax
+    const parts = [];
+    if (problems.customer) parts.push(`مشتری:\n${problems.customer}`);
+    if (problems.items.length) parts.push(`کالاها:\n${problems.items.join('\n')}`);
+    const taxReal = !!problems.tax && !!cust.id;
+    if (problems.tax && !taxReal) parts.push(`مالیات:\n${problems.tax}`);
+    if (taxReal && requester === 'owner') parts.push(`مالیات:\n${problems.tax}`);
+    if (parts.length || (taxReal && requester !== 'owner')) {
+      const message = `فاکتور ساخته نمی‌شود؛ این‌ها را درست کنید:\n${parts.join('\n\n')}`;
+      if (taxReal && requester !== 'owner') {
+        // an authorized person cannot choose the tax code: the owner is told what was found, the person what he can fix
+        const fixable = [problems.customer && `مشتری: ${problems.customer}`, ...problems.items].filter(Boolean);
+        return { requester: fixable.length ? `${message}\n\nمالیات: مالک باید کد را انتخاب کند و به او خبر داده شد.` : 'The tax code for this customer must be chosen by the owner first; he has been told. Please ask again afterwards.', owner: `درخواست فاکتور برای «${cust.name}» (از شمارهٔ ${requester}) متوقف شد.\n${problems.tax}` };
+      }
+      return stop(message);
     }
     const t = totals(out, tax.rate);
     const id = this.store.nextId();
+    if (tax.source === 'invoices' && tax.others?.length) warnings.push(`در فاکتورهای قبلی این مشتری چند سطر کد دیگری داشت: ${tax.others.map((x) => `${x.name} (${x.n} سطر)`).join('، ')}`);
     const preview = {
       id, nonce: randomBytes(5).toString('hex'), at: this.now(), status: 'pending', requester, customer: { ours: cust.ours, id: cust.id, name: cust.name, from: cust.loose ? cust.typed : '' },
-      lines: out, tax: { id: tax.id, name: tax.name, rate: tax.rate, source: tax.source }, ...t, currency: cat.currency, warnings,
+      lines: out, tax: { id: tax.id, name: tax.name, rate: tax.rate, source: tax.source, n: tax.n, total: tax.total }, ...t, currency: cat.currency, warnings,
     };
     this.store.add(preview);
     this.audit.add({ event: 'preview', requester, previewId: id, total: t.total });
@@ -415,7 +438,7 @@ export class QboInvoiceDesk {
       `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
       ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : ''}`),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
-      `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'invoices' ? '، از فاکتورهای قبلی دفتر' : p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
+      p.tax.source === 'invoices' ? `مالیات: ${p.tax.name} ${p.tax.rate}٪ (از ${fa(p.tax.n)} سطر از ${fa(p.tax.total)} سطر فاکتورهای قبلی): ${money(p.vat)}` : `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
       `جمع کل: ${money(p.total)}${p.currency ? ` ${p.currency}` : ''}`,
       ...(p.warnings.length ? ['⚠️ هشدارها:', ...p.warnings.map((w) => `• ${w}`)] : []),
       `برای ساخت: «بله #${p.id}» — برای لغو: «نه #${p.id}» (۲۴ ساعت اعتبار)`,

@@ -136,7 +136,7 @@ test('the tax codes are all READ from QuickBooks (zero-rated and exempt too); th
   assert.equal(codeFromInvoices([], codes).error, 'none'); // no invoices: he picks
   const mixed = codeFromInvoices([{ Line: [invLine('11'), invLine('12'), invLine('12')] }], codes);
   assert.equal(mixed.error, 'disagree');
-  assert.deepEqual(mixed.found.map((f) => [f.name, f.n]), [['5% S', 1], ['Zero rated', 2]]);
+  assert.deepEqual(mixed.found.map((f) => [f.name, f.n]), [['Zero rated', 2], ['5% S', 1]]);
   assert.equal(codeFromInvoices([{ Line: [invLine('99')] }], codes).error, 'unknown'); // a code that is not in the company's list
   assert.equal(codeFromInvoices([{ Line: [{ DetailType: 'SubTotalLineDetail' }] }], codes).error, 'none');
 });
@@ -145,7 +145,7 @@ test('a request becomes a PREVIEW for the owner: customer, lines, subtotal, VAT 
   const t = mk({ book: { priceOf: (code) => (code === 'ET-W' ? { price: 1.3 } : null) } });
   const r = await t.inv.request({ text: REQ, requester: '971501112222' });
   assert.ok(r.requester.includes('#Q1') && r.requester.includes('sent to the owner for approval'));
-  for (const s of ['پیش‌نمایش فاکتور #Q1', 'Orion Furniture', 'Hinge 35mm [H35] × 10 @ 2.5 = 25.00', 'Edge Tape White [ET-W] × 3 @ 1.1 = 3.30', 'جمع قبل از مالیات: 28.30', 'مالیات 5٪ (5% S، از فاکتورهای قبلی دفتر): 1.42', 'جمع کل: 29.72 AED', 'بله #Q1', 'نه #Q1']) assert.ok(r.owner.includes(s), s);
+  for (const s of ['پیش‌نمایش فاکتور #Q1', 'Orion Furniture', 'Hinge 35mm [H35] × 10 @ 2.5 = 25.00', 'Edge Tape White [ET-W] × 3 @ 1.1 = 3.30', 'جمع قبل از مالیات: 28.30', 'مالیات: 5% S 5٪ (از ۳ سطر از ۳ سطر فاکتورهای قبلی): 1.42', 'جمع کل: 29.72 AED', 'بله #Q1', 'نه #Q1']) assert.ok(r.owner.includes(s), s);
   assert.ok(r.owner.includes('سطر ۲') && r.owner.includes('کمتر از قیمت کوییک‌بوکس (1.2)') && r.owner.includes('کمتر از فهرست قیمت مالک (1.3)'));
   assert.equal(t.m.posts.length, 0);
   assert.equal(t.store.get('Q1').status, 'pending');
@@ -344,7 +344,7 @@ test('the VAT code is that of THE CUSTOMER: zero-rated customers pay no VAT, an 
   // a customer whose recent invoices are zero-rated (an export): the preview shows 0% and no VAT
   const zero = mk({ invoices: [{ Id: '601', Line: [invLine('12'), invLine('12')] }] });
   const r = await zero.inv.request({ text: REQ, requester: 'owner' });
-  assert.ok(r.owner.includes('مالیات 0٪ (Zero rated، از فاکتورهای قبلی دفتر): 0.00') && r.owner.includes('جمع کل: 28.30 AED'));
+  assert.ok(r.owner.includes('مالیات: Zero rated 0٪ (از ۲ سطر از ۲ سطر فاکتورهای قبلی): 0.00') && r.owner.includes('جمع کل: 28.30 AED'));
   assert.equal(zero.store.get('Q1').tax.id, '12');
   await zero.inv.decide({ verb: 'yes', id: 'Q1' });
   assert.deepEqual(zero.m.posts[0].body.Line.map((l) => l.SalesItemLineDetail.TaxCodeRef.value), ['12', '12']);
@@ -352,7 +352,7 @@ test('the VAT code is that of THE CUSTOMER: zero-rated customers pay no VAT, an 
   const mixed = mk({ invoices: [{ Id: '602', Line: [invLine('11'), invLine('12')] }] });
   const stop = await mixed.inv.request({ text: REQ, requester: 'owner' });
   assert.equal(stop.owner, null);
-  assert.ok(stop.requester.includes('یکی نیست') && stop.requester.includes('5% S (1 سطر)') && stop.requester.includes('Zero rated (1 سطر)') && stop.requester.includes('کد مالیات Orion Furniture = '));
+  assert.ok(stop.requester.includes('اکثریت روشنی ندارد') && stop.requester.includes('5% S (1 سطر)') && stop.requester.includes('Zero rated (1 سطر)') && stop.requester.includes('کد مالیات Orion Furniture = '));
   assert.equal(mixed.store.d.n, 0);
   // no invoices at all: stop too
   const none = mk({ invoices: [{ Id: '603', Line: [] }] });
@@ -438,7 +438,7 @@ test('the owner\'s exact message: "Ar-rad" is found as the one customer that hol
   const r = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
   assert.equal(t.extractCalls.length, 1);
   assert.ok(r.owner, r.requester);
-  for (const s of ['مشتری: AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC (از «Ar-rad»)', '108 × 32.5 @ 12 = 390.00', '105 × 14.5 @ 12 = 174.00', 'PVC 1810 [P1810] × 5 @ 8 = 40.00 (از خریدهای قبلی مشتری)', 'جمع قبل از مالیات: 604.00', 'مالیات 5٪ (5% S، از فاکتورهای قبلی دفتر): 30.20', 'جمع کل: 634.20']) assert.ok(r.owner.includes(s), s);
+  for (const s of ['مشتری: AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC (از «Ar-rad»)', '108 × 32.5 @ 12 = 390.00', '105 × 14.5 @ 12 = 174.00', 'PVC 1810 [P1810] × 5 @ 8 = 40.00 (از خریدهای قبلی مشتری)', 'جمع قبل از مالیات: 604.00', 'مالیات: 5% S 5٪ (از ۲ سطر از ۲ سطر فاکتورهای قبلی): 30.20', 'جمع کل: 634.20']) assert.ok(r.owner.includes(s), s);
   assert.deepEqual(t.store.get('Q1').customer, { ours: 'Ar-rad', id: '70', name: 'AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC', from: 'Ar-rad' });
   assert.equal(t.m.posts.length, 0); // the preview creates nothing
   await t.inv.decide({ verb: 'yes', id: 'Q1' });
@@ -490,4 +490,50 @@ test('a short customer name: exactly one match is used and shown; several are li
   const auth = realMk({ invoices: hist('31', '35') });
   const ar = await auth.inv.request({ text: OWNER_MESSAGE, requester: '971501112222' });
   assert.ok(ar.requester.includes('#Q1') && ar.owner.includes('شمارهٔ 971501112222') && ar.owner.includes('(از «Ar-rad»)'));
+});
+
+test('the tax code is the clear majority of the recent lines (at least 90%) AND the code of the most recent invoice; otherwise the owner is asked', () => {
+  const codes = taxCodeMap(TAXCODES, TAXRATES);
+  const inv = (...ids) => ({ Line: ids.map(invLine) });
+  const many = (n, id) => Array.from({ length: n }, () => id);
+  // 34 of 35 lines are 11, the newest invoice is 11: the owner's real case
+  const r = codeFromInvoices([inv(...many(5, '11')), inv(...many(29, '11'), '12')], codes);
+  assert.equal(r.code.id, '11');
+  assert.deepEqual([r.n, r.total], [34, 35]);
+  assert.deepEqual(r.found.map((f) => [f.name, f.n]), [['5% S', 34], ['Zero rated', 1]]);
+  // the lone odd line is in the NEWEST invoice, but that invoice is still mostly 11: fine
+  assert.equal(codeFromInvoices([inv(...many(4, '11'), '12'), inv(...many(30, '11'))], codes).code.id, '11');
+  // under 90% (31 of 35): stop
+  assert.equal(codeFromInvoices([inv(...many(31, '11')), inv(...many(4, '12'))], codes).error, 'disagree');
+  // 34 of 35 but the newest invoice is the other code: the customer changed, stop
+  assert.equal(codeFromInvoices([inv('12'), inv(...many(34, '11'))], codes).error, 'disagree');
+  // the newest invoice without tax lines is skipped for that test
+  assert.equal(codeFromInvoices([{ Line: [{ DetailType: 'SubTotalLineDetail' }] }, inv(...many(10, '11'))], codes).code.id, '11');
+  // a tie inside the newest invoice is no clear code
+  assert.equal(codeFromInvoices([inv('11', '12'), inv(...many(40, '11'))], codes).error, 'disagree');
+  assert.equal(codeFromInvoices([inv(...many(10, '99'))], codes).error, 'unknown');
+});
+
+test('all the stops come in ONE reply: customer, items and tax; the minority tax lines are mentioned in the preview', async () => {
+  const t = mk({ invoices: [{ Id: '701', Line: [...Array.from({ length: 29 }, () => invLine('11')), invLine('12')] }, { Id: '702', Line: Array.from({ length: 5 }, () => invLine('11')) }] });
+  const r = await t.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(r.owner.includes('مالیات: 5% S 5٪ (از ۳۴ سطر از ۳۵ سطر فاکتورهای قبلی)'));
+  assert.ok(r.owner.includes('در فاکتورهای قبلی این مشتری چند سطر کد دیگری داشت: Zero rated (1 سطر)'));
+  assert.equal(t.store.get('Q1').tax.n, 34);
+  // an unknown customer, an unknown item and an unclear tax code: one message with the three sections
+  const bad = mk({ invoices: [{ Id: '703', Line: [invLine('11'), invLine('12')] }] });
+  const all = await bad.inv.request({ text: 'فاکتور بساز Orion Furnitur\nNo Such Item, 2, 3\nH35, 1', requester: 'owner' });
+  assert.equal(all.owner, null);
+  for (const s of ['مشتری:', 'مشتری «Orion Furnitur»', 'کالاها:', 'سطر ۱: کالای «No Such Item»', 'مالیات:', 'بعد از مشخص شدن مشتری']) assert.ok(all.requester.includes(s), s);
+  assert.equal(bad.store.d.n, 0);
+  // a known customer with unknown items AND an unclear tax code: both stops at once
+  const two = mk({ invoices: [{ Id: '704', Line: [invLine('11'), invLine('12')] }] });
+  const both = await two.inv.request({ text: 'فاکتور بساز Orion Furniture\nNo Such Item, 2, 3', requester: 'owner' });
+  assert.ok(both.requester.includes('کالاها:') && both.requester.includes('No Such Item') && both.requester.includes('مالیات:') && both.requester.includes('اکثریت روشنی ندارد'));
+  assert.ok(!both.requester.includes('مشتری:'));
+  // an authorized person: what he can fix is shown to him, the tax detail goes to the owner only
+  const auth = mk({ invoices: [{ Id: '705', Line: [invLine('11'), invLine('12')] }] });
+  const ar = await auth.inv.request({ text: 'فاکتور بساز Orion Furniture\nNo Such Item, 2, 3', requester: '971501112222' });
+  assert.ok(ar.requester.includes('کالاها:') && ar.requester.includes('مالک باید کد را انتخاب کند') && !ar.requester.includes('Zero rated'));
+  assert.ok(ar.owner.includes('971501112222') && ar.owner.includes('Zero rated (1 سطر)'));
 });
