@@ -33,7 +33,8 @@ export function parseInvoiceCommand(text) {
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);
   if (m) return { type: 'request', customer: m[1].trim(), lines: raw.split('\n').slice(1).map((l) => l.trim()).filter(Boolean) };
   const s = plain(raw).replace(/[.!؟?]+$/u, '').trim();
-  if ((m = /^(بله|اره|آره|نه|خیر|yes|no)\s*#?\s*Q\s*(\d+)$/iu.exec(s))) return { type: /^(?:بله|اره|آره|yes)$/iu.test(m[1]) ? 'yes' : 'no', id: `Q${m[2]}` };
+  if ((m = /^(بله|اره|آره|نه|خیر|yes|no)\s*#?\s*([QN])\s*(\d+)$/iu.exec(s))) return { type: /^(?:بله|اره|آره|yes)$/iu.test(m[1]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+  if (new RegExp(`^نام\\s+مشتری(?:\\s*ها)?\\s+با\\s+حروف\\s+بزرگ$`, 'u').test(s)) return { type: 'names_plan' };
   if (new RegExp(`^توقف\\s*${QB}$`, 'u').test(s)) return { type: 'pause' };
   if (new RegExp(`^ادامه\\s*${QB}$`, 'u').test(s)) return { type: 'resume' };
   if (new RegExp(`^گزارش\\s*${QB}$`, 'u').test(s)) return { type: 'audit' };

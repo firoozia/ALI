@@ -29,6 +29,7 @@ import { Qbo, looksLikeConnectLine, parseConnectLine } from './qbo.js';
 import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
 import { Audit, AuthStore, InvoiceStore, ItemCodes, QboInvoiceDesk, TaxChoices, parseInvoiceCommand } from './qboinvoice.js';
 import { extractInvoiceRequest } from './qboextract.js';
+import { NamePreviews, QboNameDesk } from './qbonames.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
@@ -618,11 +619,14 @@ const qboInvoices = new QboInvoiceDesk({
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
 });
+// The one-off upper-casing of the QuickBooks customer names: a preview (#N1) and the owner's yes; a sparse update of the two name fields only.
+const qboNames = new QboNameDesk({ qbo, desk: qboDesk, audit: qboInvoices.audit, store: new NamePreviews(path.join(config.authDir, 'qbo')), log: (s) => logger.info(s) });
 /** The owner's invoice commands (his own chat): request, yes, no, pause, resume, audit, and the list of people allowed to ask. */
 async function qboInvoiceCommand(ic, text) {
   switch (ic.type) {
+    case 'names_plan': return qboNames.plan();
     case 'request': { const r = await qboInvoices.request({ text, requester: 'owner' }); return [r.owner || r.requester]; }
-    case 'yes': case 'no': return qboInvoices.decide({ verb: ic.type, id: ic.id });
+    case 'yes': case 'no': return ic.id.startsWith('N') ? qboNames.decide({ verb: ic.type, id: ic.id }) : qboInvoices.decide({ verb: ic.type, id: ic.id });
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
     case 'resume': qbo.setPaused(false); qboInvoices.audit.add({ event: 'resume', approver: 'owner' }); return ['کوییک‌بوکس ادامه یافت.'];
     case 'audit': return [qboInvoices.auditText(10)];
@@ -1297,6 +1301,7 @@ async function handleStaffChat(raw, chatId, group) {
   if (text && !audio && !image && !group && isSelf) {
     const ic = parseInvoiceCommand(text);
     if (ic && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
+      qboNames.finish = async (parts) => { for (const part of parts) await reply(part); }; // the report at the end of a long update
       for (const part of await qboInvoiceCommand(ic, text)) await reply(part);
       return true;
     }

@@ -327,11 +327,19 @@ export class Qbo {
   }
 
   /**
-   * Every write goes through here. It refuses unless QBO_WRITE is on, and it knows ONE write only: create an invoice (POST invoice). Anything else
-   * (a delete, a void, a payment, a refund, an update) is refused here whatever the caller asks. [requestId] makes the create idempotent.
+   * Every write goes through here. It refuses unless QBO_WRITE is on, and it knows TWO writes only: create an invoice (POST invoice) and the sparse
+   * update of a customer's name. Anything else (a delete, a void, a payment, a refund, any other update) is refused here whatever the caller asks.
+   * [requestId] makes the invoice create idempotent.
    */
   async write(method, pathPart, body, { requestId = '' } = {}) {
     if (!this.writeOn) throw new QboError('QuickBooks writes are switched off (QBO_WRITE)');
+    // the one other write: a SPARSE update of a customer's name (Id + SyncToken + DisplayName and/or CompanyName). No create, no other field, no delete.
+    if (method === 'POST' && pathPart === 'customer') {
+      const keys = Object.keys(body || {});
+      const okKeys = keys.every((k) => ['Id', 'SyncToken', 'sparse', 'DisplayName', 'CompanyName'].includes(k));
+      if (body?.sparse !== true || !body.Id || body.SyncToken === undefined || !okKeys || !(keys.includes('DisplayName') || keys.includes('CompanyName'))) throw new QboError('QuickBooks: only a sparse update of a customer name is allowed');
+      return this.send('POST', 'customer', {}, body);
+    }
     if (method !== 'POST' || pathPart !== 'invoice') throw new QboError('QuickBooks: only creating an invoice is allowed');
     return this.send('POST', 'invoice', requestId ? { requestid: requestId } : {}, body);
   }
