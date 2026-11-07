@@ -8,7 +8,7 @@ import { QboDesk, QboMap } from '../src/qbodesk.js';
 import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
 import { Audit, ItemCodes, parseInvoiceCommand, codeFromInvoices } from '../src/qboinvoice.js';
-import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems, planCatalog, categoryCandidates, planEdgeList, planOldEdge } from '../src/qbobulk.js';
+import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems, planCatalog, categoryCandidates, planEdgeList, planOldEdge, planEdgeNames } from '../src/qbobulk.js';
 
 // Invented data only: nothing real is ever in the repository.
 const REALM = '9130000000';
@@ -1051,5 +1051,86 @@ test('R: an item whose name no longer matches the preview is not touched; the wr
   assert.notEqual(pickItem('edge banding', { items }).item?.Id, '1'); // the inactive one is never the answer
   assert.deepEqual(parseInvoiceCommand('حذف نوار لبه‌های قدیمی'), { type: 'bulk_old_edge' });
   assert.deepEqual(parseInvoiceCommand('بله#R1'), { type: 'yes', id: 'R1' });
+});
+
+
+// ---- job F: tidy names and descriptions of the edge banding items
+const nameWorld = (extra = []) => [
+  I(239, 'EDGE BANDING', { Type: 'Category' }),
+  I(271, 'EDGE 0.8x22', { Type: 'Category', ParentRef: { value: '239' }, SubItem: true }), I(272, 'EDGE 0.8x50', { Type: 'Category', ParentRef: { value: '239' }, SubItem: true }),
+  ...[1801, 1802, 1803].map((n) => I(n + 1000, `${n} edge banding`, { Sku: `EDGE22-${n}`, ParentRef: { value: '271' }, SubItem: true, Description: 'EDGE BANDING 0.18 THICKNESS', PurchaseCost: 0.36, UnitPrice: 0.9, QtyOnHand: 100 })),
+  I(3802, 'B 1802', { Sku: 'EDGE50-1802', ParentRef: { value: '272' }, SubItem: true, Description: 'EDGE BANDING 0.8*50MM', PurchaseCost: 0.5, UnitPrice: 1.4, QtyOnHand: 10 }),
+  I(3810, 'B 1810', { Sku: 'EDGE50-1810', ParentRef: { value: '272' }, SubItem: true, Description: 'EDGE BANDING 0.8*50MM', PurchaseCost: 0, UnitPrice: 220, QtyOnHand: -5 }), // cost 0, a price outlier, negative stock
+  I(3804, 'B 1804', { Sku: 'EDGE50-1804', ParentRef: { value: '272' }, SubItem: true, UnitPrice: 1.5, PurchaseCost: 0.5 }),
+  I(8000, 'EDGE BAND 0.8x50 - 1804', { Active: false }), // an inactive item already holds this name: a clash
+  I(3899, 'B 1899', { Sku: 'WRONG-1', ParentRef: { value: '272' }, SubItem: true }), // the SKU does not say a colour: skipped
+  I(9000, 'Hinge', { Sku: 'H1' }), I(9001, 'EDGE22-9999 outside', { Sku: 'EDGE22-9999' }), // not in the categories: never touched
+  ...extra,
+];
+
+test('F plan: the new names and descriptions from the category and the colour; clashes, bad SKUs listed; warnings change nothing', () => {
+  const w = nameWorld();
+  const active = w.filter((i) => i.Active !== false);
+  const r = planEdgeNames(active, w, w.filter((i) => i.Type === 'Category'));
+  assert.deepEqual(r.changes.map((c) => [c.old, c.new]).sort(), [['1801 edge banding', 'EDGE BAND 0.8x22 - 1801'], ['1802 edge banding', 'EDGE BAND 0.8x22 - 1802'], ['1803 edge banding', 'EDGE BAND 0.8x22 - 1803'], ['B 1802', 'EDGE BAND 0.8x50 - 1802'], ['B 1810', 'EDGE BAND 0.8x50 - 1810']]);
+  assert.equal(r.changes[0].desc, 'EDGE BANDING 0.8 x 22 MM - COLOUR 1801');
+  assert.deepEqual(r.skipped.map((s) => s.label).sort(), ['B 1804', 'B 1899']);
+  assert.match(r.skipped.find((s) => s.label === 'B 1804').why, /کالای دیگری دارد/);
+  assert.ok(r.warnings.some((x) => /B 1810|0.8x50 - 1810/.test(x) && /بهای خرید/.test(x)));
+  assert.ok(r.warnings.some((x) => /موجودی منفی/.test(x)));
+  assert.ok(r.warnings.some((x) => /1810.*220/.test(x)));
+  assert.equal(r.changes.some((c) => c.label === 'Hinge' || /9999/.test(c.label)), false);
+});
+
+test('F run: Name, Description and PurchaseDesc only; the old names stay as aliases; a second run changes nothing', async () => {
+  const t = mk({ items: nameWorld() });
+  const [pv] = await t.bulk.planEdgeNames();
+  assert.match(pv, /#F1/);
+  assert.match(pv, /مبلغ و شرح سطرهای فاکتورهای قبلی تغییر نمی‌کند؛ ولی در صفحهٔ فاکتورهای قبلی، ستون نام کالا نام تازه را نشان می‌دهد چون کوییک‌بوکس نام کالا را از خود کالا می‌خواند/);
+  assert.match(pv, /1801 edge banding → EDGE BAND 0.8x22 - 1801/);
+  assert.match(pv, /هشدار دادهٔ کالاها/);
+  assert.equal(t.m.posts.length, 0);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'F1' });
+  const rep = await done;
+  const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  assert.equal(by(2801).Name, 'EDGE BAND 0.8x22 - 1801'); assert.equal(by(2801).Description, 'EDGE BANDING 0.8 x 22 MM - COLOUR 1801'); assert.equal(by(2801).PurchaseDesc, 'EDGE BANDING 0.8 x 22 MM - COLOUR 1801');
+  assert.equal(by(3802).Name, 'EDGE BAND 0.8x50 - 1802');
+  assert.equal(by(3804).Name, 'B 1804'); assert.equal(by(3899).Name, 'B 1899'); assert.equal(by(9000).Name, 'Hinge'); // skipped and outside
+  assert.equal(by(2801).UnitPrice, 0.9); assert.equal(by(2801).Sku, 'EDGE22-1801'); assert.equal(by(2801).ParentRef.value, '271'); assert.equal(by(2801).PurchaseCost, 0.36);
+  assert.ok(t.m.posts.every((p) => Object.keys(p.body).every((k) => ['Id', 'SyncToken', 'sparse', 'Name', 'Description', 'PurchaseDesc'].includes(k))));
+  assert.match(rep, /۵ تغییر کرد/);
+  // the old names still find the item
+  const { pickItem } = await import('../src/qboinvoice.js');
+  const taught = (c) => { const x = t.itemCodes.get('', c); return x ? t.m.db.Item.find((i) => i.Id === x.itemId) : null; };
+  const items = t.m.db.Item;
+  assert.equal(pickItem('1801 edge banding', { items, taught }).item.Id, '2801');
+  assert.equal(pickItem('1801 edge', { items, taught }).item.Id, '2801');
+  assert.equal(pickItem('B 1802', { items, taught }).item.Id, '3802');
+  assert.equal(pickItem('EDGE BAND 0.8x22 - 1801', { items }).item.Id, '2801'); // the new name resolves
+  assert.equal(pickItem('EDGE22-1801', { items }).item.Id, '2801');
+  const n = t.m.posts.length;
+  await t.bulk.decide({ verb: 'yes', id: 'F1' });
+  assert.equal(t.m.posts.length, n);
+  assert.match((await t.bulk.planEdgeNames())[0], /ماند|از پیش|۲ کالا رد شد|رد شد/);
+});
+
+test('F: a 400 on one item is skipped; an item that left its category since the preview is not touched; the write door needs the named id', async () => {
+  const t = mk({ items: nameWorld(), rejectIds: ['2802'] });
+  await t.bulk.planEdgeNames();
+  t.m.db.Item.find((i) => i.Id === '2803').ParentRef = { value: '555' }; // moved since the preview
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'F1' });
+  const rep = await done;
+  assert.match(rep, /1802 edge banding: Business Validation Error/);
+  assert.equal(t.m.db.Item.find((i) => i.Id === '2803').Name, '1803 edge banding');
+  assert.equal(t.m.db.Item.find((i) => i.Id === '2801').Name, 'EDGE BAND 0.8x22 - 1801');
+  const base = { Id: '2801', SyncToken: '0', sparse: true, Name: 'X' };
+  await assert.rejects(() => t.qbo.write('POST', 'item', base), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, UnitPrice: 1 }, { renameIds: ['2801'] }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Name: '' }, { renameIds: ['2801'] }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Type: 'Inventory' }, { renameIds: ['2801'] }), /only/);
+  assert.deepEqual(parseInvoiceCommand('نام و شرح نوار لبه'), { type: 'bulk_edge_names' });
+  assert.deepEqual(parseInvoiceCommand('بله#F1'), { type: 'yes', id: 'F1' });
 });
 

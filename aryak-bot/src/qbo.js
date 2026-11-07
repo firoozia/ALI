@@ -335,7 +335,7 @@ export class Qbo {
    * update of a customer's name. Anything else (a delete, a void, a payment, a refund, any other update) is refused here whatever the caller asks.
    * [requestId] makes the invoice create idempotent.
    */
-  async write(method, pathPart, body, { requestId = '', categoryIds = [], inactivateIds = [] } = {}) {
+  async write(method, pathPart, body, { requestId = '', categoryIds = [], inactivateIds = [], renameIds = [] } = {}) {
     if (!this.writeOn) throw new QboError('QuickBooks writes are switched off (QBO_WRITE)');
     // the undo and edge jobs may switch a category they name off or on (Active) and nothing else: Id + SyncToken + sparse + Active, and the Id must be one of [categoryIds]
     if (method === 'POST' && pathPart === 'item' && body && (body.Active === false || body.Active === true)) {
@@ -357,6 +357,15 @@ export class Qbo {
       const subOk = !keys.includes('ParentRef') || (keys.includes('SubItem') && body.SubItem === true && body.ParentRef?.value);
       if (body.Type !== 'Category' || typeof body.Name !== 'string' || !body.Name.trim() || body.Name.length > 100 || keys.some((k) => !['Name', 'Type', 'ParentRef', 'SubItem'].includes(k)) || !subOk || (keys.includes('SubItem') && !keys.includes('ParentRef'))) throw new QboError('QuickBooks: only creating a category is allowed');
       return this.send('POST', 'item', {}, body);
+    }
+    // the name and the two descriptions of an item: only for ids the job names ([renameIds]), nothing else beside them
+    if (method === 'POST' && pathPart === 'item' && body && body.Id !== undefined && body.Type === undefined) {
+      const k0 = Object.keys(body).filter((k) => !['Id', 'SyncToken', 'sparse'].includes(k));
+      if (k0.length && k0.every((k) => ['Name', 'Description', 'PurchaseDesc'].includes(k))) {
+        const okText = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
+        if (body.sparse !== true || body.SyncToken === undefined || !renameIds.map(String).includes(String(body.Id)) || (k0.includes('Name') && !okText(body.Name, 100)) || (k0.includes('Description') && !okText(body.Description, 1000)) || (k0.includes('PurchaseDesc') && !okText(body.PurchaseDesc, 1000))) throw new QboError('QuickBooks: only the name and descriptions of an item named for it may change');
+        return this.send('POST', 'item', {}, body);
+      }
     }
     if (method === 'POST' && SPARSE[pathPart]) {
       const keys = Object.keys(body || {});

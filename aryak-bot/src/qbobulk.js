@@ -294,6 +294,50 @@ export function planOldEdge(items) {
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------- tidy edge banding names and descriptions (job F)
+const median = (xs) => { const a = xs.filter((x) => x > 0).sort((x, y) => x - y); return a.length ? (a.length % 2 ? a[(a.length - 1) / 2] : (a[a.length / 2 - 1] + a[a.length / 2]) / 2) : 0; };
+/**
+ * The items now in the categories EDGE 0.8x22 and EDGE 0.8x50 (active only): the new name "EDGE BAND 0.8x22 - 1801" and the description text.
+ * [all]: every item including the inactive (the name must be new among them). Returns { changes, unchanged, skipped, warnings }.
+ */
+export function planEdgeNames(active, all, cats) {
+  const out = { changes: [], unchanged: 0, skipped: [], warnings: [], stop: '' };
+  const catOf = {};
+  for (const [size, name] of [[22, EDGE_SIZES[22]], [50, EDGE_SIZES[50]]]) {
+    const c = cats.filter((x) => x.Type === 'Category' && x.Active !== false && nameEq(x.Name, name));
+    if (c.length !== 1) { out.stop = c.length ? `چند دستهٔ فعال «${name}» هست؛ حدس نمی‌زنم.` : `دستهٔ «${name}» در کوییک‌بوکس نیست.`; return out; }
+    catOf[String(c[0].Id)] = size;
+  }
+  const members = active.filter((i) => i.Type !== 'Category' && i.Active !== false && catOf[String(i.ParentRef?.value || '')] !== undefined && i.SubItem);
+  const taken = new Map(); for (const i of all) taken.set(norm(i.Name), [...(taken.get(norm(i.Name)) || []), String(i.Id)]);
+  const rows = [];
+  for (const i of members) {
+    const size = catOf[String(i.ParentRef.value)];
+    const m = /^EDGE(22|50)-(\d{3,5})$/i.exec(String(i.Sku || '').trim());
+    if (!m || Number(m[1]) !== size) { out.skipped.push({ id: String(i.Id), label: i.Name, why: 'کد کالا با دسته نمی‌خواند' }); continue; }
+    const colour = m[2];
+    rows.push({ id: String(i.Id), label: i.Name, cat: String(i.ParentRef.value), size, colour, name: `EDGE BAND 0.8x${size} - ${colour}`, desc: `EDGE BANDING 0.8 x ${size} MM - COLOUR ${colour}`, item: i });
+  }
+  const planned = new Map(); for (const r of rows) planned.set(norm(r.name), [...(planned.get(norm(r.name)) || []), r.id]);
+  for (const r of rows) {
+    if ((taken.get(norm(r.name)) || []).some((x) => x !== r.id)) { out.skipped.push({ id: r.id, label: r.label, why: `نام «${r.name}» را کالای دیگری دارد` }); continue; }
+    if ((planned.get(norm(r.name)) || []).length > 1) { out.skipped.push({ id: r.id, label: r.label, why: `دو کالا نام «${r.name}» را می‌گیرند` }); continue; }
+    const same = r.item.Name === r.name && r.item.Description === r.desc && r.item.PurchaseDesc === r.desc;
+    if (same) { out.unchanged += 1; continue; }
+    out.changes.push({ op: 'rename-item', id: r.id, label: r.label, cat: r.cat, name: r.name, desc: r.desc, old: r.label, new: r.name, oldDesc: String(r.item.Description || ''), alias: [r.label, ...(r.size === 22 ? [`${r.colour} edge`] : [])] });
+  }
+  // data warnings: they change nothing
+  for (const r of rows) {
+    if (!(Number(r.item.PurchaseCost) > 0)) out.warnings.push(`${r.name}: بهای خرید صفر یا خالی است`);
+    if (Number(r.item.QtyOnHand) < 0) out.warnings.push(`${r.name}: موجودی منفی است (${r.item.QtyOnHand})`);
+  }
+  for (const size of [22, 50]) {
+    const g = rows.filter((r) => r.size === size); const med = median(g.map((r) => Number(r.item.UnitPrice) || 0));
+    for (const r of g) { const p = Number(r.item.UnitPrice) || 0; if (!(p > 0)) out.warnings.push(`${r.name}: قیمت فروش ندارد`); else if (med && (p > 2 * med || p < med / 2)) out.warnings.push(`${r.name}: قیمت ${p} با میانهٔ گروه ${med} فاصلهٔ زیاد دارد`); }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------------- undo (job U): from what the audit log says a finished job did
 /** The preview that created categories last (the one whose edge banding the owner wants back). */
 export function latestCreatingPreview(entries) {
@@ -380,6 +424,19 @@ const JOBS = {
     },
     audit: (cur, body, p, ch) => ({ field: ch.op, old: ch.op === 'sku' ? String(cur.Sku || '') : String(cur.ParentRef?.value || ''), new: ch.op === 'sku' ? ch.new : String(p.params.cats?.[ch.cat] || '') }),
   },
+  F: {
+    title: 'نام و شرح نوار لبه', entity: 'item', fields: ['Name', 'Description', 'PurchaseDesc'],
+    // only a field that differs is sent; an item that left its category since the preview is not touched
+    body: (cur, ch) => {
+      if (cur.Type === 'Category' || cur.Active === false || String(cur.ParentRef?.value || '') !== ch.cat) return null;
+      const part = {};
+      if (cur.Name !== ch.name) part.Name = ch.name;
+      if (cur.Description !== ch.desc) part.Description = ch.desc;
+      if (cur.PurchaseDesc !== ch.desc) part.PurchaseDesc = ch.desc;
+      return Object.keys(part).length ? part : null;
+    },
+    audit: (cur, body, p, ch) => ({ field: 'rename-item', old: String(cur.Name), new: ch.name, oldDesc: String(cur.Description || '').slice(0, 200), newDesc: ch.desc }),
+  },
   R: { title: 'غیرفعال کردن نوار لبه‌های قدیمی', entity: 'item', fields: [], body: () => null, audit: () => ({}) },
   U: {
     title: 'برگرداندن دسته', entity: 'item', fields: ['ParentRef', 'SubItem'],
@@ -423,14 +480,14 @@ export class QboBulkDesk {
   openIds() { return Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && this.now() - p.at <= DAY).map((p) => p.id); }
 
   /** Stores a preview and builds its text. */
-  make(kind, r, { header, summary, lines, extra = [], params = {} }) {
+  make(kind, r, { header, summary, lines, extra = [], params = {}, limit = SHOWN }) {
     const p = this.store.add(kind, { at: this.now(), status: 'pending', changes: r.changes, skipped: r.skipped, unchanged: r.unchanged, params });
     this.audit.add({ event: 'bulk-preview', kind, previewId: p.id, total: r.changes.length });
     return [[
       `پیش‌نمایش ${header} #${p.id} — هنوز چیزی در کوییک‌بوکس تغییر نکرده`,
       summary,
-      ...lines.slice(0, SHOWN),
-      ...(lines.length > SHOWN ? [`… و ${fa(lines.length - SHOWN)} مورد دیگر`] : []),
+      ...lines.slice(0, limit),
+      ...(lines.length > limit ? [`… و ${fa(lines.length - limit)} مورد دیگر`] : []),
       ...extra,
       `برای اجرا: «بله #${p.id}» — برای لغو: «نه #${p.id}» (۲۴ ساعت اعتبار)`,
     ].join('\n')];
@@ -557,6 +614,28 @@ export class QboBulkDesk {
         ...(r.missing.length ? [`در کوییک‌بوکس پیدا نشد (${fa(r.missing.length)}): ${r.missing.join('، ')}`] : []),
         ...(r.ambiguous.length ? [`چند کالا با این نام هست و رد شد: ${r.ambiguous.join('، ')}`] : []),
         ...(r.clashes.length ? [`رد شد (برخورد کد): ${r.clashes.map((c) => `${c.label} (${c.new}: ${c.why})`).join('، ')}`] : []),
+      ],
+    });
+  }
+
+  // ------------------------------------------------------------------------------------------------ F: edge banding names and descriptions
+  async planEdgeNames() {
+    const blocked = this.guard();
+    if (blocked) return [blocked];
+    const active = await this.items(true);
+    const cats = await this.qbo.query("select * from Item where Type = 'Category' and Active in (true, false)");
+    const all = await this.qbo.query('select * from Item where Active in (true, false)');
+    const r = planEdgeNames(active, all, cats);
+    if (r.stop) return [r.stop];
+    if (!r.changes.length) return [`نام و شرح نوار لبه از پیش درست است (${fa(r.unchanged)} کالا)${r.skipped.length ? `؛ ${fa(r.skipped.length)} کالا رد شد` : ''}.`];
+    const s = r.changes[0];
+    return this.make('F', { changes: r.changes, skipped: r.skipped.map((x) => ({ ...x })), unchanged: r.unchanged }, {
+      header: 'نام و شرح نوار لبه', limit: 40, params: { ids: r.changes.map((c) => c.id) },
+      summary: `${fa(r.changes.length)} کالای دو دستهٔ نوار لبه (فعال)؛ ${fa(r.unchanged)} از پیش درست است. فقط نام کالا و شرح فروش و شرح خرید عوض می‌شود؛ قیمت، بها، مالیات، حساب، کد کالا، دسته و واحد دست نمی‌خورد.\nمبلغ و شرح سطرهای فاکتورهای قبلی تغییر نمی‌کند؛ ولی در صفحهٔ فاکتورهای قبلی، ستون نام کالا نام تازه را نشان می‌دهد چون کوییک‌بوکس نام کالا را از خود کالا می‌خواند.\nنام‌های قدیمی (مثل ۱۸۰۱ و «بی ۱۸۰۲») در درخواست فاکتور همچنان همان کالا را پیدا می‌کنند.\nنمونهٔ شرح (فروش و خرید یکی است): ${s.desc}. شرح فروش قبلی همین کالا: ${s.oldDesc || '—'}.`,
+      lines: r.changes.map((c, i) => `${fa(i + 1)}. ${c.old} → ${c.new}`),
+      extra: [
+        ...(r.skipped.length ? [`رد شد (${fa(r.skipped.length)}): ${r.skipped.map((x) => `${x.label} [${x.why}]`).join('، ')}`] : []),
+        ...(r.warnings.length ? [`هشدار دادهٔ کالاها (چیزی را تغییر نمی‌دهد، ${fa(r.warnings.length)} مورد): ${r.warnings.slice(0, 20).join('؛ ')}${r.warnings.length > 20 ? ` و ${fa(r.warnings.length - 20)} مورد دیگر` : ''}`] : []),
       ],
     });
   }
@@ -794,9 +873,10 @@ export class QboBulkDesk {
         const body = { Id: String(cur.Id), SyncToken: String(cur.SyncToken), sparse: true, ...part };
         if (Object.keys(part).some((k) => !job.fields.includes(k))) { this.stop(r, p, i, new Error('a field this job may not change')); break; } // defence: never beyond the job's fields
         try {
-          await this.qbo.write('POST', job.entity, body);
+          await this.qbo.write('POST', job.entity, body, { renameIds: p.params.ids || [] });
           r.changed += 1; done.push(ch.id);
           this.audit.add({ event: 'bulk-change', kind: p.kind, previewId: p.id, approver: 'owner', qboId: body.Id, ...job.audit(cur, part, p, ch) });
+          if (p.kind === 'F' && part.Name) for (const a of ch.alias || []) this.itemCodes?.set('', a, { Id: body.Id, Name: ch.name }); // the old names still find the item
         } catch (e) {
           if (e.status === 400) { // QuickBooks refused THIS record (a validation error): skip it, say why, and go on; anything else (401, 403, 429, 5xx, network) stops the job
             r.failed += 1;
