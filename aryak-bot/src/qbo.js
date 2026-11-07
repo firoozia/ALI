@@ -48,8 +48,21 @@ export class Qbo {
     this.t = { refresh: '', access: '', accessExpiresAt: 0, initHash: '', realmId: '', needsReconnect: false };
     this.lastCall = { at: 0, status: 0 };
     this.disc = null;
+    this.controlFile = dir ? path.join(dir, 'qbo-control.json') : '';
+    this.control = { paused: false };
     try { if (this.file) Object.assign(this.t, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* first start */ }
+    try { if (this.controlFile) Object.assign(this.control, JSON.parse(fs.readFileSync(this.controlFile, 'utf8'))); } catch { /* not paused */ }
   }
+
+  /** The owner's kill switch (survives a restart): while paused, no call is made to QuickBooks at all. */
+  get paused() { return !!this.control.paused; }
+  setPaused(on) {
+    this.control = { paused: !!on, at: new Date(this.now()).toISOString() };
+    if (!this.controlFile) return;
+    try { fs.mkdirSync(path.dirname(this.controlFile), { recursive: true }); fs.writeFileSync(this.controlFile, JSON.stringify(this.control), { mode: 0o600 }); } catch { /* best effort */ }
+  }
+
+  pausedError() { const e = new QboError('QuickBooks is paused by the owner'); e.paused = true; return e; }
 
   get env() { return this.config.qboEnv === 'production' ? 'production' : 'sandbox'; }
   get base() { return BASES[this.env]; }
@@ -225,6 +238,7 @@ export class Qbo {
   }
 
   async accessToken() {
+    if (this.paused) throw this.pausedError();
     if (this.needsReconnect) throw this.reconnectError();
     if (this.t.access && this.t.accessExpiresAt - this.now() > 60 * 1000) return this.t.access;
     return this.refreshOnce();
@@ -239,7 +253,7 @@ export class Qbo {
   /** Refreshes BEFORE the access token expires (called every few minutes), so the refresh token also stays alive. Never throws. */
   async keepFresh({ marginMs = 10 * 60 * 1000 } = {}) {
     try {
-      if (!this.connected || this.needsReconnect) return false;
+      if (this.paused || !this.connected || this.needsReconnect) return false;
       if (this.t.access && this.t.accessExpiresAt - this.now() > marginMs) return false;
       await this.refreshOnce();
       return true;
@@ -252,7 +266,13 @@ export class Qbo {
     return this.send('GET', pathPart, query, undefined);
   }
 
-  async send(method, pathPart, query, body) {
+  /** A GET that returns bytes (an invoice PDF). */
+  async getBinary(pathPart, query = {}) {
+    return this.send('GET', pathPart, query, undefined, { accept: 'application/pdf', binary: true });
+  }
+
+  async send(method, pathPart, query, body, { accept = 'application/json', binary = false } = {}) {
+    if (this.paused) throw this.pausedError();
     if (!this.realm) throw new QboError('QuickBooks is not connected (no company id)');
     // spaces as %20 (Intuit's own examples), not the "+" of form encoding
     const qs = Object.entries({ ...query, minorversion: String(this.config.qboMinorVersion || 75) }).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
@@ -263,7 +283,7 @@ export class Qbo {
       const token = await this.accessToken();
       const res = await this.fetchFn(url, {
         method,
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { Authorization: `Bearer ${token}`, Accept: accept, ...(body ? { 'Content-Type': 'application/json' } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
       this.lastCall = { at: this.now(), status: res.status };
@@ -275,6 +295,7 @@ export class Qbo {
         await this.sleep(Math.min(30000, Number.isFinite(ra) && ra > 0 ? ra * 1000 : 1000 * 2 ** attempt));
         continue;
       }
+      if (binary && res.ok) return Buffer.from(await res.arrayBuffer());
       let j = {};
       try { j = await res.json(); } catch { /* not json */ }
       if (!res.ok) {
@@ -305,9 +326,13 @@ export class Qbo {
     return j?.CompanyInfo || null;
   }
 
-  /** Every write goes through here and refuses unless QBO_WRITE is on. This stage defines no caller. */
-  async write(method, pathPart, body) {
+  /**
+   * Every write goes through here. It refuses unless QBO_WRITE is on, and it knows ONE write only: create an invoice (POST invoice). Anything else
+   * (a delete, a void, a payment, a refund, an update) is refused here whatever the caller asks. [requestId] makes the create idempotent.
+   */
+  async write(method, pathPart, body, { requestId = '' } = {}) {
     if (!this.writeOn) throw new QboError('QuickBooks writes are switched off (QBO_WRITE)');
-    return this.send(method, pathPart, {}, body);
+    if (method !== 'POST' || pathPart !== 'invoice') throw new QboError('QuickBooks: only creating an invoice is allowed');
+    return this.send('POST', 'invoice', requestId ? { requestid: requestId } : {}, body);
   }
 }

@@ -117,6 +117,7 @@ export class QboDesk {
       this.cache = { at: 0, customers: [] };
       return [`کوییک‌بوکس قطع شد: ${revoked ? 'دسترسی در اینتوییت لغو شد و' : 'لغو در اینتوییت انجام نشد (یا توکنی نبود)، ولی'} توکن‌های ذخیره‌شده پاک شدند. برای وصل دوباره: اتصال کوییک‌بوکس`];
     }
+    if (c.type !== 'status' && this.qbo.paused) return ['کوییک‌بوکس با فرمان مالک متوقف است؛ بنویسید: ادامهٔ کوییک‌بوکس'];
     if (c.type !== 'status') {
       if (this.qbo.needsReconnect) return ['کوییک‌بوکس باید دوباره وصل شود؛ بنویسید: اتصال کوییک‌بوکس'];
       if (!this.qbo.connected) return ['کوییک‌بوکس وصل نیست؛ بنویسید: اتصال کوییک‌بوکس'];
@@ -134,6 +135,7 @@ export class QboDesk {
     } catch (e) {
       this.log(`QuickBooks command failed: ${e.name} ${e.status || ''}`);
       if (e.reconnect) return ['کوییک‌بوکس باید دوباره وصل شود؛ بنویسید: اتصال کوییک‌بوکس'];
+      if (e.paused) return ['کوییک‌بوکس با فرمان مالک متوقف است؛ بنویسید: ادامهٔ کوییک‌بوکس'];
       return [`خطا در کوییک‌بوکس: ${e.message}. چیزی نوشته نشد.`];
     }
   }
@@ -146,7 +148,7 @@ export class QboDesk {
     let ok = false;
     try { name = (await this.qbo.companyInfo())?.CompanyName || ''; ok = true; } catch (e) { name = e.message; }
     const last = this.qbo.lastCall.at ? `${new Date(this.qbo.lastCall.at).toISOString().replace('T', ' ').slice(0, 19)} (وضعیت ${fa(this.qbo.lastCall.status)})` : 'هنوز نبوده';
-    return [`کوییک‌بوکس: ${ok ? 'وصل است' : 'وصل نیست'}`, `محیط: ${this.qbo.env === 'production' ? 'اصلی' : 'آزمایشی'}`, ok ? `شرکت: ${name}` : `خطا: ${name}`, `آخرین تماس: ${last}`, `نوشتن در کوییک‌بوکس: ${this.qbo.writeOn ? 'روشن' : 'خاموش'}`].join('\n');
+    return [`کوییک‌بوکس: ${ok ? 'وصل است' : 'وصل نیست'}`, `محیط: ${this.qbo.env === 'production' ? 'اصلی' : 'آزمایشی'}`, ok ? `شرکت: ${name}` : `خطا: ${name}`, `آخرین تماس: ${last}`, `نوشتن در کوییک‌بوکس: ${this.qbo.writeOn ? 'روشن' : 'خاموش'}`, `کلید توقف: ${this.qbo.paused ? 'متوقف (ادامهٔ کوییک‌بوکس را بنویسید)' : 'روشن نیست'}`].join('\n');
   }
 
   /** The match table: our approved customers against QuickBooks. A sure match is saved; an unsure one is asked. */
@@ -200,8 +202,25 @@ export class QboDesk {
     return { ours, options: m.options || [] };
   }
 
-  /** One statement to the test group. Returns the lines to tell the owner. */
-  async statementOne(typed) {
+  /**
+   * Our customer's QuickBooks id for an INVOICE: only an exact name (Display, Company or Fully qualified name) or a choice the owner confirmed.
+   * Never a guess: an unsure one returns the candidates to ask about.
+   */
+  async resolveStrict(typed) {
+    const row = customerRowFor(typed, { list: this.list, aliases: this.aliases });
+    const ours = row?.customer || typed;
+    const saved = this.map.get(ours);
+    if (saved && (saved.how === 'owner' || saved.how === 'exact')) return { ours, id: saved.id, name: saved.name };
+    const all = await this.customers();
+    const key = nameKey(ours);
+    const exact = all.filter((c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName].some((n) => n && nameKey(n) === key));
+    if (exact.length === 1) { const name = exact[0].DisplayName || exact[0].CompanyName; this.map.set(ours, exact[0].Id, name, 'exact'); return { ours, id: String(exact[0].Id), name }; }
+    if (exact.length > 1) return { ours, ambiguous: exact };
+    return { ours, options: matchOne(ours, all).options || [] };
+  }
+
+  /** One statement to the test group (or, for an authorized person, to that person's own private chat). Returns the lines to tell the asker. */
+  async statementOne(typed, privateJid = null) {
     const r = await this.resolve(typed);
     if (!r.id) {
       if (r.options.length) {
@@ -213,14 +232,18 @@ export class QboDesk {
       }
       return { ok: false, text: `برای «${r.ours}» مشتری مشابهی در کوییک‌بوکس پیدا نشد.` };
     }
-    const target = pickTestGroup(await this.groups(), this.config);
-    if (!target) return { ok: false, text: 'گروه آزمایشی پیدا نشد؛ چیزی فرستاده نشد.' };
+    let targetId = privateJid;
+    if (!targetId) {
+      const target = pickTestGroup(await this.groups(), this.config);
+      if (!target) return { ok: false, text: 'گروه آزمایشی پیدا نشد؛ چیزی فرستاده نشد.' };
+      targetId = target.id;
+    }
     const data = buildStatementData({ ...(await loadCustomerData(this.qbo, r.id)), today: this.today() });
     const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox' });
     const safe = (data.customer.name || r.ours).replace(/[^\w.-]+/g, '_').slice(0, 40) || 'customer';
     const cur = data.currency ? `${data.currency} ` : '';
     const caption = `Statement - ${data.customer.name || r.ours} - balance ${cur}${money(data.closing)}${data.balanceCheck.matches === false ? ` (QuickBooks balance differs: ${cur}${money(data.balanceCheck.qbo)})` : ''}`;
-    await this.post(target.id, pdf, `statement-${safe}.pdf`, caption);
+    await this.post(targetId, pdf, `statement-${safe}.pdf`, caption);
     return { ok: true, text: `صورت‌حساب «${data.customer.name || r.ours}» به گروه آزمایشی رفت (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${data.balanceCheck.matches === false ? '؛ با مانده کوییک‌بوکس نمی‌خواند' : ''}).` };
   }
 

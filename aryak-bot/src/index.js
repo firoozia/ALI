@@ -26,7 +26,8 @@ import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, 
 import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
 import { Qbo, looksLikeConnectLine, parseConnectLine } from './qbo.js';
-import { QboDesk, QboMap, parseQboCommand } from './qbodesk.js';
+import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
+import { Audit, AuthStore, InvoiceStore, QboInvoiceDesk, parseInvoiceCommand } from './qboinvoice.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
@@ -599,13 +600,64 @@ const qbo = new Qbo({
   onReconnect: () => { const own = ownIds()[0]; if (own && sock) sock.sendMessage(own, { text: '🤖 کوییک‌بوکس باید دوباره وصل شود. بنویسید: اتصال کوییک‌بوکس' }).catch(() => {}); },
 });
 setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); // refresh before the access token expires, not only when a call finds it expired
+const postDocument = async (jid, buf, fileName, caption) => { const r = await sock.sendMessage(jid, { document: buf, mimetype: 'application/pdf', fileName, caption }); if (!r) throw new Error('the document was not sent'); };
+const allGroups = async () => Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
+const qboChats = new Set(); // private chats of the people the owner authorized: the only extra chats the program may write to
 const qboDesk = new QboDesk({
   qbo, list: customerGroups, aliases, map: new QboMap(path.join(config.authDir, 'qbo')), config,
-  groups: async () => Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' })),
-  post: async (jid, buf, fileName, caption) => { const r = await sock.sendMessage(jid, { document: buf, mimetype: 'application/pdf', fileName, caption }); if (!r) throw new Error('the statement was not sent'); },
+  groups: allGroups,
+  post: postDocument,
   today: () => localParts(Date.now(), config.timezone).day,
   log: (s) => logger.info(s),
 });
+// Invoices in QuickBooks: a request becomes a PREVIEW for the owner; only HIS "بله #Q12" in his own chat creates it (QBO_WRITE must be on too).
+const qboAuth = new AuthStore(path.join(config.authDir, 'qbo'));
+const qboInvoices = new QboInvoiceDesk({
+  qbo, desk: qboDesk, store: new InvoiceStore(path.join(config.authDir, 'qbo')), audit: new Audit(path.join(config.authDir, 'qbo')), book, config,
+  today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
+});
+/** The owner's invoice commands (his own chat): request, yes, no, pause, resume, audit, and the list of people allowed to ask. */
+async function qboInvoiceCommand(ic, text) {
+  switch (ic.type) {
+    case 'request': { const r = await qboInvoices.request({ text, requester: 'owner' }); return [r.owner || r.requester]; }
+    case 'yes': case 'no': return qboInvoices.decide({ verb: ic.type, id: ic.id });
+    case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
+    case 'resume': qbo.setPaused(false); qboInvoices.audit.add({ event: 'resume', approver: 'owner' }); return ['کوییک‌بوکس ادامه یافت.'];
+    case 'audit': return [qboInvoices.auditText(10)];
+    case 'auth_add': { const n = qboAuth.add(ic.number); if (n) qboInvoices.audit.add({ event: 'authorize', approver: 'owner', reason: n }); return [n ? `مجوز فاکتور و صورت‌حساب برای ${n} ثبت شد. هر فاکتورش منتظر «بله» شما می‌ماند.` : 'شماره درست نیست (۸ تا ۱۵ رقم با کد کشور).']; }
+    case 'auth_remove': { const ok = qboAuth.remove(ic.number); if (ok) qboInvoices.audit.add({ event: 'deauthorize', approver: 'owner' }); return [ok ? 'مجوز برداشته شد.' : 'این شماره در فهرست مجازها نبود.']; }
+    case 'auth_list': return [qboAuth.numbers().length ? ['مجازها برای فاکتور و صورت‌حساب:', ...qboAuth.numbers().map((n) => `• ${n}`)].join('\n') : 'کسی مجوز ندارد. بنویسید: مجوز فاکتور <شماره با کد کشور>'];
+    default: return [];
+  }
+}
+
+/**
+ * A person the owner authorized, in a private chat with the bot: an invoice request (becomes a PREVIEW for the owner; nothing is created) or a
+ * statement for one customer (returned to that private chat only). Anything else from them is ignored as before. Replies are short English.
+ */
+async function authorizedFlow({ chatId, text }) {
+  const ic = parseInvoiceCommand(text);
+  const qc = ic ? null : parseQboCommand(text);
+  const isRequest = ic?.type === 'request';
+  const isStatement = qc?.type === 'statement';
+  if (!isRequest && !isStatement) return false;
+  qboChats.add(chatId);
+  const say = (t) => sock.sendMessage(chatId, { text: t });
+  try {
+    if (isRequest) {
+      const r = await qboInvoices.request({ text, requester: jidDigits(chatId) });
+      await say(r.requester);
+      if (r.owner) await sock.sendMessage(ownIds()[0], { text: `🤖 ${r.owner}` });
+    } else {
+      const x = await qboDesk.statementOne(qc.name, chatId);
+      if (!x.ok) await say('I could not find exactly one matching customer in QuickBooks (or QuickBooks is not available). Please ask the owner.');
+    }
+  } catch (e) {
+    logger.warn(`authorized QuickBooks request failed: ${e.name} ${e.status || ''}`);
+    await say(e.paused ? 'QuickBooks is paused by the owner.' : e.reconnect ? 'QuickBooks needs reconnecting; please tell the owner.' : 'I could not do that now. Please tell the owner.');
+  }
+  return true;
+}
 const taught = new TaughtStore(path.join(config.authDir, 'taught')); // what the owner taught in words: numbered, versioned, removable
 const teachDesk = new TeachDesk({ store: taught });
 const teachFx = () => ({ aliases, customerGroups, rules, watchList, config });
@@ -1108,6 +1160,8 @@ async function handleStaffChat(raw, chatId, group) {
     const who = group ? { sender: raw.key.participant, senderAlt: raw.key.participantAlt } : { sender: chatId, senderAlt: raw.key.remoteJidAlt };
     let staff = staffChecker(config.staffNumbers, info.lidToPhone)(who);
     if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(who); }
+    // a person the owner authorized for invoices and statements: only those commands are taken, in a private chat (the rest is ignored as before)
+    if (!group && text && qboAuth.isAuthorized(who, info.lidToPhone) && (await authorizedFlow({ chatId, text }))) { trace(where, 'authorized', 'QuickBooks request'); return true; }
     if (!staff) { trace(where, 'not-staff', group ? 'left to the customer flow' : 'ignored: private chat from a number that is not staff'); return false; }
     admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
     ownerPerson = staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;
@@ -1231,6 +1285,14 @@ async function handleStaffChat(raw, chatId, group) {
     if (qc && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
       qboDesk.finish = async (parts) => { for (const part of parts) await reply(part); };
       for (const part of await qboDesk.handle(qc)) await reply(part);
+      return true;
+    }
+  }
+  // The owner's invoice commands (his own chat, owner only): the request, his yes or no, the kill switch, the audit report, the authorized people.
+  if (text && !audio && !image && !group && isSelf) {
+    const ic = parseInvoiceCommand(text);
+    if (ic && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
+      for (const part of await qboInvoiceCommand(ic, text)) await reply(part);
       return true;
     }
   }
@@ -1721,7 +1783,7 @@ async function start() {
   sock = makeWASocket({ auth: state, logger: logger.child({ module: 'baileys' }, { level: 'warn' }) });
   const rawSend = sock.sendMessage.bind(sock);
   // EVERY message leaves through this one function; the guard decides whether the destination may be written to.
-  const guarded = guardedSend({ rawSend, config, oneShot, isGroup: isJidGroup, known: staffChats, ownIds: () => ownIds(), log: (s) => logger.warn(s), subjectOf: async (jid) => groups.get(jid)?.subject ?? (await groupInfo(jid)).subject });
+  const guarded = guardedSend({ rawSend, config, oneShot, isGroup: isJidGroup, known: { has: (j) => staffChats.has(j) || qboChats.has(j) }, ownIds: () => ownIds(), log: (s) => logger.warn(s), subjectOf: async (jid) => groups.get(jid)?.subject ?? (await groupInfo(jid)).subject });
   // What colleagues read is English, whatever generated it: every group except a test group, and every private chat except the owner's.
   const englishFor = async (jid) => {
     if (isJidGroup(jid)) { const why = groupAllowed(groups.get(jid)?.subject ?? (await groupInfo(jid)).subject, config).why; return why === 'internal group' || why === 'test group'; } // a customer group keeps the customer's language
