@@ -7,6 +7,9 @@ import { Qbo, QboError } from '../src/qbo.js';
 import { QboDesk, QboMap, pickTestGroup } from '../src/qbodesk.js';
 import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
+import { STAFF_RULES } from '../src/staff.js';
+import { extractInvoiceRequest, validateExtraction } from '../src/qboextract.js';
+import { ItemCodes, itemsContaining, looksLikeInvoiceRequest } from '../src/qboinvoice.js';
 import { Audit, AuthStore, CAP_DAY, CAP_HOUR, EXPIRY_MS, InvoiceStore, QboInvoiceDesk, TaxChoices, codeFromInvoices, itemsNamed, lineCandidates, parseInvoiceCommand, resolveLines, taxCodeMap, totals } from '../src/qboinvoice.js';
 
 // Invented names, items, numbers and amounts only: nothing real is ever in the repository.
@@ -58,7 +61,7 @@ function mockQbo(opts = {}) {
     if (p.includes('/companyinfo/')) return res(200, { CompanyInfo: { CompanyName: 'The Test Workshop', Country: 'AE' } });
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
-    const rows = { Customer: CUSTOMERS, Item: ITEMS, TaxCode: opts.taxCodes || TAXCODES, TaxRate: TAXRATES, Invoice: opts.invoices || RECENT, Payment: [], CreditMemo: [] }[ent] || [];
+    const rows = { Customer: opts.customers || CUSTOMERS, Item: opts.items || ITEMS, TaxCode: opts.taxCodes || TAXCODES, TaxRate: TAXRATES, Invoice: opts.invoices || RECENT, Payment: [], CreditMemo: [] }[ent] || [];
     return res(200, { QueryResponse: { [ent]: rows } });
   };
   return { fetchFn, calls, posts, invoices };
@@ -81,8 +84,11 @@ function mk(opts = {}) {
   const store = new InvoiceStore(path.join(dir, 'qbo'));
   const audit = new Audit(path.join(dir, 'qbo'), () => clock.t);
   const book = opts.book || null;
-  const inv = new QboInvoiceDesk({ qbo, desk, store, audit, book, taxChoices: new TaxChoices(path.join(dir, 'qbo')), config, today: () => '2026-11-08', now: () => clock.t, post, ownerJid: () => OWNER_JID, groups: async () => GROUPS, testGroup: (g) => pickTestGroup(g, config), log: () => {} });
-  return { dir, m, clock, config, qbo, desk, inv, store, audit, sent, map, list };
+  const itemCodes = new ItemCodes(path.join(dir, 'qbo'));
+  const extractCalls = [];
+  const extract = opts.extract ? async (text) => { extractCalls.push(text); return opts.extract(text); } : null;
+  const inv = new QboInvoiceDesk({ qbo, desk, store, audit, book, taxChoices: new TaxChoices(path.join(dir, 'qbo')), itemCodes, extract, config, today: () => '2026-11-08', now: () => clock.t, post, ownerJid: () => OWNER_JID, groups: async () => GROUPS, testGroup: (g) => pickTestGroup(g, config), log: () => {} });
+  return { dir, m, clock, config, qbo, desk, inv, store, audit, sent, map, list, itemCodes, extractCalls };
 }
 const REQ = 'فاکتور بساز Orion Furniture\nHinge 35mm, 10\nEdge Tape White, 3, 1.1';
 
@@ -139,7 +145,7 @@ test('a request becomes a PREVIEW for the owner: customer, lines, subtotal, VAT 
   const t = mk({ book: { priceOf: (code) => (code === 'ET-W' ? { price: 1.3 } : null) } });
   const r = await t.inv.request({ text: REQ, requester: '971501112222' });
   assert.ok(r.requester.includes('#Q1') && r.requester.includes('sent to the owner for approval'));
-  for (const s of ['پیش‌نمایش فاکتور #Q1', 'Orion Furniture', 'Hinge 35mm × 10 @ 2.5 = 25.00', 'Edge Tape White × 3 @ 1.1 = 3.30', 'جمع قبل از مالیات: 28.30', 'مالیات 5٪ (5% S، از فاکتورهای قبلی دفتر): 1.42', 'جمع کل: 29.72 AED', 'بله #Q1', 'نه #Q1']) assert.ok(r.owner.includes(s), s);
+  for (const s of ['پیش‌نمایش فاکتور #Q1', 'Orion Furniture', 'Hinge 35mm [H35] × 10 @ 2.5 = 25.00', 'Edge Tape White [ET-W] × 3 @ 1.1 = 3.30', 'جمع قبل از مالیات: 28.30', 'مالیات 5٪ (5% S، از فاکتورهای قبلی دفتر): 1.42', 'جمع کل: 29.72 AED', 'بله #Q1', 'نه #Q1']) assert.ok(r.owner.includes(s), s);
   assert.ok(r.owner.includes('سطر ۲') && r.owner.includes('کمتر از قیمت کوییک‌بوکس (1.2)') && r.owner.includes('کمتر از فهرست قیمت مالک (1.3)'));
   assert.equal(t.m.posts.length, 0);
   assert.equal(t.store.get('Q1').status, 'pending');
@@ -162,10 +168,11 @@ test('an unknown customer or item stops with "map this first" and the candidates
   assert.equal(t.store.d.n, 0); // no id is spent on a request that stopped
   assert.equal(t.m.posts.length, 0);
   // an auto-matched (fuzzy) choice from the statement is not enough; the owner's confirmed one is
-  t.map.set('Cedar Wood', '59', 'Cedar Wood Works', 'auto');
-  assert.equal((await t.inv.request({ text: 'فاکتور بساز Cedar Wood\nH35, 1', requester: 'owner' })).owner, null);
-  t.map.set('Cedar Wood', '59', 'Cedar Wood Works', 'owner');
-  assert.ok((await t.inv.request({ text: 'فاکتور بساز Cedar Wood\nH35, 1', requester: 'owner' })).owner.includes('Cedar Wood Works'));
+  t.map.set('Cedar Wod', '59', 'Cedar Wood Works', 'auto');
+  assert.equal((await t.inv.request({ text: 'فاکتور بساز Cedar Wod\nH35, 1', requester: 'owner' })).owner, null); // a misspelling mapped automatically is not enough
+  t.map.set('Cedar Wod', '59', 'Cedar Wood Works', 'owner');
+  assert.ok((await t.inv.request({ text: 'فاکتور بساز Cedar Wod\nH35, 1', requester: 'owner' })).owner.includes('Cedar Wood Works')); // the owner's confirmed choice is
+  assert.ok((await t.inv.request({ text: 'فاکتور بساز Cedar\nH35, 1', requester: 'owner' })).owner.includes('(از «Cedar»)')); // one customer holds the word: used and shown
 });
 
 test('only the owner\'s yes creates: the invoice body, the request id, the read-back, the PDF to his chat and the test group only', async () => {
@@ -373,4 +380,114 @@ test('the VAT code is that of THE CUSTOMER: zero-rated customers pay no VAT, an 
   // the words
   assert.deepEqual(parseInvoiceCommand('کد مالیات Orion Furniture = Zero rated'), { type: 'tax_set', customer: 'Orion Furniture', code: 'Zero rated' });
   assert.deepEqual(parseInvoiceCommand('کدهای مالیات'), { type: 'tax_list' });
+});
+
+// ------------------------------------------------------------------------------------------------ the owner's real first request
+const OWNER_MESSAGE = 'اتوسا فاکتور بساز مشتری برای / Ar-rad / Code 108 / 32.5m / 12 aed / Code 105 / 14.5m / 12aed / Code 1810 / 5m / 8aed';
+const ARRAD = { Id: '70', DisplayName: 'AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC', Balance: 0 };
+const REAL_ITEMS = [
+  { Id: '31', Name: '108', Sku: '108', UnitPrice: 12.5, Active: true }, { Id: '32', Name: '105', Sku: '105', UnitPrice: 12.5, Active: true },
+  { Id: '33', Name: '1810 edge banding', Sku: '', UnitPrice: 4.5, Active: true }, { Id: '34', Name: 'B 1810', Sku: 'B1810', UnitPrice: 5, Active: true }, { Id: '35', Name: 'PVC 1810', Sku: 'P1810', UnitPrice: 8.5, Active: true },
+];
+const EXTRACTED = { customer: 'Ar-rad', lines: [{ item: '108', qty: 32.5, price: 12 }, { item: '105', qty: 14.5, price: 12 }, { item: '1810', qty: 5, price: 8 }], unsure: [] };
+const hist = (...ids) => [{ Id: '801', Line: [...ids.map((id) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { ItemRef: { value: id }, TaxCodeRef: { value: '11' } } }))] }];
+const realMk = (extra = {}) => {
+  const t = mk({ customers: [ARRAD, ...CUSTOMERS], items: REAL_ITEMS, extract: async () => EXTRACTED, invoices: hist('31'), ...extra });
+  t.list.approve('Ar-Rad INTL(IBN AJMI)', 'arrad@g.us', 'Ar-Rad INTL(IBN AJMI)\u2013 ARYAK');
+  return t;
+};
+
+test('free-form requests go to the invoice flow: any layout, with or without the assistant\'s name; never a question or a send', () => {
+  assert.equal(parseInvoiceCommand(OWNER_MESSAGE).type, 'request');
+  assert.equal(parseInvoiceCommand(OWNER_MESSAGE).free, undefined); // its first line is read as the strict form, but it has no lines, so it is read by the model
+  for (const t of ['فاکتور بزن برای Ar-rad\nکد 108 تعداد 32 قیمت 12', 'اتوسا فاکتور رو بساز: Cedar / 105 / 4m', 'لطفا یک فاکتور صادر کن برای ar-rad', 'create an invoice for Cedar, code 108, 5 m', 'آتوسا فاکتور بساز']) assert.equal(looksLikeInvoiceRequest(t), true, t);
+  for (const t of ['فاکتور Cedar را بفرست', 'فاکتور بساز؟', 'send the invoice of Cedar', 'چند فاکتور داریم', 'سلام']) assert.equal(looksLikeInvoiceRequest(t), false, t);
+  assert.equal(parseInvoiceCommand('فاکتور بزن برای Cedar\n108, 3').free, true);
+  assert.deepEqual(parseInvoiceCommand('کد 1810 = PVC 1810'), { type: 'item_code', code: '1810', item: 'PVC 1810', customer: '' });
+  assert.deepEqual(parseInvoiceCommand('کد 1810 = PVC 1810 مشتری Ar-rad'), { type: 'item_code', code: '1810', item: 'PVC 1810', customer: 'Ar-rad' });
+  assert.deepEqual(parseInvoiceCommand('کد مالیات Cedar = Zero rated'), { type: 'tax_set', customer: 'Cedar', code: 'Zero rated' }); // the tax command is not taken for an item code
+  assert.ok(STAFF_RULES.includes('Making an invoice: you CAN') && STAFF_RULES.includes('Never say you cannot make invoices'));
+});
+
+test('the model only EXTRACTS: a strict shape, nothing invented, an unclear request stops with what was understood', async () => {
+  const client = (answer) => ({ beta: { messages: { create: async () => ({ content: [{ type: 'text', text: typeof answer === 'string' ? answer : JSON.stringify(answer) }] }) } } });
+  const ok = await extractInvoiceRequest({ client: client(`Here: ${JSON.stringify(EXTRACTED)}`), config: { model: 'm' }, text: OWNER_MESSAGE });
+  assert.deepEqual(ok, EXTRACTED);
+  assert.equal(await extractInvoiceRequest({ client: client('no json'), config: { model: 'm' }, text: 'x' }), null);
+  const v = validateExtraction({ customer: '  ', lines: [{ item: 'A', qty: 2, price: -1 }, { item: null, qty: 3, price: null }, { item: 'B', qty: null, price: 1 }, { item: 'C', qty: '5', price: 1 }, { item: 'D', qty: 1.5, price: 0 }], unsure: ['odd count'] });
+  assert.equal(v.customer, null);
+  assert.deepEqual(v.lines, [{ item: 'D', qty: 1.5, price: 0 }]); // a bad price, a missing item, a missing or text quantity: none is kept or guessed
+  assert.equal(v.unsure.length, 1 + 4);
+  const t = realMk({ extract: async () => ({ customer: 'Ar-rad', lines: [{ item: '108', qty: 32.5, price: 12 }], unsure: ['یک عدد بدون کالا'] }) });
+  const r = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.equal(r.owner, null);
+  assert.ok(r.requester.includes('این را فهمیدم') && r.requester.includes('Ar-rad') && r.requester.includes('108 × 32.5 @ 12') && r.requester.includes('مطمئن نیستم') && r.requester.includes('چیزی ساخته نشد'));
+  assert.equal(t.store.d.n, 0);
+  const none = realMk({ extract: async () => ({ customer: null, lines: [], unsure: [] }) });
+  assert.ok((await none.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).requester.includes('نام مشتری مشخص نیست'));
+  const broken = realMk({ extract: async () => { throw new Error('down'); } });
+  assert.ok((await broken.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).requester.includes('درخواست را نفهمیدم'));
+  // the strict format needs no model at all
+  const strict = realMk();
+  await strict.inv.request({ text: 'فاکتور بساز AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC\n108, 3, 12', requester: 'owner' });
+  assert.equal(strict.extractCalls.length, 0);
+});
+
+test('the owner\'s exact message: "Ar-rad" is found as the one customer that holds those words; 108 and 105 are shown as what they are; 1810 is settled by what he bought before', async () => {
+  const t = realMk({ invoices: hist('31', '35') }); // he bought PVC 1810 before
+  const r = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.equal(t.extractCalls.length, 1);
+  assert.ok(r.owner, r.requester);
+  for (const s of ['مشتری: AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC (از «Ar-rad»)', '108 × 32.5 @ 12 = 390.00', '105 × 14.5 @ 12 = 174.00', 'PVC 1810 [P1810] × 5 @ 8 = 40.00 (از خریدهای قبلی مشتری)', 'جمع قبل از مالیات: 604.00', 'مالیات 5٪ (5% S، از فاکتورهای قبلی دفتر): 30.20', 'جمع کل: 634.20']) assert.ok(r.owner.includes(s), s);
+  assert.deepEqual(t.store.get('Q1').customer, { ours: 'Ar-rad', id: '70', name: 'AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC', from: 'Ar-rad' });
+  assert.equal(t.m.posts.length, 0); // the preview creates nothing
+  await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(t.m.posts[0].body.Line.map((l) => [l.SalesItemLineDetail.ItemRef.value, l.SalesItemLineDetail.Qty, l.SalesItemLineDetail.UnitPrice]), [['31', 32.5, 12], ['32', 14.5, 12], ['35', 5, 8]]);
+});
+
+test('a code that fits several items and was never bought: the candidates are listed with their prices and the request stops; the owner teaches the code once', async () => {
+  const t = realMk({ invoices: hist('31') });
+  const stop = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.equal(stop.owner, null);
+  for (const s of ['سطر ۳', '«1810» چند کالا دارد', '۱) 1810 edge banding — قیمت 4.5', '۲) B 1810 [B1810] — قیمت 5', '۳) PVC 1810 [P1810] — قیمت 8.5', 'کد 1810 = <نام دقیق کالا>']) assert.ok(stop.requester.includes(s), s);
+  assert.equal(t.store.d.n, 0);
+  assert.equal(itemsContaining(REAL_ITEMS, '1810').length, 3);
+  assert.equal(itemsContaining(REAL_ITEMS, '181').length, 0); // whole words only
+  // two candidates bought before: still no choice made
+  const two = realMk({ invoices: hist('34', '35') });
+  assert.equal((await two.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).owner, null);
+  // he teaches it for everybody
+  assert.ok((await t.inv.setItemCode({ code: '1810', item: 'PVC 1810', customer: '' })).join('').includes('برای همهٔ مشتری‌ها'));
+  const again = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.ok(again.owner.includes('PVC 1810 [P1810] × 5 @ 8 = 40.00 (کد آموخته‌شدهٔ مالک)'));
+  assert.equal(new ItemCodes(path.join(t.dir, 'qbo')).get('70', '1810').name, 'PVC 1810'); // kept on the VM
+  // taught for one customer only: another customer is not affected
+  const one = realMk({ invoices: hist('31') });
+  assert.ok((await one.inv.setItemCode({ code: '1810', item: 'B 1810', customer: 'Ar-rad' })).join('').includes('برای مشتری AR-RAD'));
+  assert.ok((await one.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).owner.includes('B 1810 [B1810] × 5 @ 8 = 40.00 (کد آموخته‌شدهٔ مالک)'));
+  assert.equal(one.itemCodes.get('59', '1810'), null);
+  // errors: a name that is not exactly one item; a customer that is not unique
+  assert.ok((await t.inv.setItemCode({ code: '1810', item: 'Nope', customer: '' })).join('').includes('دقیقاً پیدا نشد'));
+  assert.ok((await t.inv.setItemCode({ code: '1810', item: '1810', customer: '' })).join('').includes('دقیقاً پیدا نشد')); // "1810" alone is not an item name
+});
+
+test('a short customer name: exactly one match is used and shown; several are listed and the request stops; none says map it first', async () => {
+  const two = realMk({ customers: [ARRAD, { Id: '71', DisplayName: 'Ar Rad Trading', Balance: 0 }, ...CUSTOMERS] });
+  const r = await two.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.equal(r.owner, null);
+  assert.ok(r.requester.includes('بین آن‌ها حدس نمی‌زنم') && r.requester.includes('۱) AR-RAD INTERNATIONAL') && r.requester.includes('۲) Ar Rad Trading'));
+  assert.equal(two.store.d.n, 0);
+  const nobody = realMk({ extract: async () => ({ ...EXTRACTED, customer: 'Zorvan' }) });
+  assert.ok((await nobody.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).requester.includes('تطبیق کوییک‌بوکس'));
+  // a word that is only part of a word is not a match ("rad" is not "radiant")
+  const part = realMk({ customers: [{ Id: '72', DisplayName: 'RADIANT LIGHTING', Balance: 0 }, ...CUSTOMERS], extract: async () => ({ ...EXTRACTED, customer: 'rad' }) });
+  assert.ok((await part.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).requester.includes('تطبیق کوییک‌بوکس'));
+  // the approved list: a group name holds the words, its customer is found in QuickBooks by those words
+  const viaList = realMk({ extract: async () => ({ ...EXTRACTED, customer: 'Ibn Ajmi' }) });
+  const v = await viaList.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.equal(v.owner, null); // the row's name is not in QuickBooks under those words, so nothing is guessed
+  // and an authorized person gets the same flow: the preview goes to the owner
+  const auth = realMk({ invoices: hist('31', '35') });
+  const ar = await auth.inv.request({ text: OWNER_MESSAGE, requester: '971501112222' });
+  assert.ok(ar.requester.includes('#Q1') && ar.owner.includes('شمارهٔ 971501112222') && ar.owner.includes('(از «Ar-rad»)'));
 });

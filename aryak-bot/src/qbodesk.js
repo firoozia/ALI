@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { clearWinner, customerRowFor, nameKey, rankCustomers } from './customergroups.js';
+import { clearWinner, customerRowFor, nameKey, rankCustomers, rowGroups } from './customergroups.js';
 import { buildStatementData, loadCustomerData, money, statementPdf } from './qbostatement.js';
 import { groupAllowed, shadowGroup } from './guard.js';
 
@@ -217,6 +217,34 @@ export class QboDesk {
     if (exact.length === 1) { const name = exact[0].DisplayName || exact[0].CompanyName; this.map.set(ours, exact[0].Id, name, 'exact'); return { ours, id: String(exact[0].Id), name }; }
     if (exact.length > 1) return { ours, ambiguous: exact };
     return { ours, options: matchOne(ours, all).options || [] };
+  }
+
+  /**
+   * A customer for an INVOICE from a short or partial name ("Ar-rad"). Exact or confirmed first (resolveStrict); then the owner's approved list
+   * (a customer or group name that holds all the words as whole words), then the QuickBooks customers that hold all the words as whole words
+   * (case, hyphen and space do not matter). Exactly one -> used, and the preview says "from «<typed>»" (his yes on the preview is the
+   * confirmation); several -> { candidates } and the request stops. Never a choice between two.
+   */
+  async resolveLoose(typed) {
+    const strict = await this.resolveStrict(typed);
+    if (strict.id) return { ...strict, loose: false };
+    const tk = nameKey(typed).split(' ').filter(Boolean);
+    const whole = (name, words = tk) => { const t = new Set(nameKey(name).split(' ')); return words.length > 0 && words.every((x) => t.has(x)); };
+    const rows = this.list.rows().filter((r) => whole(r.customer) || rowGroups(r).some((g) => whole(String(g.subject).replace(/aryak/gi, ' '))));
+    if (rows.length > 1) return { ours: typed, candidates: rows.map((r) => r.customer).slice(0, 8) };
+    if (rows.length === 1) {
+      const s = await this.resolveStrict(rows[0].customer);
+      if (s.id) return { ...s, loose: true, typed };
+    }
+    const all = await this.customers();
+    const names = (c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName];
+    let hits = all.filter((c) => names(c).some((n) => n && whole(n)));
+    if (!hits.length && rows.length === 1) { const rk = nameKey(rows[0].customer).split(' ').filter(Boolean); hits = all.filter((c) => names(c).some((n) => n && whole(n, rk))); }
+    const seen = new Set();
+    hits = hits.filter((c) => !seen.has(String(c.Id)) && seen.add(String(c.Id)));
+    if (hits.length === 1) { const name = hits[0].DisplayName || hits[0].CompanyName; return { ours: typed, id: String(hits[0].Id), name, loose: true, typed }; }
+    if (hits.length > 1) return { ours: typed, candidates: hits.map((c) => c.DisplayName || c.CompanyName).slice(0, 8) };
+    return { ours: typed, options: matchOne(typed, all).options || [] };
   }
 
   /** One statement to the test group (or, for an authorized person, to that person's own private chat). Returns the lines to tell the asker. */

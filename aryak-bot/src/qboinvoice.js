@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { staffChecker } from './gate.js';
+import { nameKey } from './customergroups.js';
 import { qboEscape } from './qbo.js';
 
 const latin = (s) => String(s).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[٫]/g, '.');
@@ -28,7 +29,7 @@ const QB = 'کو[ئی]*یک\\s*بوکس';
 /** What the owner (or an authorized person) wrote, or null. Multi-line: the first line is "فاکتور بساز <customer>", then one item per line. */
 export function parseInvoiceCommand(text) {
   const raw = String(text || '').replace(/\r/g, '');
-  const first = plain(raw.split('\n')[0]).replace(/^آتوسا[ ,،:]*/u, '');
+  const first = plain(raw.split('\n')[0]).replace(/^(?:آتوسا|اتوسا)[ ,،:]*/u, '');
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);
   if (m) return { type: 'request', customer: m[1].trim(), lines: raw.split('\n').slice(1).map((l) => l.trim()).filter(Boolean) };
   const s = plain(raw).replace(/[.!؟?]+$/u, '').trim();
@@ -41,7 +42,17 @@ export function parseInvoiceCommand(text) {
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
   if (/^کدهای\s+مالیات$/u.test(s)) return { type: 'tax_list' };
   if ((m = /^کد\s+مالیات\s+(.+?)\s*=\s*(.+)$/u.exec(s))) return { type: 'tax_set', customer: m[1].trim(), code: m[2].trim() };
+  if ((m = /^کد\s+(.+?)\s*=\s*(.+?)(?:\s+مشتری\s+(.+))?$/u.exec(s))) return { type: 'item_code', code: m[1].trim(), item: m[2].trim(), customer: m[3]?.trim() || '' };
+  if (looksLikeInvoiceRequest(raw)) return { type: 'request', customer: '', lines: [], free: true }; // any layout: the model only extracts, the matching stays exact
   return null;
+}
+
+/** A message that asks to make an invoice, in any layout ("فاکتور بساز", "فاکتور بزن", "صادر کن", with or without the assistant's name). Not a question, not a send. */
+export function looksLikeInvoiceRequest(text) {
+  const s = plain(text);
+  if (!s || s.length > 3000 || /[?؟]\s*$/u.test(s)) return false;
+  if (/ارسال|بفرست|\bsend\b|\bforward\b/iu.test(s) && !/بساز|بزن|صادر/u.test(s)) return false;
+  return (/فاکتور/u.test(s) && /(?:بساز|بزن|صادر\s*کن|درست\s*کن|ایجاد\s*کن|بنویس)/u.test(s)) || /(?:create|make|issue)\s+(?:an?\s+)?invoice/iu.test(s);
 }
 
 /** The ways one item line can be read: [{ item, qty, price|null }]. Separators (, | ; tab) make it exact; without them the numbers at the end are read. */
@@ -77,27 +88,58 @@ function closeItems(items, name) {
   return items.filter((i) => [i.Name, i.Sku].some((x) => x && (norm(x).includes(k) || k.includes(norm(x)) || (first.length >= 3 && norm(x).includes(first))))).slice(0, 3).map((i) => i.Name);
 }
 
+/** Items whose Name, Sku or full name holds all the words of [name] as whole words ("1810" finds "B 1810" and "PVC 1810"), up to eight. */
+export function itemsContaining(items, name) {
+  const toks = nameKey(name).split(' ').filter(Boolean);
+  if (!toks.length) return [];
+  return items.filter((i) => [i.Name, i.Sku, i.FullyQualifiedName].some((x) => { if (!x) return false; const t = new Set(nameKey(x).split(' ')); return toks.every((k) => t.has(k)); })).slice(0, 8);
+}
+
+const itemLabel = (i) => `${i.Name}${i.Sku && norm(i.Sku) !== norm(i.Name) ? ` [${i.Sku}]` : ''}`;
+
 /**
- * Every line of the request against the QuickBooks items. Returns { lines, stops }: a line resolves only if exactly ONE reading names exactly ONE
- * item; otherwise it is a stop with the reason and the candidates.
+ * One item text -> an item. In order: the code the owner taught, the one item that equals it exactly (Name or Sku), else the items that hold it as
+ * whole words: if exactly one of those is something THIS customer bought before, that one; otherwise a stop that lists them with their prices.
+ * Returns { item, via } or { stop(n) }.
  */
-export function resolveLines(rawLines, items) {
+export function pickItem(name, ctx = {}) {
+  const items = ctx.items || [];
+  const taught = ctx.taught?.(name);
+  if (taught) return { item: taught, via: 'taught' };
+  const exact = itemsNamed(items, name);
+  if (exact.length === 1) return { item: exact[0], via: '' };
+  const cands = exact.length ? exact : itemsContaining(items, name);
+  if (!cands.length) return { stop: (n) => { const close = closeItems(items, name); return `سطر ${fa(n)}: کالای «${name}» در کوییک‌بوکس دقیقاً پیدا نشد؛ اول آن را معرفی کنید.${close.length ? ` نزدیک‌ها: ${close.join(' | ')}` : ''}`; } };
+  const hist = ctx.history ? cands.filter((i) => ctx.history.has(String(i.Id))) : [];
+  if (hist.length === 1) return { item: hist[0], via: 'history' };
+  return { stop: (n) => `سطر ${fa(n)}: «${name}» چند کالا دارد و بین آن‌ها حدس نمی‌زنم:\n${cands.map((i, k) => `   ${fa(k + 1)}) ${itemLabel(i)} — قیمت ${Number(i.UnitPrice) > 0 ? i.UnitPrice : 'ندارد'}`).join('\n')}\nبنویسید: کد ${name} = <نام دقیق کالا>` };
+}
+
+/**
+ * Every line against the QuickBooks items. [entries]: [{ raw, cands: [{ item, qty, price|null }] }] (each candidate is one reading of the line).
+ * A line resolves only if exactly ONE reading names an item (see pickItem); otherwise it is a stop with the reason and the candidates.
+ */
+export function resolveEntries(entries, ctx) {
   const lines = []; const stops = [];
-  rawLines.forEach((raw, i) => {
+  entries.forEach((e, i) => {
     const n = i + 1;
-    const cands = lineCandidates(raw);
-    if (!cands.length) { stops.push(`سطر ${fa(n)} را نفهمیدم: «${raw.slice(0, 60)}» — قالب: نام کالا، تعداد، قیمت (قیمت اختیاری)`); return; }
-    const hits = cands.map((c) => ({ c, found: itemsNamed(items, c.item) })).filter((h) => h.found.length);
-    if (hits.length !== 1 || hits[0].found.length !== 1) {
-      if (!hits.length) { const close = closeItems(items, cands[0].item); stops.push(`سطر ${fa(n)}: کالای «${cands[0].item}» در کوییک‌بوکس دقیقاً پیدا نشد؛ اول آن را معرفی کنید.${close.length ? ` نزدیک‌ها: ${close.join(' | ')}` : ''}`); } else stops.push(`سطر ${fa(n)}: «${raw.slice(0, 60)}» بیش از یک جور خوانده می‌شود؛ با ویرگول بنویسید: نام کالا، تعداد، قیمت`);
-      return;
-    }
-    const { c, found } = hits[0];
+    const cands = e.cands || [];
+    if (!cands.length) { stops.push(`سطر ${fa(n)} را نفهمیدم: «${String(e.raw).slice(0, 60)}» — قالب: نام کالا، تعداد، قیمت (قیمت اختیاری)`); return; }
+    const tried = cands.map((c) => ({ c, r: pickItem(c.item, ctx) }));
+    const ok = tried.filter((t) => t.r.item);
+    if (ok.length > 1) { stops.push(`سطر ${fa(n)}: «${String(e.raw).slice(0, 60)}» بیش از یک جور خوانده می‌شود؛ با ویرگول بنویسید: نام کالا، تعداد، قیمت`); return; }
+    if (!ok.length) { stops.push(tried[0].r.stop(n)); return; }
+    const { c, r } = ok[0];
     if (!(c.qty > 0 && c.qty <= 100000)) { stops.push(`سطر ${fa(n)}: تعداد درست نیست`); return; }
-    if (c.price !== null && !(c.price >= 0 && c.price <= 10000000)) { stops.push(`سطر ${fa(n)}: قیمت درست نیست`); return; }
-    lines.push({ n, item: found[0], qty: c.qty, price: c.price });
+    if (c.price !== null && c.price !== undefined && !(c.price >= 0 && c.price <= 10000000)) { stops.push(`سطر ${fa(n)}: قیمت درست نیست`); return; }
+    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via });
   });
   return { lines, stops };
+}
+
+/** The same for plain text lines (the strict format): [{ lines, stops }]. */
+export function resolveLines(rawLines, items, ctx = {}) {
+  return resolveEntries(rawLines.map((raw) => ({ raw, cands: lineCandidates(raw) })), { ...ctx, items });
 }
 
 /**
@@ -118,9 +160,11 @@ export function taxCodeMap(taxCodes, taxRates) {
 /** The tax code the office itself used on a customer's recent invoices: one code if they all agree, else the list of what was found. */
 export function codeFromInvoices(invoices, codes) {
   const count = new Map();
-  for (const inv of invoices) for (const l of inv.Line || []) {
-    const id = l.SalesItemLineDetail?.TaxCodeRef?.value;
-    if (id !== undefined && id !== null && id !== '') count.set(String(id), (count.get(String(id)) || 0) + 1);
+  for (const inv of invoices) {
+    for (const l of inv.Line || []) {
+      const id = l.SalesItemLineDetail?.TaxCodeRef?.value;
+      if (id !== undefined && id !== null && id !== '') count.set(String(id), (count.get(String(id)) || 0) + 1);
+    }
   }
   const found = [...count.entries()].map(([id, n]) => ({ id, n, name: codes.get(id)?.name || `(${id})`, known: codes.has(id) }));
   if (!found.length) return { error: 'none', found };
@@ -147,6 +191,16 @@ export class AuthStore {
   remove(number) { const n = AuthStore.clean(number); const len = this.d.people.length; this.d.people = this.d.people.filter((p) => p.number !== n); this.save(); return this.d.people.length < len; }
   /** Is this sender (jid, alt jid, lid mapped) an authorized person? */
   isAuthorized(who, lidToPhone = new Map()) { return staffChecker(this.numbers(), lidToPhone)(who) === true; }
+}
+
+/** The item codes the owner taught ("کد 1810 = PVC 1810"): for one customer (by QuickBooks id) or for everybody. Kept on the VM. */
+export class ItemCodes {
+  constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-itemcodes.json') : ''; this.d = { byKey: {} }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ } }
+  save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
+  static key(customerId, code) { return `${customerId || '*'}|${nameKey(code)}`; }
+  /** The item taught for this customer's code, else the global one, else null. */
+  get(customerId, code) { return this.d.byKey[ItemCodes.key(customerId, code)] || this.d.byKey[ItemCodes.key('', code)] || null; }
+  set(customerId, code, item, now = Date.now()) { this.d.byKey[ItemCodes.key(customerId, code)] = { itemId: String(item.Id), name: item.Name, at: new Date(now).toISOString() }; this.save(); }
 }
 
 /** The tax code the owner chose for a customer (by QuickBooks customer id), for a customer with no clear invoices of his own. */
@@ -183,8 +237,8 @@ export class QboInvoiceDesk {
    * list (PriceBook) or null; [config]; [today]: () => yyyy-mm-dd; [now]; [post]: async (jid, buffer, fileName, caption); [ownerJid]: () => jid;
    * [groups]: async () => [{ id, subject }]; [testGroup]: (groups) => group|null.
    */
-  constructor({ qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
-    Object.assign(this, { qbo, desk, store, audit, book, taxChoices, config, today, now, post, ownerJid, groups, testGroup, log });
+  constructor({ qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
+    Object.assign(this, { qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
     this.cache = { at: 0, items: [], codes: new Map(), currency: '' };
     this.inflight = new Set(); // previews being created right now: a yes that arrives meanwhile does not start a second attempt
   }
@@ -208,7 +262,12 @@ export class QboInvoiceDesk {
    * The tax code of an invoice for THIS customer: the owner's override (QBO_TAX_CODE), else the code he chose for the customer, else the code the
    * office itself used on the customer's recent invoices (all of their lines agree). Otherwise { error } with what was found, so the owner picks.
    */
-  async taxFor(cust, cat) {
+  async recentInvoices(customerId) {
+    const j = await this.qbo.get('query', { query: `select * from Invoice where CustomerRef = '${qboEscape(customerId)}' ORDERBY TxnDate DESC STARTPOSITION 1 MAXRESULTS 10` });
+    return j?.QueryResponse?.Invoice || [];
+  }
+
+  async taxFor(cust, cat, recent) {
     const names = [...cat.codes.values()].map((c) => `${c.name} (${c.rate}%)`).join(' | ');
     const ask = `کد را خودتان بگویید: «کد مالیات ${cust.name} = <نام کد>». کدهای موجود: ${names}`;
     if (this.config.qboTaxCode) {
@@ -217,8 +276,7 @@ export class QboInvoiceDesk {
     }
     const chosen = this.taxChoices.get(cust.id);
     if (chosen && cat.codes.has(String(chosen.codeId))) return { ...cat.codes.get(String(chosen.codeId)), source: 'owner' };
-    const j = await this.qbo.get('query', { query: `select * from Invoice where CustomerRef = '${qboEscape(cust.id)}' ORDERBY TxnDate DESC STARTPOSITION 1 MAXRESULTS 10` });
-    const r = codeFromInvoices(j?.QueryResponse?.Invoice || [], cat.codes);
+    const r = codeFromInvoices(recent, cat.codes);
     if (r.code) return { ...r.code, source: 'invoices' };
     if (r.error === 'none') return { error: `برای «${cust.name}» فاکتور قبلی با کد مالیات در کوییک‌بوکس نیست تا از دفتر خوانده شود. ${ask}` };
     const seen = r.found.map((f) => `${f.name} (${f.n} سطر)`).join('، ');
@@ -254,8 +312,9 @@ export class QboInvoiceDesk {
   }
 
   /**
-   * A request to make an invoice -> a PREVIEW sent to the owner. Returns { requester, owner }: the note for the person who asked, and the preview for
-   * the owner (null when the request stopped; then the requester's text says why). Never creates anything.
+   * A request in the strict format (customer on the first line, one item per line) or in ANY layout -> a PREVIEW sent to the owner. Free-form
+   * requests are first read by the model into { customer, lines } (it only extracts); when it is unsure the request stops and says what was
+   * understood. Returns { requester, owner }: the note for the person who asked, and the preview for the owner (null when it stopped). Never creates.
    */
   async request({ text, requester }) {
     const cmd = parseInvoiceCommand(text);
@@ -263,15 +322,41 @@ export class QboInvoiceDesk {
     const stop = (msg) => ({ requester: msg, owner: null });
     const blocked = this.guard();
     if (blocked) return stop(blocked);
-    if (!cmd.lines.length) return stop('بعد از نام مشتری، هر کالا را در یک سطر بنویسید: نام کالا، تعداد، قیمت (قیمت اختیاری).');
-    if (cmd.lines.length > MAX_LINES) return stop(`حداکثر ${fa(MAX_LINES)} سطر در یک فاکتور.`);
-    const cust = await this.desk.resolveStrict(cmd.customer);
+    const strict = !cmd.free && cmd.customer && cmd.lines.length && cmd.lines.every((l) => lineCandidates(l).length);
+    let customerText = cmd.customer; let entries;
+    if (strict) {
+      if (cmd.lines.length > MAX_LINES) return stop(`حداکثر ${fa(MAX_LINES)} سطر در یک فاکتور.`);
+      entries = cmd.lines.map((raw) => ({ raw, cands: lineCandidates(raw) }));
+    } else {
+      if (!this.extract) return stop('بعد از نام مشتری، هر کالا را در یک سطر بنویسید: نام کالا، تعداد، قیمت (قیمت اختیاری).');
+      let x = null;
+      try { x = await this.extract(text); } catch (e) { this.log(`invoice request could not be read: ${e.name}`); }
+      if (!x) return stop('درخواست را نفهمیدم. بنویسید: فاکتور بساز <مشتری> و بعد هر کالا در یک سطر: نام کالا، تعداد، قیمت (قیمت اختیاری).');
+      const unclear = [...x.unsure];
+      if (!x.customer) unclear.push('نام مشتری مشخص نیست');
+      if (!x.lines.length) unclear.push('هیچ کالایی با تعدادش خوانده نشد');
+      if (x.lines.length > MAX_LINES) unclear.push(`بیش از ${fa(MAX_LINES)} سطر`);
+      if (unclear.length) return stop(`این را فهمیدم:\nمشتری: ${x.customer || '—'}\n${x.lines.length ? x.lines.map((l, i) => `${fa(i + 1)}. ${l.item} × ${l.qty}${l.price !== null ? ` @ ${l.price}` : ''}`).join('\n') : 'سطری نیست'}\nولی مطمئن نیستم: ${unclear.join('؛ ')}\nچیزی ساخته نشد. دوباره بنویسید (یا با قالب: فاکتور بساز <مشتری> و هر کالا در یک سطر: نام کالا، تعداد، قیمت).`);
+      customerText = x.customer;
+      entries = x.lines.map((l) => ({ raw: `${l.item} ${l.qty}${l.price !== null ? ` @ ${l.price}` : ''}`, cands: [{ item: l.item, qty: l.qty, price: l.price }] }));
+    }
+    return this.makePreview({ customerText, entries, requester, stop });
+  }
+
+  async makePreview({ customerText, entries, requester, stop }) {
+    const cust = await this.desk.resolveLoose(customerText);
     if (!cust.id) {
+      if (cust.candidates) return stop(`مشتری «${cust.ours}» با چند مشتری می‌خواند و بین آن‌ها حدس نمی‌زنم:\n${cust.candidates.map((c, i) => `${fa(i + 1)}) ${c}`).join('\n')}\nنام کامل یکی را بنویسید.`);
       const how = cust.ambiguous ? `چند مشتری با این نام دقیق هست: ${cust.ambiguous.map((c) => c.DisplayName).join(' | ')}` : cust.options?.length ? `نزدیک‌ها: ${cust.options.map((o) => o.name).join(' | ')}` : 'مشتری مشابهی هم پیدا نشد';
       return stop(`مشتری «${cust.ours}» با نام دقیق یا انتخاب تأییدشدهٔ مالک در کوییک‌بوکس نیست؛ اول معرفی شود (تطبیق کوییک‌بوکس). ${how}`);
     }
     const cat = await this.catalog();
-    const { lines, stops } = resolveLines(cmd.lines, cat.items);
+    const recent = await this.recentInvoices(cust.id);
+    // what this customer bought before settles a code that fits several items
+    const history = new Set();
+    for (const inv of recent) for (const l of inv.Line || []) { const id = l.SalesItemLineDetail?.ItemRef?.value; if (id !== undefined && id !== null) history.add(String(id)); }
+    const taught = (code) => { const t = this.itemCodes.get(cust.id, code); return t ? cat.items.find((i) => String(i.Id) === String(t.itemId)) || null : null; };
+    const { lines, stops } = resolveEntries(entries, { items: cat.items, history, taught });
     if (stops.length) return stop(`فاکتور ساخته نمی‌شود؛ این‌ها را درست کنید:\n${stops.join('\n')}`);
     const warnings = []; const out = [];
     for (const l of lines) {
@@ -285,9 +370,9 @@ export class QboInvoiceDesk {
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
       if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`);
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
-      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', qty: l.qty, price, amount });
+      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', qty: l.qty, price, amount, via: l.via });
     }
-    const tax = await this.taxFor(cust, cat);
+    const tax = await this.taxFor(cust, cat, recent);
     if (tax.error) {
       // the owner must pick: he is told what was found; an authorized person is told only that the owner was asked
       if (requester === 'owner') return stop(tax.error);
@@ -296,7 +381,7 @@ export class QboInvoiceDesk {
     const t = totals(out, tax.rate);
     const id = this.store.nextId();
     const preview = {
-      id, nonce: randomBytes(5).toString('hex'), at: this.now(), status: 'pending', requester, customer: { ours: cust.ours, id: cust.id, name: cust.name },
+      id, nonce: randomBytes(5).toString('hex'), at: this.now(), status: 'pending', requester, customer: { ours: cust.ours, id: cust.id, name: cust.name, from: cust.loose ? cust.typed : '' },
       lines: out, tax: { id: tax.id, name: tax.name, rate: tax.rate, source: tax.source }, ...t, currency: cat.currency, warnings,
     };
     this.store.add(preview);
@@ -304,12 +389,31 @@ export class QboInvoiceDesk {
     return { requester: `Your invoice request #${id} for ${cust.name} was sent to the owner for approval (total ${money(t.total)}). You will be told when it is created or refused.`, owner: this.previewText(preview) };
   }
 
+  /** "کد 1810 = PVC 1810 [مشتری X]": the owner teaches which item a code means (for one customer, else for everybody). */
+  async setItemCode({ code, item, customer }) {
+    const guard = this.guard();
+    if (guard) return [guard];
+    const cat = await this.catalog();
+    const found = itemsNamed(cat.items, item);
+    if (found.length !== 1) return [found.length ? `نام «${item}» در کوییک‌بوکس برای بیش از یک کالا است؛ دقیق‌تر بنویسید.` : `کالای «${item}» در کوییک‌بوکس دقیقاً پیدا نشد. نام کامل کالا را بنویسید.${closeItems(cat.items, item).length ? ` نزدیک‌ها: ${closeItems(cat.items, item).join(' | ')}` : ''}`];
+    let custId = '';
+    let custName = '';
+    if (customer) {
+      const c = await this.desk.resolveLoose(customer);
+      if (!c.id) return [`مشتری «${customer}» یکتا پیدا نشد؛ نام کامل‌تر بنویسید.${c.candidates ? ` ${c.candidates.join(' | ')}` : ''}`];
+      custId = c.id; custName = c.name;
+    }
+    this.itemCodes.set(custId, code, found[0], this.now());
+    this.audit.add({ event: 'item-code', approver: 'owner', reason: `${custId || '*'}:${nameKey(code)}=${found[0].Id}` });
+    return [`ثبت شد: کد «${code}» = ${itemLabel(found[0])}${custName ? ` برای مشتری ${custName}` : ' برای همهٔ مشتری‌ها'}. در پیش‌نمایش‌های بعدی نشان داده می‌شود.`];
+  }
+
   previewText(p) {
     const who = p.requester === 'owner' ? 'خودتان' : `شمارهٔ ${p.requester}`;
     return [
       `پیش‌نمایش فاکتور #${p.id} (درخواست از ${who}) — هنوز چیزی در کوییک‌بوکس ساخته نشده`,
-      `مشتری: ${p.customer.name}`,
-      ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name} × ${l.qty} @ ${l.price} = ${money(l.amount)}`),
+      `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
+      ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : ''}`),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
       `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'invoices' ? '، از فاکتورهای قبلی دفتر' : p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
       `جمع کل: ${money(p.total)}${p.currency ? ` ${p.currency}` : ''}`,
