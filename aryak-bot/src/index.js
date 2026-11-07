@@ -631,7 +631,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'names_plan': return qboNames.plan();
     case 'bulk_email': return qboBulk.planEmails(ic.email);
     case 'bulk_mobile': return qboBulk.planMobiles();
-    case 'bulk_catalog': return qboBulk.planCatalog();
+    case 'bulk_catalog': return qboBulk.planCatalog({ edge: ic.edge !== false });
     case 'bulk_tax': return qboBulk.planItemTax();
     case 'price_set': {
       const out = ic.lines.length ? await qboBulk.addPrices(ic.lines) : ['قیمت درست نیست (عدد ۰ تا ۱۰٬۰۰۰٬۰۰۰).'];

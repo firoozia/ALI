@@ -182,9 +182,9 @@ export function edgeCode(i) {
 }
 
 /** What would change: the categories (exists / rename / create), the PVC film and edge banding items to move, their SKUs; clashes and unsure ones listed. */
-export function planCatalog(items) {
+export function planCatalog(items, { edge = true } = {}) {
   const out = { cats: [], moves: [], skus: [], edgeSkus: [], clashes: [], unsure: [], unchanged: 0, stop: '' };
-  for (const spec of CATS) {
+  for (const spec of CATS.filter((c) => edge || c.key === 'pvc')) { // edge false: the PVC film part only, nothing of edge banding
     const { exact, variants } = categoryCandidates(items, spec.name);
     if (exact) out.cats.push({ ...spec, mode: 'exists', id: String(exact.Id), oldName: exact.Name });
     else if (variants.length === 1) out.cats.push({ ...spec, mode: 'rename', id: String(variants[0].Id), oldName: variants[0].Name });
@@ -201,6 +201,7 @@ export function planCatalog(items) {
       if (inPlace(i, 'pvc')) out.unchanged += 1; else out.moves.push({ op: 'move', cat: 'pvc', id: String(i.Id), label: i.Name, old: String(i.ParentRef?.value || ''), new: CAT_NAME });
       wanted.push({ op: 'sku', id: String(i.Id), label: i.Name, old: String(i.Sku || ''), new: `PVC-${code}`, edge: false });
     } else if (isEdgeItem(i)) {
+      if (!edge) continue; // not in this job: no move, no SKU, not even listed
       const sz = edgeSize(i); const col = edgeCode(i);
       if (!sz.size) { out.unsure.push({ id: String(i.Id), label: i.Name, why: sz.why === 'unknown' ? 'اندازهٔ پهنا خوانده نشد' : sz.why === 'both' ? 'هر دو اندازه یا اندازهٔ ناهمخوان' : 'پهنای دیگر (۴۵) حدس زده نمی‌شود' }); continue; }
       const key = sz.size === 22 ? 'e22' : 'e50';
@@ -377,11 +378,11 @@ export class QboBulkDesk {
   }
 
   // ------------------------------------------------------------------------------------------------ C: categories and SKUs
-  async planCatalog() {
+  async planCatalog({ edge = true } = {}) {
     const blocked = this.guard();
     if (blocked) return [blocked];
     const items = await this.items(true);
-    const r = planCatalog(items);
+    const r = planCatalog(items, { edge });
     if (r.stop) return [r.stop];
     const changes = [];
     for (const c of r.cats) {
@@ -396,9 +397,10 @@ export class QboBulkDesk {
     const skuPvc = r.skus; const skuEdge = (n) => r.edgeSkus.filter((s) => s.new.startsWith(`EDGE${n}-`));
     const makes = r.cats.filter((c) => c.mode === 'create').length;
     const cats = Object.fromEntries(r.cats.filter((c) => c.id).map((c) => [c.key, c.id]));
+    const pvcSummary = `فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا. فقط بخش پی‌وی‌سی؛ به نوار لبه دست زده نمی‌شود. نام، قیمت، مالیات و حساب هیچ کالایی عوض نمی‌شود.\nدسته: ${catLines[0]}.\nانتقال: ${fa(perCat('pvc').length)} کالای پی‌وی‌سی. کد کالا: ${fa(skuPvc.length)} پی‌وی‌سی. ${fa(r.unchanged)} مورد از پیش درست است.`;
     return this.make('C', { changes, skipped: [...r.clashes, ...r.unsure.map((u) => ({ ...u, why: 'unsure' }))], unchanged: r.unchanged }, {
       header: 'دسته و کد کالاها', params: { cats },
-      summary: `فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا. نام، قیمت، مالیات و حساب هیچ کالایی عوض نمی‌شود.\nدسته‌ها: ${catLines.join('؛ ')}${makes ? ` (جمعاً ${fa(makes)} دستهٔ تازه؛ تنها ساختی که این کار دارد)` : ''}.\nانتقال: ${fa(perCat('pvc').length)} کالای پی‌وی‌سی، ${fa(perCat('e22').length)} نوار لبهٔ ۲۲ و ${fa(perCat('e50').length)} نوار لبهٔ ۵۰.\nکد کالا: ${fa(skuPvc.length)} پی‌وی‌سی، ${fa(skuEdge(22).length)} نوار لبهٔ ۲۲، ${fa(skuEdge(50).length)} نوار لبهٔ ۵۰. ${fa(r.unchanged)} مورد از پیش درست است.`,
+      summary: !edge ? pvcSummary : `فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا. نام، قیمت، مالیات و حساب هیچ کالایی عوض نمی‌شود.\nدسته‌ها: ${catLines.join('؛ ')}${makes ? ` (جمعاً ${fa(makes)} دستهٔ تازه؛ تنها ساختی که این کار دارد)` : ''}.\nانتقال: ${fa(perCat('pvc').length)} کالای پی‌وی‌سی، ${fa(perCat('e22').length)} نوار لبهٔ ۲۲ و ${fa(perCat('e50').length)} نوار لبهٔ ۵۰.\nکد کالا: ${fa(skuPvc.length)} پی‌وی‌سی، ${fa(skuEdge(22).length)} نوار لبهٔ ۲۲، ${fa(skuEdge(50).length)} نوار لبهٔ ۵۰. ${fa(r.unchanged)} مورد از پیش درست است.`,
       lines: [
         ...sample(perCat('pvc'), (c) => `انتقال: ${c.label} ← ${CAT_NAME}`),
         ...sample(perCat('e22'), (c) => `انتقال: ${c.label} ← ${EDGE_SIZES[22]}`),

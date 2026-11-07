@@ -44,6 +44,7 @@ export function parseInvoiceCommand(text) {
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
   if (/^موبایل\s+مشتری(?:\s*ها)?$/u.test(s)) return { type: 'bulk_mobile' };
   if (/^دسته\s+و\s+کد\s+کالا(?:\s*ها)?$/u.test(s)) return { type: 'bulk_catalog' };
+  if (/^دسته\s+و\s+کد\s+پی\s*وی\s*سی$/u.test(s)) return { type: 'bulk_catalog', edge: false }; // the PVC film part only: no edge banding change at all
   if (/^مالیات\s+کالاها(?:\s+دبی)?$/u.test(s)) return { type: 'bulk_tax' };
   if (/^شروع\s+کن$/u.test(s)) return { type: 'price_start' };
   if (/^لیست\s+قیمت$/u.test(s)) return { type: 'price_list' };
@@ -110,7 +111,7 @@ const norm = (s) => String(s || '').normalize('NFKC').toLowerCase().replace(/\s+
 /** The code (three or four digits) of a PVC item (PVC FILM108 -> 108, PVC 1810 -> 1810), or null (edge banding, boards and the like have none). */
 export function pvcCode(i) {
   const name = String(i?.Name || '');
-  const m = /pvc\s*(?:film\s*)?(\d{3,4})(?!\d)/i.exec(name) || (/pvc/i.test(name) ? /^(\d{3,4})$/.exec(String(i.Sku || '').trim()) : null);
+  const m = /pvc\s*(?:film|flim)?\s*(\d{3,4})(?!\d)/i.exec(name) || (/pvc/i.test(name) ? /^(\d{3,4})$/.exec(String(i.Sku || '').trim()) : null);
   return m ? Number(m[1]) : null;
 }
 

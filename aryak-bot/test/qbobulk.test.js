@@ -712,3 +712,48 @@ test('the words: the catalog job and the yes with C', () => {
   assert.deepEqual(parseInvoiceCommand('بله#C1'), { type: 'yes', id: 'C1' });
   assert.deepEqual(parseInvoiceCommand('C1# نه'), { type: 'no', id: 'C1' });
 });
+
+// ---- the PVC-only form, and the misspelled family members
+test('the family rule: FILM or FLIM, a missing space, never a catalogue, a glue or a thickness', async () => {
+  const { pvcCode } = await import('../src/qbobulk.js');
+  for (const [n, c] of [['PVC FILM108', 108], ['PVC FLIM 608', 608], ['PVC FLIM513', 513], ['pvc flim 513', 513], ['PVC 1810', 1810], ['PVC FILM 109', 109]]) assert.equal(pvcCode({ Name: n }), c, n);
+  for (const n of ['PVC Film0.4*19', 'ARYAK PVC CATALOG', 'PVC GLUE 500ML', 'PVC flim 0.1 roll', 'EDGE 1801']) assert.equal(pvcCode({ Name: n }), null, n);
+});
+
+test('the price series now holds the misspelled PVC FLIM 608 and PVC FLIM513 (series 600 and 500)', () => {
+  const items = [I(1, 'PVC FILM601', { UnitPrice: 14 }), I(2, 'PVC FLIM 608', { UnitPrice: 14 }), I(3, 'PVC FLIM513', { UnitPrice: 11 }), I(4, 'PVC FILM501', { UnitPrice: 11 }), I(5, 'PVC Film0.4*19')];
+  assert.deepEqual(seriesItems(items, 601, 699).map((x) => x.item.Id), ['1', '2']);
+  assert.deepEqual(seriesItems(items, 501, 599).map((x) => x.item.Id), ['4', '3']);
+});
+
+test('the PVC-only job: the words, no edge banding change of any kind, the misspelled ones in, the odd ones listed', async () => {
+  assert.deepEqual(parseInvoiceCommand('دسته و کد پی‌وی‌سی'), { type: 'bulk_catalog', edge: false });
+  assert.deepEqual(parseInvoiceCommand('دسته و کد پی وی سی'), { type: 'bulk_catalog', edge: false });
+  assert.deepEqual(parseInvoiceCommand('دسته و کد کالاها'), { type: 'bulk_catalog' }); // the full job stays
+  const items = [...catItems(), I(608, 'PVC FLIM 608', { Sku: '608' }), I(513, 'PVC FLIM513'), I(910, 'PVC Film0.4*19'), I(911, 'PVC GLUE'), I(912, 'ARYAK PVC CATALOG')];
+  const r = planCatalog(items, { edge: false });
+  assert.deepEqual(r.cats.map((c) => c.key), ['pvc']);
+  assert.deepEqual(r.edgeSkus, []);
+  assert.ok(r.moves.every((m) => m.cat === 'pvc'));
+  assert.deepEqual(r.moves.map((m) => m.id).sort(), ['108', '120', '1810', '513', '608']);
+  assert.deepEqual(r.skus.map((s) => s.new).sort(), ['PVC-108', 'PVC-120', 'PVC-1810', 'PVC-513', 'PVC-608']);
+  assert.deepEqual(r.unsure.map((u) => u.id).sort(), ['900', '910', '911', '912']);
+  assert.deepEqual(r.unsure.filter((u) => /^70|^3|^2/.test(u.id)), []); // the edge items are not even listed
+  const t = mk({ items });
+  const [pv] = await t.bulk.planCatalog({ edge: false });
+  assert.match(pv, /#C1/);
+  assert.match(pv, /به نوار لبه دست زده نمی‌شود/);
+  assert.match(pv, /فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا/);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'C1' });
+  await done;
+  const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  assert.equal(by(50).Name, 'PVC FILM');
+  assert.equal(t.m.db.Item.filter((i) => i.Type === 'Category').length, 1); // no edge category was made
+  for (const id of [701, 702, 703, 704, 705, 706, 707]) { assert.equal(by(id).ParentRef, undefined, String(id)); }
+  assert.deepEqual([701, 702, 707].map((id) => by(id).Sku), ['EDGE 1801', 'EDGE 1801', 'EDGE22-3020']); // untouched
+  assert.equal(by(608).ParentRef.value, '50'); assert.equal(by(608).Sku, 'PVC-608'); assert.equal(by(513).Sku, 'PVC-513');
+  assert.equal(by(910).ParentRef, undefined);
+  assert.ok(t.m.posts.every((p) => ['Id,Name,SyncToken,Type,sparse', 'Id,ParentRef,SubItem,SyncToken,sparse', 'Id,Sku,SyncToken,sparse'].includes(Object.keys(p.body).sort().join())));
+});
+
