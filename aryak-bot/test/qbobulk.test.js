@@ -92,10 +92,10 @@ test('the words of the four jobs', () => {
   assert.deepEqual(parseInvoiceCommand('شروع کن'), { type: 'price_start' });
   assert.deepEqual(parseInvoiceCommand('لیست قیمت'), { type: 'price_list' });
   assert.deepEqual(parseInvoiceCommand('حذف قیمت 108'), { type: 'price_remove', code: '108' });
-  assert.deepEqual(parseInvoiceCommand('قیمت 108 = 12'), { type: 'price_set', lines: [{ code: '108', price: 12 }], bad: 0 });
-  assert.deepEqual(parseInvoiceCommand('قیمت PVC FILM108 = 12\nقیمت 109 = 13.5'), { type: 'price_set', lines: [{ code: 'PVC FILM108', price: 12 }, { code: '109', price: 13.5 }], bad: 0 });
+  assert.deepEqual(parseInvoiceCommand('قیمت 108 = 12'), { type: 'price_set', lines: [{ code: '108', price: 12 }], bad: 0, unread: [] });
+  assert.deepEqual(parseInvoiceCommand('قیمت PVC FILM108 = 12\nقیمت 109 = 13.5'), { type: 'price_set', lines: [{ code: 'PVC FILM108', price: 12 }, { code: '109', price: 13.5 }], bad: 0, unread: [] });
   assert.equal(parseInvoiceCommand('قیمت 108'), null); // the older price-book question is not ours
-  assert.equal(parseInvoiceCommand('قیمت 108 = 12\nسلام'), null); // every line must be a price line
+  assert.deepEqual(parseInvoiceCommand('قیمت 108 = 12\nسلام').unread, ['سلام']); // the line that is not a price is named, the rest is taken
 });
 
 test('phone kinds: UAE and Oman mobiles, landlines, the rest', () => {
@@ -412,4 +412,62 @@ test('P series: warnings per series (over 30 percent, below the purchase cost)',
   const [pv] = await t.bulk.planPrices();
   assert.match(pv, /⚠️ ۲۵ کالا هشدار دارد/);
   assert.match(pv, /قیمت تازه کمتر از بهای خرید/);
+});
+
+// ---- the owner's real layouts
+test('yes and no in every layout: id before or after, with or without space and #, lower case, Persian and Arabic digits', () => {
+  for (const t of ['بله#M1', 'بله # M1', 'M1# بله', '#M1 بله', 'بله M1', 'بله m1', 'بله #م1'.replace('م', 'M'), 'بله #M۱', 'بله #M١', 'M1 بله', 'بله\u200f #M1', 'بله#M1.']) assert.deepEqual(parseInvoiceCommand(t), { type: 'yes', id: 'M1' }, t);
+  for (const t of ['نه#E2', 'E2# نه', 'خیر e2']) assert.deepEqual(parseInvoiceCommand(t), { type: 'no', id: 'E2' }, t);
+  assert.deepEqual(parseInvoiceCommand('بله'), { type: 'yes', id: '' });
+  assert.deepEqual(parseInvoiceCommand('نه'), { type: 'no', id: '' });
+  assert.equal(parseInvoiceCommand('بله M1 نه'), null); // two words: not a command
+});
+
+test('openIds: only previews still open (pending, under a day) of every kind', async () => {
+  const t = mk();
+  assert.deepEqual(t.bulk.openIds(), []);
+  await t.bulk.planEmails(); await t.bulk.planMobiles();
+  assert.deepEqual(t.bulk.openIds(), ['E1', 'M1']);
+  await t.bulk.decide({ verb: 'no', id: 'E1' });
+  assert.deepEqual(t.bulk.openIds(), ['M1']);
+  t.clock.t += 25 * 3600 * 1000;
+  assert.deepEqual(t.bulk.openIds(), []);
+});
+
+test('the owner\'s exact price message: the header line and the name are ignored, Persian digits, = with or without spaces', async () => {
+  const text = 'آتوسا قیمت ها به درهم است\nقیمت سری ۱۰۰ =۱۳\nقیمت سری ۲۰۰ = ۱۴\nقیمت سری۳۰۰=۱۵\nقیمت ۱۰۸ = ۱۲٫۵';
+  const ic = parseInvoiceCommand(text);
+  assert.equal(ic.type, 'price_set');
+  assert.deepEqual(ic.lines, [{ series: 100, price: 13 }, { series: 200, price: 14 }, { series: 300, price: 15 }, { code: '108', price: 12.5 }]);
+  assert.deepEqual(ic.unread, []);
+  assert.deepEqual(parseInvoiceCommand('آتوسا قیمت ۱۰۸ = ۱۲').lines, [{ code: '108', price: 12 }]); // the name in front
+  const t = mk({ items: pvcItems() });
+  const [r] = await t.bulk.addPrices(ic.lines);
+  assert.match(r, /سری 100: ۱۰۱ تا ۱۲۶/);
+  assert.match(r, /سری 300.*پیدا نشد|هیچ کالای فیلم/s);
+  assert.equal(t.bulk.draft.series.length, 2);
+});
+
+test('a price message with one line not understood takes the rest and names that line', () => {
+  const ic = parseInvoiceCommand('قیمت 108 = 12\nقیمت نامعلوم\nقیمت 109 = 13');
+  assert.equal(ic.lines.length, 2);
+  assert.deepEqual(ic.unread, ['قیمت نامعلوم']);
+  assert.equal(parseInvoiceCommand('قیمت نامعلوم'), null); // nothing parsed: not ours
+});
+
+test('intake: the owner\'s late private message from a sync is taken once, a repeat after a restart is not, a group or an old one is not', async () => {
+  const { shouldProcess, OwnerSeen } = await import('../src/intake.js');
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'os-')), 'seen.json');
+  const now = 100000 * 1000;
+  const msg = (id, extra = {}, key = {}) => ({ key: { id, fromMe: true, remoteJid: '97150@s.whatsapp.net', ...key }, message: { conversation: 'x' }, messageTimestamp: 100000 - 600, ...extra });
+  const a = new OwnerSeen(f);
+  assert.equal(shouldProcess({ type: 'append', raw: msg('m1'), seen: new Set(), now, ownerSeen: a }).ok, true); // ten minutes old, from the sync
+  assert.equal(shouldProcess({ type: 'append', raw: msg('m2', { messageTimestamp: 100000 - 7200 }), seen: new Set(), now, ownerSeen: a }).ok, false); // two hours: history
+  assert.equal(shouldProcess({ type: 'append', raw: msg('m3', {}, { remoteJid: 'g@g.us' }), seen: new Set(), now, ownerSeen: a }).ok, false); // a group
+  assert.equal(shouldProcess({ type: 'append', raw: msg('m4', {}, { fromMe: false }), seen: new Set(), now, ownerSeen: a }).ok, false); // not his own
+  // after a restart (a new process: an empty seen set, the file kept) the same id is a duplicate, live or from the sync
+  const b = new OwnerSeen(f);
+  assert.equal(shouldProcess({ type: 'append', raw: msg('m1'), seen: new Set(), now, ownerSeen: b }).ok, false);
+  assert.equal(shouldProcess({ type: 'notify', raw: msg('m1'), seen: new Set(), now, ownerSeen: b }).ok, false);
+  assert.equal(shouldProcess({ type: 'notify', raw: msg('m5'), seen: new Set(), now, ownerSeen: b }).ok, true); // a new live one still passes
 });

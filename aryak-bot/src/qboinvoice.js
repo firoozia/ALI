@@ -33,7 +33,13 @@ export function parseInvoiceCommand(text) {
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);
   if (m) return { type: 'request', customer: m[1].trim(), lines: raw.split('\n').slice(1).map((l) => l.trim()).filter(Boolean) };
   const s = plain(raw).replace(/[.!؟?]+$/u, '').trim();
-  if ((m = /^(بله|اره|آره|نه|خیر|yes|no)\s*#?\s*([QNEMTP])\s*(\d+)$/iu.exec(s))) return { type: /^(?:بله|اره|آره|yes)$/iu.test(m[1]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+  {
+    // yes / no with the id before or after (right-to-left typing), with or without spaces and #; or the bare word (the desk then looks for the one open preview)
+    const W = 'بله|اره|آره|نه|خیر|yes|no';
+    const isYes = (w) => /^(?:بله|اره|آره|yes)$/iu.test(w);
+    if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTP])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+  }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
   if (/^موبایل\s+مشتری(?:\s*ها)?$/u.test(s)) return { type: 'bulk_mobile' };
@@ -42,7 +48,7 @@ export function parseInvoiceCommand(text) {
   if (/^لیست\s+قیمت$/u.test(s)) return { type: 'price_list' };
   if ((m = /^حذف\s+قیمت\s+(.+)$/u.exec(s))) return { type: 'price_remove', code: m[1].trim() };
   {
-    const rows = raw.split('\n').map((l) => plain(l)).filter(Boolean);
+    const rows = raw.split('\n').map((l) => plain(l).replace(/^(?:آتوسا|اتوسا)[ ,،:]*/u, '')).filter((l) => l && !/^قیمت\s*(?:ها|های)?\s+(?:به\s+)?(?:درهم|aed)(?:\s+است)?$/iu.test(l));
     const one = (l) => {
       let x = /^قیمت\s+سری\s*(\d+)\s*[=:]?\s*([\d.,]+)$/u.exec(l);
       if (x) return { series: Number(x[1]), price: x[2] };
@@ -52,10 +58,10 @@ export function parseInvoiceCommand(text) {
       return x ? { code: x[1].trim(), price: x[2] } : null;
     };
     const pr = rows.map(one);
-    if (rows.length && rows.length <= 60 && pr.every(Boolean)) {
-      const lines = pr.map((x) => ({ ...x, price: Number(String(x.price).replace(/,/g, '')) }));
+    if (rows.length && rows.length <= 60 && pr.some(Boolean)) {
+      const lines = pr.filter(Boolean).map((x) => ({ ...x, price: Number(String(x.price).replace(/,/g, '')) }));
       const okp = (l) => l.price >= 0 && l.price <= 10000000;
-      return { type: 'price_set', lines: lines.filter(okp), bad: lines.filter((l) => !okp(l)).length };
+      return { type: 'price_set', lines: lines.filter(okp), bad: lines.filter((l) => !okp(l)).length, unread: rows.filter((_, i) => !pr[i]) };
     }
   }
   if (new RegExp(`^نام\\s+مشتری(?:\\s*ها)?\\s+با\\s+حروف\\s+بزرگ$`, 'u').test(s)) return { type: 'names_plan' };
@@ -344,6 +350,9 @@ export class QboInvoiceDesk {
     const seen = r.found.map((f) => `${f.name} (${f.n} سطر)`).join('، ');
     return { error: `کد مالیات فاکتورهای اخیر «${cust.name}» ${r.error === 'unknown' ? 'ناشناخته است' : 'اکثریت روشنی ندارد (دست‌کم ۹۰٪ سطرها و کد آخرین فاکتور باید یکی باشد)'}: ${seen}. ${ask}` };
   }
+
+  /** The ids of the previews the owner can still say yes or no to (pending, not older than a day). */
+  openIds() { return Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && this.now() - p.at <= EXPIRY_MS).map((p) => p.id); }
 
   /** "کد مالیات <مشتری> = <کد>": the owner chooses the code of a customer (stored on the VM). */
   async setTaxChoice({ customer, code }) {

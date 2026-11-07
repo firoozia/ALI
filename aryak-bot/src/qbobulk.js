@@ -207,6 +207,9 @@ export class QboBulkDesk {
     return items;
   }
 
+  /** The ids of the previews the owner can still say yes or no to. */
+  openIds() { return Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && this.now() - p.at <= DAY).map((p) => p.id); }
+
   /** Stores a preview and builds its text. */
   make(kind, r, { header, summary, lines, extra = [], params = {} }) {
     const p = this.store.add(kind, { at: this.now(), status: 'pending', changes: r.changes, skipped: r.skipped, unchanged: r.unchanged, params });

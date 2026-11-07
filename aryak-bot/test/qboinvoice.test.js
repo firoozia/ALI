@@ -106,7 +106,7 @@ test('the words: the request with its lines, yes and no with the preview id, the
   assert.deepEqual(parseInvoiceCommand('بله #Q12'), { type: 'yes', id: 'Q12' });
   assert.deepEqual(parseInvoiceCommand('بله #Q۱۲'), { type: 'yes', id: 'Q12' });
   assert.deepEqual(parseInvoiceCommand('نه Q3'), { type: 'no', id: 'Q3' });
-  assert.equal(parseInvoiceCommand('بله'), null); // a bare yes belongs to other conversations
+  assert.deepEqual(parseInvoiceCommand('بله'), { type: 'yes', id: '' }); // bare: the desk looks for the one open preview (none open: not ours)
   assert.deepEqual(parseInvoiceCommand('توقف کوییک‌بوکس'), { type: 'pause' });
   assert.deepEqual(parseInvoiceCommand('ادامهٔ کوییک‌بوکس'), { type: 'resume' });
   assert.deepEqual(parseInvoiceCommand('گزارش کوییک‌بوکس'), { type: 'audit' });

@@ -63,7 +63,7 @@ import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
 import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
-import { shouldProcess } from './intake.js';
+import { shouldProcess, OwnerSeen } from './intake.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -151,6 +151,7 @@ const transcribe = speechTranscriber({
   phrases: [...new Set([config.displayName, ...DEFAULT_PHRASES])],
 });
 const handled = new Set(); // ids of messages already taken in
+const ownerSeen = new OwnerSeen(path.join(config.authDir, 'owner-seen.json')); // the owner's own private messages taken in (survives a restart)
 const lastRaw = new Map(); // group JID -> last customer message, quoted by the reply
 let sock;
 
@@ -631,12 +632,26 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_email': return qboBulk.planEmails(ic.email);
     case 'bulk_mobile': return qboBulk.planMobiles();
     case 'bulk_tax': return qboBulk.planItemTax();
-    case 'price_set': return ic.lines.length ? qboBulk.addPrices(ic.lines) : ['قیمت درست نیست (عدد ۰ تا ۱۰٬۰۰۰٬۰۰۰).'];
+    case 'price_set': {
+      const out = ic.lines.length ? await qboBulk.addPrices(ic.lines) : ['قیمت درست نیست (عدد ۰ تا ۱۰٬۰۰۰٬۰۰۰).'];
+      if (ic.unread?.length) out.push(`این خط‌ها را نفهمیدم و نگرفتم: ${ic.unread.slice(0, 10).map((x) => `«${x.slice(0, 40)}»`).join(' ')}\nقالب: قیمت <کد یا سری ۱۰۰> = <عدد>`);
+      return out;
+    }
     case 'price_list': return qboBulk.showDraft() || null;
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
     case 'request': { const r = await qboInvoices.request({ text, requester: 'owner' }); return [r.owner || r.requester]; }
-    case 'yes': case 'no': return ic.id.startsWith('N') ? qboNames.decide({ verb: ic.type, id: ic.id }) : /^[EMTP]/.test(ic.id) ? qboBulk.decide({ verb: ic.type, id: ic.id }) : qboInvoices.decide({ verb: ic.type, id: ic.id });
+    case 'yes': case 'no': {
+      let id = ic.id; let said = '';
+      if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
+        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds()];
+        if (!open.length) return null;
+        if (open.length > 1) return [`چند پیش‌نمایش باز است: ${open.map((x) => `#${x}`).join('، ')}. چیزی انجام نشد؛ شمارهٔ پیش‌نمایش را بنویسید، مثل: ${ic.type === 'yes' ? 'بله' : 'نه'} #${open[0]}`];
+        id = open[0]; said = `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
+      }
+      const out = await (id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTP]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
+      return said ? [said + out[0], ...out.slice(1)] : out;
+    }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
     case 'resume': qbo.setPaused(false); qboInvoices.audit.add({ event: 'resume', approver: 'owner' }); return ['کوییک‌بوکس ادامه یافت.'];
     case 'audit': return [qboInvoices.auditText(10)];
@@ -1871,7 +1886,7 @@ async function start() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     let history = 0;
     for (const raw of messages) {
-      const verdict = shouldProcess({ type, raw, seen: handled });
+      const verdict = shouldProcess({ type, raw, seen: handled, ownerSeen });
       if (!verdict.ok) {
         // A refused message is never silent, except bulk history after a restart (counted in one line).
         if (verdict.reason.startsWith('old message')) { history++; continue; }
