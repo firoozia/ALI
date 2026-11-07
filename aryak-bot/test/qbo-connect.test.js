@@ -253,8 +253,9 @@ test('every error response is logged with its intuit_tid, in a short error log, 
   assert.ok(lines.every((l) => l.at && l.op === 'GET query'));
   const badLine = JSON.parse(fs.readFileSync(path.join(bad.dir, 'qbo-errors.log'), 'utf8').trim());
   assert.deepEqual([badLine.status, badLine.tid], [400, 'tid-400']);
+  assert.equal(badLine.fault.message, 'bad query'); // QuickBooks's own words (the Fault) are kept, for a 400 can only be understood with them
   const raw = fs.readFileSync(path.join(t.dir, 'qbo-errors.log'), 'utf8') + fs.readFileSync(path.join(bad.dir, 'qbo-errors.log'), 'utf8') + t.logs.join('\n');
-  for (const s of [SECRET, CODE, 'ACCESS-', 'REFRESH-', 'Bearer', 'bad query']) assert.ok(!raw.includes(s), s); // no token, no body
+  for (const s of [SECRET, CODE, 'ACCESS-', 'REFRESH-', 'Bearer']) assert.ok(!raw.includes(s), s); // no token
   assert.ok(t.logs.some((l) => /QuickBooks error 500 GET query tid=tid-500-a/.test(l)));
   // the log stays short
   const many = mk();

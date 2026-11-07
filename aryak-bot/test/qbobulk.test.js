@@ -50,7 +50,9 @@ function mockQbo(opts = {}) {
     if (init.method === 'POST') {
       const ent = u.pathname.endsWith('/customer') ? 'customer' : 'item';
       postsSeen += 1; const body = JSON.parse(init.body); posts.push({ ent, body });
-      if (opts.failOnPost && postsSeen === opts.failOnPost) return res(400, { Fault: { Error: [{ Message: 'Business Validation Error' }] } });
+      if (opts.failOnPost && postsSeen === opts.failOnPost) return res(403, { Fault: { Error: [{ Message: 'Business Validation Error' }] } });
+      if (opts.rejectIds?.includes(body.Id)) return res(400, { Fault: { Error: [{ Message: 'Business Validation Error', Detail: 'Income account is inactive', code: '6000', element: 'IncomeAccountRef' }] } });
+      if (opts.serverErrorOn && body.Id === opts.serverErrorOn) return res(503, {});
       const r = db[key(ent)].find((x) => x.Id === body.Id);
       for (const [k, v] of Object.entries(body)) if (!['Id', 'SyncToken', 'sparse'].includes(k)) r[k] = v; // a sparse update changes only what is sent
       r.SyncToken = String(Number(r.SyncToken) + 1);
@@ -503,4 +505,56 @@ test('series 1800 is the four-digit codes 1801 to 1899; a code with several PVC 
   assert.equal(by('PVC 1812'), 7); // double: untouched
   assert.equal(by('PVC FILM1812'), 9);
   assert.equal(by('PVC FILM101'), 10); // the three-digit series is not touched
+});
+
+// ---- a 400 on one record skips that record and goes on; other errors stop
+test('a 400 validation error on one item: skipped with the QuickBooks message and the item name, the rest continue, the draft keeps it, a second run finishes only that one', async () => {
+  const t = mk({ items: pvcItems(), rejectIds: ['105'] });
+  await t.bulk.addPrices([{ series: 100, price: 12 }, { code: 'PVC FILM201', price: 31 }]);
+  await t.bulk.planPrices();
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'P1' });
+  const rep = await done;
+  assert.match(rep, /۱ را کوییک‌بوکس نپذیرفت/);
+  assert.match(rep, /PVC FILM105: Business Validation Error - Income account is inactive/);
+  assert.doesNotMatch(rep, /ایستاد/);
+  const by = (n) => t.m.db.Item.find((i) => i.Name === `PVC FILM${n}`).UnitPrice;
+  assert.equal(by(104), 12); assert.equal(by(106), 12); assert.equal(by(126), 12); // after the refused one the job went on
+  assert.equal(by(105), 10); // the refused one is untouched
+  assert.equal(by(201), 31);
+  assert.equal(t.bulk.draft.series.length, 1); // the series stays: one item still needs it
+  assert.equal(t.bulk.draft.lines.length, 0); // the single line that was applied left
+  const audit = t.audit.last(50).find((e) => e.event === 'bulk-skip');
+  assert.equal(audit.name, 'PVC FILM105'); assert.equal(audit.fault.element, 'IncomeAccountRef'); assert.equal(audit.itemType, 'Inventory');
+  // again «شروع کن»: only the refused one is left to change, the rest is already right
+  const [pv2] = await t.bulk.planPrices();
+  assert.match(pv2, /#P2/);
+  assert.match(pv2, /۱ تغییر/);
+  assert.match(pv2, /۲۴ از پیش درست/);
+});
+
+test('a 5xx stops the whole job, a 400 does not; the body sent has only the price', async () => {
+  const t = mk({ items: pvcItems(), serverErrorOn: '103' });
+  await t.bulk.addPrices([{ series: 100, price: 12 }]);
+  await t.bulk.planPrices();
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'P1' });
+  const rep = await done;
+  assert.match(rep, /ایستاد/);
+  assert.ok(only(t.m.posts, 'item', ['UnitPrice']));
+  assert.ok(t.m.posts.every((p) => Object.keys(p.body).sort().join() === 'Id,SyncToken,UnitPrice,sparse'));
+  assert.equal(t.m.db.Item.find((i) => i.Name === 'PVC FILM104').UnitPrice, 10); // nothing after the stop
+});
+
+test('the QuickBooks fault (code, message, detail, element) is in the error and in the error log, never a token', async () => {
+  const t = mk({ items: pvcItems(), rejectIds: ['101'] });
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Id: '101', SyncToken: '0', sparse: true, UnitPrice: 5 }), (e) => {
+    assert.equal(e.status, 400);
+    assert.equal(e.fault.code, '6000'); assert.equal(e.fault.element, 'IncomeAccountRef'); assert.equal(e.fault.detail, 'Income account is inactive');
+    assert.match(e.message, /Income account is inactive.*IncomeAccountRef/);
+    return true;
+  });
+  const log = fs.readFileSync(path.join(t.dir, 'qbo-errors.log'), 'utf8');
+  assert.match(log, /IncomeAccountRef/);
+  assert.doesNotMatch(log, /ACCESS-X|REFRESH-X|Bearer/);
 });

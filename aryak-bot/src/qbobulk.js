@@ -381,10 +381,13 @@ export class QboBulkDesk {
     return [`اجرا شروع شد (${job.title}): ${fa(p.changes.length)} مورد، یکی‌یکی با فاصله. نتیجه در پایان گفته می‌شود.`];
   }
 
-  reportLine(r) { return `${fa(r.changed)} تغییر کرد، ${fa(r.skipped)} رد شد (از پیش درست یا پیدا نشد)، ${fa(r.failed)} ناموفق${r.stoppedAt ? `؛ در مورد ${fa(r.stoppedAt)} ایستاد: ${r.why}` : ''}${r.remaining ? `؛ ${fa(r.remaining)} مورد انجام نشد` : ''}.`; }
+  reportLine(r) {
+    const errs = (r.errors || []).slice(0, 10).map((x) => `\n• ${x.name}: ${x.why}`).join('');
+    return `${fa(r.changed)} تغییر کرد، ${fa(r.skipped)} رد شد (از پیش درست یا پیدا نشد)، ${fa(r.failed)} را کوییک‌بوکس نپذیرفت${r.stoppedAt ? `؛ در مورد ${fa(r.stoppedAt)} ایستاد: ${r.why}` : ''}${r.remaining ? `؛ ${fa(r.remaining)} مورد انجام نشد` : ''}.${errs}${(r.errors || []).length ? `\nبرای ادامهٔ بقیه همان فرمان کار را دوباره بنویسید (برای قیمت‌ها: «شروع کن»)؛ همان پیش‌نویس می‌ماند و آنچه انجام شده «از پیش درست» حساب می‌شود.` : ''}`;
+  }
 
   async run(p, job) {
-    const r = { changed: 0, skipped: p.skipped.length, failed: 0, stoppedAt: 0, why: '', remaining: 0 };
+    const r = { changed: 0, skipped: p.skipped.length, failed: 0, stoppedAt: 0, why: '', remaining: 0, errors: [] };
     const done = [];
     try {
       for (const [i, ch] of p.changes.entries()) {
@@ -399,14 +402,24 @@ export class QboBulkDesk {
           await this.qbo.write('POST', job.entity, body);
           r.changed += 1; done.push(ch.id);
           this.audit.add({ event: 'bulk-change', kind: p.kind, previewId: p.id, approver: 'owner', qboId: body.Id, ...job.audit(cur, part, p) });
-        } catch (e) { this.stop(r, p, i, e); break; }
+        } catch (e) {
+          if (e.status === 400) { // QuickBooks refused THIS record (a validation error): skip it, say why, and go on; anything else (401, 403, 429, 5xx, network) stops the job
+            r.failed += 1;
+            r.errors.push({ name: ch.label, id: ch.id, why: [e.fault?.message, e.fault?.detail].filter(Boolean).join(' - ') || e.message });
+            this.audit.add({ event: 'bulk-skip', kind: p.kind, previewId: p.id, qboId: ch.id, name: ch.label, itemType: cur.Type, fault: e.fault || undefined });
+            this.log(`QuickBooks bulk ${p.kind}: record ${ch.id} refused (400) ${e.fault?.message || ''} ${e.fault?.detail || ''}`.slice(0, 300));
+            if (this.gapMs) await this.sleep(this.gapMs);
+            continue;
+          }
+          this.stop(r, p, i, e); break;
+        }
         if (this.gapMs) await this.sleep(this.gapMs);
       }
     } finally {
       p.status = r.stoppedAt ? 'pending' : 'done'; // after a stop it can be run again: the done ones are skipped
       p.result = r;
       this.busy = false;
-      if (p.kind === 'P') { this.draft.dropItems(done); if (!r.stoppedAt) this.draft.dropSeries(p.params.series || []); } // the prices that are in QuickBooks leave the draft
+      if (p.kind === 'P') { this.draft.dropItems(done); if (!r.stoppedAt && !r.failed) this.draft.dropSeries(p.params.series || []); } // the prices that are in QuickBooks leave the draft
       this.store.save();
       this.itemCache = { at: 0, items: [] };
       this.desk.cache = { at: 0, customers: [] };

@@ -21,7 +21,7 @@ const STATE_MS = 15 * 60 * 1000;
 export const DEFAULT_REDIRECT = 'https://firoozia.github.io/atossa/connect.html';
 
 export class QboError extends Error {
-  constructor(message, status = 0) { super(message); this.name = 'QboError'; this.status = status; this.reconnect = false; }
+  constructor(message, status = 0, fault = null) { super(message); this.name = 'QboError'; this.status = status; this.reconnect = false; this.fault = fault; }
 }
 
 const sha = (s) => createHash('sha256').update(String(s)).digest('hex').slice(0, 16);
@@ -289,18 +289,22 @@ export class Qbo {
       this.lastCall = { at: this.now(), status: res.status };
       this.log(`QuickBooks ${method} ${label} -> ${res.status}`);
       if (res.status === 401 && !refreshedOn401) { refreshedOn401 = true; this.t.access = ''; this.t.accessExpiresAt = 0; continue; }
-      if (!res.ok) this.errorLog({ status: res.status, op: `${method} ${label}`, tid: this.tidOf(res) });
+      let j = {};
+      if (!res.ok) { try { j = await res.json(); } catch { /* not json */ } }
+      const fe = j?.Fault?.Error?.[0] || j?.fault?.error?.[0] || {};
+      const fault = { code: String(fe.code ?? '').slice(0, 20), message: String(fe.Message ?? fe.message ?? '').slice(0, 200), detail: String(fe.Detail ?? fe.detail ?? '').slice(0, 300), element: String(fe.element ?? '').slice(0, 80) };
+      // the Fault (code, message, detail, element) is what explains a 400; it carries no token and no body of ours
+      if (!res.ok) this.errorLog({ status: res.status, op: `${method} ${label}`, tid: this.tidOf(res), ...(fault.code || fault.message || fault.detail || fault.element ? { fault } : {}) });
       if ((res.status === 429 || res.status >= 500) && attempt < RETRIES - 1) {
         const ra = Number(res.headers?.get?.('retry-after'));
         await this.sleep(Math.min(30000, Number.isFinite(ra) && ra > 0 ? ra * 1000 : 1000 * 2 ** attempt));
         continue;
       }
       if (binary && res.ok) return Buffer.from(await res.arrayBuffer());
-      let j = {};
-      try { j = await res.json(); } catch { /* not json */ }
+      if (res.ok) { try { j = await res.json(); } catch { /* not json */ } }
       if (!res.ok) {
-        const detail = j?.Fault?.Error?.[0]?.Message || j?.fault?.error?.[0]?.message || '';
-        throw new QboError(`QuickBooks request failed (${res.status}${detail ? `: ${String(detail).slice(0, 120)}` : ''})`, res.status);
+        const detail = [fault.message, fault.detail].filter(Boolean).join(' - ');
+        throw new QboError(`QuickBooks request failed (${res.status}${detail ? `: ${detail.slice(0, 200)}` : ''}${fault.element ? ` [${fault.element}]` : ''})`, res.status, fault);
       }
       return j;
     }
