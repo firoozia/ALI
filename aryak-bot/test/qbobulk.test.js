@@ -8,7 +8,7 @@ import { QboDesk, QboMap } from '../src/qbodesk.js';
 import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
 import { Audit, ItemCodes, parseInvoiceCommand, codeFromInvoices } from '../src/qboinvoice.js';
-import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems, planCatalog, categoryCandidates } from '../src/qbobulk.js';
+import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems, planCatalog, categoryCandidates, planEdgeList } from '../src/qbobulk.js';
 
 // Invented data only: nothing real is ever in the repository.
 const REALM = '9130000000';
@@ -873,5 +873,112 @@ test('Qbo.write: Active false only for a named category, alone', async () => {
   assert.equal(t.m.posts.length, 0);
   await t.qbo.write('POST', 'item', base, { categoryIds: ['271'] });
   assert.equal(t.m.posts.length, 1);
+});
+
+
+// ---- job D: the edge banding list the owner gave (33 named items, nothing else)
+const edgeWorld = ({ drop = [], extra = [], cats = true } = {}) => {
+  const A = Array.from({ length: 20 }, (_, i) => 1801 + i).filter((n) => !drop.includes(n)).map((n) => I(1000 + n, `${n} edge banding`, { Sku: `EDGE ${n}`, Description: 'EDGE BANDING 0.18 THICKNESS' }));
+  const B = [1802, 1804, 1805, 1806, 1807, 1808, 1809, 1810, 1816, 1817, 1818, 1819, 1820].map((n) => I(2000 + n, `B ${n}`, { Sku: n === 1810 ? '18010/50MM' : `${n}/50MM` }));
+  return [
+    ...(cats ? [I(239, 'EDGE BANDING', { Type: 'Category' }), I(271, 'EDGE 0.8x22', { Type: 'Category', Active: false, ParentRef: { value: '239' }, SubItem: true }), I(272, 'EDGE 0.8x50', { Type: 'Category', Active: false, ParentRef: { value: '239' }, SubItem: true })] : []),
+    ...A, ...B,
+    I(3001, 'EDGE BAND 1MM*223019', { Sku: 'EDGE BAND 1MM*22(3019)' }), I(3002, 'edge banding', { Sku: 'edge banding' }), // group C: never touched
+    I(3003, 'GLUE EDGE BANDING ARYAK', { Sku: 'GLUE-1' }), I(3004, 'B 1803', { Sku: '1803/50MM' }), // not on the list
+    I(3005, 'PVC 1801', { Sku: 'PVC-1801', UnitPrice: 12 }),
+    ...extra,
+  ];
+};
+
+test('D plan: the 33 listed items only; reactivates the two inactive categories; the rest is untouched; a missing one is named', () => {
+  const items = edgeWorld({ drop: [1815] });
+  const r = planEdgeList(items.filter((i) => i.Type !== 'Category'), items.filter((i) => i.Type === 'Category'));
+  assert.deepEqual(r.subs.map((s) => [s.key, s.mode, s.id]), [['e22', 'activate', '271'], ['e50', 'activate', '272']]);
+  assert.equal(r.moves.filter((m) => m.cat === 'e22').length, 19); assert.equal(r.moves.filter((m) => m.cat === 'e50').length, 13);
+  assert.deepEqual(r.missing, ['1815 edge banding']);
+  assert.equal(r.skus.find((s) => s.label === 'B 1810').new, 'EDGE50-1810'); // the typo 18010/50MM is fixed
+  assert.equal(r.skus.find((s) => s.label === '1801 edge banding').new, 'EDGE22-1801');
+  const touched = new Set([...r.moves, ...r.skus].map((x) => x.label));
+  for (const n of ['EDGE BAND 1MM*223019', 'edge banding', 'GLUE EDGE BANDING ARYAK', 'B 1803', 'PVC 1801']) assert.equal(touched.has(n), false, n);
+});
+
+test('D plan: a missing parent stops, a missing sub-category is created, a SKU another item holds is a clash', () => {
+  const noParent = edgeWorld({ cats: false });
+  assert.match(planEdgeList(noParent, []).stop, /نیست/);
+  const items = edgeWorld({ cats: false, extra: [I(5000, 'Other', { Sku: 'EDGE50-1805' })] });
+  const r = planEdgeList(items, [I(239, 'EDGE BANDING', { Type: 'Category' })]);
+  assert.deepEqual(r.subs.map((s) => s.mode), ['create', 'create']);
+  assert.deepEqual(r.clashes.map((c) => c.label), ['B 1805']);
+});
+
+test('D run: categories on, 32 moves, 32 SKUs, only the allowed fields; group C, glue, PVC and B 1803 untouched; idempotent', async () => {
+  const t = mk({ items: edgeWorld({ drop: [1815] }) });
+  const [pv] = await t.bulk.planEdgeList();
+  assert.match(pv, /#D1/);
+  assert.match(pv, /فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا/);
+  assert.match(pv, /دوباره فعال می‌شود/);
+  assert.match(pv, /1815 edge banding/);
+  assert.equal(t.m.posts.length, 0);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'D1' });
+  await done;
+  const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  assert.equal(by(271).Active, true); assert.equal(by(272).Active, true);
+  assert.equal(by(2801).ParentRef.value, '271'); assert.equal(by(2820).ParentRef.value, '271'); // "1801 edge banding" and "1820 edge banding"
+  assert.equal(by(2815), undefined); // 1815 was dropped from this world
+  assert.equal(by(3802).ParentRef.value, '272'); assert.equal(by(3820).ParentRef.value, '272'); // "B 1802" and "B 1820"
+  assert.equal(by(2801).Sku, 'EDGE22-1801'); assert.equal(by(3802).Sku, 'EDGE50-1802'); assert.equal(by(3810).Sku, 'EDGE50-1810'); // the typo is fixed
+  for (const id of [3001, 3002, 3003, 3004, 3005]) assert.equal(by(id).ParentRef, undefined, String(id));
+  assert.deepEqual([3001, 3002, 3004].map((id) => by(id).Sku), ['EDGE BAND 1MM*22(3019)', 'edge banding', '1803/50MM']);
+  assert.equal(by(3005).Sku, 'PVC-1801');
+  assert.ok(t.m.posts.every((p) => ['Active,Id,SyncToken,sparse', 'Id,ParentRef,SubItem,SyncToken,sparse', 'Id,Sku,SyncToken,sparse'].includes(Object.keys(p.body).sort().join())));
+  assert.equal(t.m.posts.length, 2 + 32 + 32);
+  const n = t.m.posts.length;
+  await t.bulk.decide({ verb: 'yes', id: 'D1' });
+  assert.equal(t.m.posts.length, n);
+});
+
+test('D run: with no sub-categories they are created under EDGE BANDING', async () => {
+  const items = edgeWorld({ cats: false }).concat(I(239, 'EDGE BANDING', { Type: 'Category' }));
+  const t = mk({ items });
+  const [pv] = await t.bulk.planEdgeList();
+  assert.match(pv, /ساخته می‌شود/);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'D1' });
+  await done;
+  const e22 = t.m.db.Item.find((i) => i.Type === 'Category' && i.Name === 'EDGE 0.8x22'); const e50 = t.m.db.Item.find((i) => i.Type === 'Category' && i.Name === 'EDGE 0.8x50');
+  assert.ok(e22 && e50);
+  assert.equal(e22.ParentRef.value, '239'); assert.equal(e22.SubItem, true);
+  assert.equal(t.m.db.Item.find((i) => i.Name === '1801 edge banding').ParentRef.value, e22.Id);
+  assert.equal(t.m.db.Item.find((i) => i.Name === 'B 1802').ParentRef.value, e50.Id);
+});
+
+test('after the job: the bare colour number asks which (22, 50 and the PVC one), the exact SKU and the size words find one', async () => {
+  const { pickItem } = await import('../src/qboinvoice.js');
+  const world = edgeWorld({ extra: [I(9801, 'B 1801', { Sku: 'EDGE50-1801' })] }); // a second edge 1801 so that both widths exist
+  const t = mk({ items: world });
+  await t.bulk.planEdgeList();
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'D1' });
+  await done;
+  const items = t.m.db.Item;
+  const bare = pickItem('1801', { items });
+  assert.equal(bare.item, undefined);
+  const text = bare.stop(1);
+  assert.match(text, /EDGE22-1801/); assert.match(text, /EDGE50-1801/); assert.match(text, /PVC 1801/);
+  assert.equal(pickItem('EDGE22-1801', { items }).item.Name, '1801 edge banding');
+  assert.equal(pickItem('EDGE50-1801', { items }).item.Id, '9801');
+  assert.equal(pickItem('نوار لبه 1801 سایز 22', { items }).item.Name, '1801 edge banding');
+});
+
+test('Qbo.write: a named category can be switched on or off, nothing else; the words of the job', async () => {
+  const t = mk({ items: edgeWorld() });
+  const base = { Id: '271', SyncToken: '0', sparse: true, Active: true };
+  await assert.rejects(() => t.qbo.write('POST', 'item', base), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Id: '1801' }, { categoryIds: ['271'] }), /only/);
+  await t.qbo.write('POST', 'item', base, { categoryIds: ['271'] });
+  assert.equal(t.m.posts.length, 1);
+  assert.deepEqual(parseInvoiceCommand('دسته و کد نوار لبه'), { type: 'bulk_edge' });
+  assert.deepEqual(parseInvoiceCommand('بله#D1'), { type: 'yes', id: 'D1' });
 });
 

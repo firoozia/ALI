@@ -223,6 +223,54 @@ export function planCatalog(items, { edge = true } = {}) {
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------- the edge banding list (job D): an explicit list, never a guess
+export const EDGE_A = Array.from({ length: 20 }, (_, i) => 1801 + i); // "1801 edge banding" .. "1820 edge banding": 0.8x22
+export const EDGE_B = [1802, 1804, 1805, 1806, 1807, 1808, 1809, 1810, 1816, 1817, 1818, 1819, 1820]; // "B 1802" ...: 0.8x50
+const nameEq = (a, b) => norm(a) === norm(b);
+/**
+ * [items]: the active items; [cats]: every category, active or not. Returns the parent, the two sub-categories (exists / activate / create),
+ * the moves and the SKUs of the 33 listed items only, and what was not found or is ambiguous.
+ */
+export function planEdgeList(items, cats) {
+  const out = { parent: null, subs: [], moves: [], skus: [], clashes: [], missing: [], ambiguous: [], unchanged: 0, stop: '' };
+  cats = cats.filter((c) => c.Type === 'Category'); // whatever the query returned, only categories count
+  const parents = cats.filter((c) => c.Active !== false && nameEq(c.Name, EDGE_CAT));
+  if (parents.length !== 1) { out.stop = parents.length ? `چند دستهٔ «${EDGE_CAT}» هست؛ حدس نمی‌زنم.` : `دستهٔ «${EDGE_CAT}» در کوییک‌بوکس نیست؛ این کار آن را نمی‌سازد. اول آن را بسازید.`; return out; }
+  out.parent = { id: String(parents[0].Id), name: parents[0].Name };
+  for (const [key, size] of [['e22', 22], ['e50', 50]]) {
+    const name = EDGE_SIZES[size];
+    const same = cats.filter((c) => nameEq(c.Name, name));
+    const active = same.filter((c) => c.Active !== false);
+    if (active.length > 1) { out.stop = `چند دستهٔ فعال «${name}» هست؛ حدس نمی‌زنم.`; return out; }
+    if (active.length === 1) out.subs.push({ key, name, parent: 'edge', mode: 'exists', id: String(active[0].Id) });
+    else if (same.length === 1) out.subs.push({ key, name, parent: 'edge', mode: 'activate', id: String(same[0].Id) });
+    else if (same.length > 1) { out.stop = `چند دستهٔ غیرفعال «${name}» هست؛ حدس نمی‌زنم.`; return out; }
+    else out.subs.push({ key, name, parent: 'edge', mode: 'create', id: '' });
+  }
+  const idOf = (key) => out.subs.find((s) => s.key === key).id;
+  const real = items.filter((i) => i.Type !== 'Category' && i.Active !== false && ITEM_TYPES.includes(i.Type));
+  const wanted = [];
+  const listed = [...EDGE_A.map((n) => ({ name: `${n} edge banding`, n, size: 22, key: 'e22' })), ...EDGE_B.map((n) => ({ name: `B ${n}`, n, size: 50, key: 'e50' }))];
+  for (const L of listed) {
+    const hit = real.filter((i) => nameEq(i.Name, L.name));
+    if (!hit.length) { out.missing.push(L.name); continue; }
+    if (hit.length > 1) { out.ambiguous.push(L.name); continue; }
+    const i = hit[0];
+    if (idOf(L.key) && String(i.ParentRef?.value || '') === idOf(L.key) && i.SubItem) out.unchanged += 1;
+    else out.moves.push({ op: 'move', cat: L.key, id: String(i.Id), label: i.Name, old: String(i.ParentRef?.value || ''), new: EDGE_SIZES[L.size] });
+    wanted.push({ op: 'sku', id: String(i.Id), label: i.Name, old: String(i.Sku || ''), new: `EDGE${L.size}-${L.n}` });
+  }
+  const held = new Map(); for (const i of items) if (i.Sku) held.set(String(i.Sku).toLowerCase(), [...(held.get(String(i.Sku).toLowerCase()) || []), String(i.Id)]);
+  const planned = new Map(); for (const w of wanted) planned.set(w.new.toLowerCase(), [...(planned.get(w.new.toLowerCase()) || []), w.id]);
+  for (const w of wanted) {
+    if (w.old === w.new) { out.unchanged += 1; continue; }
+    if ((held.get(w.new.toLowerCase()) || []).some((x) => x !== w.id)) { out.clashes.push({ ...w, why: 'این کد را کالای دیگری دارد' }); continue; }
+    if ((planned.get(w.new.toLowerCase()) || []).length > 1) { out.clashes.push({ ...w, why: 'دو کالا این کد را می‌گیرند' }); continue; }
+    out.skus.push(w);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------------- undo (job U): from what the audit log says a finished job did
 /** The preview that created categories last (the one whose edge banding the owner wants back). */
 export function latestCreatingPreview(entries) {
@@ -297,6 +345,17 @@ const JOBS = {
       return null;
     },
     audit: (cur, body, p, ch) => ({ field: ch.op, old: ch.op === 'sku' ? String(cur.Sku || '') : ch.op === 'rename' ? cur.Name : String(cur.ParentRef?.value || ''), new: ch.op === 'sku' || ch.op === 'rename' ? ch.new : String(p.params.cats?.[ch.cat] || '') }),
+  },
+  D: {
+    title: 'دسته و کد نوار لبه', entity: 'item', fields: ['Type', 'Name', 'ParentRef', 'SubItem', 'Sku'],
+    body: (cur, ch, p) => {
+      if (cur.Type === 'Category') return null;
+      const cid = String(p.params.cats?.[ch.cat] || '');
+      if (ch.op === 'move') return cid && !(String(cur.ParentRef?.value || '') === cid && cur.SubItem) ? { ParentRef: { value: cid }, SubItem: true } : null;
+      if (ch.op === 'sku') return String(cur.Sku || '') === ch.new ? null : { Sku: ch.new };
+      return null;
+    },
+    audit: (cur, body, p, ch) => ({ field: ch.op, old: ch.op === 'sku' ? String(cur.Sku || '') : String(cur.ParentRef?.value || ''), new: ch.op === 'sku' ? ch.new : String(p.params.cats?.[ch.cat] || '') }),
   },
   U: {
     title: 'برگرداندن دسته', entity: 'item', fields: ['ParentRef', 'SubItem'],
@@ -440,6 +499,40 @@ export class QboBulkDesk {
       extra: [
         ...(r.clashes.length ? [`رد شد (برخورد کد): ${r.clashes.slice(0, 10).map((c) => `${c.label} (${c.new}: ${c.why})`).join('، ')}${r.clashes.length > 10 ? ` و ${fa(r.clashes.length - 10)} مورد دیگر` : ''}`] : []),
         ...(r.unsure.length ? [`مطمئن نیستم و جابه‌جا یا بی‌تغییر می‌ماند (${fa(r.unsure.length)} کالا): ${r.unsure.slice(0, 30).map((u) => `${u.label} [${u.why}]`).join('، ')}${r.unsure.length > 30 ? ` و ${fa(r.unsure.length - 30)} مورد دیگر` : ''}`] : []),
+      ],
+    });
+  }
+
+  // ------------------------------------------------------------------------------------------------ D: the edge banding list
+  async planEdgeList() {
+    const blocked = this.guard();
+    if (blocked) return [blocked];
+    const items = await this.items(true);
+    const cats = await this.qbo.query("select * from Item where Type = 'Category' and Active in (true, false)");
+    const r = planEdgeList(items, cats);
+    if (r.stop) return [r.stop];
+    const changes = [];
+    for (const s of r.subs) {
+      if (s.mode === 'activate') changes.push({ op: 'cat-activate', cat: s.key, id: s.id, label: s.name, old: 'inactive', new: s.name });
+      if (s.mode === 'create') changes.push({ op: 'cat-create', cat: s.key, parent: 'edge', id: '', label: s.name, old: '', new: s.name });
+    }
+    changes.push(...r.moves, ...r.skus);
+    if (!changes.length) return [`دسته و کد نوار لبه از پیش درست است (${fa(r.unchanged)} مورد)${r.missing.length ? `؛ ${fa(r.missing.length)} کالا در فهرست پیدا نشد` : ''}.`];
+    const cats2 = { edge: r.parent.id, ...Object.fromEntries(r.subs.filter((s) => s.id).map((s) => [s.key, s.id])) };
+    const subLine = r.subs.map((s) => ({ exists: `دستهٔ «${s.name}» از پیش هست`, activate: `دستهٔ «${s.name}» (غیرفعال) دوباره فعال می‌شود`, create: `دستهٔ «${s.name}» زیر «${EDGE_CAT}» ساخته می‌شود` }[s.mode])).join('؛ ');
+    const m22 = r.moves.filter((m) => m.cat === 'e22'); const m50 = r.moves.filter((m) => m.cat === 'e50');
+    return this.make('D', { changes, skipped: [...r.clashes, ...r.missing.map((x) => ({ label: x, why: 'missing' })), ...r.ambiguous.map((x) => ({ label: x, why: 'ambiguous' }))], unchanged: r.unchanged }, {
+      header: 'دسته و کد نوار لبه', params: { cats: cats2 },
+      summary: `فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا. فقط همین فهرست ۳۳ کالایی که مالک داد؛ هیچ کالای دیگری، چسب و پی‌وی‌سی دست نمی‌خورد.\n${subLine}.\nانتقال: ${fa(m22.length)} کالا به ${EDGE_SIZES[22]} و ${fa(m50.length)} کالا به ${EDGE_SIZES[50]}. کد کالا: ${fa(r.skus.length)} کد تغییر می‌کند. ${fa(r.unchanged)} مورد از پیش درست است.`,
+      lines: [
+        ...m22.slice(0, 4).map((c) => `انتقال: ${c.label} ← ${EDGE_SIZES[22]}`),
+        ...m50.slice(0, 4).map((c) => `انتقال: ${c.label} ← ${EDGE_SIZES[50]}`),
+        ...r.skus.slice(0, 6).map((c) => `کد: ${c.label}: ${c.old || '—'} → ${c.new}`),
+      ].map((x, i) => `${fa(i + 1)}. ${x}`),
+      extra: [
+        ...(r.missing.length ? [`در کوییک‌بوکس پیدا نشد (${fa(r.missing.length)}): ${r.missing.join('، ')}`] : []),
+        ...(r.ambiguous.length ? [`چند کالا با این نام هست و رد شد: ${r.ambiguous.join('، ')}`] : []),
+        ...(r.clashes.length ? [`رد شد (برخورد کد): ${r.clashes.map((c) => `${c.label} (${c.new}: ${c.why})`).join('، ')}`] : []),
       ],
     });
   }
@@ -588,6 +681,18 @@ export class QboBulkDesk {
     const done = [];
     try {
       for (const [i, ch] of p.changes.entries()) {
+        if (ch.op === 'cat-activate') { // a category of ours that was switched off comes back (named in the plan, and the only item this step may touch)
+          try {
+            const cat = (await this.qbo.get(`item/${encodeURIComponent(ch.id)}`))?.Item;
+            if (!cat || cat.Type !== 'Category') throw new Error('the category is gone');
+            if (cat.Active === false) {
+              await this.qbo.write('POST', 'item', { Id: String(cat.Id), SyncToken: String(cat.SyncToken), sparse: true, Active: true }, { categoryIds: [ch.id] });
+              r.changed += 1; this.audit.add({ event: 'bulk-change', kind: p.kind, previewId: p.id, approver: 'owner', qboId: ch.id, field: 'category-activate', new: ch.new });
+            } else r.skipped += 1;
+          } catch (e) { this.stop(r, p, i, e); break; }
+          if (this.gapMs) await this.sleep(this.gapMs);
+          continue;
+        }
         if (ch.op === 'undo-cat') { // a category the job made is switched off only if nothing active sits in it any more
           try {
             const kids = (await this.items(true)).filter((x) => String(x.ParentRef?.value || '') === ch.id && x.Active !== false);
