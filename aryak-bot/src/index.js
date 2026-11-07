@@ -625,6 +625,7 @@ const qboInvoices = new QboInvoiceDesk({
 const qboNames = new QboNameDesk({ qbo, desk: qboDesk, audit: qboInvoices.audit, store: new NamePreviews(path.join(config.authDir, 'qbo')), log: (s) => logger.info(s) });
 // The owner's other bulk jobs (e-mail #E, mobile #M, item tax code #T, base prices #P): same pattern, each changes only its own fields.
 const qboBulk = new QboBulkDesk({ qbo, desk: qboDesk, audit: qboInvoices.audit, store: new BulkPreviews(path.join(config.authDir, 'qbo')), draft: new PriceDraft(path.join(config.authDir, 'qbo')), itemCodes: qboInvoices.itemCodes, config, log: (s) => logger.info(s) });
+qboBulk.afterRun = () => { qboInvoices.cache.at = 0; }; // a changed item (inactive, moved, priced) is read again for the next invoice
 /** The owner's invoice commands (his own chat): request, yes, no, pause, resume, audit, and the list of people allowed to ask. */
 async function qboInvoiceCommand(ic, text) {
   switch (ic.type) {
@@ -632,6 +633,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_email': return qboBulk.planEmails(ic.email);
     case 'bulk_mobile': return qboBulk.planMobiles();
     case 'bulk_edge': return qboBulk.planEdgeList();
+    case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'bulk_undo': return qboBulk.planUndo({ scope: ic.scope, source: ic.source });
     case 'bulk_catalog': return qboBulk.planCatalog({ edge: ic.edge !== false });
     case 'bulk_tax': return qboBulk.planItemTax();
@@ -652,7 +654,7 @@ async function qboInvoiceCommand(ic, text) {
         if (open.length > 1) return [`چند پیش‌نمایش باز است: ${open.map((x) => `#${x}`).join('، ')}. چیزی انجام نشد؛ شمارهٔ پیش‌نمایش را بنویسید، مثل: ${ic.type === 'yes' ? 'بله' : 'نه'} #${open[0]}`];
         id = open[0]; said = `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUD]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
+      const out = await (id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDR]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
       return said ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];

@@ -335,12 +335,12 @@ export class Qbo {
    * update of a customer's name. Anything else (a delete, a void, a payment, a refund, any other update) is refused here whatever the caller asks.
    * [requestId] makes the invoice create idempotent.
    */
-  async write(method, pathPart, body, { requestId = '', categoryIds = [] } = {}) {
+  async write(method, pathPart, body, { requestId = '', categoryIds = [], inactivateIds = [] } = {}) {
     if (!this.writeOn) throw new QboError('QuickBooks writes are switched off (QBO_WRITE)');
     // the undo and edge jobs may switch a category they name off or on (Active) and nothing else: Id + SyncToken + sparse + Active, and the Id must be one of [categoryIds]
     if (method === 'POST' && pathPart === 'item' && body && (body.Active === false || body.Active === true)) {
       const keys = Object.keys(body);
-      if (body.sparse !== true || !body.Id || body.SyncToken === undefined || keys.some((k) => !['Id', 'SyncToken', 'sparse', 'Active'].includes(k)) || !categoryIds.map(String).includes(String(body.Id))) throw new QboError('QuickBooks: only switching a named category on or off is allowed');
+      if (body.sparse !== true || !body.Id || body.SyncToken === undefined || keys.some((k) => !['Id', 'SyncToken', 'sparse', 'Active'].includes(k)) || !(categoryIds.map(String).includes(String(body.Id)) || (body.Active === false && inactivateIds.map(String).includes(String(body.Id))))) throw new QboError('QuickBooks: only switching a named category on or off (or an item named for it off) is allowed');
       return this.send('POST', 'item', {}, body);
     }
     // the other writes are SPARSE updates only (Id + SyncToken + sparse + ONE job's fields); no create, no delete, no inactivate:

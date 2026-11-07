@@ -8,7 +8,7 @@ import { QboDesk, QboMap } from '../src/qbodesk.js';
 import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
 import { Audit, ItemCodes, parseInvoiceCommand, codeFromInvoices } from '../src/qboinvoice.js';
-import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems, planCatalog, categoryCandidates, planEdgeList } from '../src/qbobulk.js';
+import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems, planCatalog, categoryCandidates, planEdgeList, planOldEdge } from '../src/qbobulk.js';
 
 // Invented data only: nothing real is ever in the repository.
 const REALM = '9130000000';
@@ -980,5 +980,76 @@ test('Qbo.write: a named category can be switched on or off, nothing else; the w
   assert.equal(t.m.posts.length, 1);
   assert.deepEqual(parseInvoiceCommand('دسته و کد نوار لبه'), { type: 'bulk_edge' });
   assert.deepEqual(parseInvoiceCommand('بله#D1'), { type: 'yes', id: 'D1' });
+});
+
+
+// ---- job R: switch off the nine old edge banding items
+const oldEdgeWorld = (extra = []) => [
+  ...[['3019', 134, 4000], ['3020', 135, 5000], ['394', 129, 3000], ['640', 130, 3000], ['726', 132, 3500], ['729', 133, 3000], ['735', 131, 4200], ['840', 128, 3000]]
+    .map(([c, id, q]) => I(id, `EDGE BAND 1MM*22(${c})`, { Sku: `EDGE BAND 1MM*22(${c})`, QtyOnHand: q, PurchaseCost: 0.36 })),
+  I(140, 'edge banding', { Sku: 'edge banding', QtyOnHand: 100, PurchaseCost: 0.36 }),
+  I(239, 'EDGE BANDING', { Type: 'Category' }), // the category has the same name apart from case: never an item of this job
+  I(300, '1801 edge banding', { QtyOnHand: 50 }), I(301, 'GLUE EDGE BANDING ARYAK'),
+  ...extra,
+];
+
+test('R plan: exactly the nine by exact name, with stock, cost and value; the category, the glue and the numbered items are not in it', () => {
+  const r = planOldEdge(oldEdgeWorld());
+  assert.deepEqual(r.found.map((x) => x.id).sort(), ['128', '129', '130', '131', '132', '133', '134', '135', '140']);
+  assert.equal(r.found.find((x) => x.id === '134').value, 1440); // 4000 x 0.36
+  assert.equal(r.total, Math.round((4000 + 5000 + 3000 + 3000 + 3500 + 3000 + 4200 + 3000 + 100) * 0.36 * 100) / 100);
+  assert.deepEqual(r.missing, []);
+  assert.deepEqual(planOldEdge([]).missing.length, 9);
+  const two = planOldEdge(oldEdgeWorld([I(141, 'edge banding')]));
+  assert.deepEqual(two.ambiguous, ['edge banding']);
+  assert.deepEqual(planOldEdge(oldEdgeWorld().map((i) => (i.Id === '135' ? { ...i, Active: false } : i))).already, ['EDGE BAND 1MM*22(3020)']);
+});
+
+test('R run: the preview shows stock and value and the promise; the yes switches off (Active false only); a 400 for stock is skipped with its message', async () => {
+  const t = mk({ items: oldEdgeWorld(), rejectIds: ['135'] });
+  assert.match(t.bulk.constructor.name, /Desk/);
+  const [pv] = await t.bulk.planOldEdge();
+  assert.match(pv, /#R1/);
+  assert.match(pv, /در کوییک‌بوکس کالا پاک نمی‌شود؛ غیرفعال می‌شود و موجودی‌اش با سند تعدیل انبار صفر می‌شود؛ فاکتورهای قبلی تغییر نمی‌کنند/);
+  assert.match(pv, /EDGE BAND 1MM\*22\(3019\) \(شناسه 134\): موجودی 4,000، بها 0.36، ارزش 1,440/);
+  assert.match(pv, /جمع ارزش موجودی/);
+  assert.equal(t.m.posts.length, 0);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'R1' });
+  const rep = await done;
+  const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  for (const id of [134, 129, 130, 132, 133, 131, 128, 140]) assert.equal(by(id).Active, false, String(id));
+  assert.equal(by(135).Active, true); // refused: stays, reported
+  assert.match(rep, /EDGE BAND 1MM\*22\(3020\): Business Validation Error/);
+  assert.doesNotMatch(rep, /ایستاد/);
+  assert.equal(by(239).Active, true); assert.equal(by(300).Active, true); assert.equal(by(301).Active, true); // category, numbered item, glue
+  assert.ok(t.m.posts.every((p) => Object.keys(p.body).sort().join() === 'Active,Id,SyncToken,sparse' && p.body.Active === false));
+  assert.equal(by(134).QtyOnHand, 4000); // the bot makes no adjustment
+  assert.ok(t.audit.all().some((e) => e.field === 'deactivate' && e.qboId === '134' && e.qty === 4000));
+  // the same preview again after the one refusal: only that one is left
+  const [pv2] = await t.bulk.planOldEdge();
+  assert.match(pv2, /#R2/);
+  assert.match(pv2, /۱ کالا/);
+});
+
+test('R: an item whose name no longer matches the preview is not touched; the write door only opens for a named id; inactive items are never matched', async () => {
+  const t = mk({ items: oldEdgeWorld() });
+  await t.bulk.planOldEdge();
+  t.m.db.Item.find((i) => i.Id === '134').Name = 'Renamed since'; // changed between preview and yes
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'R1' });
+  const rep = await done;
+  assert.equal(t.m.db.Item.find((i) => i.Id === '134').Active, true);
+  assert.match(rep, /Renamed since|EDGE BAND 1MM\*22\(3019\): نامش با پیش‌نمایش نمی‌خواند/);
+  const base = { Id: '134', SyncToken: '0', sparse: true, Active: false };
+  await assert.rejects(() => t.qbo.write('POST', 'item', base), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Active: true }, { inactivateIds: ['134'] }), /only/); // an item can be named for OFF only
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, UnitPrice: 1 }, { inactivateIds: ['134'] }), /only/);
+  const { pickItem } = await import('../src/qboinvoice.js');
+  const items = [I(1, 'edge banding', { Sku: 'edge banding', Active: false }), I(2, '1801 edge banding')];
+  assert.equal(pickItem('edge banding', { items }).stop !== undefined || pickItem('edge banding', { items }).item?.Id === '2', true);
+  assert.notEqual(pickItem('edge banding', { items }).item?.Id, '1'); // the inactive one is never the answer
+  assert.deepEqual(parseInvoiceCommand('حذف نوار لبه‌های قدیمی'), { type: 'bulk_old_edge' });
+  assert.deepEqual(parseInvoiceCommand('بله#R1'), { type: 'yes', id: 'R1' });
 });
 

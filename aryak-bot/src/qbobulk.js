@@ -271,6 +271,29 @@ export function planEdgeList(items, cats) {
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------- the old edge banding items to switch off (job R): nine named items
+export const OLD_EDGE = [
+  ['EDGE BAND 1MM*22(3019)', '134'], ['EDGE BAND 1MM*22(3020)', '135'], ['EDGE BAND 1MM*22(394)', '129'], ['EDGE BAND 1MM*22(640)', '130'],
+  ['EDGE BAND 1MM*22(726)', '132'], ['EDGE BAND 1MM*22(729)', '133'], ['EDGE BAND 1MM*22(735)', '131'], ['EDGE BAND 1MM*22(840)', '128'], ['edge banding', ''],
+];
+/** The nine items by exact name (a category is never one): found with their stock and value, missing and ambiguous named. */
+export function planOldEdge(items) {
+  const real = items.filter((i) => i.Type !== 'Category');
+  const out = { found: [], missing: [], ambiguous: [], already: [], total: 0 };
+  for (const [name, hintId] of OLD_EDGE) {
+    const hit = real.filter((i) => nameEq(i.Name, name));
+    const live = hit.filter((i) => i.Active !== false);
+    if (!hit.length) { out.missing.push(name); continue; }
+    if (!live.length) { out.already.push(name); continue; }
+    if (live.length > 1) { out.ambiguous.push(name); continue; }
+    const i = live[0]; const qty = Number(i.QtyOnHand) || 0; const cost = Number(i.PurchaseCost) || 0;
+    const value = Math.round(qty * cost * 100) / 100;
+    out.total = Math.round((out.total + value) * 100) / 100;
+    out.found.push({ op: 'deactivate', id: String(i.Id), label: i.Name, hint: hintId && hintId !== String(i.Id) ? hintId : '', qty, cost, value, old: 'active', new: 'inactive' });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------------- undo (job U): from what the audit log says a finished job did
 /** The preview that created categories last (the one whose edge banding the owner wants back). */
 export function latestCreatingPreview(entries) {
@@ -357,6 +380,7 @@ const JOBS = {
     },
     audit: (cur, body, p, ch) => ({ field: ch.op, old: ch.op === 'sku' ? String(cur.Sku || '') : String(cur.ParentRef?.value || ''), new: ch.op === 'sku' ? ch.new : String(p.params.cats?.[ch.cat] || '') }),
   },
+  R: { title: 'غیرفعال کردن نوار لبه‌های قدیمی', entity: 'item', fields: [], body: () => null, audit: () => ({}) },
   U: {
     title: 'برگرداندن دسته', entity: 'item', fields: ['ParentRef', 'SubItem'],
     // an item goes back only if it still sits where the job put it; one that someone moved since is left alone and named
@@ -537,6 +561,26 @@ export class QboBulkDesk {
     });
   }
 
+  // ------------------------------------------------------------------------------------------------ R: the old edge banding items
+  async planOldEdge() {
+    const blocked = this.guard();
+    if (blocked) return [blocked];
+    const items = await this.items(true);
+    const r = planOldEdge(items);
+    if (!r.found.length) return [`کالایی برای غیرفعال کردن نمانده${r.already.length ? ` (${fa(r.already.length)} کالا از پیش غیرفعال است)` : ''}${r.missing.length ? `؛ پیدا نشد: ${r.missing.join('، ')}` : ''}.`];
+    const num = (x) => String(x).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return this.make('R', { changes: r.found, skipped: [...r.missing.map((x) => ({ label: x, why: 'missing' })), ...r.ambiguous.map((x) => ({ label: x, why: 'ambiguous' }))], unchanged: r.already.length }, {
+      header: 'غیرفعال کردن نوار لبه‌های قدیمی',
+      summary: `${fa(r.found.length)} کالا با نام دقیق. در کوییک‌بوکس کالا پاک نمی‌شود؛ غیرفعال می‌شود و موجودی‌اش با سند تعدیل انبار صفر می‌شود؛ فاکتورهای قبلی تغییر نمی‌کنند. ربات خودش هیچ سند تعدیل نمی‌سازد؛ اگر کوییک‌بوکس به‌خاطر موجودی نپذیرد، کالا رد و پیام آن گفته می‌شود تا خودتان در کوییک‌بوکس «غیرفعال» را بزنید.\nجمع ارزش موجودی (تعداد × بهای خرید): ${num(r.total)}.`,
+      lines: r.found.map((c, i) => `${fa(i + 1)}. ${c.label} (شناسه ${c.id}${c.hint ? `، در فهرست ${c.hint}` : ''}): موجودی ${num(c.qty)}، بها ${c.cost}، ارزش ${num(c.value)}`),
+      extra: [
+        ...(r.missing.length ? [`پیدا نشد: ${r.missing.join('، ')}`] : []),
+        ...(r.ambiguous.length ? [`چند کالا با این نام هست و رد شد: ${r.ambiguous.join('، ')}`] : []),
+        ...(r.already.length ? [`از پیش غیرفعال: ${r.already.join('، ')}`] : []),
+      ],
+    });
+  }
+
   // ------------------------------------------------------------------------------------------------ U: put a finished job's moves back
   /** [scope] 'edge': the latest job that created categories, only the moves into them; 'all': every move of the job named in [source]. */
   async planUndo({ scope = 'edge', source = '' } = {}) {
@@ -681,6 +725,25 @@ export class QboBulkDesk {
     const done = [];
     try {
       for (const [i, ch] of p.changes.entries()) {
+        if (ch.op === 'deactivate') { // an old item is switched off (never deleted, no adjustment made by the bot); QuickBooks may refuse: skip, say why
+          try {
+            const cur = (await this.qbo.get(`item/${encodeURIComponent(ch.id)}`))?.Item;
+            if (!cur || !nameEq(cur.Name, ch.label)) { r.skipped += 1; (r.notes = r.notes || []).push(`${ch.label}: نامش با پیش‌نمایش نمی‌خواند و دست نخورد`); continue; }
+            if (cur.Active === false) { r.skipped += 1; continue; }
+            await this.qbo.write('POST', 'item', { Id: String(cur.Id), SyncToken: String(cur.SyncToken), sparse: true, Active: false }, { inactivateIds: [ch.id] });
+            r.changed += 1; this.audit.add({ event: 'bulk-change', kind: p.kind, previewId: p.id, approver: 'owner', qboId: ch.id, field: 'deactivate', name: ch.label, qty: Number(cur.QtyOnHand) || 0, cost: Number(cur.PurchaseCost) || 0, new: 'inactive' });
+          } catch (e) {
+            if (e.status === 400) {
+              r.failed += 1; r.errors.push({ name: ch.label, id: ch.id, why: [e.fault?.message, e.fault?.detail].filter(Boolean).join(' - ') || e.message });
+              this.audit.add({ event: 'bulk-skip', kind: p.kind, previewId: p.id, qboId: ch.id, name: ch.label, fault: e.fault || undefined });
+              if (this.gapMs) await this.sleep(this.gapMs);
+              continue;
+            }
+            this.stop(r, p, i, e); break;
+          }
+          if (this.gapMs) await this.sleep(this.gapMs);
+          continue;
+        }
         if (ch.op === 'cat-activate') { // a category of ours that was switched off comes back (named in the plan, and the only item this step may touch)
           try {
             const cat = (await this.qbo.get(`item/${encodeURIComponent(ch.id)}`))?.Item;
@@ -755,6 +818,7 @@ export class QboBulkDesk {
       this.store.save();
       this.itemCache = { at: 0, items: [] };
       this.desk.cache = { at: 0, customers: [] };
+      try { this.afterRun?.(); } catch { /* the invoice catalogue is read again at its next use */ }
       this.audit.add({ event: r.stoppedAt ? 'bulk-stopped' : 'bulk-done', kind: p.kind, previewId: p.id, total: r.changed });
       if (this.finish) { try { await this.finish([`${job.title} (${p.id}): ${this.reportLine(r)}`]); } catch { /* the chat may be gone */ } }
     }
