@@ -7,7 +7,7 @@ import { Qbo, QboError } from '../src/qbo.js';
 import { QboDesk, QboMap, pickTestGroup } from '../src/qbodesk.js';
 import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
-import { Audit, AuthStore, CAP_DAY, CAP_HOUR, EXPIRY_MS, InvoiceStore, QboInvoiceDesk, findVatCode, itemsNamed, lineCandidates, parseInvoiceCommand, resolveLines, totals } from '../src/qboinvoice.js';
+import { Audit, AuthStore, CAP_DAY, CAP_HOUR, EXPIRY_MS, InvoiceStore, QboInvoiceDesk, TaxChoices, codeFromInvoices, itemsNamed, lineCandidates, parseInvoiceCommand, resolveLines, taxCodeMap, totals } from '../src/qboinvoice.js';
 
 // Invented names, items, numbers and amounts only: nothing real is ever in the repository.
 const REALM = '9130000000';
@@ -26,6 +26,8 @@ const TAXCODES = [
   { Id: 'NON', Name: 'Out of scope', Taxable: false, Active: true },
 ];
 const TAXRATES = [{ Id: '5', RateValue: 5 }, { Id: '6', RateValue: 0 }];
+const invLine = (code) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { TaxCodeRef: { value: code } } });
+const RECENT = [{ Id: '501', CustomerRef: { value: '58' }, Line: [invLine('11'), invLine('11'), { DetailType: 'SubTotalLineDetail' }] }, { Id: '502', CustomerRef: { value: '58' }, Line: [invLine('11')] }];
 
 const res = (status, json, extra = {}) => ({ status, ok: status >= 200 && status < 300, json: async () => json, arrayBuffer: async () => Buffer.from(extra.bytes || ''), headers: { get: () => null } });
 
@@ -56,7 +58,7 @@ function mockQbo(opts = {}) {
     if (p.includes('/companyinfo/')) return res(200, { CompanyInfo: { CompanyName: 'The Test Workshop', Country: 'AE' } });
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
-    const rows = { Customer: CUSTOMERS, Item: ITEMS, TaxCode: opts.taxCodes || TAXCODES, TaxRate: TAXRATES, Invoice: [], Payment: [], CreditMemo: [] }[ent] || [];
+    const rows = { Customer: CUSTOMERS, Item: ITEMS, TaxCode: opts.taxCodes || TAXCODES, TaxRate: TAXRATES, Invoice: opts.invoices || RECENT, Payment: [], CreditMemo: [] }[ent] || [];
     return res(200, { QueryResponse: { [ent]: rows } });
   };
   return { fetchFn, calls, posts, invoices };
@@ -79,7 +81,7 @@ function mk(opts = {}) {
   const store = new InvoiceStore(path.join(dir, 'qbo'));
   const audit = new Audit(path.join(dir, 'qbo'), () => clock.t);
   const book = opts.book || null;
-  const inv = new QboInvoiceDesk({ qbo, desk, store, audit, book, config, today: () => '2026-11-08', now: () => clock.t, post, ownerJid: () => OWNER_JID, groups: async () => GROUPS, testGroup: (g) => pickTestGroup(g, config), log: () => {} });
+  const inv = new QboInvoiceDesk({ qbo, desk, store, audit, book, taxChoices: new TaxChoices(path.join(dir, 'qbo')), config, today: () => '2026-11-08', now: () => clock.t, post, ownerJid: () => OWNER_JID, groups: async () => GROUPS, testGroup: (g) => pickTestGroup(g, config), log: () => {} });
   return { dir, m, clock, config, qbo, desk, inv, store, audit, sent, map, list };
 }
 const REQ = 'فاکتور بساز Orion Furniture\nHinge 35mm, 10\nEdge Tape White, 3, 1.1';
@@ -118,22 +120,26 @@ test('item lines: commas make them exact; without commas the numbers at the end 
   assert.ok(amb.stops[0].includes('بیش از یک جور'));
 });
 
-test('the VAT code is READ from QuickBooks: the 5% sales code; none or several stop with the candidates; the setting can name one', () => {
-  assert.deepEqual(findVatCode(TAXCODES, TAXRATES), { id: '11', name: '5% S', rate: 5 });
-  assert.ok(findVatCode([TAXCODES[1], TAXCODES[2]], TAXRATES).error.includes('۵ درصد'));
-  const two = [...TAXCODES, { Id: '13', Name: 'Standard Rate', Taxable: true, Active: true, SalesTaxRateList: { TaxRateDetail: [{ TaxRateRef: { value: '5' } }] } }];
-  assert.equal(findVatCode(two, TAXRATES).name, 'Standard Rate'); // "standard" breaks the tie
-  const same = [...TAXCODES, { Id: '14', Name: 'Other five', Taxable: true, Active: true, SalesTaxRateList: { TaxRateDetail: [{ TaxRateRef: { value: '5' } }] } }];
-  assert.ok(findVatCode(same, TAXRATES).error.includes('QBO_TAX_CODE'));
-  assert.equal(findVatCode(same, TAXRATES, 'Other five').id, '14');
+test('the tax codes are all READ from QuickBooks (zero-rated and exempt too); the code of a customer is what the office used on his recent invoices', () => {
+  const codes = taxCodeMap(TAXCODES, TAXRATES);
+  assert.deepEqual([...codes.values()].map((c) => [c.id, c.name, c.rate]), [['11', '5% S', 5], ['12', 'Zero rated', 0], ['NON', 'Out of scope', 0]]);
+  assert.deepEqual(taxCodeMap([{ Id: '9', Name: 'Old', Active: false }], []).size, 0); // inactive codes are not offered
   assert.deepEqual(totals([{ amount: 2500 }, { amount: 330 }], 5), { subtotal: 2830, vat: 142, total: 2972 });
+  assert.deepEqual(totals([{ amount: 2500 }], 0), { subtotal: 2500, vat: 0, total: 2500 }); // zero-rated: no VAT
+  assert.equal(codeFromInvoices(RECENT, codes).code.name, '5% S'); // all lines of all recent invoices agree
+  assert.equal(codeFromInvoices([], codes).error, 'none'); // no invoices: he picks
+  const mixed = codeFromInvoices([{ Line: [invLine('11'), invLine('12'), invLine('12')] }], codes);
+  assert.equal(mixed.error, 'disagree');
+  assert.deepEqual(mixed.found.map((f) => [f.name, f.n]), [['5% S', 1], ['Zero rated', 2]]);
+  assert.equal(codeFromInvoices([{ Line: [invLine('99')] }], codes).error, 'unknown'); // a code that is not in the company's list
+  assert.equal(codeFromInvoices([{ Line: [{ DetailType: 'SubTotalLineDetail' }] }], codes).error, 'none');
 });
 
 test('a request becomes a PREVIEW for the owner: customer, lines, subtotal, VAT and total as QuickBooks will add them; nothing is created', async () => {
   const t = mk({ book: { priceOf: (code) => (code === 'ET-W' ? { price: 1.3 } : null) } });
   const r = await t.inv.request({ text: REQ, requester: '971501112222' });
   assert.ok(r.requester.includes('#Q1') && r.requester.includes('sent to the owner for approval'));
-  for (const s of ['پیش‌نمایش فاکتور #Q1', 'Orion Furniture', 'Hinge 35mm × 10 @ 2.5 = 25.00', 'Edge Tape White × 3 @ 1.1 = 3.30', 'جمع قبل از مالیات: 28.30', 'مالیات 5٪ (5% S): 1.42', 'جمع کل: 29.72 AED', 'بله #Q1', 'نه #Q1']) assert.ok(r.owner.includes(s), s);
+  for (const s of ['پیش‌نمایش فاکتور #Q1', 'Orion Furniture', 'Hinge 35mm × 10 @ 2.5 = 25.00', 'Edge Tape White × 3 @ 1.1 = 3.30', 'جمع قبل از مالیات: 28.30', 'مالیات 5٪ (5% S، از فاکتورهای قبلی دفتر): 1.42', 'جمع کل: 29.72 AED', 'بله #Q1', 'نه #Q1']) assert.ok(r.owner.includes(s), s);
   assert.ok(r.owner.includes('سطر ۲') && r.owner.includes('کمتر از قیمت کوییک‌بوکس (1.2)') && r.owner.includes('کمتر از فهرست قیمت مالک (1.3)'));
   assert.equal(t.m.posts.length, 0);
   assert.equal(t.store.get('Q1').status, 'pending');
@@ -325,4 +331,46 @@ test('the audit report shows the last ten events with no message text', async ()
   assert.ok(rep.includes('create') && rep.includes('شمارهٔ 2001') && rep.includes('جمع 29.72'));
   assert.ok(!/Hinge|Edge Tape|فاکتور بساز/.test(rep));
   assert.ok(fs.readFileSync(path.join(t.dir, 'qbo', 'qbo-audit.log'), 'utf8').trim().split('\n').length === 13); // append-only: every preview and the create
+});
+
+test('the VAT code is that of THE CUSTOMER: zero-rated customers pay no VAT, an unclear customer stops with what was found, the owner\'s choice is kept', async () => {
+  // a customer whose recent invoices are zero-rated (an export): the preview shows 0% and no VAT
+  const zero = mk({ invoices: [{ Id: '601', Line: [invLine('12'), invLine('12')] }] });
+  const r = await zero.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(r.owner.includes('مالیات 0٪ (Zero rated، از فاکتورهای قبلی دفتر): 0.00') && r.owner.includes('جمع کل: 28.30 AED'));
+  assert.equal(zero.store.get('Q1').tax.id, '12');
+  await zero.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(zero.m.posts[0].body.Line.map((l) => l.SalesItemLineDetail.TaxCodeRef.value), ['12', '12']);
+  // the lines disagree: stop, list what was found, ask the owner
+  const mixed = mk({ invoices: [{ Id: '602', Line: [invLine('11'), invLine('12')] }] });
+  const stop = await mixed.inv.request({ text: REQ, requester: 'owner' });
+  assert.equal(stop.owner, null);
+  assert.ok(stop.requester.includes('یکی نیست') && stop.requester.includes('5% S (1 سطر)') && stop.requester.includes('Zero rated (1 سطر)') && stop.requester.includes('کد مالیات Orion Furniture = '));
+  assert.equal(mixed.store.d.n, 0);
+  // no invoices at all: stop too
+  const none = mk({ invoices: [{ Id: '603', Line: [] }] });
+  assert.ok((await none.inv.request({ text: REQ, requester: 'owner' })).requester.includes('فاکتور قبلی با کد مالیات'));
+  // an authorized person cannot choose: he is told the owner was asked, and the OWNER gets the details
+  const auth = mk({ invoices: [{ Id: '604', Line: [invLine('11'), invLine('12')] }] });
+  const ar = await auth.inv.request({ text: REQ, requester: '971501112222' });
+  assert.ok(ar.requester.includes('chosen by the owner') && !ar.requester.includes('Zero rated'));
+  assert.ok(ar.owner.includes('971501112222') && ar.owner.includes('Zero rated (1 سطر)'));
+  // the owner chooses; it is stored on the VM by QuickBooks customer id and used from then on
+  assert.ok((await mixed.inv.setTaxChoice({ customer: 'Orion Furniture', code: 'zero rated' })).join('').includes('Zero rated'));
+  assert.deepEqual(mixed.inv.taxChoices.get('58').codeId, '12');
+  assert.equal(new TaxChoices(path.join(mixed.dir, 'qbo')).get('58').name, 'Zero rated');
+  const after = await mixed.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(after.owner.includes('مالیات 0٪ (Zero rated، انتخاب مالک)'));
+  // a code that does not exist, a customer that is not exact
+  assert.ok((await mixed.inv.setTaxChoice({ customer: 'Orion Furniture', code: 'Nope' })).join('').includes('کدهای موجود'));
+  assert.ok((await mixed.inv.setTaxChoice({ customer: 'Orion Furnitur', code: '5% S' })).join('').includes('معرفی شود'));
+  assert.ok((await mixed.inv.taxListText()).join('').includes('5% S — 5٪') && (await mixed.inv.taxListText()).join('').includes('Zero rated — 0٪'));
+  // the setting stays as an owner override over everything
+  const over = mk({ invoices: [{ Id: '605', Line: [invLine('11')] }], config: { qboTaxCode: 'Zero rated' } });
+  assert.ok((await over.inv.request({ text: REQ, requester: 'owner' })).owner.includes('مالیات 0٪ (Zero rated، تنظیم مالک)'));
+  const badOver = mk({ config: { qboTaxCode: 'Nope' } });
+  assert.ok((await badOver.inv.request({ text: REQ, requester: 'owner' })).requester.includes('QBO_TAX_CODE'));
+  // the words
+  assert.deepEqual(parseInvoiceCommand('کد مالیات Orion Furniture = Zero rated'), { type: 'tax_set', customer: 'Orion Furniture', code: 'Zero rated' });
+  assert.deepEqual(parseInvoiceCommand('کدهای مالیات'), { type: 'tax_list' });
 });

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { staffChecker } from './gate.js';
+import { qboEscape } from './qbo.js';
 
 const latin = (s) => String(s).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[٫]/g, '.');
 const plain = (s) => latin(String(s || '')).replace(/[‌‎‏ً-ٟ]/g, ' ').replace(/[أإ]/g, 'ا').replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/\s+/g, ' ').trim();
@@ -38,6 +39,8 @@ export function parseInvoiceCommand(text) {
   if ((m = /^لغو\s+مجوز\s+فاکتور\s+\+?([\d\s-]{7,20})$/u.exec(s))) return { type: 'auth_remove', number: m[1] };
   if ((m = /^مجوز\s+فاکتور\s+\+?([\d\s-]{7,20})$/u.exec(s))) return { type: 'auth_add', number: m[1] };
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
+  if (/^کدهای\s+مالیات$/u.test(s)) return { type: 'tax_list' };
+  if ((m = /^کد\s+مالیات\s+(.+?)\s*=\s*(.+)$/u.exec(s))) return { type: 'tax_set', customer: m[1].trim(), code: m[2].trim() };
   return null;
 }
 
@@ -97,18 +100,33 @@ export function resolveLines(rawLines, items) {
   return { lines, stops };
 }
 
-/** The 5% standard-rated sales tax code of the company, read from QuickBooks; or { error, candidates }. [wanted]: an optional name to use. */
-export function findVatCode(taxCodes, taxRates, wanted = '') {
+/**
+ * Every active tax code of the company (zero-rated and exempt ones too) with its sales rate, read from QuickBooks: id -> { id, name, rate }.
+ * UAE VAT is by emirate of supply (and exports are zero-rated), so no single code can be right for every customer.
+ */
+export function taxCodeMap(taxCodes, taxRates) {
   const rate = new Map(taxRates.map((r) => [String(r.Id), Number(r.RateValue)]));
-  const withRate = taxCodes.filter((t) => t.Active !== false && t.Taxable !== false && t.SalesTaxRateList?.TaxRateDetail?.length)
-    .map((t) => ({ id: String(t.Id), name: t.Name, rate: t.SalesTaxRateList.TaxRateDetail.reduce((s, d) => s + (rate.get(String(d.TaxRateRef?.value)) || 0), 0) }));
-  if (wanted) { const w = withRate.filter((t) => norm(t.name) === norm(wanted) || t.id === String(wanted)); return w.length === 1 ? w[0] : { error: 'کد مالیاتی تعیین‌شده پیدا نشد', candidates: withRate.map((t) => `${t.name} (${t.rate}%)`) }; }
-  const five = withRate.filter((t) => Math.abs(t.rate - 5) < 1e-9);
-  if (five.length === 1) return five[0];
-  if (!five.length) return { error: 'کد مالیات بر ارزش افزودهٔ ۵ درصد در کوییک‌بوکس پیدا نشد', candidates: withRate.map((t) => `${t.name} (${t.rate}%)`) };
-  const std = five.filter((t) => /standard/i.test(t.name));
-  if (std.length === 1) return std[0];
-  return { error: 'چند کد مالیاتی ۵ درصد هست؛ نام درست را در تنظیم QBO_TAX_CODE بگذارید', candidates: five.map((t) => t.name) };
+  const out = new Map();
+  for (const t of taxCodes) {
+    if (t.Active === false) continue;
+    const r = (t.SalesTaxRateList?.TaxRateDetail || []).reduce((sum, d) => sum + (rate.get(String(d.TaxRateRef?.value)) || 0), 0);
+    out.set(String(t.Id), { id: String(t.Id), name: t.Name, rate: t.Taxable === false ? 0 : r });
+  }
+  return out;
+}
+
+/** The tax code the office itself used on a customer's recent invoices: one code if they all agree, else the list of what was found. */
+export function codeFromInvoices(invoices, codes) {
+  const count = new Map();
+  for (const inv of invoices) for (const l of inv.Line || []) {
+    const id = l.SalesItemLineDetail?.TaxCodeRef?.value;
+    if (id !== undefined && id !== null && id !== '') count.set(String(id), (count.get(String(id)) || 0) + 1);
+  }
+  const found = [...count.entries()].map(([id, n]) => ({ id, n, name: codes.get(id)?.name || `(${id})`, known: codes.has(id) }));
+  if (!found.length) return { error: 'none', found };
+  if (found.length > 1) return { error: 'disagree', found };
+  if (!found[0].known) return { error: 'unknown', found };
+  return { code: codes.get(found[0].id), invoices: invoices.length };
 }
 
 /** Totals in fils, the way QuickBooks adds them: each line rounded, the VAT on the sum of the taxable lines. */
@@ -129,6 +147,14 @@ export class AuthStore {
   remove(number) { const n = AuthStore.clean(number); const len = this.d.people.length; this.d.people = this.d.people.filter((p) => p.number !== n); this.save(); return this.d.people.length < len; }
   /** Is this sender (jid, alt jid, lid mapped) an authorized person? */
   isAuthorized(who, lidToPhone = new Map()) { return staffChecker(this.numbers(), lidToPhone)(who) === true; }
+}
+
+/** The tax code the owner chose for a customer (by QuickBooks customer id), for a customer with no clear invoices of his own. */
+export class TaxChoices {
+  constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-taxcodes.json') : ''; this.d = { byCustomer: {} }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ } }
+  save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
+  get(customerId) { return this.d.byCustomer[String(customerId)] || null; }
+  set(customerId, code, now = Date.now()) { this.d.byCustomer[String(customerId)] = { codeId: code.id, name: code.name, at: new Date(now).toISOString() }; this.save(); }
 }
 
 /** The append-only audit log: time, requester, approver, preview id, QuickBooks id, document number, total. Never a message text. */
@@ -157,9 +183,9 @@ export class QboInvoiceDesk {
    * list (PriceBook) or null; [config]; [today]: () => yyyy-mm-dd; [now]; [post]: async (jid, buffer, fileName, caption); [ownerJid]: () => jid;
    * [groups]: async () => [{ id, subject }]; [testGroup]: (groups) => group|null.
    */
-  constructor({ qbo, desk, store, audit, book = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
-    Object.assign(this, { qbo, desk, store, audit, book, config, today, now, post, ownerJid, groups, testGroup, log });
-    this.cache = { at: 0, items: [], tax: null, currency: '' };
+  constructor({ qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
+    Object.assign(this, { qbo, desk, store, audit, book, taxChoices, config, today, now, post, ownerJid, groups, testGroup, log });
+    this.cache = { at: 0, items: [], codes: new Map(), currency: '' };
     this.inflight = new Set(); // previews being created right now: a yes that arrives meanwhile does not start a second attempt
   }
 
@@ -171,8 +197,52 @@ export class QboInvoiceDesk {
       this.qbo.query('select * from TaxRate').catch(() => []),
       this.qbo.get('preferences').then((j) => j?.Preferences || null).catch(() => null),
     ]);
-    this.cache = { at: this.now(), items, tax: findVatCode(taxCodes, taxRates, this.config.qboTaxCode || ''), currency: prefs?.CurrencyPrefs?.HomeCurrency?.value || '' };
+    this.cache = { at: this.now(), items, codes: taxCodeMap(taxCodes, taxRates), currency: prefs?.CurrencyPrefs?.HomeCurrency?.value || '' };
     return this.cache;
+  }
+
+  /** A tax code by its name or id (case-insensitive, exact). */
+  codeNamed(codes, name) { const k = norm(name); return [...codes.values()].find((c) => c.id === String(name).trim() || norm(c.name) === k) || null; }
+
+  /**
+   * The tax code of an invoice for THIS customer: the owner's override (QBO_TAX_CODE), else the code he chose for the customer, else the code the
+   * office itself used on the customer's recent invoices (all of their lines agree). Otherwise { error } with what was found, so the owner picks.
+   */
+  async taxFor(cust, cat) {
+    const names = [...cat.codes.values()].map((c) => `${c.name} (${c.rate}%)`).join(' | ');
+    const ask = `کد را خودتان بگویید: «کد مالیات ${cust.name} = <نام کد>». کدهای موجود: ${names}`;
+    if (this.config.qboTaxCode) {
+      const c = this.codeNamed(cat.codes, this.config.qboTaxCode);
+      return c ? { ...c, source: 'override' } : { error: `کد مالیاتی تعیین‌شده در تنظیم (QBO_TAX_CODE) در کوییک‌بوکس پیدا نشد. کدهای موجود: ${names}` };
+    }
+    const chosen = this.taxChoices.get(cust.id);
+    if (chosen && cat.codes.has(String(chosen.codeId))) return { ...cat.codes.get(String(chosen.codeId)), source: 'owner' };
+    const j = await this.qbo.get('query', { query: `select * from Invoice where CustomerRef = '${qboEscape(cust.id)}' ORDERBY TxnDate DESC STARTPOSITION 1 MAXRESULTS 10` });
+    const r = codeFromInvoices(j?.QueryResponse?.Invoice || [], cat.codes);
+    if (r.code) return { ...r.code, source: 'invoices' };
+    if (r.error === 'none') return { error: `برای «${cust.name}» فاکتور قبلی با کد مالیات در کوییک‌بوکس نیست تا از دفتر خوانده شود. ${ask}` };
+    const seen = r.found.map((f) => `${f.name} (${f.n} سطر)`).join('، ');
+    return { error: `کد مالیات فاکتورهای اخیر «${cust.name}» ${r.error === 'unknown' ? 'ناشناخته است' : 'یکی نیست'}: ${seen}. ${ask}` };
+  }
+
+  /** "کد مالیات <مشتری> = <کد>": the owner chooses the code of a customer (stored on the VM). */
+  async setTaxChoice({ customer, code }) {
+    const guard = this.guard();
+    if (guard) return [guard];
+    const cust = await this.desk.resolveStrict(customer);
+    if (!cust.id) return [`مشتری «${cust.ours}» با نام دقیق یا انتخاب تأییدشدهٔ مالک در کوییک‌بوکس نیست؛ اول معرفی شود (تطبیق کوییک‌بوکس).`];
+    const cat = await this.catalog();
+    const c = this.codeNamed(cat.codes, code);
+    if (!c) return [`کد «${code}» در کوییک‌بوکس نیست. کدهای موجود: ${[...cat.codes.values()].map((x) => `${x.name} (${x.rate}%)`).join(' | ')}`];
+    this.taxChoices.set(cust.id, c, this.now());
+    this.audit.add({ event: 'tax-code', approver: 'owner', reason: `${cust.id}=${c.id}` });
+    return [`ثبت شد: کد مالیات «${cust.name}» = ${c.name} (${c.rate}٪). فاکتورهای بعدی او با همین کد می‌شود.`];
+  }
+
+  async taxListText() {
+    if (this.guard()) return [this.guard()];
+    const cat = await this.catalog();
+    return [['کدهای مالیاتی کوییک‌بوکس:', ...[...cat.codes.values()].map((c) => `• ${c.name} — ${c.rate}٪`)].join('\n')];
   }
 
   guard() {
@@ -201,7 +271,6 @@ export class QboInvoiceDesk {
       return stop(`مشتری «${cust.ours}» با نام دقیق یا انتخاب تأییدشدهٔ مالک در کوییک‌بوکس نیست؛ اول معرفی شود (تطبیق کوییک‌بوکس). ${how}`);
     }
     const cat = await this.catalog();
-    if (cat.tax.error) return stop(`${cat.tax.error}.${cat.tax.candidates?.length ? ` کدهای موجود: ${cat.tax.candidates.join(' | ')}` : ''}`);
     const { lines, stops } = resolveLines(cmd.lines, cat.items);
     if (stops.length) return stop(`فاکتور ساخته نمی‌شود؛ این‌ها را درست کنید:\n${stops.join('\n')}`);
     const warnings = []; const out = [];
@@ -218,11 +287,17 @@ export class QboInvoiceDesk {
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
       out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', qty: l.qty, price, amount });
     }
-    const t = totals(out, cat.tax.rate);
+    const tax = await this.taxFor(cust, cat);
+    if (tax.error) {
+      // the owner must pick: he is told what was found; an authorized person is told only that the owner was asked
+      if (requester === 'owner') return stop(tax.error);
+      return { requester: 'The tax code for this customer must be chosen by the owner first; he has been told. Please ask again afterwards.', owner: `درخواست فاکتور برای «${cust.name}» (از شمارهٔ ${requester}) متوقف شد.\n${tax.error}` };
+    }
+    const t = totals(out, tax.rate);
     const id = this.store.nextId();
     const preview = {
       id, nonce: randomBytes(5).toString('hex'), at: this.now(), status: 'pending', requester, customer: { ours: cust.ours, id: cust.id, name: cust.name },
-      lines: out, tax: { id: cat.tax.id, name: cat.tax.name, rate: cat.tax.rate }, ...t, currency: cat.currency, warnings,
+      lines: out, tax: { id: tax.id, name: tax.name, rate: tax.rate, source: tax.source }, ...t, currency: cat.currency, warnings,
     };
     this.store.add(preview);
     this.audit.add({ event: 'preview', requester, previewId: id, total: t.total });
@@ -236,7 +311,7 @@ export class QboInvoiceDesk {
       `مشتری: ${p.customer.name}`,
       ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name} × ${l.qty} @ ${l.price} = ${money(l.amount)}`),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
-      `مالیات ${p.tax.rate}٪ (${p.tax.name}): ${money(p.vat)}`,
+      `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'invoices' ? '، از فاکتورهای قبلی دفتر' : p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
       `جمع کل: ${money(p.total)}${p.currency ? ` ${p.currency}` : ''}`,
       ...(p.warnings.length ? ['⚠️ هشدارها:', ...p.warnings.map((w) => `• ${w}`)] : []),
       `برای ساخت: «بله #${p.id}» — برای لغو: «نه #${p.id}» (۲۴ ساعت اعتبار)`,

@@ -27,7 +27,7 @@ import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
 import { Qbo, looksLikeConnectLine, parseConnectLine } from './qbo.js';
 import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
-import { Audit, AuthStore, InvoiceStore, QboInvoiceDesk, parseInvoiceCommand } from './qboinvoice.js';
+import { Audit, AuthStore, InvoiceStore, QboInvoiceDesk, TaxChoices, parseInvoiceCommand } from './qboinvoice.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
@@ -613,7 +613,7 @@ const qboDesk = new QboDesk({
 // Invoices in QuickBooks: a request becomes a PREVIEW for the owner; only HIS "بله #Q12" in his own chat creates it (QBO_WRITE must be on too).
 const qboAuth = new AuthStore(path.join(config.authDir, 'qbo'));
 const qboInvoices = new QboInvoiceDesk({
-  qbo, desk: qboDesk, store: new InvoiceStore(path.join(config.authDir, 'qbo')), audit: new Audit(path.join(config.authDir, 'qbo')), book, config,
+  qbo, desk: qboDesk, store: new InvoiceStore(path.join(config.authDir, 'qbo')), audit: new Audit(path.join(config.authDir, 'qbo')), book, taxChoices: new TaxChoices(path.join(config.authDir, 'qbo')), config,
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
 });
 /** The owner's invoice commands (his own chat): request, yes, no, pause, resume, audit, and the list of people allowed to ask. */
@@ -624,6 +624,8 @@ async function qboInvoiceCommand(ic, text) {
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
     case 'resume': qbo.setPaused(false); qboInvoices.audit.add({ event: 'resume', approver: 'owner' }); return ['کوییک‌بوکس ادامه یافت.'];
     case 'audit': return [qboInvoices.auditText(10)];
+    case 'tax_set': return qboInvoices.setTaxChoice({ customer: ic.customer, code: ic.code });
+    case 'tax_list': return qboInvoices.taxListText();
     case 'auth_add': { const n = qboAuth.add(ic.number); if (n) qboInvoices.audit.add({ event: 'authorize', approver: 'owner', reason: n }); return [n ? `مجوز فاکتور و صورت‌حساب برای ${n} ثبت شد. هر فاکتورش منتظر «بله» شما می‌ماند.` : 'شماره درست نیست (۸ تا ۱۵ رقم با کد کشور).']; }
     case 'auth_remove': { const ok = qboAuth.remove(ic.number); if (ok) qboInvoices.audit.add({ event: 'deauthorize', approver: 'owner' }); return [ok ? 'مجوز برداشته شد.' : 'این شماره در فهرست مجازها نبود.']; }
     case 'auth_list': return [qboAuth.numbers().length ? ['مجازها برای فاکتور و صورت‌حساب:', ...qboAuth.numbers().map((n) => `• ${n}`)].join('\n') : 'کسی مجوز ندارد. بنویسید: مجوز فاکتور <شماره با کد کشور>'];

@@ -110,7 +110,7 @@ export function loadConfig(env = process.env) {
     qboRefreshInit: (env.QBO_REFRESH_TOKEN_INIT || '').trim(), // used once; after that the rotating token lives in a file under authDir
     qboWrite: /^(1|true|on|yes)$/i.test((env.QBO_WRITE || '').trim()), // off: no write to QuickBooks is possible
     qboMinorVersion: Number(env.QBO_MINOR_VERSION) || 75,
-    qboTaxCode: (env.QBO_TAX_CODE || '').trim(), // only if the company has several 5% tax codes: the name of the one to use for invoices
+    qboTaxCode: (env.QBO_TAX_CODE || '').trim(), // the owner's override for EVERY invoice (normally empty: a new invoice takes the tax code the office used on that customer's recent invoices, or the one the owner chose)
     qboRedirectUri: (env.QBO_REDIRECT_URI || 'https://firoozia.github.io/atossa/connect.html').trim(), // the public page Intuit sends the owner back to
     testCustomerName: (env.TEST_CUSTOMER_NAME || 'test customer').trim().toLowerCase(),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
