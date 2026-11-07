@@ -74,6 +74,50 @@ export function planItemTax(items, code) {
   return { changes, skipped: [], unchanged };
 }
 
+// ---- the PVC film series: the code of an item is the three-digit number in its name (PVC FILM108 -> 108); a series 100 is the codes 101 to 199
+/** The three-digit code of a PVC film item, or null (edge banding, boards and four-digit codes are never in a series). */
+export function pvcCode(i) {
+  const name = String(i?.Name || '');
+  if (!/pvc\s*film/i.test(name)) return null;
+  const m = /pvc\s*film\s*(\d{3})(?!\d)/i.exec(name) || /^(\d{3})$/.exec(String(i.Sku || '').trim());
+  return m ? Number(m[1]) : null;
+}
+/** The active PVC film items whose code is lo..hi: [{ item, code }] by code. */
+export function seriesItems(items, lo, hi) {
+  return items.filter((i) => i.Active !== false && ITEM_TYPES.includes(i.Type)).map((item) => ({ item, code: pvcCode(item) })).filter((x) => x.code !== null && x.code >= lo && x.code <= hi).sort((a, b) => a.code - b.code);
+}
+/** "۱۰۱ تا ۱۲۶، بدون ۱۱۳": the range found, with the gaps inside it. */
+export function rangeText(codes) {
+  if (!codes.length) return '—';
+  const have = new Set(codes); const lo = Math.min(...codes); const hi = Math.max(...codes);
+  const gaps = []; for (let c = lo; c <= hi; c += 1) if (!have.has(c)) gaps.push(c);
+  return `${fa(lo)} تا ${fa(hi)}${gaps.length ? `، بدون ${gaps.map(fa).join('، ')}` : ''}`;
+}
+/** "۲۰ کالا 10 → 12، ۶ کالا 11 → 12": the old prices grouped. */
+export function oldGroups(items, price) {
+  const g = new Map(); for (const i of items) { const o = Number(i.UnitPrice) || 0; g.set(o, (g.get(o) || 0) + 1); }
+  return [...g.entries()].map(([o, n]) => `${fa(n)} کالا ${o} → ${price}`).join('، ');
+}
+/** The series bounds from a draft entry: «سری 100» = 101..199; an explicit range as given. null: not a valid series number. */
+export function seriesBounds({ series, from, to }) {
+  if (series !== undefined) return series > 0 && series % 100 === 0 ? { lo: series + 1, hi: series + 99, label: `سری ${series}` } : null;
+  const lo = Math.min(from, to); const hi = Math.max(from, to);
+  return { lo, hi, label: `${lo} تا ${hi}` };
+}
+/** The draft as one list of items: a single code line wins over its series, whatever the order. Each line: { itemId, name, new, group }. */
+export function expandDraft(draft, items) {
+  const single = new Map(draft.lines.map((l) => [String(l.itemId), l]));
+  const out = draft.lines.map((l) => ({ itemId: l.itemId, name: l.name, new: l.new, group: '' }));
+  const groups = [];
+  for (const s of draft.series) {
+    const found = seriesItems(items, s.lo, s.hi);
+    const own = found.filter((x) => single.has(String(x.item.Id)));
+    groups.push({ ...s, found, own: own.length });
+    for (const x of found) if (!single.has(String(x.item.Id))) out.push({ itemId: String(x.item.Id), name: x.item.Name, new: s.price, group: s.label });
+  }
+  return { lines: out, groups };
+}
+
 /** The draft lines against the current items: old -> new and the warnings (a change over 30%, a new price below the purchase cost). */
 export function planPrices(lines, items) {
   const byId = new Map(items.map((i) => [String(i.Id), i]));
@@ -86,7 +130,7 @@ export function planPrices(lines, items) {
     const warn = [];
     if (old > 0 && Math.abs(l.new - old) / old > 0.3) warn.push(`تغییر بیش از ۳۰٪ (${Math.round((Math.abs(l.new - old) / old) * 100)}٪)`);
     if (Number(it.PurchaseCost) > 0 && l.new < Number(it.PurchaseCost)) warn.push(`قیمت تازه کمتر از بهای خرید (${it.PurchaseCost})`);
-    changes.push({ id: String(it.Id), label: it.Name, old, new: l.new, warn });
+    changes.push({ id: String(it.Id), label: it.Name, old, new: l.new, warn, group: l.group || '' });
   }
   return { changes, skipped, unchanged };
 }
@@ -101,9 +145,14 @@ export class BulkPreviews {
 
 /** The base prices the owner gives one by one, kept on the VM until «شروع کن». */
 export class PriceDraft {
-  constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-pricedraft.json') : ''; this.d = { lines: [] }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ } }
+  constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-pricedraft.json') : ''; this.d = { lines: [], series: [] }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ } }
   save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
   get lines() { return this.d.lines; }
+  get series() { return this.d.series; }
+  get size() { return this.d.lines.length + this.d.series.length; }
+  setSeries(s) { this.d.series = [...this.d.series.filter((x) => !(x.lo === s.lo && x.hi === s.hi)), s]; this.save(); }
+  removeSeries(label) { const k = norm(label); const n = this.d.series.length; this.d.series = this.d.series.filter((x) => norm(x.label) !== k); this.save(); return this.d.series.length < n; }
+  dropSeries(keys) { const s = new Set(keys); this.d.series = this.d.series.filter((x) => !s.has(`${x.lo}-${x.hi}-${x.price}`)); this.save(); }
   set(line) { this.d.lines = [...this.d.lines.filter((l) => String(l.itemId) !== String(line.itemId)), line]; this.save(); }
   remove(code) { const k = norm(code); const n = this.d.lines.length; this.d.lines = this.d.lines.filter((l) => norm(l.code) !== k && norm(l.name) !== k); this.save(); return this.d.lines.length < n; }
   dropItems(ids) { const s = new Set(ids.map(String)); this.d.lines = this.d.lines.filter((l) => !s.has(String(l.itemId))); this.save(); }
@@ -233,36 +282,66 @@ export class QboBulkDesk {
     const items = await this.items();
     const ctx = { items, history: null, taught: (c) => { const t = this.itemCodes?.get('', c); return t ? items.find((i) => String(i.Id) === String(t.itemId)) || null : null; } };
     const out = [];
-    for (const { code, price } of lines) {
+    for (const ln of lines) {
+      const { code, price } = ln;
+      if (code === undefined) {
+        const b = seriesBounds(ln);
+        if (!b) { out.push(`✖ «سری ${ln.series}» درست نیست؛ سری‌ها صدتا صدتاست (سری ۱۰۰، سری ۲۰۰، …). این خط گرفته نشد.`); continue; }
+        const found = seriesItems(items, b.lo, b.hi);
+        if (!found.length) { out.push(`✖ ${b.label}: هیچ کالای فیلم پی‌وی‌سی با این کدها پیدا نشد. این خط گرفته نشد.`); continue; }
+        this.draft.setSeries({ lo: b.lo, hi: b.hi, price, label: b.label });
+        const own = found.filter((x) => this.draft.lines.some((l) => String(l.itemId) === String(x.item.Id)));
+        out.push(`✓ ${b.label}: ${rangeText(found.map((x) => x.code))}، ${fa(found.length)} کالا؛ ${oldGroups(found.map((x) => x.item), price)}${own.length ? `\n   ${fa(own.length)} کالای آن خط جدا دارد و قیمت خط جدا را می‌گیرد` : ''}`);
+        continue;
+      }
       const r = pickItem(code, ctx);
       if (!r.item) { out.push(`✖ ${r.stop(1).replace(/^سطر ۱: /, '')}\n   این خط گرفته نشد.`); continue; }
       const old = Number(r.item.UnitPrice) || 0;
       this.draft.set({ code, itemId: String(r.item.Id), name: r.item.Name, old, new: price });
-      out.push(`✓ ${r.item.Name}: ${old} → ${price}${old > 0 && Math.abs(price - old) / old > 0.3 ? ' ⚠️ تغییر بیش از ۳۰٪' : ''}`);
+      const inSeries = this.draft.series.find((s) => { const c = pvcCode(r.item); return c !== null && c >= s.lo && c <= s.hi; });
+      out.push(`✓ ${r.item.Name}: ${old} → ${price}${old > 0 && Math.abs(price - old) / old > 0.3 ? ' ⚠️ تغییر بیش از ۳۰٪' : ''}${inSeries ? `\n   این کالا در ${inSeries.label} هم هست؛ خط جدا پیش می‌افتد و ${price} می‌گیرد` : ''}`);
     }
-    out.push(`در فهرست پیش‌نویس: ${fa(this.draft.lines.length)} خط. «لیست قیمت» نشان می‌دهد، «حذف قیمت <کد>» برمی‌دارد، «شروع کن» پیش‌نمایش می‌سازد.`);
+    out.push(`در فهرست پیش‌نویس: ${fa(this.draft.size)} خط. «لیست قیمت» نشان می‌دهد، «حذف قیمت <کد>» برمی‌دارد، «شروع کن» پیش‌نمایش می‌سازد.`);
     return [out.join('\n')];
   }
 
   showDraft() {
-    if (!this.draft.lines.length) return null; // no draft: the older «لیست قیمت» (the office's price book) answers
-    return [['پیش‌نویس قیمت پایه (هنوز چیزی در کوییک‌بوکس عوض نشده):', ...this.draft.lines.map((l, i) => `${fa(i + 1)}. ${l.name}: ${l.old} → ${l.new}`), 'برای ساخت پیش‌نمایش: «شروع کن». فهرست قیمت دفتر: «قیمت‌ها».'].join('\n')];
+    if (!this.draft.size) return null; // no draft: the older «لیست قیمت» (the office's price book) answers
+    const items = this.itemCache.items;
+    const sl = this.draft.series.map((s, i) => {
+      const found = seriesItems(items, s.lo, s.hi); const own = found.filter((x) => this.draft.lines.some((l) => String(l.itemId) === String(x.item.Id))).length;
+      return `${fa(i + 1)}. ${s.label}: ${found.length ? `${rangeText(found.map((x) => x.code))}، ${fa(found.length)} کالا` : 'کالاها بعد از «شروع کن» خوانده می‌شوند'} → ${s.price}${own ? ` (${fa(own)} کالای آن خط جدا دارد و خط جدا پیش می‌افتد)` : ''}`;
+    });
+    return [['پیش‌نویس قیمت پایه (هنوز چیزی در کوییک‌بوکس عوض نشده):', ...sl, ...this.draft.lines.map((l, i) => `${fa(sl.length + i + 1)}. ${l.name}: ${l.old} → ${l.new}${this.draft.series.some((s) => { const c = pvcCode({ Name: l.name }); return c !== null && c >= s.lo && c <= s.hi; }) ? ' (خط جدا، بر سری پیش می‌افتد)' : ''}`), 'برای ساخت پیش‌نمایش: «شروع کن». فهرست قیمت دفتر: «قیمت‌ها».'].join('\n')];
   }
 
-  removePrice(code) { return [this.draft.remove(code) ? `خط «${code}» از پیش‌نویس برداشته شد. ${fa(this.draft.lines.length)} خط مانده.` : `خطی با «${code}» در پیش‌نویس نبود.`]; }
+  removePrice(code) {
+    const sm = /^سری\s*(\d+)$/u.exec(String(code).trim());
+    const ok = sm ? this.draft.removeSeries(`سری ${sm[1]}`) : (this.draft.remove(code) || this.draft.removeSeries(code));
+    return [ok ? `خط «${code}» از پیش‌نویس برداشته شد. ${fa(this.draft.size)} خط مانده.` : `خطی با «${code}» در پیش‌نویس نبود.`];
+  }
 
   async planPrices() {
-    if (!this.draft.lines.length) return null; // «شروع کن» with no draft is not ours
+    if (!this.draft.size) return null; // «شروع کن» with no draft is not ours
     const blocked = this.guard();
     if (blocked) return [blocked];
     const items = await this.items(true);
-    const r = planPrices(this.draft.lines, items);
+    const ex = expandDraft(this.draft, items);
+    const r = planPrices(ex.lines, items);
     if (!r.changes.length) return [`هیچ قیمتی برای تغییر نیست (${fa(r.unchanged)} خط از پیش درست است${r.skipped.length ? `، ${fa(r.skipped.length)} کالا پیدا نشد` : ''}).`];
     const warned = r.changes.filter((c) => c.warn.length);
     return this.make('P', r, {
       header: 'قیمت پایهٔ کالاها',
       summary: `${fa(r.changes.length)} قیمت تغییر می‌کند${r.unchanged ? `، ${fa(r.unchanged)} از پیش درست است` : ''}${r.skipped.length ? `، ${fa(r.skipped.length)} کالا پیدا نشد` : ''}. فقط قیمت فروش پایهٔ کالا عوض می‌شود.`,
-      lines: r.changes.map((c, i) => `${fa(i + 1)}. ${c.label}: ${c.old} → ${c.new}${c.warn.length ? ` ⚠️ ${c.warn.join('، ')}` : ''}`),
+      params: { series: this.draft.series.map((s) => `${s.lo}-${s.hi}-${s.price}`) },
+      lines: [
+        ...ex.groups.map((g) => {
+          const mine = r.changes.filter((c) => c.group === g.label);
+          const w = mine.filter((c) => c.warn.length);
+          return `${g.label} (${g.found.length ? rangeText(g.found.map((x) => x.code)) : 'کالایی پیدا نشد'}): ${fa(g.found.length - g.own)} کالا، ${fa(mine.length)} تغییر؛ ${oldGroups(mine.map((c) => ({ UnitPrice: c.old })), g.price) || 'همه از پیش درست'}${w.length ? `\n   ⚠️ ${fa(w.length)} کالا هشدار دارد: ${[...new Set(w.flatMap((c) => c.warn.map((x) => x.replace(/\s*\(.*\)$/, ''))))].join('، ')}` : ''}${g.own ? `\n   ${fa(g.own)} کالا خط جدا دارد` : ''}`;
+        }),
+        ...r.changes.filter((c) => !c.group).map((c) => `${c.label}: ${c.old} → ${c.new}${c.warn.length ? ` ⚠️ ${c.warn.join('، ')}` : ''}`),
+      ].map((x, i) => `${fa(i + 1)}. ${x}`),
       extra: warned.length ? [`⚠️ ${fa(warned.length)} قیمت هشدار دارد؛ پیش از «بله» نگاه کنید.`] : [],
     });
   }
@@ -317,7 +396,7 @@ export class QboBulkDesk {
       p.status = r.stoppedAt ? 'pending' : 'done'; // after a stop it can be run again: the done ones are skipped
       p.result = r;
       this.busy = false;
-      if (p.kind === 'P') this.draft.dropItems(done); // the prices that are in QuickBooks leave the draft
+      if (p.kind === 'P') { this.draft.dropItems(done); if (!r.stoppedAt) this.draft.dropSeries(p.params.series || []); } // the prices that are in QuickBooks leave the draft
       this.store.save();
       this.itemCache = { at: 0, items: [] };
       this.desk.cache = { at: 0, customers: [] };

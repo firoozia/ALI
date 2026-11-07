@@ -8,7 +8,7 @@ import { QboDesk, QboMap } from '../src/qbodesk.js';
 import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
 import { Audit, ItemCodes, parseInvoiceCommand, codeFromInvoices } from '../src/qboinvoice.js';
-import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices } from '../src/qbobulk.js';
+import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems } from '../src/qbobulk.js';
 
 // Invented data only: nothing real is ever in the repository.
 const REALM = '9130000000';
@@ -325,4 +325,91 @@ test('the invoice tax rule: the owner\'s choice, then the items\' own code, then
   const b = await desk.taxFor(cust, cat, [], [item('DXBID')]);
   assert.equal(b.id, 'OLD'); assert.equal(b.source, 'owner');
   void codeFromInvoices;
+});
+
+// ---- the PVC series
+const pvcItems = () => {
+  const items = [];
+  for (let c = 101; c <= 126; c += 1) if (c !== 113) items.push(I(c, `PVC FILM${c}`, { Sku: String(c), UnitPrice: c <= 120 ? 10 : 11, PurchaseCost: 4 }));
+  items.push(I(201, 'PVC FILM201', { UnitPrice: 30 }), I(1810, 'PVC FILM1810', { UnitPrice: 99 }), I(150, 'EDGE BAND 150', { UnitPrice: 50 }), I(160, 'PVC FILM160', { UnitPrice: 8, Active: false }));
+  return items;
+};
+
+test('the words of the series: digits in any script, no space, = or : or nothing, and an explicit range', () => {
+  const s = (t) => parseInvoiceCommand(t).lines;
+  assert.deepEqual(s('قیمت سری 100 = 12'), [{ series: 100, price: 12 }]);
+  assert.deepEqual(s('قیمت سری۱۰۰=۱۲'), [{ series: 100, price: 12 }]);
+  assert.deepEqual(s('قیمت سری ١٠٠ : ١٢'), [{ series: 100, price: 12 }]);
+  assert.deepEqual(s('قیمت سری 100 12'), [{ series: 100, price: 12 }]);
+  assert.deepEqual(s('قیمت 101 تا 126 = 12'), [{ from: 101, to: 126, price: 12 }]);
+  assert.deepEqual(s('قیمت ۱۰۱ تا ۱۲۶ ۱۲'), [{ from: 101, to: 126, price: 12 }]);
+  assert.deepEqual(s('قیمت 108 : 13'), [{ code: '108', price: 13 }]);
+});
+
+test('the series code rule: only three-digit PVC film codes; never edge banding, four digits, or inactive', () => {
+  const items = pvcItems();
+  const f = seriesItems(items, 101, 199);
+  assert.equal(f.length, 25);
+  assert.ok(f.every((x) => /PVC FILM1\d\d$/.test(x.item.Name)));
+  assert.equal(seriesItems(items, 1001, 1999).length, 0); // 1810 has four digits
+  assert.equal(seriesItems(items, 150, 160).length, 0); // the edge band and the inactive one
+});
+
+test('P series: the reply lists the range with its gap, the count and the old prices grouped; a single line wins whatever the order', async () => {
+  const t = mk({ items: pvcItems() });
+  const [r] = await t.bulk.addPrices([{ series: 100, price: 12 }]);
+  assert.match(r, /سری 100: ۱۰۱ تا ۱۲۶، بدون ۱۱۳، ۲۵ کالا/);
+  assert.match(r, /۱۹ کالا 10 → 12، ۶ کالا 11 → 12/);
+  // the single line comes AFTER the series
+  const [r2] = await t.bulk.addPrices([{ code: '108', price: 13 }]);
+  assert.match(r2, /سری 100 هم هست/);
+  const [r3] = await t.bulk.addPrices([{ series: 200, price: 5 }, { series: 150, price: 5 }, { from: 130, to: 140, price: 5 }]);
+  assert.match(r3, /۲۰۱ تا ۲۰۱، ۱ کالا|۲۰۱ تا ۲۰۱/);
+  assert.match(r3, /«سری 150» درست نیست/);
+  assert.match(r3, /هیچ کالای فیلم/);
+  assert.match(t.bulk.showDraft()[0], /خط جدا/);
+  // the preview
+  const [pv] = await t.bulk.planPrices();
+  assert.match(pv, /#P1/);
+  assert.match(pv, /سری 100 \(۱۰۱ تا ۱۲۶، بدون ۱۱۳\): ۲۴ کالا/);
+  assert.match(pv, /۱ کالا خط جدا دارد/);
+  assert.match(pv, /PVC FILM108: 10 → 13/);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'P1' });
+  await done;
+  assert.ok(only(t.m.posts, 'item', ['UnitPrice']));
+  const by = (n) => t.m.db.Item.find((i) => i.Name === `PVC FILM${n}`).UnitPrice;
+  assert.equal(by(108), 13); // the single line won
+  assert.equal(by(101), 12); assert.equal(by(126), 12);
+  assert.equal(by(201), 5);
+  assert.equal(t.m.db.Item.find((i) => i.Name === 'EDGE BAND 150').UnitPrice, 50);
+  assert.equal(by(1810), 99);
+  assert.equal(t.bulk.draft.size, 0); // the series left the draft
+  const n = t.m.posts.length;
+  await t.bulk.decide({ verb: 'yes', id: 'P1' });
+  assert.equal(t.m.posts.length, n);
+});
+
+test('P series: the single line wins when it is given FIRST too, an explicit range works, and a series line can be removed', async () => {
+  const t = mk({ items: pvcItems() });
+  await t.bulk.addPrices([{ code: '108', price: 13 }]);
+  await t.bulk.addPrices([{ from: 126, to: 101, price: 12 }]); // reversed bounds are fine
+  assert.equal(t.bulk.draft.series[0].lo, 101);
+  await t.bulk.planPrices();
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'P1' });
+  await done;
+  assert.equal(t.m.db.Item.find((i) => i.Name === 'PVC FILM108').UnitPrice, 13);
+  const t2 = mk({ items: pvcItems() });
+  await t2.bulk.addPrices([{ series: 100, price: 12 }]);
+  assert.match(t2.bulk.removePrice('سری 100')[0], /برداشته شد/);
+  assert.equal(t2.bulk.draft.size, 0);
+});
+
+test('P series: warnings per series (over 30 percent, below the purchase cost)', async () => {
+  const t = mk({ items: pvcItems() });
+  await t.bulk.addPrices([{ series: 100, price: 3 }]); // below the cost 4 and a big drop
+  const [pv] = await t.bulk.planPrices();
+  assert.match(pv, /⚠️ ۲۵ کالا هشدار دارد/);
+  assert.match(pv, /قیمت تازه کمتر از بهای خرید/);
 });

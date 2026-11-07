@@ -43,10 +43,19 @@ export function parseInvoiceCommand(text) {
   if ((m = /^حذف\s+قیمت\s+(.+)$/u.exec(s))) return { type: 'price_remove', code: m[1].trim() };
   {
     const rows = raw.split('\n').map((l) => plain(l)).filter(Boolean);
-    const pr = rows.map((l) => /^قیمت\s+(.+?)\s*=\s*([\d.,]+)$/u.exec(l));
+    const one = (l) => {
+      let x = /^قیمت\s+سری\s*(\d+)\s*[=:]?\s*([\d.,]+)$/u.exec(l);
+      if (x) return { series: Number(x[1]), price: x[2] };
+      x = /^قیمت\s+(\d+)\s*تا\s*(\d+)\s*[=:]?\s*([\d.,]+)$/u.exec(l);
+      if (x) return { from: Number(x[1]), to: Number(x[2]), price: x[3] };
+      x = /^قیمت\s+(.+?)\s*[=:]\s*([\d.,]+)$/u.exec(l) || /^قیمت\s+(\d{1,4})\s+([\d.,]+)$/u.exec(l);
+      return x ? { code: x[1].trim(), price: x[2] } : null;
+    };
+    const pr = rows.map(one);
     if (rows.length && rows.length <= 60 && pr.every(Boolean)) {
-      const lines = pr.map((x) => ({ code: x[1].trim(), price: Number(x[2].replace(/,/g, '')) }));
-      return { type: 'price_set', lines: lines.filter((l) => l.price >= 0 && l.price <= 10000000), bad: lines.filter((l) => !(l.price >= 0 && l.price <= 10000000)).length };
+      const lines = pr.map((x) => ({ ...x, price: Number(String(x.price).replace(/,/g, '')) }));
+      const okp = (l) => l.price >= 0 && l.price <= 10000000;
+      return { type: 'price_set', lines: lines.filter(okp), bad: lines.filter((l) => !okp(l)).length };
     }
   }
   if (new RegExp(`^نام\\s+مشتری(?:\\s*ها)?\\s+با\\s+حروف\\s+بزرگ$`, 'u').test(s)) return { type: 'names_plan' };
