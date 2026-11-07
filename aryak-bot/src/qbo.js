@@ -340,14 +340,22 @@ export class Qbo {
     // the other writes are SPARSE updates only (Id + SyncToken + sparse + ONE job's fields); no create, no delete, no inactivate:
     //   customer: the name (DisplayName, CompanyName), or the e-mail (PrimaryEmailAddr), or the mobile (Mobile); never a mix of the jobs
     //   item: the sales tax code (SalesTaxCodeRef), or the base price (UnitPrice); never a mix
+    //   item: also its category (ParentRef + SubItem), its SKU, and the NAME of a Category item (Type must say Category)
     const SPARSE = {
       customer: [['DisplayName', 'CompanyName'], ['PrimaryEmailAddr'], ['Mobile']],
-      item: [['SalesTaxCodeRef'], ['UnitPrice']],
+      item: [['SalesTaxCodeRef'], ['UnitPrice'], ['ParentRef', 'SubItem'], ['Sku'], ['Type', 'Name']],
     };
+    // the only create: a Category item (Name + Type only, no Id)
+    if (method === 'POST' && pathPart === 'item' && body && body.Id === undefined) {
+      const keys = Object.keys(body);
+      if (body.Type !== 'Category' || typeof body.Name !== 'string' || !body.Name.trim() || body.Name.length > 100 || keys.some((k) => !['Name', 'Type'].includes(k))) throw new QboError('QuickBooks: only creating a category is allowed');
+      return this.send('POST', 'item', {}, body);
+    }
     if (method === 'POST' && SPARSE[pathPart]) {
       const keys = Object.keys(body || {});
       const data = keys.filter((k) => !['Id', 'SyncToken', 'sparse'].includes(k));
-      const okJob = SPARSE[pathPart].some((job) => data.length > 0 && data.every((k) => job.includes(k)));
+      const nameOk = !data.includes('Name') || (body.Type === 'Category' && typeof body.Name === 'string' && body.Name.trim() && data.length === 2); // a Name only with Type Category
+      const okJob = nameOk && SPARSE[pathPart].some((job) => data.length > 0 && data.every((k) => job.includes(k)));
       if (body?.sparse !== true || !body.Id || body.SyncToken === undefined || !okJob) throw new QboError(`QuickBooks: only a sparse update of one allowed field set of a ${pathPart} is allowed`);
       return this.send('POST', pathPart, {}, body);
     }

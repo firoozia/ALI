@@ -8,7 +8,7 @@ import { QboDesk, QboMap } from '../src/qbodesk.js';
 import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
 import { Audit, ItemCodes, parseInvoiceCommand, codeFromInvoices } from '../src/qboinvoice.js';
-import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems } from '../src/qbobulk.js';
+import { BulkPreviews, PriceDraft, QboBulkDesk, phoneKind, planMobiles, planPrices, seriesItems, planCatalog, categoryCandidates } from '../src/qbobulk.js';
 
 // Invented data only: nothing real is ever in the repository.
 const REALM = '9130000000';
@@ -53,8 +53,10 @@ function mockQbo(opts = {}) {
       if (opts.failOnPost && postsSeen === opts.failOnPost) return res(403, { Fault: { Error: [{ Message: 'Business Validation Error' }] } });
       if (opts.rejectIds?.includes(body.Id)) return res(400, { Fault: { Error: [{ Message: 'Business Validation Error', Detail: 'Income account is inactive', code: '6000', element: 'IncomeAccountRef' }] } });
       if (opts.serverErrorOn && body.Id === opts.serverErrorOn) return res(503, {});
+      if (body.Id === undefined) { const n = { Id: String(900 + db.Item.length), SyncToken: '0', Active: true, ...body }; db.Item.push(n); return res(200, { Item: n }); } // a create
       const r = db[key(ent)].find((x) => x.Id === body.Id);
       for (const [k, v] of Object.entries(body)) if (!['Id', 'SyncToken', 'sparse'].includes(k)) r[k] = v; // a sparse update changes only what is sent
+      if (body.ParentRef) r.FullyQualifiedName = `${db.Item.find((x) => x.Id === body.ParentRef.value).Name}:${r.Name}`;
       r.SyncToken = String(Number(r.SyncToken) + 1);
       return res(200, { [key(ent)]: r });
     }
@@ -557,4 +559,127 @@ test('the QuickBooks fault (code, message, detail, element) is in the error and 
   const log = fs.readFileSync(path.join(t.dir, 'qbo-errors.log'), 'utf8');
   assert.match(log, /IncomeAccountRef/);
   assert.doesNotMatch(log, /ACCESS-X|REFRESH-X|Bearer/);
+});
+
+// ---- job C: the category PVC FILM, the moves, the SKUs
+const catItems = (extra = []) => [
+  I(50, 'PVC FLIM', { Type: 'Category' }),
+  I(108, 'PVC FILM108', { Sku: '108', UnitPrice: 10 }), I(109, 'PVC FILM109', { Sku: 'PVC-109', ParentRef: { value: '50' }, SubItem: true }),
+  I(1810, 'PVC 1810', { Sku: '1810', UnitPrice: 20 }), I(120, 'PVC FILM120', { UnitPrice: 11 }), // no SKU yet
+  I(900, 'pvc flim 0.1 roll', { Sku: 'R1' }), // looks like PVC, no code: unsure
+  I(901, 'Hinge', { Sku: 'H1' }),
+  I(701, 'EDGE 1801 white', { Sku: 'EDGE 1801' }), I(702, 'EDGE 1802 grey', { Sku: 'EDGE 1802' }), I(703, 'Taken edge', { Sku: 'EDGE-1802' }),
+  ...extra,
+];
+
+test('C plan: rename the misspelled category, move the PVC family, SKUs, edge SKUs, clashes and unsure ones listed', () => {
+  const r = planCatalog(catItems());
+  assert.deepEqual([r.category.mode, r.category.id], ['rename', '50']);
+  assert.deepEqual(r.moves.map((m) => m.id).sort(), ['108', '120', '1810']); // 109 is already inside
+  assert.deepEqual(r.skus.map((s) => [s.id, s.old, s.new]).sort(), [['108', '108', 'PVC-108'], ['120', '', 'PVC-120'], ['1810', '1810', 'PVC-1810']]);
+  assert.deepEqual(r.edge.map((s) => [s.id, s.new]), [['701', 'EDGE-1801']]);
+  assert.deepEqual(r.clashes.map((c) => [c.id, c.new]), [['702', 'EDGE-1802']]); // another item holds EDGE-1802
+  assert.deepEqual(r.unsure.map((u) => u.id), ['900']);
+  assert.equal(r.unchanged, 2); // 109: moved and SKU right
+});
+
+test('C plan: an exact PVC FILM category is kept, none means create, two variants mean stop; case variants count', () => {
+  assert.equal(planCatalog([I(1, 'PVC FILM', { Type: 'Category' }), I(2, 'PVC FLIM', { Type: 'Category' }), I(108, 'PVC FILM108')]).category.mode, 'exists');
+  assert.equal(planCatalog([I(108, 'PVC FILM108')]).category.mode, 'create');
+  assert.ok(planCatalog([I(1, 'pvc flim', { Type: 'Category' }), I(2, 'Pvc Film ', { Type: 'Category' })]).stop);
+  assert.equal(categoryCandidates([I(1, 'Hardware', { Type: 'Category' })]).variants.length, 0);
+  // two items that would get the same SKU are both skipped
+  const r = planCatalog([I(1, 'PVC FILM', { Type: 'Category' }), I(2, 'PVC FILM108'), I(3, 'PVC 108')]);
+  assert.equal(r.clashes.length, 2); assert.equal(r.skus.length, 0);
+});
+
+test('C run: renames the category (Name and Type only), moves (ParentRef and SubItem only), sets SKUs (Sku only); idempotent', async () => {
+  const t = mk({ items: catItems() });
+  const [pv] = await t.bulk.planCatalog();
+  assert.match(pv, /#C1/);
+  assert.match(pv, /فاکتورهای قبلی تغییر نمی‌کنند؛ فقط دسته و کد کالا/);
+  assert.match(pv, /تغییر نام می‌دهد/);
+  assert.equal(t.m.posts.length, 0);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'C1' });
+  await done;
+  const keysOf = (p) => Object.keys(p.body).sort().join();
+  assert.ok(t.m.posts.every((p) => ['Id,Name,SyncToken,Type,sparse', 'Id,ParentRef,SubItem,SyncToken,sparse', 'Id,Sku,SyncToken,sparse'].includes(keysOf(p))), t.m.posts.map(keysOf).join(' | '));
+  const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  assert.equal(by(50).Name, 'PVC FILM');
+  for (const id of [108, 120, 1810]) { assert.equal(by(id).ParentRef.value, '50'); assert.equal(by(id).SubItem, true); }
+  assert.equal(by(108).FullyQualifiedName, 'PVC FILM:PVC FILM108');
+  assert.equal(by(108).Name, 'PVC FILM108'); // the name is never touched
+  assert.equal(by(108).UnitPrice, 10);
+  assert.deepEqual([by(108).Sku, by(120).Sku, by(1810).Sku, by(701).Sku, by(702).Sku], ['PVC-108', 'PVC-120', 'PVC-1810', 'EDGE-1801', 'EDGE 1802']);
+  assert.equal(by(900).ParentRef, undefined); assert.equal(by(901).Sku, 'H1');
+  const n = t.m.posts.length;
+  await t.bulk.decide({ verb: 'yes', id: 'C1' });
+  assert.equal(t.m.posts.length, n);
+});
+
+test('C run: no category yet creates it once (the only create)', async () => {
+  const t = mk({ items: [I(108, 'PVC FILM108', { Sku: '108' }), I(109, 'PVC FILM109', { Sku: '109' })] });
+  const [pv] = await t.bulk.planCatalog();
+  assert.match(pv, /ساخته می‌شود/);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'C1' });
+  await done;
+  const cats = t.m.db.Item.filter((i) => i.Type === 'Category');
+  assert.equal(cats.length, 1); assert.equal(cats[0].Name, 'PVC FILM');
+  assert.deepEqual(t.m.posts[0].body, { Name: 'PVC FILM', Type: 'Category' });
+  assert.ok(t.m.db.Item.filter((i) => i.Type !== 'Category').every((i) => i.ParentRef.value === cats[0].Id && /^PVC-\d+$/.test(i.Sku)));
+});
+
+test('C run: an item QuickBooks refuses (a memorised transaction) is skipped with its message and the rest go on', async () => {
+  const t = mk({ items: catItems(), rejectIds: ['120'] });
+  await t.bulk.planCatalog();
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'C1' });
+  const rep = await done;
+  assert.match(rep, /PVC FILM120: Business Validation Error/);
+  assert.doesNotMatch(rep, /ایستاد/);
+  assert.equal(t.m.db.Item.find((i) => i.Id === '1810').Sku, 'PVC-1810');
+});
+
+test('after the move: matching still uses the item name, the new SKU and the bare code; a category is never an invoice item', async () => {
+  const { pickItem, itemsNamed, itemsContaining } = await import('../src/qboinvoice.js');
+  const t = mk({ items: catItems() });
+  await t.bulk.planCatalog();
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'C1' });
+  await done;
+  const items = t.m.db.Item;
+  for (const q of ['PVC FILM108', 'pvc film108', 'PVC-108', 'pvc-108', 'PVC FILM:PVC FILM108', '108']) assert.equal(pickItem(q, { items }).item?.Id, '108', q);
+  assert.equal(pickItem('1810', { items }).item?.Id, '1810');
+  assert.equal(pickItem('EDGE-1801', { items }).item?.Id, '701');
+  assert.equal(itemsNamed(items, 'PVC FILM').length, 0); // the category is not an item
+  assert.ok(itemsContaining(items, 'PVC FILM').every((i) => i.Type !== 'Category'));
+  const [r] = await t.bulk.addPrices([{ series: 100, price: 12 }]); // the price series still finds the items by their names
+  assert.match(r, /سری 100/);
+});
+
+test('Qbo.write for categories: only the category create, a Name only with Type Category, nothing for a normal item name', async () => {
+  const t = mk({ items: catItems() });
+  const base = { Id: '108', SyncToken: '0', sparse: true };
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Name: 'x' }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Name: 'x', Type: 'Inventory' }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, Name: 'x', Type: 'Category', UnitPrice: 1 }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Name: 'New thing', Type: 'Inventory' }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Name: 'New', Type: 'Category', UnitPrice: 1 }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { UnitPrice: 5 }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, ParentRef: { value: '50' }, Sku: 'x' }), /only/);
+  assert.equal(t.m.posts.length, 0);
+  await t.qbo.write('POST', 'item', { ...base, ParentRef: { value: '50' }, SubItem: true });
+  await t.qbo.write('POST', 'item', { ...base, Sku: 'PVC-108' });
+  await t.qbo.write('POST', 'item', { Id: '50', SyncToken: '0', sparse: true, Name: 'PVC FILM', Type: 'Category' });
+  await t.qbo.write('POST', 'item', { Name: 'PVC FILM', Type: 'Category' });
+  assert.equal(t.m.posts.length, 4);
+});
+
+test('the words: the catalog job and the yes with C', () => {
+  assert.deepEqual(parseInvoiceCommand('دسته و کد کالاها'), { type: 'bulk_catalog' });
+  assert.deepEqual(parseInvoiceCommand('دسته و کد کالا'), { type: 'bulk_catalog' });
+  assert.deepEqual(parseInvoiceCommand('بله#C1'), { type: 'yes', id: 'C1' });
+  assert.deepEqual(parseInvoiceCommand('C1# نه'), { type: 'no', id: 'C1' });
 });

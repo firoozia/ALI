@@ -38,11 +38,12 @@ export function parseInvoiceCommand(text) {
     const W = 'بله|اره|آره|نه|خیر|yes|no';
     const isYes = (w) => /^(?:بله|اره|آره|yes)$/iu.test(w);
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
-    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTP])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPC])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
   if (/^موبایل\s+مشتری(?:\s*ها)?$/u.test(s)) return { type: 'bulk_mobile' };
+  if (/^دسته\s+و\s+کد\s+کالا(?:\s*ها)?$/u.test(s)) return { type: 'bulk_catalog' };
   if (/^مالیات\s+کالاها(?:\s+دبی)?$/u.test(s)) return { type: 'bulk_tax' };
   if (/^شروع\s+کن$/u.test(s)) return { type: 'price_start' };
   if (/^لیست\s+قیمت$/u.test(s)) return { type: 'price_list' };
@@ -106,10 +107,22 @@ export function lineCandidates(line) {
 // ---------------------------------------------------------------------------------------------------------------- exact matching
 const norm = (s) => String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
-/** Items whose Name, Sku or FullyQualifiedName equals [name] exactly (case-insensitive). */
+/** The code (three or four digits) of a PVC item (PVC FILM108 -> 108, PVC 1810 -> 1810), or null (edge banding, boards and the like have none). */
+export function pvcCode(i) {
+  const name = String(i?.Name || '');
+  const m = /pvc\s*(?:film\s*)?(\d{3,4})(?!\d)/i.exec(name) || (/pvc/i.test(name) ? /^(\d{3,4})$/.exec(String(i.Sku || '').trim()) : null);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Items whose Name, Sku or FullyQualifiedName equals [name] exactly (case-insensitive). The match is by Item.Name (a sub-item's full name
+ * "PVC FILM:PVC FILM108" is one more key) and by the SKU ("PVC-108"). A bare code ("108") also finds the PVC item by its code in itemsContaining,
+ * so it keeps being found after the SKU was changed. A category is never an item of an invoice.
+ */
 export function itemsNamed(items, name) {
   const k = norm(name);
-  return k ? items.filter((i) => [i.Name, i.Sku, i.FullyQualifiedName].some((x) => x && norm(x) === k)) : [];
+  if (!k) return [];
+  return items.filter((i) => i.Type !== 'Category' && [i.Name, i.Sku, i.FullyQualifiedName].some((x) => x && norm(x) === k));
 }
 
 /** Close names for a stop message: never a choice made for the user. */
@@ -123,7 +136,8 @@ function closeItems(items, name) {
 export function itemsContaining(items, name) {
   const toks = nameKey(name).split(' ').filter(Boolean);
   if (!toks.length) return [];
-  return items.filter((i) => [i.Name, i.Sku, i.FullyQualifiedName].some((x) => { if (!x) return false; const t = new Set(nameKey(x).split(' ')); return toks.every((k) => t.has(k)); })).slice(0, 8);
+  const code = /^\d{3,4}$/.test(String(name).trim()) ? Number(String(name).trim()) : null; // a bare code also finds the PVC item that carries it (its SKU may now be PVC-108)
+  return items.filter((i) => i.Type !== 'Category' && ([i.Name, i.Sku, i.FullyQualifiedName].some((x) => { if (!x) return false; const t = new Set(nameKey(x).split(' ')); return toks.every((k) => t.has(k)); }) || (code !== null && pvcCode(i) === code))).slice(0, 8);
 }
 
 const itemLabel = (i) => `${i.Name}${i.Sku && norm(i.Sku) !== norm(i.Name) ? ` [${i.Sku}]` : ''}`;
@@ -141,6 +155,8 @@ export function pickItem(name, ctx = {}) {
   if (exact.length === 1) return { item: exact[0], via: '' };
   const cands = exact.length ? exact : itemsContaining(items, name);
   if (!cands.length) return { stop: (n) => { const close = closeItems(items, name); return `سطر ${fa(n)}: کالای «${name}» در کوییک‌بوکس دقیقاً پیدا نشد؛ اول آن را معرفی کنید.${close.length ? ` نزدیک‌ها: ${close.join(' | ')}` : ''}`; } };
+  // a bare code ("108") that only one PVC item carries is that item, even after its SKU became PVC-108 (the code is the number in its name)
+  if (!exact.length && cands.length === 1 && /^\d{3,4}$/.test(String(name).trim()) && pvcCode(cands[0]) === Number(String(name).trim())) return { item: cands[0], via: 'code' };
   const hist = ctx.history ? cands.filter((i) => ctx.history.has(String(i.Id))) : [];
   if (hist.length === 1) return { item: hist[0], via: 'history' };
   return { stop: (n) => `سطر ${fa(n)}: «${name}» چند کالا دارد و بین آن‌ها حدس نمی‌زنم:\n${cands.map((i, k) => `   ${fa(k + 1)}) ${itemLabel(i)} — قیمت ${Number(i.UnitPrice) > 0 ? i.UnitPrice : 'ندارد'}`).join('\n')}\nبنویسید: کد ${name} = <نام دقیق کالا>` };
@@ -289,7 +305,7 @@ export class QboInvoiceDesk {
       this.qbo.query('select * from TaxRate').catch(() => []),
       this.qbo.get('preferences').then((j) => j?.Preferences || null).catch(() => null),
     ]);
-    this.cache = { at: this.now(), items, codes: taxCodeMap(taxCodes, taxRates), currency: prefs?.CurrencyPrefs?.HomeCurrency?.value || '', customTxn: prefs?.SalesFormsPrefs?.CustomTxnNumbers === true };
+    this.cache = { at: this.now(), items: items.filter((i) => i.Type !== 'Category'), codes: taxCodeMap(taxCodes, taxRates), currency: prefs?.CurrencyPrefs?.HomeCurrency?.value || '', customTxn: prefs?.SalesFormsPrefs?.CustomTxnNumbers === true };
     return this.cache;
   }
 

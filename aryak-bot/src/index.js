@@ -631,6 +631,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'names_plan': return qboNames.plan();
     case 'bulk_email': return qboBulk.planEmails(ic.email);
     case 'bulk_mobile': return qboBulk.planMobiles();
+    case 'bulk_catalog': return qboBulk.planCatalog();
     case 'bulk_tax': return qboBulk.planItemTax();
     case 'price_set': {
       const out = ic.lines.length ? await qboBulk.addPrices(ic.lines) : ['قیمت درست نیست (عدد ۰ تا ۱۰٬۰۰۰٬۰۰۰).'];
@@ -649,7 +650,7 @@ async function qboInvoiceCommand(ic, text) {
         if (open.length > 1) return [`چند پیش‌نمایش باز است: ${open.map((x) => `#${x}`).join('، ')}. چیزی انجام نشد؛ شمارهٔ پیش‌نمایش را بنویسید، مثل: ${ic.type === 'yes' ? 'بله' : 'نه'} #${open[0]}`];
         id = open[0]; said = `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTP]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
+      const out = await (id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPC]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
       return said ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
