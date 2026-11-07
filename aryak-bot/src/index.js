@@ -25,6 +25,8 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
+import { Qbo } from './qbo.js';
+import { QboDesk, QboMap, parseQboCommand } from './qbodesk.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
 import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
@@ -590,6 +592,15 @@ async function checkForSend(buf) {
 const customerGroups = new CustomerGroups(path.join(config.authDir, 'customer-groups')); // the owner's approved list: customer on the invoice -> group
 const customerNames = new NameBook(path.join(config.authDir, 'customer-groups')); // the names the owner imported from his accounting export (names only, on the VM)
 const customerDesk = new CustomerGroupDesk({ list: customerGroups, config, book: customerNames });
+// QuickBooks Online: READ ONLY. Statements go only to the test group; nothing is written to QuickBooks (QBO_WRITE is off).
+const qbo = new Qbo({ config, dir: path.join(config.authDir, 'qbo'), log: (s) => logger.info(s) });
+const qboDesk = new QboDesk({
+  qbo, list: customerGroups, aliases, map: new QboMap(path.join(config.authDir, 'qbo')), config,
+  groups: async () => Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' })),
+  post: async (jid, buf, fileName, caption) => { const r = await sock.sendMessage(jid, { document: buf, mimetype: 'application/pdf', fileName, caption }); if (!r) throw new Error('the statement was not sent'); },
+  today: () => localParts(Date.now(), config.timezone).day,
+  log: (s) => logger.info(s),
+});
 const taught = new TaughtStore(path.join(config.authDir, 'taught')); // what the owner taught in words: numbered, versioned, removable
 const teachDesk = new TeachDesk({ store: taught });
 const teachFx = () => ({ aliases, customerGroups, rules, watchList, config });
@@ -1198,6 +1209,15 @@ async function handleStaffChat(raw, chatId, group) {
   if (text && !audio && !image && !pdf && addressed) {
     const rq = parseReceivedQuery(text);
     if (rq) { await reply(receivedSummary((group?.test ? testTracker : tracker).events, { period: rq.period, timeZone: config.timezone, lang: staffLang === 'fa' ? 'fa' : 'en' })); return true; }
+  }
+  // QuickBooks (his own chat, owner only): status, the match table, one statement or all (to the test group only). Read only.
+  if (text && !audio && !image && !group && isSelf) {
+    const qc = parseQboCommand(text);
+    if (qc && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
+      qboDesk.finish = async (parts) => { for (const part of parts) await reply(part); };
+      for (const part of await qboDesk.handle(qc)) await reply(part);
+      return true;
+    }
   }
   // "وضعیت سفارش‌ها" (his own chat, owner only): counts of orders by source and of invoices in each state, last seven days, no names.
   if (config.ownerInvoiceSend && text && !audio && !image && !group && isSelf && isOrderStatusCommand(text) && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {

@@ -102,6 +102,14 @@ export function loadConfig(env = process.env) {
     ownerInvoiceSend: !/^(0|false|off|no)$/i.test(env.OWNER_INVOICE_SEND || 'on'),
     // the owner can teach her in one sentence in his own chat (aliases, customer groups, watched groups, rules, terms); every change needs his yes
     ownerTeach: !/^(0|false|off|no)$/i.test(env.OWNER_TEACH || 'on'),
+    // QuickBooks Online (read only in this stage). The keys come from the VM's metadata; none of them is ever logged or sent anywhere but Intuit.
+    qboClientId: (env.QBO_CLIENT_ID || '').trim(),
+    qboClientSecret: (env.QBO_CLIENT_SECRET || '').trim(),
+    qboEnv: /^production$/i.test((env.QBO_ENV || '').trim()) ? 'production' : 'sandbox',
+    qboRealmId: (env.QBO_REALM_ID || '').trim(),
+    qboRefreshInit: (env.QBO_REFRESH_TOKEN_INIT || '').trim(), // used once; after that the rotating token lives in a file under authDir
+    qboWrite: /^(1|true|on|yes)$/i.test((env.QBO_WRITE || '').trim()), // off: no write to QuickBooks is possible
+    qboMinorVersion: Number(env.QBO_MINOR_VERSION) || 75,
     testCustomerName: (env.TEST_CUSTOMER_NAME || 'test customer').trim().toLowerCase(),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     orderNagHours: Number(env.ORDER_NAG_HOURS || 24),
