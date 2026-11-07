@@ -38,11 +38,13 @@ export function parseInvoiceCommand(text) {
     const W = 'بله|اره|آره|نه|خیر|yes|no';
     const isYes = (w) => /^(?:بله|اره|آره|yes)$/iu.test(w);
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
-    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPC])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCU])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
   if (/^موبایل\s+مشتری(?:\s*ها)?$/u.test(s)) return { type: 'bulk_mobile' };
+  if (/^برگرداندن\s+نوار\s+لبه$/u.test(s)) return { type: 'bulk_undo', scope: 'edge' };
+  if ((m = /^برگرداندن\s+([CEMTP])\s*(\d+)$/iu.exec(s))) return { type: 'bulk_undo', scope: 'all', source: `${m[1].toUpperCase()}${m[2]}` };
   if (/^دسته\s+و\s+کد\s+کالا(?:\s*ها)?$/u.test(s)) return { type: 'bulk_catalog' };
   if (/^دسته\s+و\s+کد\s+پی\s*وی\s*سی$/u.test(s)) return { type: 'bulk_catalog', edge: false }; // the PVC film part only: no edge banding change at all
   if (/^مالیات\s+کالاها(?:\s+دبی)?$/u.test(s)) return { type: 'bulk_tax' };
@@ -274,6 +276,8 @@ export class Audit {
   constructor(dir = '', now = () => Date.now()) { this.file = dir ? path.join(dir, 'qbo-audit.log') : ''; this.now = now; }
   add(entry) { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.appendFileSync(this.file, `${JSON.stringify({ at: new Date(this.now()).toISOString(), ...entry })}\n`, { mode: 0o600 }); } catch { /* best effort */ } }
   last(n = 10) { try { return fs.readFileSync(this.file, 'utf8').split('\n').filter(Boolean).slice(-n).map((l) => JSON.parse(l)); } catch { return []; } }
+  /** Every entry (the undo job reads what a finished job really did from here). */
+  all() { try { return fs.readFileSync(this.file, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } }
 }
 
 /** The previews and the creations made (for the caps). */

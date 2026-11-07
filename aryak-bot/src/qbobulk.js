@@ -223,6 +223,28 @@ export function planCatalog(items, { edge = true } = {}) {
   return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------- undo (job U): from what the audit log says a finished job did
+/** The preview that created categories last (the one whose edge banding the owner wants back). */
+export function latestCreatingPreview(entries) {
+  for (let i = entries.length - 1; i >= 0; i -= 1) if (entries[i].event === 'bulk-change' && entries[i].field === 'category-create') return String(entries[i].previewId || '');
+  return '';
+}
+/**
+ * The moves a finished job made and the categories it created, from the audit entries: { created: [{ id, name }], moves: [{ id, old, new }] }.
+ * [onlyCreated]: only the moves into a category that this same job created.
+ */
+export function undoSet(entries, source, { onlyCreated = false } = {}) {
+  const mine = entries.filter((e) => e.event === 'bulk-change' && String(e.previewId) === String(source));
+  const created = mine.filter((e) => e.field === 'category-create').map((e) => ({ id: String(e.qboId), name: String(e.new || '') }));
+  const ids = new Set(created.map((c) => c.id));
+  const by = new Map();
+  for (const e of mine.filter((x) => x.field === 'move')) {
+    const k = String(e.qboId);
+    if (!by.has(k)) by.set(k, { id: k, old: String(e.old || ''), new: String(e.new || '') }); else by.get(k).new = String(e.new || '');
+  }
+  return { created, moves: [...by.values()].filter((m) => m.old !== m.new && (!onlyCreated || ids.has(m.new))) };
+}
+
 // ---------------------------------------------------------------------------------------------------------------- the stores
 export class BulkPreviews {
   constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-bulk.json') : ''; this.d = { n: {}, previews: {} }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ } }
@@ -275,6 +297,13 @@ const JOBS = {
       return null;
     },
     audit: (cur, body, p, ch) => ({ field: ch.op, old: ch.op === 'sku' ? String(cur.Sku || '') : ch.op === 'rename' ? cur.Name : String(cur.ParentRef?.value || ''), new: ch.op === 'sku' || ch.op === 'rename' ? ch.new : String(p.params.cats?.[ch.cat] || '') }),
+  },
+  U: {
+    title: 'برگرداندن دسته', entity: 'item', fields: ['ParentRef', 'SubItem'],
+    // an item goes back only if it still sits where the job put it; one that someone moved since is left alone and named
+    body: (cur, ch) => (String(cur.ParentRef?.value || '') === ch.expect && cur.SubItem ? (ch.restore ? { ParentRef: { value: ch.restore }, SubItem: true } : { SubItem: false }) : null),
+    note: (cur, ch) => (String(cur.ParentRef?.value || '') === ch.restore && (ch.restore ? cur.SubItem : !cur.SubItem) ? '' : `${ch.label}: دسته‌اش از آن زمان عوض شده و دست نخورد`),
+    audit: (cur, body, p, ch) => ({ field: 'undo-move', old: String(cur.ParentRef?.value || ''), new: ch.restore, of: p.params.source }),
   },
   P: {
     title: 'قیمت پایهٔ کالاها', entity: 'item', fields: ['UnitPrice'],
@@ -415,6 +444,42 @@ export class QboBulkDesk {
     });
   }
 
+  // ------------------------------------------------------------------------------------------------ U: put a finished job's moves back
+  /** [scope] 'edge': the latest job that created categories, only the moves into them; 'all': every move of the job named in [source]. */
+  async planUndo({ scope = 'edge', source = '' } = {}) {
+    const blocked = this.guard();
+    if (blocked) return [blocked];
+    const entries = this.audit.all();
+    const src = scope === 'edge' ? latestCreatingPreview(entries) : String(source).toUpperCase();
+    if (!src) return ['در گزارش حسابرسی کاری که دسته ساخته باشد پیدا نشد؛ چیزی برای برگرداندن نیست.'];
+    const set = undoSet(entries, src, { onlyCreated: scope === 'edge' });
+    if (!set.moves.length) return [`در گزارش حسابرسی ${src} جابه‌جایی‌ای برای برگرداندن پیدا نشد.`];
+    const items = await this.items(true);
+    const byId = new Map(items.map((i) => [String(i.Id), i]));
+    const name = (id) => byId.get(String(id))?.Name || `کالای ${id}`;
+    const changes = []; const left = []; let already = 0;
+    for (const m of set.moves) {
+      const it = byId.get(m.id);
+      const now = String(it?.ParentRef?.value || '');
+      if (!it) { left.push(`${name(m.id)}: در کوییک‌بوکس نیست`); continue; }
+      if (now === m.old && (m.old ? it.SubItem : !it.SubItem)) { already += 1; continue; }
+      if (now !== m.new) { left.push(`${name(m.id)}: دسته‌اش از آن زمان عوض شده`); continue; }
+      changes.push({ op: 'undo-move', id: m.id, label: name(m.id), expect: m.new, restore: m.old, old: m.new, new: m.old });
+    }
+    const cats = scope === 'edge' || set.created.length ? set.created : [];
+    for (const c of cats) changes.push({ op: 'undo-cat', id: c.id, label: c.name || `دستهٔ ${c.id}` });
+    if (!changes.length) return [`چیزی برای برگرداندن نمانده (${fa(already)} کالا از پیش سر جایش است)${left.length ? `؛ ${fa(left.length)} کالا عوض شده و رد شد` : ''}.`];
+    const toNone = changes.filter((c) => c.op === 'undo-move' && !c.restore);
+    const toCat = changes.filter((c) => c.op === 'undo-move' && c.restore);
+    const lines = changes.filter((c) => c.op === 'undo-move').map((c, i) => `${fa(i + 1)}. ${c.label}: دسته ${c.old} ← ${c.restore ? `دستهٔ ${c.restore}` : 'بدون دسته'}`);
+    return this.make('U', { changes, skipped: left.map((x) => ({ label: x, why: 'changed' })), unchanged: already }, {
+      header: `برگرداندن جابه‌جایی‌های ${src}`, params: { source: src, createdIds: cats.map((c) => c.id) },
+      summary: `فقط دستهٔ کالا برمی‌گردد: ${fa(toNone.length)} کالا به بدون دسته و ${fa(toCat.length)} کالا به دستهٔ پیشین. ${cats.length ? `دسته‌هایی که همان کار ساخته (${cats.map((c) => c.name).join('، ')}) فقط اگر بعد از آن خالی باشند غیرفعال می‌شوند (حذف نمی‌شوند). ` : ''}کد و نام و قیمت دست نمی‌خورد؛ جابه‌جایی‌ها و کدهای پی‌وی‌سی می‌مانند. کالایی که از آن زمان کسی جابه‌جایش کرده رد و فهرست می‌شود.`,
+      lines,
+      extra: left.length ? [`رد شد (عوض شده): ${left.slice(0, 20).join('، ')}`] : [],
+    });
+  }
+
   // ------------------------------------------------------------------------------------------------ P: base prices one by one
   /** «قیمت 108 = 12» (several lines allowed): each line is resolved to ONE item and added to the draft; an unclear one is not taken. */
   async addPrices(lines) {
@@ -514,7 +579,7 @@ export class QboBulkDesk {
   }
 
   reportLine(r) {
-    const errs = (r.errors || []).slice(0, 10).map((x) => `\n• ${x.name}: ${x.why}`).join('');
+    const errs = (r.errors || []).slice(0, 10).map((x) => `\n• ${x.name}: ${x.why}`).join('') + (r.notes || []).slice(0, 15).map((x) => `\n• ${x}`).join('');
     return `${fa(r.changed)} تغییر کرد، ${fa(r.skipped)} رد شد (از پیش درست یا پیدا نشد)، ${fa(r.failed)} را کوییک‌بوکس نپذیرفت${r.stoppedAt ? `؛ در مورد ${fa(r.stoppedAt)} ایستاد: ${r.why}` : ''}${r.remaining ? `؛ ${fa(r.remaining)} مورد انجام نشد` : ''}.${errs}${(r.errors || []).length ? `\nبرای ادامهٔ بقیه همان فرمان کار را دوباره بنویسید (برای قیمت‌ها: «شروع کن»)؛ همان پیش‌نویس می‌ماند و آنچه انجام شده «از پیش درست» حساب می‌شود.` : ''}`;
   }
 
@@ -523,6 +588,21 @@ export class QboBulkDesk {
     const done = [];
     try {
       for (const [i, ch] of p.changes.entries()) {
+        if (ch.op === 'undo-cat') { // a category the job made is switched off only if nothing active sits in it any more
+          try {
+            const kids = (await this.items(true)).filter((x) => String(x.ParentRef?.value || '') === ch.id && x.Active !== false);
+            if (kids.length) { r.skipped += 1; (r.notes = r.notes || []).push(`${ch.label}: خالی نیست (${fa(kids.length)} کالا در آن است) و بسته نشد`); continue; }
+            const cat = (await this.qbo.get(`item/${encodeURIComponent(ch.id)}`))?.Item;
+            if (!cat || cat.Type !== 'Category' || cat.Active === false) { r.skipped += 1; continue; }
+            await this.qbo.write('POST', 'item', { Id: String(cat.Id), SyncToken: String(cat.SyncToken), sparse: true, Active: false }, { categoryIds: p.params.createdIds || [] });
+            r.changed += 1; this.audit.add({ event: 'bulk-change', kind: p.kind, previewId: p.id, approver: 'owner', qboId: ch.id, field: 'undo-category', new: 'inactive', of: p.params.source });
+          } catch (e) {
+            if (e.status === 400) { r.failed += 1; r.errors.push({ name: ch.label, id: ch.id, why: [e.fault?.message, e.fault?.detail].filter(Boolean).join(' - ') || e.message }); continue; }
+            this.stop(r, p, i, e); break;
+          }
+          if (this.gapMs) await this.sleep(this.gapMs);
+          continue;
+        }
         if (ch.op === 'cat-create') { // the only creates: the categories (looked for again first, so a re-run never makes a second one)
           try {
             p.params.cats = p.params.cats || {};
@@ -542,7 +622,7 @@ export class QboBulkDesk {
         try { cur = (await this.qbo.get(`${job.entity}/${encodeURIComponent(ch.id)}`))?.[job.entity === 'customer' ? 'Customer' : 'Item']; } catch (e) { this.stop(r, p, i, e); break; }
         if (!cur) { r.skipped += 1; continue; }
         const part = job.body(cur, ch, p); // computed from the record as it is NOW: already done = null
-        if (!part) { r.skipped += 1; done.push(ch.id); continue; }
+        if (!part) { r.skipped += 1; done.push(ch.id); const note = job.note?.(cur, ch, p); if (note) (r.notes = r.notes || []).push(note); continue; }
         const body = { Id: String(cur.Id), SyncToken: String(cur.SyncToken), sparse: true, ...part };
         if (Object.keys(part).some((k) => !job.fields.includes(k))) { this.stop(r, p, i, new Error('a field this job may not change')); break; } // defence: never beyond the job's fields
         try {

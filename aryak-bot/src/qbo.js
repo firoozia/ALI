@@ -335,8 +335,14 @@ export class Qbo {
    * update of a customer's name. Anything else (a delete, a void, a payment, a refund, any other update) is refused here whatever the caller asks.
    * [requestId] makes the invoice create idempotent.
    */
-  async write(method, pathPart, body, { requestId = '' } = {}) {
+  async write(method, pathPart, body, { requestId = '', categoryIds = [] } = {}) {
     if (!this.writeOn) throw new QboError('QuickBooks writes are switched off (QBO_WRITE)');
+    // the undo job may switch off (Active false) a category it names and nothing else: Id + SyncToken + sparse + Active false, and the Id must be one of [categoryIds]
+    if (method === 'POST' && pathPart === 'item' && body && body.Active === false) {
+      const keys = Object.keys(body);
+      if (body.sparse !== true || !body.Id || body.SyncToken === undefined || keys.some((k) => !['Id', 'SyncToken', 'sparse', 'Active'].includes(k)) || !categoryIds.map(String).includes(String(body.Id))) throw new QboError('QuickBooks: only switching off a named category is allowed');
+      return this.send('POST', 'item', {}, body);
+    }
     // the other writes are SPARSE updates only (Id + SyncToken + sparse + ONE job's fields); no create, no delete, no inactivate:
     //   customer: the name (DisplayName, CompanyName), or the e-mail (PrimaryEmailAddr), or the mobile (Mobile); never a mix of the jobs
     //   item: the sales tax code (SalesTaxCodeRef), or the base price (UnitPrice); never a mix

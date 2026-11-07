@@ -56,6 +56,7 @@ function mockQbo(opts = {}) {
       if (body.Id === undefined) { const n = { Id: String(900 + db.Item.length), SyncToken: '0', Active: true, ...body }; db.Item.push(n); return res(200, { Item: n }); } // a create
       const r = db[key(ent)].find((x) => x.Id === body.Id);
       for (const [k, v] of Object.entries(body)) if (!['Id', 'SyncToken', 'sparse'].includes(k)) r[k] = v; // a sparse update changes only what is sent
+      if (body.SubItem === false) delete r.ParentRef; // a top-level item has no parent
       if (body.ParentRef) r.FullyQualifiedName = `${db.Item.find((x) => x.Id === body.ParentRef.value).Name}:${r.Name}`;
       r.SyncToken = String(Number(r.SyncToken) + 1);
       return res(200, { [key(ent)]: r });
@@ -755,5 +756,122 @@ test('the PVC-only job: the words, no edge banding change of any kind, the missp
   assert.equal(by(608).ParentRef.value, '50'); assert.equal(by(608).Sku, 'PVC-608'); assert.equal(by(513).Sku, 'PVC-513');
   assert.equal(by(910).ParentRef, undefined);
   assert.ok(t.m.posts.every((p) => ['Id,Name,SyncToken,Type,sparse', 'Id,ParentRef,SubItem,SyncToken,sparse', 'Id,Sku,SyncToken,sparse'].includes(Object.keys(p.body).sort().join())));
+});
+
+
+// ---- job U: put a finished job's moves back, from the audit log
+const undoWorld = (extraItems = []) => {
+  const items = [
+    I(239, 'EDGE BANDING', { Type: 'Category' }), I(271, 'EDGE 0.8x22', { Type: 'Category', ParentRef: { value: '239' }, SubItem: true }), I(272, 'EDGE 0.8x50', { Type: 'Category', ParentRef: { value: '239' }, SubItem: true }),
+    I(207, 'PVC FILM', { Type: 'Category' }),
+    I(301, 'EDGE A', { ParentRef: { value: '271' }, SubItem: true }), I(302, 'EDGE B', { ParentRef: { value: '271' }, SubItem: true }), // were top level
+    I(303, 'EDGE C', { ParentRef: { value: '272' }, SubItem: true }), I(304, 'EDGE D', { ParentRef: { value: '272' }, SubItem: true }), // were in 239
+    I(305, 'EDGE E', { ParentRef: { value: '777' }, SubItem: true }), // moved by someone else since
+    I(108, 'PVC FILM108', { ParentRef: { value: '207' }, SubItem: true, Sku: 'PVC-108' }),
+    ...extraItems,
+  ];
+  const t = mk({ items });
+  const log = (field, qboId, old, nw) => t.audit.add({ event: 'bulk-change', kind: 'C', previewId: 'C2', approver: 'owner', qboId, field, ...(old !== undefined ? { old } : {}), new: nw });
+  log('rename', '207', 'PVC FLIM', 'PVC FILM');
+  log('category-create', '271', undefined, 'EDGE 0.8x22'); log('category-create', '272', undefined, 'EDGE 0.8x50');
+  log('move', '108', '148', '207');
+  log('move', '301', '', '271'); log('move', '302', '', '271'); log('move', '303', '239', '272'); log('move', '304', '239', '272'); log('move', '305', '', '271');
+  log('sku', '108', '108', 'PVC-108');
+  return t;
+};
+
+test('undo words, and the audit reading: only the moves into the categories the job created', async () => {
+  const { undoSet, latestCreatingPreview } = await import('../src/qbobulk.js');
+  assert.deepEqual(parseInvoiceCommand('برگرداندن نوار لبه'), { type: 'bulk_undo', scope: 'edge' });
+  assert.deepEqual(parseInvoiceCommand('برگرداندن c2'), { type: 'bulk_undo', scope: 'all', source: 'C2' });
+  assert.deepEqual(parseInvoiceCommand('بله#U1'), { type: 'yes', id: 'U1' });
+  const t = undoWorld();
+  const e = t.audit.all();
+  assert.equal(latestCreatingPreview(e), 'C2');
+  const s = undoSet(e, 'C2', { onlyCreated: true });
+  assert.deepEqual(s.created.map((c) => c.id), ['271', '272']);
+  assert.deepEqual(s.moves.map((m) => [m.id, m.old, m.new]), [['301', '', '271'], ['302', '', '271'], ['303', '239', '272'], ['304', '239', '272'], ['305', '', '271']]); // 108 (PVC) is not among them
+  assert.equal(undoSet(e, 'C2').moves.length, 6); // the whole job: PVC too
+});
+
+test('U: the preview writes nothing; the run puts the edge items back, switches off the two empty categories, leaves PVC and the moved-since item', async () => {
+  const t = undoWorld();
+  const [pv] = await t.bulk.planUndo({ scope: 'edge' });
+  assert.match(pv, /#U1/);
+  assert.match(pv, /۲ کالا به بدون دسته و ۲ کالا به دستهٔ پیشین/);
+  assert.match(pv, /دسته‌اش از آن زمان عوض شده/); // 305
+  assert.equal(t.m.posts.length, 0);
+  // plan-time: 305 is at 777, not at 271: left out
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'U1' });
+  const rep = await done;
+  const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  for (const id of [301, 302]) { assert.equal(by(id).ParentRef, undefined, String(id)); assert.equal(by(id).SubItem, false); }
+  for (const id of [303, 304]) { assert.equal(by(id).ParentRef.value, '239'); assert.equal(by(id).SubItem, true); }
+  assert.equal(by(305).ParentRef.value, '777'); // someone else's move is left
+  assert.equal(by(108).ParentRef.value, '207'); assert.equal(by(108).Sku, 'PVC-108'); // PVC stays
+  assert.equal(by(271).Active, false); assert.equal(by(272).Active, false); assert.equal(by(239).Active, true); assert.equal(by(207).Active, true);
+  assert.ok(t.m.posts.every((p) => ['Id,SubItem,SyncToken,sparse', 'Id,ParentRef,SubItem,SyncToken,sparse', 'Active,Id,SyncToken,sparse'].includes(Object.keys(p.body).sort().join())), t.m.posts.map((p) => Object.keys(p.body).sort().join()).join(' | '));
+  assert.equal(t.m.posts.length, 6); // four items, two categories
+  const undo = t.audit.all().filter((e) => e.field === 'undo-move');
+  assert.deepEqual(undo.map((e) => [e.qboId, e.old, e.new]), [['301', '271', ''], ['302', '271', ''], ['303', '272', '239'], ['304', '272', '239']]);
+  assert.ok(t.audit.all().some((e) => e.field === 'undo-category' && e.qboId === '271'));
+  assert.match(rep, /۶ تغییر کرد/);
+  const n = t.m.posts.length;
+  await t.bulk.decide({ verb: 'yes', id: 'U1' });
+  assert.equal(t.m.posts.length, n); // done once
+});
+
+test('U: a category that still holds an item is not switched off; an item moved between the preview and the yes is skipped and named', async () => {
+  const t = undoWorld([I(306, 'EDGE F', { ParentRef: { value: '272' }, SubItem: true })]); // an item NOT in the audit sits in 272
+  await t.bulk.planUndo({ scope: 'edge' });
+  // between the preview and the yes someone moves 301 elsewhere
+  t.m.db.Item.find((i) => i.Id === '301').ParentRef = { value: '555' };
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'U1' });
+  const rep = await done;
+  const by = (id) => t.m.db.Item.find((i) => i.Id === String(id));
+  assert.equal(by(301).ParentRef.value, '555'); // left
+  assert.match(rep, /EDGE A: دسته‌اش از آن زمان عوض شده/);
+  assert.equal(by(272).Active, true); // EDGE F is still in it
+  assert.match(rep, /EDGE 0.8x50: خالی نیست/);
+  assert.equal(by(271).Active, false); // 302 went back, 305 is elsewhere, 301 left: nothing active in 271
+});
+
+test('U: the kill switch stops it; after resume it runs; a QuickBooks 400 on one item is skipped', async () => {
+  const t = undoWorld(); t.qbo.setPaused(true);
+  assert.match((await t.bulk.planUndo({ scope: 'edge' }))[0], /متوقف/);
+  t.qbo.setPaused(false);
+  const t2 = mk({ items: undoWorld().m.db.Item, rejectIds: ['302'] });
+  for (const e of undoWorld().audit.all()) t2.audit.add(e);
+  await t2.bulk.planUndo({ scope: 'edge' });
+  const done = t2.finished();
+  await t2.bulk.decide({ verb: 'yes', id: 'U1' });
+  const rep = await done;
+  assert.match(rep, /EDGE B: Business Validation Error/);
+  assert.doesNotMatch(rep, /ایستاد/);
+  assert.equal(t2.m.db.Item.find((i) => i.Id === '301').SubItem, false);
+});
+
+test('U: the generic form puts back every move of the named job; nothing found says so', async () => {
+  const t = undoWorld();
+  const [pv] = await t.bulk.planUndo({ scope: 'all', source: 'C2' });
+  assert.match(pv, /#U1/);
+  assert.match(pv, /PVC FILM108/);
+  assert.match((await t.bulk.planUndo({ scope: 'all', source: 'C9' }))[0], /پیدا نشد/);
+  const none = mk({ items: [] });
+  assert.match((await none.bulk.planUndo({ scope: 'edge' }))[0], /پیدا نشد/);
+});
+
+test('Qbo.write: Active false only for a named category, alone', async () => {
+  const t = undoWorld();
+  const base = { Id: '271', SyncToken: '0', sparse: true, Active: false };
+  await assert.rejects(() => t.qbo.write('POST', 'item', base), /only/); // no list given
+  await assert.rejects(() => t.qbo.write('POST', 'item', base, { categoryIds: ['272'] }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, UnitPrice: 1 }, { categoryIds: ['271'] }), /only/);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { ...base, sparse: undefined }, { categoryIds: ['271'] }), /only/);
+  assert.equal(t.m.posts.length, 0);
+  await t.qbo.write('POST', 'item', base, { categoryIds: ['271'] });
+  assert.equal(t.m.posts.length, 1);
 });
 
