@@ -70,6 +70,7 @@ import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
 import { cutRecords, markCutsInvoiced } from './cuts.js';
+import { PendingChoice, parseChoice } from './pendingchoice.js';
 import { mergeTranscripts, isShortCorrection } from './voicemerge.js';
 import { codeKnownInItems } from './qboinvoice.js';
 import { buildSystemPrompt } from './prompt.js';
@@ -159,6 +160,7 @@ const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availabilit
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
+const choiceDesk = new PendingChoice({ file: path.join(config.authDir, 'pending-choice.json') }); // a numbered question waiting for its answer (30 minutes, kept over a restart)
 const voiceGate = new VoiceGate(); // the transcript of a voice note that would change something, waiting for the speaker's «بله»
 const transcribe = speechTranscriber({
   languages: config.speechLanguages, token: metadataToken(), minConfidence: config.speechMinConfidence,
@@ -662,7 +664,7 @@ async function qboInvoiceCommand(ic, text) {
       if (blocked) return [blocked];
       const x = await qboDesk.statementFor(ic.customer, { privateJid: ownIds()[0], period: ic.period });
       const out = [x.text];
-      if (x.ask) out.clarify = true; // the next short answer completes this request
+      if (x.ask) { out.clarify = true; if (x.options?.length) out.choice = { kind: 'statement', options: x.options, period: ic.period }; } // the next answer picks one
       return out;
     }
     case 'bulk_edge_names': return qboBulk.planEdgeNames();
@@ -1276,6 +1278,22 @@ async function handleStaffChat(raw, chatId, group) {
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  // A numbered question just asked waits for its answer: «1», «۱», «یک», «اولی», «شماره یک درست است» or the name itself. Nothing else may take this message.
+  const pending = text && !audio && !image ? choiceDesk.get(`pc:${chatId}`) : null;
+  if (pending) {
+    const at = parseChoice(text, pending.options);
+    if (at >= 0) {
+      choiceDesk.clear(`pc:${chatId}`);
+      trace(where, role, 'a numbered question was answered');
+      if (pending.kind === 'statement') {
+        try {
+          const x = await qboDesk.statementFor(pending.options[at], { privateJid: isSelf ? ownIds()[0] : chatId, period: pending.period });
+          await reply(x.text);
+        } catch (e) { await reply(e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.'); }
+      }
+      return true;
+    }
+  }
   // the echo of a transcript (merged or not), then by its class: a question runs, a change waits for the yes
   const actOnTranscript = async (said, lang) => {
     const pv = planVoice({ transcript: said, lang, priv: true });
@@ -1411,7 +1429,7 @@ async function handleStaffChat(raw, chatId, group) {
       const parts = await qboInvoiceCommand(ic, text);
       if (parts) {
         for (const part of parts) await reply(part);
-        if (parts.clarify) voiceGate.set(gateKey, text, 'clarify'); // "which customer?": a short answer, typed or spoken, is merged into this request
+        if (parts.choice) choiceDesk.set(`pc:${chatId}`, parts.choice); else if (parts.clarify) voiceGate.set(gateKey, text, 'clarify'); // "which customer?": a short answer, typed or spoken, is merged into this request
         return true;
       } // null: not ours (the older price list answers)
     }

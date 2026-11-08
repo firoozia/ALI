@@ -226,3 +226,54 @@ test('"Mice Interiors Decoration LLC" finds "MICE INTERIORS DECORATION L.L.C" in
   const r3 = await c.desk.resolveLoose('Mice Interiors Decoration LLC');
   assert.equal(r3.id, undefined); assert.ok(Array.isArray(r3.options));
 });
+
+// ------------------------------------------------------------------------------------------------ the owner's messages of 2026-11-08, 14:09-14:11
+import { parseChoice, PendingChoice } from '../src/pendingchoice.js';
+
+test('the bot\'s name in Latin and English verbs are stripped: «Atosa send Statement Al afeef» asks for the statement of «Al afeef»', () => {
+  for (const t of ['Atosa send Statement Al afeef', 'Atossa give me statement of account Al afeef', 'atousa send SOA Al afeef', 'Atusa make statement Al afeef', 'Atoosa statement Al afeef please']) {
+    const r = parseInvoiceCommand(t);
+    assert.equal(r?.type, 'statement_nl', t); assert.equal(r.customer, 'Al afeef', t);
+  }
+  assert.equal(parseInvoiceCommand('Atosa send statement Al afeef October').period.label, '2026-10');
+  assert.equal(parseInvoiceCommand('statement Al afeef'), null); // the exact older form is not a request in free words
+  assert.equal(voiceChangesSomething('Atosa send Statement Al afeef'), false); // read only
+});
+
+test('the answer to a numbered question: «1», «۱», «یک», «اولی», «شماره یک», «شماره یک درست است», «۱ درست است» or the name itself', () => {
+  const opts = ['AL AFEEF KITCHEN', 'AL AFEEF DOORS'];
+  for (const t of ['1', '۱', 'یک', 'اولی', 'شماره یک', 'شماره یک درست است', '۱ درست است', 'شماره ۱', '1)', 'first', 'Al afeef kitchen', 'AL AFEEF KITCHEN', 'al afeef kitchen درست است']) assert.equal(parseChoice(t, opts), 0, t);
+  for (const t of ['2', '۲', 'دو', 'دومی', 'شماره دو درست است', 'Al afeef doors']) assert.equal(parseChoice(t, opts), 1, t);
+  for (const t of ['3', 'سه', 'Al afeef', 'موجودی 215', 'AL SAIFI DOORS', '', 'سلام']) assert.equal(parseChoice(t, opts), -1, t); // out of range, ambiguous or something else
+});
+
+test('a pending choice lives 30 minutes and survives a restart; a statement that cannot decide asks with a numbered list and the answer picks', async () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pc-')), 'p.json');
+  const clock = { t: 1000 };
+  const a = new PendingChoice({ file, now: () => clock.t });
+  a.set('pc:1', { kind: 'statement', options: ['A', 'B'], period: null });
+  assert.equal(new PendingChoice({ file, now: () => clock.t }).get('pc:1').options.length, 2); // a restart
+  clock.t += 29 * 60 * 1000; assert.ok(a.get('pc:1'));
+  clock.t += 2 * 60 * 1000; assert.equal(a.get('pc:1'), null);
+  // two equally good candidates: asked with a numbered list, nothing sent
+  const { desk, posted } = mkDesk([{ Id: '1', DisplayName: 'AL AFEEF KITCHEN' }, { Id: '2', DisplayName: 'AL AFEEF DOORS' }, { Id: '3', DisplayName: 'ZED TRADING' }]);
+  const ask = await desk.statementFor('Al afeef', { privateJid: 'x@s.whatsapp.net', period: null });
+  assert.equal(ask.ask, true); assert.deepEqual(ask.options.sort(), ['AL AFEEF DOORS', 'AL AFEEF KITCHEN']);
+  assert.equal(posted.length, 0);
+  // «شماره یک درست است» picks the first listed option and the statement is sent
+  const options = ask.options;
+  const at = parseChoice('شماره یک درست است', options);
+  const done = await desk.statementFor(options[at], { privateJid: 'x@s.whatsapp.net' });
+  assert.equal(done.ok, true); assert.equal(posted.length, 1); assert.match(done.text, new RegExp(options[at]));
+});
+
+test('a read-only action with one clearly best candidate is done and said: «(حدس از …)», not asked', async () => {
+  const { desk, posted } = mkDesk([{ Id: '1', DisplayName: 'AL AFEEF KITCHEN' }, { Id: '2', DisplayName: 'AL SAIFI DOORS' }, { Id: '3', DisplayName: 'ZED TRADING' }]);
+  const r = await desk.statementFor('Al afif', { privateJid: 'x@s.whatsapp.net', period: null }); // a misspelling: no exact words, one name is clearly nearest
+  assert.equal(r.ok, true); assert.equal(r.guessed, true);
+  assert.match(r.text, /صورت‌حساب «AL AFEEF KITCHEN» \(حدس از «Al afif» — اگر مشتری دیگری بود بنویسید\)/);
+  assert.equal(posted.length, 1);
+  // the words of the name are all there: exact by words, no guess mark
+  const exact = await desk.statementFor('Al afeef', { privateJid: 'x@s.whatsapp.net' });
+  assert.equal(exact.ok, true); assert.ok(!exact.text.includes('حدس'));
+});

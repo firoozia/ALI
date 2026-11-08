@@ -66,8 +66,8 @@ export function parsePeriod(text, today) {
   return null;
 }
 
-const SIMPLE_WORDS = /(?:^|\s)(?:آتوسا|اتوسا|آدرس|لطفا|لطفاً|سلام)(?=\s|$)/gu;
-const FILLERS = /(?:^|\s)(?:را|رو|برای|برام|برایم|به|من|ما|از|تا|بفرست|بفرستید|بفرستین|بده|بدید|می‌?خواهم|میخواهم|می‌?خوام|میخوام|لازم|دارم|ارسال|کن|بزن|بساز|ماه|برج|میلادی|کنید|صورت\s*حساب|صورتحساب|حساب|statement|please|send|me|the|of|for|my)(?=\s|$)/giu;
+const SIMPLE_WORDS = /(?:^|\s)(?:آتوسا|اتوسا|آدرس|لطفا|لطفاً|سلام|atossa|atosa|atousa|atusa|atoosa|hello|hi|hey)(?=\s|$)/giu;
+const FILLERS = /(?:^|\s)(?:را|رو|برای|برام|برایم|به|من|ما|از|تا|بفرست|بفرستید|بفرستین|بده|بدید|می‌?خواهم|میخواهم|می‌?خوام|میخوام|لازم|دارم|ارسال|کن|بزن|بساز|ماه|برج|میلادی|کنید|صورت\s*حساب|صورتحساب|حساب|statement|statements|soa|account|accounts|please|send|give|make|get|show|issue|me|the|of|for|my|to|a)(?=\s|$)/giu;
 
 /**
  * A free-form request for a statement ("آتوسا صورتحساب شرکت پالم برد را برای ماه ۱۰ میلادی برام بفرست"): { customer, period, label } or null when the text does not
@@ -75,10 +75,11 @@ const FILLERS = /(?:^|\s)(?:را|رو|برای|برام|برایم|به|من|م�
  */
 export function parseStatementRequest(text, today) {
   const t0 = norm(text).replace(/[.!؟?،,]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!/(?:صورت\s*حساب|صورتحساب|statement|حساب\s+(?:ماه|برج|شرکت|مشتری|این|آن))/iu.test(t0)) return null;
+  if (!/(?:صورت\s*حساب|صورتحساب|statement|soa|حساب\s+(?:ماه|برج|شرکت|مشتری|این|آن))/iu.test(t0)) return null;
   if (/فاکتور|invoice/iu.test(t0)) return null; // an invoice is another thing
   const period = parsePeriod(t0, today);
-  const wants = /(?:بفرست|بده|بدید|می‌?خوام|میخوام|می‌?خواهم|لازم|ارسال|send|give|need|want)/iu.test(t0);
+  const wants = /(?:بفرست|بده|بدید|می‌?خوام|میخوام|می‌?خواهم|لازم|ارسال|send|give|make|need|want|get|show)/iu.test(t0)
+    || /^(?:آتوسا|اتوسا|atossa|atosa|atousa|atusa|atoosa)(?=\s)/iu.test(t0); // addressed to her by name: a statement word is a request
   if (!period && !wants) return null; // the exact older form keeps its own path
   let rest = period?.span ? `${t0.slice(0, period.span[0])} ${t0.slice(period.span[1])}` : t0;
   rest = rest.replace(SIMPLE_WORDS, ' ').replace(FILLERS, ' ').replace(FILLERS, ' ').replace(/\s+/g, ' ').trim();

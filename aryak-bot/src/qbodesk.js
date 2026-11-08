@@ -356,7 +356,9 @@ export class QboDesk {
     const cur = data.currency ? `${data.currency} ` : '';
     const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${period.from} to ${period.to}` : 'current'} - balance ${cur}${money(data.closing)}`;
     await this.post(privateJid, pdf, `statement-${safe}${period ? `-${period.label}` : ''}.pdf`, caption);
-    return { ok: true, name: data.customer.name || found.name, text: `صورت‌حساب «${data.customer.name || found.name}»${period ? ` از ${fa(period.from)} تا ${fa(period.to)}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };
+    // a read-only action with ONE clearly best candidate is done and said, not asked: «(حدس از …)»
+    const guessed = found.via === 'sound' ? ` (حدس از «${typed}» — اگر مشتری دیگری بود بنویسید)` : '';
+    return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(period.from)} تا ${fa(period.to)}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };
   }
 
   async statementOne(typed, privateJid = null) {
