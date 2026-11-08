@@ -59,10 +59,12 @@ function mockQbo(opts = {}) {
     if (p.endsWith('/pdf')) return opts.pdfFails ? res(500, {}) : res(200, {}, { bytes: '%PDF-1.4 fake invoice' });
     const one = /\/invoice\/(\d+)$/.exec(p);
     if (one) return res(200, { Invoice: invoices.get(one[1]) });
-    if (p.includes('/preferences')) return res(200, { Preferences: { CurrencyPrefs: { HomeCurrency: { value: 'AED' } }, SalesFormsPrefs: { CustomTxnNumbers: !!opts.customTxn } } });
+    if (p.includes('/preferences')) return res(200, { Preferences: { CurrencyPrefs: { HomeCurrency: { value: 'AED' } }, SalesFormsPrefs: { CustomTxnNumbers: !!opts.customTxn, ...(opts.salesForms || {}) } } });
     if (p.includes('/companyinfo/')) return res(200, { CompanyInfo: { CompanyName: 'The Test Workshop', Country: 'AE' } });
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
+    if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.officeInvoices) return res(200, { QueryResponse: { Invoice: opts.officeInvoices } });
+    if (ent === 'Template') return res(200, { QueryResponse: { Template: opts.templates || [] } });
     const used = opts.docNumbers || (opts.docNumbers = []);
     if (ent === 'Invoice' && sql.includes('MetaData.LastUpdatedTime') && opts.changed) return res(200, { QueryResponse: { Invoice: opts.changed().map((n, i) => ({ Id: String(500 + i), DocNumber: n })) } });
     if (ent === 'Invoice' && (sql.includes('MetaData.CreateTime') || sql.includes('MetaData.LastUpdatedTime'))) return res(200, { QueryResponse: { Invoice: used.map((n, i) => ({ Id: String(i + 1), DocNumber: n })) } });
@@ -1099,4 +1101,48 @@ test('the bold code is separated from a name that glues it (PVC FILM509 -> PVC F
     assert.ok(lines.includes('1. PVC FILM *509* (8 ×11 = 88.00)'), lines.join(' | '));
     assert.ok(lines.some((l) => /^2\. EDGE0\.4MM-\*215\*\s?X \(3 ×2 = 6\.00\)$|^2\. EDGE0\.4MM- \*215\* X \(3 ×2 = 6\.00\)$/.test(l)), lines.join(' | '));
   } finally { setOutLang('fa'); }
+});
+
+// ------------------------------------------------------------------------------------------------ what the QuickBooks screen fills in and the API does not
+test('the create carries the default terms and the message on invoice, read live: the preference first, else the newest invoice the OFFICE made; the PO number goes first; nothing is invented', async () => {
+  const NL = String.fromCharCode(10);
+  const MESSAGE = ['Thank you for being our loyal customer.', 'Beneficiary Name: Test Workshop LLC', 'IBAN: AE000000000000000000000'].join(NL);
+  const noTerms = [{ Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0 }]; // a customer with no terms of his own
+  const a = mk({ customers: noTerms, salesForms: { DefaultTerms: '5', DefaultCustomerMessage: MESSAGE } });
+  await a.inv.request({ text: REQ, requester: 'owner' });
+  await a.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(a.m.posts[0].body.CustomerMemo.value, MESSAGE); assert.deepEqual(a.m.posts[0].body.SalesTermRef, { value: '5' });
+  // the customer's own terms win over the default
+  const b = mk({ salesForms: { DefaultTerms: '5', DefaultCustomerMessage: MESSAGE } });
+  await b.inv.request({ text: REQ, requester: 'owner' }); await b.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(b.m.posts[0].body.SalesTermRef, { value: '3' });
+  // no preference text: the newest invoice made by the office (not Atossa's) lends its message
+  const c2 = mk({ customers: noTerms, officeInvoices: [{ Id: '1', DocNumber: 'inv-1', PrivateNote: 'Atossa Q9', CustomerMemo: { value: 'OUR OWN TEXT' } }, { Id: '2', DocNumber: 'inv-2', CustomerMemo: { value: MESSAGE } }, { Id: '3', DocNumber: 'inv-3', CustomerMemo: { value: 'OLDER' } }] });
+  await c2.inv.request({ text: REQ, requester: 'owner' }); await c2.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(c2.m.posts[0].body.CustomerMemo.value, MESSAGE);
+  // the PO number comes first, then the company's message
+  const d = mk({ customers: noTerms, salesForms: { DefaultCustomerMessage: MESSAGE } });
+  await d.inv.request({ text: REQ, requester: 'owner', quotedText: 'PN 1029' }); await d.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(d.m.posts[0].body.CustomerMemo.value, `PO 1029${NL}${NL}${MESSAGE}`);
+  // nothing anywhere: no memo and no terms are made up
+  const none = mk({ customers: noTerms });
+  await none.inv.request({ text: REQ, requester: 'owner' }); await none.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal('CustomerMemo' in none.m.posts[0].body, false); assert.equal('SalesTermRef' in none.m.posts[0].body, false);
+  assert.equal('TemplateRef' in none.m.posts[0].body, false); // the company default form style
+});
+
+test('the form style: listed in the log; a style named in QBO_INVOICE_TEMPLATE is used, an unknown name falls back to the company default', async () => {
+  const templates = [{ Id: '10', Name: 'MY INVOICE ALI', TemplateType: 'Invoice' }, { Id: '11', Name: 'Standard', TemplateType: 'Invoice' }];
+  const t = mk({ templates }); t.config.qboInvoiceTemplate = 'my invoice ali';
+  const lines = []; t.inv.log = (x) => lines.push(x);
+  await t.inv.request({ text: REQ, requester: 'owner' }); await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(t.m.posts[0].body.TemplateRef, { value: '10' });
+  assert.ok(lines.some((l) => l.includes('form styles in QuickBooks: MY INVOICE ALI [Invoice], Standard [Invoice]')));
+  const u = mk({ templates }); u.config.qboInvoiceTemplate = 'No such style';
+  const log2 = []; u.inv.log = (x) => log2.push(x);
+  await u.inv.request({ text: REQ, requester: 'owner' }); await u.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal('TemplateRef' in u.m.posts[0].body, false); assert.ok(log2.some((l) => l.includes('was not found; the company default is used')));
+  // the short preview shows nothing of this
+  const r = await mk({ templates }).inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(!/terms|message|template/i.test(r.owner));
 });

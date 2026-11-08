@@ -555,6 +555,38 @@ export class QboInvoiceDesk {
     return this.cache;
   }
 
+  /**
+   * What the QuickBooks screen fills in by itself and the API does not: the company's default terms (Net 30 …) and the «message on invoice» (the thank-you,
+   * bank charges and bank details block). Read LIVE at the create, never typed here: the default message of the company's sales-form preferences, else the
+   * message of the newest invoice the OFFICE made (not one of ours). Nothing is invented; a field that cannot be read stays empty. { terms, memo, source }.
+   */
+  async salesDefaults() {
+    let terms = ''; let memo = ''; let source = '';
+    try {
+      const forms = (await this.qbo.get('preferences'))?.Preferences?.SalesFormsPrefs || {};
+      if (/^\d+$/.test(String(forms.DefaultTerms || ''))) terms = String(forms.DefaultTerms);
+      memo = String(forms.DefaultCustomerMessage || '').trim(); if (memo) source = 'preference';
+    } catch (e) { this.log(`sales defaults: the preferences could not be read (${e.name})`); }
+    if (!memo) {
+      try {
+        const rows = (await this.qbo.get('query', { query: 'select * from Invoice ORDERBY MetaData.CreateTime DESC STARTPOSITION 1 MAXRESULTS 25' }))?.QueryResponse?.Invoice || [];
+        const office = rows.find((r) => !/^Atossa/i.test(String(r.PrivateNote || '')) && String(r.CustomerMemo?.value || '').trim());
+        if (office) { memo = String(office.CustomerMemo.value).trim(); source = `invoice ${office.DocNumber || office.Id}`; }
+      } catch (e) { this.log(`sales defaults: the latest invoices could not be read (${e.name})`); }
+    }
+    let template = '';
+    try { // the form styles QuickBooks lists (the default one cannot be read through the API; a style is named in QBO_INVOICE_TEMPLATE to force it)
+      const styles = await this.qbo.query('select * from Template');
+      const names = styles.map((t) => `${t.Name}${t.TemplateType ? ` [${t.TemplateType}]` : ''}`);
+      if (names.length) this.log(`sales defaults: form styles in QuickBooks: ${names.join(', ')}`);
+      const want = String(this.config.qboInvoiceTemplate || '').trim().toLowerCase();
+      const hit = want ? styles.find((t) => String(t.Name || '').trim().toLowerCase() === want) : null;
+      if (hit) template = String(hit.Id); else if (want) this.log(`sales defaults: the form style "${this.config.qboInvoiceTemplate}" was not found; the company default is used`);
+    } catch (e) { this.log(`sales defaults: the form styles could not be read (${e.name})`); }
+    this.log(`sales defaults: terms ${terms || 'none'}, message ${memo ? `${memo.length} characters from ${source}` : 'none'}`);
+    return { terms, memo, source, template };
+  }
+
   async customerRecord(id) { return (await this.qbo.query(`select * from Customer where Id = '${qboEscape(id)}'`))[0] || null; }
 
   /** Is this document number already used by an invoice? */
@@ -994,7 +1026,7 @@ export class QboInvoiceDesk {
     // the attempt is counted and remembered BEFORE the call; the request id belongs to the preview, so a retry returns the same invoice
     p.status = 'creating'; this.store.recordCreate(this.now()); this.store.save();
     this.inflight.add(p.id);
-    const body = this.invoiceBody(p);
+    const body = this.invoiceBody(p, await this.salesDefaults());
     let created;
     try {
       const j = await this.qbo.write('POST', 'invoice', body, { requestId: `atossa-${p.id}-${p.nonce}` });
@@ -1035,15 +1067,18 @@ export class QboInvoiceDesk {
     return out;
   }
 
-  invoiceBody(p) {
+  invoiceBody(p, defaults = {}) {
+    const memo = [p.po ? `PO ${p.po}` : '', defaults.memo || ''].filter(Boolean).join('\n\n'); // the customer's PO number first, then the company's message
+    const terms = p.termId || defaults.terms || ''; // the customer's own terms, else the company default
     return {
       CustomerRef: { value: p.customer.id },
       ...(p.docNumber ? { DocNumber: p.docNumber } : {}),
       TxnDate: this.today(),
       GlobalTaxCalculation: 'TaxExcluded',
       PrivateNote: `Atossa ${p.id}`,
-      ...(p.po ? { CustomerMemo: { value: `PO ${p.po}` } } : {}),
-      ...(p.termId ? { SalesTermRef: { value: p.termId } } : {}),
+      ...(memo ? { CustomerMemo: { value: memo } } : {}),
+      ...(terms ? { SalesTermRef: { value: terms } } : {}),
+      ...(defaults.template ? { TemplateRef: { value: defaults.template } } : {}),
       ...(p.billEmail ? { BillEmail: { Address: p.billEmail } } : {}),
       Line: p.lines.map((l) => ({
         DetailType: 'SalesItemLineDetail',

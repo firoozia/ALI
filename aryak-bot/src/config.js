@@ -118,6 +118,7 @@ export function loadConfig(env = process.env) {
     qboTaxCode: (env.QBO_TAX_CODE || '').trim(), // the owner's override for EVERY invoice (normally empty: a new invoice takes the tax code the office used on that customer's recent invoices, or the one the owner chose)
     qboCustomerEmail: (env.QBO_CUSTOMER_EMAIL || '').trim(), // the company's own address, written into every customer by the owner's bulk e-mail job
     qboItemTaxCode: (env.QBO_ITEM_TAX_CODE || '').trim(), // the tax code NAME the owner's bulk item job sets (empty: the Dubai standard-rated code)
+    qboInvoiceTemplate: (env.QBO_INVOICE_TEMPLATE || '').trim(), // the name of the custom form style (e.g. the office's invoice style); empty = the company default
     qboRedirectUri: (env.QBO_REDIRECT_URI || 'https://firoozia.github.io/atossa/connect.html').trim(), // the public page Intuit sends the owner back to
     testCustomerName: (env.TEST_CUSTOMER_NAME || 'test customer').trim().toLowerCase(),
     goodsGroupNames: (env.GOODS_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
