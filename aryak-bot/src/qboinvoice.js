@@ -444,6 +444,8 @@ export class AuthStore {
   /** Has this sender (jid, alt jid, lid mapped) the permission [perm]? With no [perm]: any permission at all. */
   has(who, perm = '', lidToPhone = new Map()) { return this.d.people.some((p) => (!perm || p.grants.includes(perm)) && staffChecker([p.number], lidToPhone)(who) === true); }
   isAuthorized(who, lidToPhone = new Map()) { return this.has(who, '', lidToPhone); }
+  /** The number the sender is authorized under ('' if none) and what that person may do. */
+  whoIs(who, lidToPhone = new Map()) { const p = this.d.people.find((x) => staffChecker([x.number], lidToPhone)(who) === true); return p ? { number: p.number, grants: [...p.grants] } : { number: '', grants: [] }; }
 }
 
 /** The item codes the owner taught ("کد 1810 = PVC 1810"): for one customer (by QuickBooks id) or for everybody. Kept on the VM. */

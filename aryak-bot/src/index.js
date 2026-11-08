@@ -59,6 +59,7 @@ import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
+import { lidLookup } from './lidmap.js';
 import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -732,6 +733,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
   if (!isRequest && !isStatement && !nl) return false;
   qboChats.add(chatId);
   const say = (t) => sock.sendMessage(chatId, persianText(t));
+  if ((isRequest && !canInvoice) || ((isStatement || nl) && !canStatement)) logger.info(`not authorized: ${chatId} (${isRequest ? 'invoice' : 'statement'})`);
   if (isRequest && !canInvoice) { await say('برای درخواست فاکتور مجوز ندارید.'); return true; }
   if ((isStatement || nl) && !canStatement) { await say('برای درخواست صورت‌حساب مجوز ندارید.'); return true; }
   try {
@@ -906,7 +908,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
   { // an invoice request: the preview is built and shown HERE (an internal group); only the owner's yes creates it
     const ic = parseInvoiceCommand(eff);
     if (ic?.type === 'request') {
-      if (!(owner || canInvoice)) { trace(where, role, 'an invoice request from a colleague without the invoice permission'); await sayIn(raw, chatId, where, 'برای درخواست فاکتور مجوز ندارید.'); return true; }
+      if (!(owner || canInvoice)) { logger.info(`not authorized: ${raw.key.participant || raw.key.remoteJid} (invoice)`); trace(where, role, 'an invoice request from a colleague without the invoice permission'); await sayIn(raw, chatId, where, 'برای درخواست فاکتور مجوز ندارید.'); return true; }
       trace(where, role, 'invoice request in an internal group');
       try {
         const r = await qboInvoices.request({ text: eff, requester: owner ? 'owner' : by, quotedText: quoted });
@@ -921,7 +923,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
   }
   const ask = statementAsk(eff);
   if (!ask) return false;
-  if (!may) { trace(where, role, 'a statement request from a colleague who is not authorized'); await sayIn(raw, chatId, where, 'صورت‌حساب را فقط مالک یا کسی که مالک مجاز کرده می‌تواند بخواهد.'); return true; }
+  if (!may) { logger.info(`not authorized: ${raw.key.participant || raw.key.remoteJid} (statement)`); trace(where, role, 'a statement request from a colleague who is not authorized'); await sayIn(raw, chatId, where, 'صورت‌حساب را فقط مالک یا کسی که مالک مجاز کرده می‌تواند بخواهد.'); return true; }
   trace(where, role, 'statement request in an internal group');
   if (ask.unsupported) { await sayIn(raw, chatId, where, 'ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'); return true; }
   if (!ask.customer) { await sayIn(raw, chatId, where, 'صورت‌حساب کدام مشتری؟ نام را بنویسید.'); return true; }
@@ -996,10 +998,10 @@ async function customerGroupStatement({ raw, groupId, info }) {
   const ask = statementAsk(effectiveRequest(text, quotedTextOf(ctx), config.botNames));
   if (!ask) return false;
   const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
-  const owner = !!raw.key.fromMe || staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;
+  const owner = !!raw.key.fromMe || staffChecker(config.ownerNumbers, lids(info.lidToPhone))(who) === true;
   const where = `group "${info.subject}"`;
   if (!owner) {
-    const colleague = staffChecker([...config.staffNumbers, ...config.adminNumbers], info.lidToPhone)(who) === true || qboAuth.isAuthorized(who, info.lidToPhone);
+    const colleague = staffChecker([...config.staffNumbers, ...config.adminNumbers], lids(info.lidToPhone))(who) === true || qboAuth.isAuthorized(who, lids(info.lidToPhone));
     if (colleague) { trace(where, 'staff', 'ignored: a colleague asked for a statement in a customer group (only the owner may)'); return true; }
     return false;
   }
@@ -1225,6 +1227,19 @@ async function customerVoiceStep(groupId, messages) {
   return { messages };
 }
 
+const lids = (base) => lidLookup(config.authDir, base); // a sender shown only as a lid is still found by the phone number the auth folder knows
+const loggedLid = new Set();
+/** What this sender may ask of her (logged once when it was found only through a lid). */
+const grantsOf = (who, base) => {
+  const found = qboAuth.whoIs(who, lids(base));
+  const lid = [who.sender, who.senderAlt].find((j) => String(j || '').endsWith('@lid'));
+  if (found.number && lid && !who.senderAlt && !loggedLid.has(lid)) { loggedLid.add(lid); logger.info(`authorized: ${found.number} via lid`); }
+  return found.grants;
+};
+/** What the sender may ask of her, as one line for the model (the owner may everything; others only what he granted). */
+const abilitiesText = ({ owner, grants }) => (owner
+  ? 'everything: customer statements (PDF), invoice requests (a preview, created only with his own yes), stock, reports, the cost report, QuickBooks jobs (his yes each).'
+  : [grants.includes('statement') ? 'customer statements (a PDF; write her name and the request, for example «آتوسا صورت‌حساب <مشتری> ماه ۱۰»)' : '', grants.includes('invoice') ? 'invoice requests (she builds a preview; only the owner yes creates the invoice)' : ''].filter(Boolean).join('; ') || 'stock questions and reports only (no statement and no invoice: for those they need the permission of the owner).');
 const jidDigits = (j) => String(j || '').replace(/@.*$/, '').replace(/:\d+$/, '').replace(/\D/g, '');
 const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
 const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
@@ -1461,23 +1476,25 @@ async function handleStaffChat(raw, chatId, group) {
   let ownerPerson = !!raw.key.fromMe; // typed on the account's own phone counts as the owner
   let authorizedPerson = false; // a person the owner authorized for statements (in a group)
   let invoicePerson = false; // a person the owner authorized for invoice requests (in a group)
+  let requesterGrants = []; // what the owner allowed THIS sender (statement, invoice …); the owner and the account itself may everything
   if (!raw.key.fromMe) {
     let info = group ? await groupInfo(chatId) : { lidToPhone: new Map() };
     const who = group ? { sender: raw.key.participant, senderAlt: raw.key.participantAlt } : { sender: chatId, senderAlt: raw.key.remoteJidAlt };
-    let staff = staffChecker(config.staffNumbers, info.lidToPhone)(who);
-    if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(who); }
+    let staff = staffChecker(config.staffNumbers, lids(info.lidToPhone))(who);
+    if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, lids(info.lidToPhone))(who); }
     // a person the owner authorized for invoices and statements: only those commands are taken, in a private chat (the rest is ignored as before)
-    if (!group && text && qboAuth.isAuthorized(who, info.lidToPhone) && (await authorizedFlow({ chatId, text, canInvoice: qboAuth.has(who, 'invoice', info.lidToPhone), canStatement: qboAuth.has(who, 'statement', info.lidToPhone) }))) { trace(where, 'authorized', 'QuickBooks request'); return true; }
+    if (!group && text && qboAuth.isAuthorized(who, lids(info.lidToPhone)) && (await authorizedFlow({ chatId, text, canInvoice: qboAuth.has(who, 'invoice', lids(info.lidToPhone)), canStatement: qboAuth.has(who, 'statement', lids(info.lidToPhone)) }))) { trace(where, 'authorized', 'QuickBooks request'); return true; }
     // an authorized person (not staff) may ask for a statement by her name in an internal group; nothing else of theirs is taken
-    if (group && !staff && text && !audio && !image && qboAuth.isAuthorized(who, info.lidToPhone)) {
+    if (group && !staff && text && !audio && !image && qboAuth.isAuthorized(who, lids(info.lidToPhone))) {
       const gctx = (content.extendedTextMessage || {}).contextInfo || {};
-      if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: qboAuth.has(who, 'statement', info.lidToPhone), canInvoice: qboAuth.has(who, 'invoice', info.lidToPhone), where, role: 'authorized' })) return true;
+      if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: qboAuth.has(who, 'statement', lids(info.lidToPhone)), canInvoice: qboAuth.has(who, 'invoice', lids(info.lidToPhone)), where, role: 'authorized' })) return true;
     }
-    authorizedPerson = !!(group && qboAuth.has(who, 'statement', info.lidToPhone));
-    invoicePerson = !!(group && qboAuth.has(who, 'invoice', info.lidToPhone));
+    requesterGrants = grantsOf(who, info.lidToPhone);
+    authorizedPerson = !!(group && qboAuth.has(who, 'statement', lids(info.lidToPhone)));
+    invoicePerson = !!(group && qboAuth.has(who, 'invoice', lids(info.lidToPhone)));
     if (!staff) { trace(where, 'not-staff', group ? 'left to the customer flow' : 'ignored: private chat from a number that is not staff'); return false; }
-    admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
-    ownerPerson = staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;
+    admin = staffChecker(config.adminNumbers, lids(info.lidToPhone))(who) === true;
+    ownerPerson = staffChecker(config.ownerNumbers, lids(info.lidToPhone))(who) === true;
     if (!group) staffChats.add(chatId);
   }
   const role = admin ? 'admin' : 'staff';
@@ -1899,7 +1916,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   if (!addressed && !confirmed && !engaged) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
-    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key, lang, !!group && lang === 'fa'), lang, today: todayLine(new Date(), config.timezone),
+    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), handlers: staffHandlersFor(key, lang, !!group && lang === 'fa'), lang, today: todayLine(new Date(), config.timezone), abilities: abilitiesText({ owner: ownerPerson, grants: requesterGrants }),
   });
   trace(where, role, `${answerText ? 'answered' : 'no reply (the model chose silence)'}, reply language ${lang}`);
   if (answerText) await reply(answerText);

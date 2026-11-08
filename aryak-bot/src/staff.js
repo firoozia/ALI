@@ -166,11 +166,12 @@ export function runCommand(cmd, ctx) {
  * One staff answer: Claude with the three staff tools. [handlers]: { staff_stock, recent_checks, find_order }, each
  * (input) -> object. Returns the text, or null for silence.
  */
-export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers, log = () => {}, lang = '', today = '' }) {
+export async function staffAnswer({ client, config, text, quoted = '', who = '', handlers, log = () => {}, lang = '', today = '', abilities = '' }) {
   const lines = [];
   if (quoted) lines.push(`The colleague is replying to this message: "${quoted.slice(0, 600)}"`, '');
   if (today) lines.push(today, '');
   if (lang) lines.push(`Reply language: ${LANG_NAME[lang] || lang} (the stock tool already writes its text in it).`, '');
+  if (abilities) lines.push(`What THIS person may ask of you now: ${abilities}`, 'When they ask what you can do, list exactly these (and stock, outgoing goods reports, invoice checks, purchase orders). The account may be shared by several people: never use a personal name, greet with «سلام» only.', '');
   lines.push(`Message from ${who || 'a colleague'}:`, text);
   const messages = [{ role: 'user', content: lines.join('\n') }];
   for (let round = 0; round < 6; round++) {

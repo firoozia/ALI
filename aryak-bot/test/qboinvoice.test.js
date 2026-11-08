@@ -332,7 +332,7 @@ test('the wiring: the owner\'s yes is taken only in his own chat; the guard know
   const block = index.slice(index.indexOf("The owner's invoice commands (his own chat, owner only)"), index.indexOf('"وضعیت سفارش‌ها" (his own chat'));
   assert.ok(block.includes('!group && isSelf') && block.includes('isOwnerCommand(') && block.includes('qboInvoiceCommand('));
   assert.match(index, /known: \{ has: \(j\) => staffChats\.has\(j\) \|\| qboChats\.has\(j\) \}/);
-  assert.match(index, /qboAuth\.isAuthorized\(who, info\.lidToPhone\) && \(await authorizedFlow\(/);
+  assert.match(index, /qboAuth\.isAuthorized\(who, lids\(info\.lidToPhone\)\) && \(await authorizedFlow\(/);
   const flow = index.slice(index.indexOf('async function authorizedFlow'), index.indexOf("const taught = new TaughtStore"));
   assert.ok(!/orion|customerGroups|shadowGroup/i.test(flow) && !flow.includes('@g.us')); // it never addresses a group
   // the startup script and the example file know the tax setting

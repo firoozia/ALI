@@ -123,12 +123,12 @@ const slice = (from, to) => src.slice(src.indexOf(from), src.indexOf(to, src.ind
 test('wiring: the group statement turn runs for the owner and the authorized only, and answers in that group in Persian', () => {
   const turn = slice('async function groupStatementTurn', 'async function prepareGroupStatement');
   assert.match(turn, /const may = owner \|\| authorized;/);
-  assert.match(turn, /if \(!may\) \{[^}]*'صورت‌حساب را فقط مالک یا کسی که مالک مجاز کرده می‌تواند بخواهد\.'/);
+  assert.match(turn, /if \(!may\) \{[\s\S]*?'صورت‌حساب را فقط مالک یا کسی که مالک مجاز کرده می‌تواند بخواهد\.'/);
   assert.match(turn, /privateJid: chatId/); // the PDF goes back to the group it was asked in
   assert.match(turn, /pending\.by === by/); // a numbered choice belongs to the person who asked
   assert.doesNotMatch(turn, /toEnglish/); // never turned into English
   assert.match(src, /groupStatementTurn\(\{ raw, chatId, text, ctx: \(content\.extendedTextMessage \|\| \{\}\)\.contextInfo \|\| \{\}, owner: ownerPerson, authorized: authorizedPerson/);
-  assert.match(src, /qboAuth\.isAuthorized\(who, info\.lidToPhone\)\) \{\s*const gctx/); // an authorized person who is not staff is taken before the staff check
+  assert.match(src, /qboAuth\.isAuthorized\(who, lids\(info\.lidToPhone\)\)\) \{\s*const gctx/); // an authorized person who is not staff is taken before the staff check
 });
 
 test('wiring: in a customer group only the owner\'s request counts; it asks in his own chat first and nothing goes to the group', () => {
@@ -230,8 +230,8 @@ test('the store: separate grants; the old file (no grants = both, scope statemen
 test('wiring: each request needs its own permission, with one Persian line when missing; the list names each person\'s permissions', () => {
   assert.match(src, /if \(isRequest && !canInvoice\) \{ await say\('برای درخواست فاکتور مجوز ندارید\.'\); return true; \}/);
   assert.match(src, /if \(\(isStatement \|\| nl\) && !canStatement\) \{ await say\('برای درخواست صورت‌حساب مجوز ندارید\.'\); return true; \}/);
-  assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', info\.lidToPhone\), canStatement: qboAuth\.has\(who, 'statement', info\.lidToPhone\)/);
-  assert.match(src, /authorizedPerson = !!\(group && qboAuth\.has\(who, 'statement', info\.lidToPhone\)\)/); // an invoice-only person gets no statement in a group
+  assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', lids\(info\.lidToPhone\)\), canStatement: qboAuth\.has\(who, 'statement', lids\(info\.lidToPhone\)\)/);
+  assert.match(src, /authorizedPerson = !!\(group && qboAuth\.has\(who, 'statement', lids\(info\.lidToPhone\)\)\)/); // an invoice-only person gets no statement in a group
   assert.match(src, /statementFor\(nl\.customer, \{ privateJid: chatId, period: nl\.period \}\)/);
   assert.match(src, /p\.grants\.map\(\(g\) => PERMISSIONS\[g\]\?\.label \|\| g\)/);
 });
@@ -241,10 +241,10 @@ test('wiring: an invoice request in an internal group needs the owner or the inv
   const turn = src.slice(src.indexOf('async function groupStatementTurn'), src.indexOf('async function prepareGroupStatement'));
   assert.match(turn, /if \(owner\) \{\s*const dec = parseInvoiceCommand\(text\);/); // the owner's «بله #Q5» typed here
   assert.ok(turn.includes('[QS]') && turn.includes('.test(dec.id')); // only a named preview, never a bare yes
-  assert.match(turn, /if \(!\(owner \|\| canInvoice\)\) \{[^}]*'برای درخواست فاکتور مجوز ندارید\.'/);
+  assert.match(turn, /if \(!\(owner \|\| canInvoice\)\) \{[\s\S]*?'برای درخواست فاکتور مجوز ندارید\.'/);
   assert.match(turn, /qboInvoices\.request\(\{ text: eff, requester: owner \? 'owner' : by, quotedText: quoted \}\)/);
   assert.match(turn, /await sayIn\(raw, chatId, where, r\.owner \|\| r\.requester\)/); // posted in the group, Persian
-  assert.match(src, /canInvoice: invoicePerson, where, role/); assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', info\.lidToPhone\), where, role: 'authorized'/);
+  assert.match(src, /canInvoice: invoicePerson, where, role/); assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', lids\(info\.lidToPhone\)\), where, role: 'authorized'/);
 });
 
 test('wiring: what she says in a group or to a colleague about statements and invoices stays in Persian (the outgoing hook would turn Persian into English)', () => {
@@ -252,4 +252,39 @@ test('wiring: what she says in a group or to a colleague about statements and in
   assert.match(src, /content: persianText\(body\), quoted: raw/); // sayIn
   assert.match(src, /const say = \(t\) => sock\.sendMessage\(chatId, persianText\(t\)\)/); // the authorized person's private chat
   assert.match(src, /if \(typeof a\[1\]\?\.text === 'string' && \/\[\u0600-\u06FF\]\/\.test\(a\[1\]\.text\) && !keepLang\.has\(a\[1\]\)\)|!keepLang\.has\(a\[1\]\)/); // the hook skips what is kept
+});
+
+// ------------------------------------------------------------------------------------------------ the lid, and what the model is told about this person
+import { lidLookup, phoneOfLid } from '../src/lidmap.js';
+
+test('a sender shown only as a lid is found by the phone number in the auth folder, and so is authorized by it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lid-'));
+  fs.writeFileSync(path.join(dir, 'lid-mapping-55512345678901_reverse.json'), JSON.stringify('971528493119'));
+  assert.equal(phoneOfLid(dir, '55512345678901@lid'), '971528493119@s.whatsapp.net');
+  assert.equal(phoneOfLid(dir, '99999@lid'), ''); assert.equal(phoneOfLid(dir, '971528493119@s.whatsapp.net'), ''); assert.equal(phoneOfLid('', '55512345678901@lid'), '');
+  const a = new AuthStore(fs.mkdtempSync(path.join(os.tmpdir(), 'au-')));
+  a.grant('971528493119', 'invoice'); a.grant('971528493119', 'statement');
+  const lidWho = { sender: '55512345678901@lid' };
+  assert.equal(a.has(lidWho, 'statement'), false); // the lid alone says nothing
+  const map = lidLookup(dir, new Map());
+  assert.equal(a.has(lidWho, 'statement', map), true); assert.equal(a.has(lidWho, 'invoice', map), true);
+  assert.deepEqual(a.whoIs(lidWho, map), { number: '971528493119', grants: ['invoice', 'statement'] });
+  assert.deepEqual(a.whoIs({ sender: '55599@lid' }, map), { number: '', grants: [] });
+  const base = new Map([['777@lid', '971500000009@s.whatsapp.net']]); // the group's own data still wins
+  assert.equal(lidLookup(dir, base).get('777@lid'), '971500000009@s.whatsapp.net');
+});
+
+test('wiring: the model is told what THIS person may do, never a personal name; the lid is logged once; a refusal is logged', async () => {
+  const { staffAnswer } = await import('../src/staff.js');
+  let prompt = '';
+  const client = { beta: { messages: { create: async (req) => { prompt = req.messages[0].content; return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'سلام' }] }; } } } };
+  await staffAnswer({ client, config: { model: 'm', displayName: 'Atossa' }, text: 'Atossa where are you', handlers: {}, abilities: 'customer statements; invoice requests' });
+  assert.match(prompt, /What THIS person may ask of you now: customer statements; invoice requests/);
+  assert.match(prompt, /never use a personal name, greet with «سلام» only/);
+  assert.doesNotMatch(prompt, /Message from [A-Z][a-z]+:/); // no personal name: «a colleague»
+  assert.match(src, /abilities: abilitiesText\(\{ owner: ownerPerson, grants: requesterGrants \}\)/);
+  assert.ok(!/who: raw\.pushName/.test(src.slice(src.indexOf('const answerText = await staffAnswer'), src.indexOf('const answerText = await staffAnswer') + 600)));
+  assert.match(src, /logger\.info\(`authorized: \$\{found\.number\} via lid`\)/);
+  assert.match(src, /logger\.info\(`not authorized: \$\{raw\.key\.participant \|\| raw\.key\.remoteJid\} \(statement\)`\)/);
+  assert.match(src, /logger\.info\(`not authorized: \$\{chatId\} \(\$\{isRequest \? 'invoice' : 'statement'\}\)`\)/);
 });
