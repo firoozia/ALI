@@ -13,7 +13,7 @@ export const isEnglishOut = () => state.lang === 'en';
 
 const LETTER = /[؀-ۿ]/;
 const PERSIAN_DIGITS = (s) => String(s).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/٫/g, '.').replace(/،/g, ',').replace(/؛/g, ';').replace(/؟/g, '?');
-const QUOTED = /^\s*(?:🤖\s*)?Heard:/;
+const QUOTED = /^\s*(?:🤖\s*)?(?:Heard:|Persian name:)/; // what the person said, and the Persian spellings of customer names, are data
 const memory = new Map();
 
 /**

@@ -19,6 +19,7 @@ export function skeleton(word) {
   if (/[a-z]/.test(w)) {
     const t = w.replace(/ph/g, 'f').replace(/kh/g, 'h').replace(/ch/g, 'j').replace(/sh/g, 'j').replace(/th/g, 't').replace(/gh/g, 'k').replace(/ck/g, 'k').replace(/(.)\1+/g, '$1');
     for (const ch of t) out += LATIN[ch] ?? '';
+    out = out.replace(/(.)\1+/g, '$1'); // doubled sounds after the vowels are gone (HRAYER = h-r-r -> h-r, like the Persian spelling)
   } else {
     for (const ch of w) out += PERSIAN[ch] ?? '';
     out = out.replace(/(.)\1+/g, '$1');
@@ -40,23 +41,55 @@ function lev(a, b) {
 /** 1 for equal skeletons, 0 for nothing alike. */
 export const sim = (a, b) => (!a || !b ? 0 : 1 - lev(a, b) / Math.max(a.length, b.length));
 
-const tokensOf = (s) => clean(s).split(' ').filter((t) => t && !NOISE.has(t));
+const SUN = new Set([...'تثدذرزسشصضطظلن']);
+/** The words of a name without the noise words; a standalone Arabic article («ال راد») is joined to the word after it («الراد»). */
+const tokensOf = (s) => {
+  const raw = clean(s).split(' ').filter(Boolean);
+  const out = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    if (raw[i] === 'ال' && raw[i + 1]) { out.push(`ال${raw[i + 1]}`); i += 1; } else out.push(raw[i]);
+  }
+  return out.filter((t) => t && !NOISE.has(t));
+};
+
+/**
+ * The skeletons a spoken word can stand for. Persian «ال» + a sun letter is spoken as the letter («الراد» = AR-RAD, «الشباب» = ASH-SHABAB): besides the plain
+ * skeleton there is one with the article dropped and the first sound doubled (the Latin side joins «AR» + «RAD» to the same).
+ */
+export function skeletonVariants(word) {
+  const plain = skeleton(word);
+  const w = clean(word).replace(/\s+/g, '');
+  if (/[a-z]/.test(w) || !w.startsWith('ال') || w.length < 4 || !SUN.has(w[2])) return [plain];
+  const rest = skeleton(w.slice(2));
+  return rest ? [plain, rest[0] + rest] : [plain];
+}
 
 /**
  * How well the spoken words fit one name: every spoken word is matched to its best word in the name (or to two joined words: "بردپالم"); the score is the
  * mean, lowered a little for each word of the name that was not spoken (a name with TRADING LLC after it is still the same company).
  */
 export function scoreName(spoken, name) {
-  const st = tokensOf(spoken).map(skeleton).filter(Boolean);
+  const spokenWords = tokensOf(spoken).filter((t) => skeleton(t));
   const nt = tokensOf(name).map(skeleton).filter(Boolean);
-  if (!st.length || !nt.length) return 0;
-  const joined = nt.length > 1 ? [nt.join(''), ...nt.slice(0, -1).map((t, i) => t + nt[i + 1])] : [];
+  if (!spokenWords.length || !nt.length) return 0;
+  const used = new Set();
   let total = 0;
-  for (const s of st) total += Math.max(...nt.map((t) => sim(s, t)), ...joined.map((t) => sim(s, t) * 0.97));
-  let score = total / st.length;
-  const extra = Math.max(0, nt.length - st.length);
+  for (const word of spokenWords) { // every spoken word takes its best word of the name (or two joined: «بردپالم», «AR»+«RAD»); a word of the name is used once
+    const variants = skeletonVariants(word);
+    let best = 0; let take = [];
+    nt.forEach((t, i) => { if (!used.has(i)) for (const v of variants) { const sc = sim(v, t); if (sc > best) { best = sc; take = [i]; } } });
+    for (let i = 0; i < nt.length - 1; i += 1) {
+      if (used.has(i) || used.has(i + 1)) continue;
+      for (const v of variants) { const sc = sim(v, nt[i] + nt[i + 1]) * 0.97; if (sc > best) { best = sc; take = [i, i + 1]; } }
+    }
+    if (nt.length > 2 && !used.size) for (const v of variants) { const sc = sim(v, nt.join('')) * 0.97; if (sc > best) { best = sc; take = nt.map((_, i) => i); } }
+    take.forEach((i) => used.add(i));
+    total += best;
+  }
+  let score = total / spokenWords.length;
+  const extra = Math.max(0, nt.length - spokenWords.length);
   score *= 1 - Math.min(0.2, extra * 0.05);
-  if (st.length > nt.length) score *= 0.85; // more words spoken than the name has
+  if (spokenWords.length > nt.length) score *= 0.85; // more words spoken than the name has
   return score;
 }
 

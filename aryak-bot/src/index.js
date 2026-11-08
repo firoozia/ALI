@@ -60,6 +60,7 @@ import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, rep
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { lidLookup } from './lidmap.js';
+import { PersianNames, seedPersianNames } from './persiannames.js';
 import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -643,6 +644,10 @@ const qboDesk = new QboDesk({
   today: () => localParts(Date.now(), config.timezone).day,
   log: (s) => logger.info(s),
 });
+// The usual Persian spelling of every QuickBooks customer: written once by the model, kept, listed for the owner to correct; used to find a customer named in Persian letters.
+const persianNames = new PersianNames(path.join(config.authDir, 'qbo'));
+qboDesk.persian = persianNames;
+qboDesk.seedPersian = async () => seedPersianNames({ store: persianNames, client, config, customers: (await qboDesk.customers()).map((cu) => ({ id: String(cu.Id), name: cu.DisplayName || cu.CompanyName || '' })) });
 // Invoices in QuickBooks: a request becomes a PREVIEW for the owner; only HIS "بله #Q12" in his own chat creates it (QBO_WRITE must be on too).
 const qboAuth = new AuthStore(path.join(config.authDir, 'qbo'));
 const qboInvoices = new QboInvoiceDesk({
@@ -668,6 +673,22 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_edge': return qboBulk.planEdgeList();
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
+    case 'persian_list': {
+      const blocked = qboInvoices.guard(); if (blocked) return [blocked];
+      if (!persianNames.seeded) await qboDesk.seedPersian();
+      const rows = (await qboDesk.customers()).map((cu) => ({ name: cu.DisplayName || cu.CompanyName || '', fa: persianNames.of(cu.Id)[0] || '' })).filter((r) => r.name && r.fa);
+      if (!rows.length) return ['نام فارسی‌ای نوشته نشد؛ کمی بعد دوباره بنویسید.'];
+      const parts = [`نام فارسی ${rows.length} مشتری (برای اصلاح بنویسید: «نام فارسی <مشتری> = <نام فارسی>»):`];
+      for (let i = 0; i < rows.length; i += 40) parts.push(rows.slice(i, i + 40).map((r) => `Persian name: ${r.name} = ${r.fa}`).join('\n'));
+      return parts;
+    }
+    case 'persian_set': {
+      const blocked = qboInvoices.guard(); if (blocked) return [blocked];
+      const r = await qboDesk.resolveLoose(ic.customer);
+      if (!r.id) return [`مشتری «${ic.customer}» یکتا پیدا نشد؛ نام کامل‌تر (همان نام کوییک‌بوکس) را بنویسید.`];
+      persianNames.setOwner(r.id, ic.persian);
+      return [`ثبت شد: «${ic.persian}» برای ${r.name || ic.customer}. از این پس این نام فارسی را می‌شناسم.`];
+    }
     case 'adjust': return qboInvoices.adjust(ic);
     case 'yes_all': case 'no_all': return qboInvoices.decideAll({ verb: ic.type === 'yes_all' ? 'yes' : 'no' });
     case 'statement_nl': {

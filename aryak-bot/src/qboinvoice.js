@@ -47,10 +47,12 @@ export function englishCommand(text) {
   if (/^(?:permissions|permission list|who is authori[sz]ed)$/i.test(t)) return 'مجوزها';
   if ((m = /^cost\s+(today|week)$/i.exec(t))) return `هزینه ${m[1].toLowerCase() === 'week' ? 'هفته' : 'امروز'}`;
   if (/^tax codes$/i.test(t)) return 'کدهای مالیات';
+  if (/^persian names$/i.test(t)) return 'نام‌های فارسی';
   if ((m = /^(grant|revoke)\s+(invoices?|statements?)\s+(\+?[\d\s-]{7,20})$/i.exec(t))) {
     const word = /^invoice/i.test(m[2]) ? 'فاکتور' : 'صورت‌حساب';
     return `${m[1].toLowerCase() === 'revoke' ? 'لغو ' : ''}مجوز ${word} ${m[3]}`;
   }
+  if ((m = /^persian name\s+(.+?)\s*=\s*(.+)$/i.exec(t))) return `نام فارسی ${m[1]} = ${m[2]}`;
   if ((m = /^customer\s+(\d+)(\s+#?\s*Q\s*\d+)?$/i.exec(t))) return `مشتری ${m[1]}${m[2] || ''}`;
   if ((m = /^line\s+(\d+)\s*=\s*(\d+)(\s+#?\s*Q\s*\d+)?$/i.exec(t))) return `سطر ${m[1]} = ${m[2]}${m[3] || ''}`;
   if ((m = /^tax\s+(\d+)(\s+#?\s*Q\s*\d+)?$/i.exec(t))) return `مالیات ${m[1]}${m[2] || ''}`;
@@ -123,6 +125,8 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], perm };
   }
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
+  if (/^نام\s*(?:‌?های|ها)\s+فارسی(?:\s+مشتری(?:\s*ها)?)?$/u.test(s)) return { type: 'persian_list' };
+  if ((m = /^نام\s+فارسی\s+(.+?)\s*=\s*(.+)$/u.exec(s)) && /[؀-ۿ]/.test(m[2])) return { type: 'persian_set', customer: m[1].trim(), persian: m[2].trim() };
   if (/^کدهای\s+مالیات$/u.test(s)) return { type: 'tax_list' };
   if ((m = /^کد\s+مالیات\s+(.+?)\s*=\s*(.+)$/u.exec(s))) return { type: 'tax_set', customer: m[1].trim(), code: m[2].trim() };
   if ((m = /^کد\s+(.+?)\s*=\s*(.+?)(?:\s+مشتری\s+(.+))?$/u.exec(s))) return { type: 'item_code', code: m[1].trim(), item: m[2].trim(), customer: m[3]?.trim() || '' };

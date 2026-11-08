@@ -82,8 +82,8 @@ export class QboDesk {
    * [qbo]: the client; [list]: the approved customer-group list; [aliases]; [map]: QboMap; [config]; [groups]: async () => [{ id, subject }];
    * [post]: async (jid, buffer, fileName, caption) -> sends the document; [today]: () => yyyy-mm-dd; [sleep]; [log].
    */
-  constructor({ qbo, list, aliases, map, config, groups, post, today, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), gapMs = 6000, log = () => {} }) {
-    Object.assign(this, { qbo, list, aliases, map, config, groups, post, today, sleep, gapMs, log });
+  constructor({ qbo, list, aliases, map, config, groups, post, today, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), gapMs = 6000, log = () => {}, persian = null, seedPersian = null }) {
+    Object.assign(this, { qbo, list, aliases, map, config, groups, post, today, sleep, gapMs, log, persian, seedPersian });
     this.busy = false;
     this.cache = { at: 0, customers: [] };
   }
@@ -352,7 +352,9 @@ export class QboDesk {
       return { many: [...new Set(ranked)].slice(0, 5) };
     }
     const all = await this.customers();
-    const names = all.map((c) => ({ name: c.DisplayName || c.CompanyName || '', alts: [c.CompanyName, c.FullyQualifiedName].filter((x) => x && x !== c.DisplayName), id: String(c.Id) }));
+    // a name typed in Persian letters: the Persian spellings of the customers are written once (one batch call) and kept; the owner can correct them
+    if (this.persian && this.seedPersian && !this.persian.seeded && /[؀-ۿ]/.test(typed)) { try { await this.seedPersian(); } catch (e) { this.log(`persian names could not be written: ${e.message}`); } }
+    const names = all.map((c) => ({ name: c.DisplayName || c.CompanyName || '', alts: [c.CompanyName, c.FullyQualifiedName, ...(this.persian ? this.persian.of(c.Id) : [])].filter((x) => x && x !== c.DisplayName), id: String(c.Id) }));
     for (const row of this.list.rows()) names.push({ name: row.customer, alts: [], id: '', approved: true }); // the approved list (Persian names too)
     const picked = pickSpoken(typed, names, { strong: 0.7 });
     const pickName = (x) => { const hit = names.find((n) => n.name === x.name && n.id) || null; return hit; };
