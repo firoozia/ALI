@@ -9,6 +9,8 @@ import { buildStatementData, loadCustomerData, money, statementPdf } from './qbo
 import { groupAllowed, shadowGroup } from './guard.js';
 import { pickSpoken, rankNames } from './translit.js';
 import { hasPeriod } from './period.js';
+import { looseKey, looseWords } from './namekey.js';
+import { qboEscape } from './qbo.js';
 
 const fa = (s) => String(s).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const latin = (s) => String(s).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
@@ -44,7 +46,7 @@ export function pickTestGroup(groups, config) {
 export function matchOne(ourName, qboCustomers) {
   const people = qboCustomers.map((c) => ({ name: c.DisplayName || c.CompanyName || '', alts: [c.CompanyName, c.FullyQualifiedName].filter((x) => x && x !== c.DisplayName), id: String(c.Id) }));
   const ranked = rankCustomers(ourName, people);
-  const exact = people.filter((p) => [p.name, ...p.alts].some((n) => nameKey(n) === nameKey(ourName)));
+  const exact = people.filter((p) => [p.name, ...p.alts].some((n) => nameKey(n) === nameKey(ourName) || (looseKey(n) && looseKey(n) === looseKey(ourName))));
   if (exact.length === 1) return { kind: 'confident', id: exact[0].id, name: exact[0].name };
   if (clearWinner(ranked)) { const p = people.find((x) => x.name === ranked[0].customer); return { kind: 'confident', id: p.id, name: p.name }; }
   const options = ranked.slice(0, 3).map((r) => { const p = people.find((x) => x.name === r.customer); return { id: p.id, name: p.name }; });
@@ -218,7 +220,12 @@ export class QboDesk {
     if (saved && (saved.how === 'owner' || saved.how === 'exact')) return { ours, id: saved.id, name: saved.name };
     const all = await this.customers();
     const key = nameKey(ours);
-    const exact = all.filter((c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName].some((n) => n && nameKey(n) === key));
+    const lk = looseKey(ours);
+    let exact = all.filter((c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName].some((n) => n && (nameKey(n) === key || (lk && looseKey(n) === lk))));
+    if (!exact.length) { // not in the cache: ask QuickBooks itself (a customer the office made after the bot started)
+      const live = await this.liveFind(ours);
+      exact = live.filter((c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName].some((n) => n && (nameKey(n) === key || (lk && looseKey(n) === lk))));
+    }
     if (exact.length === 1) { const name = exact[0].DisplayName || exact[0].CompanyName; this.map.set(ours, exact[0].Id, name, 'exact'); return { ours, id: String(exact[0].Id), name }; }
     if (exact.length > 1) return { ours, ambiguous: exact };
     return { ours, options: matchOne(ours, all).options || [] };
@@ -233,17 +240,21 @@ export class QboDesk {
   async resolveLoose(typed) {
     const strict = await this.resolveStrict(typed);
     if (strict.id) return { ...strict, loose: false };
-    const tk = nameKey(typed).split(' ').filter(Boolean);
-    const whole = (name, words = tk) => { const t = new Set(nameKey(name).split(' ')); return words.length > 0 && words.every((x) => t.has(x)); };
+    const tk = looseWords(typed);
+    const whole = (name, words = tk) => { const t = new Set(looseWords(name)); return words.length > 0 && words.every((x) => t.has(x)); };
     const rows = this.list.rows().filter((r) => whole(r.customer) || rowGroups(r).some((g) => whole(String(g.subject).replace(/aryak/gi, ' '))));
     if (rows.length > 1) return { ours: typed, candidates: rows.map((r) => r.customer).slice(0, 8) };
     if (rows.length === 1) {
       const s = await this.resolveStrict(rows[0].customer);
       if (s.id) return { ...s, loose: true, typed };
     }
-    const all = await this.customers();
+    let all = await this.customers();
     const names = (c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName];
     let hits = all.filter((c) => names(c).some((n) => n && whole(n)));
+    if (!hits.length) { // not in the cache: ask QuickBooks itself before saying "not found"
+      const live = await this.liveFind(typed);
+      if (live.length) { all = await this.customers(); hits = all.filter((c) => names(c).some((n) => n && whole(n))); }
+    }
     if (!hits.length && rows.length === 1) { const rk = nameKey(rows[0].customer).split(' ').filter(Boolean); hits = all.filter((c) => names(c).some((n) => n && whole(n, rk))); }
     const seen = new Set();
     hits = hits.filter((c) => !seen.has(String(c.Id)) && seen.add(String(c.Id)));
@@ -251,6 +262,30 @@ export class QboDesk {
     if (hits.length > 1) return { ours: typed, candidates: hits.map((c) => c.DisplayName || c.CompanyName).slice(0, 8) };
     const options = matchOne(typed, all).options || [];
     return { ours: typed, options: options.length ? options : await this.nearestCustomers(typed) };
+  }
+
+  /**
+   * A customer the cache does not hold, looked up in QuickBooks by the longest word and by the first word of the name (DisplayName LIKE); what is found joins
+   * the cache. Returns the rows found (empty when nothing, or when QuickBooks cannot be asked).
+   */
+  async liveFind(typed) {
+    const words = looseWords(typed).filter((w) => w.length >= 3);
+    if (!words.length) return [];
+    const longest = [...words].sort((a, b) => b.length - a.length)[0];
+    const asks = [...new Set([longest, words[0]])];
+    const found = new Map();
+    for (const w of asks) {
+      try {
+        const rows = await this.qbo.query(`select Id, DisplayName, CompanyName, FullyQualifiedName, Balance, Active from Customer where DisplayName like '%${qboEscape(w.toUpperCase())}%'`);
+        for (const r of rows) found.set(String(r.Id), r);
+      } catch { /* QuickBooks cannot be asked now: the cache decides */ }
+    }
+    if (found.size) {
+      const have = new Set(this.cache.customers.map((c) => String(c.Id)));
+      const add = [...found.values()].filter((r) => !have.has(String(r.Id)));
+      if (add.length) this.cache = { at: this.cache.at || Date.now(), customers: [...this.cache.customers, ...add] };
+    }
+    return [...found.values()];
   }
 
   /** The three nearest names among ALL customers, inactive ones too, by token overlap and sound (case, LLC and L.L.C do not matter); even weak ones are listed. */

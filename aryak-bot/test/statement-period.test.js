@@ -169,3 +169,60 @@ test('the general prompt tells what the program can do now, so it never answers 
   assert.match(RULES, /never say you have no access to the company's accounts/);
   assert.match(RULES, /ask which customer or which period/);
 });
+
+// ------------------------------------------------------------------------------------------------ the same name written two ways, and a customer the cache has not seen
+import { looseKey } from '../src/namekey.js';
+import { itemsNamed } from '../src/qboinvoice.js';
+
+test('names compare loosely: L.L.C, LLC, L L C and llc. are one word; case, dots, commas, hyphens and spaces do not matter; CO and TRADING stay words', () => {
+  const same = ['MICE INTERIORS DECORATION L.L.C', 'Mice Interiors Decoration LLC', 'mice  interiors, decoration L L C', 'MICE-INTERIORS DECORATION llc.', 'Mice Interiors Decoration L.L.C.'];
+  assert.equal(new Set(same.map(looseKey)).size, 1, same.map(looseKey).join(' | '));
+  assert.notEqual(looseKey('ARRAD TRADING LLC'), looseKey('ARRAD LLC')); // TRADING is a word
+  assert.equal(looseKey('AR-RAD CO.'), looseKey('ar rad co'));
+  assert.equal(looseKey('B 1810'), 'b 1810'); // a single letter before a number stays alone
+  assert.equal(looseKey('KITCHEN PALACE KITCHENS IND L.L.C'), looseKey('kitchen palace kitchens ind LLC'));
+  assert.equal(itemsNamed([{ Id: '1', Name: 'AR-RAD GLUE 25 KG', Type: 'Inventory', Active: true }], 'ar rad glue 25 kg').length, 1);
+});
+
+function liveDesk({ cached, live }) {
+  const asked = [];
+  const qbo = {
+    configured: true, connected: true, paused: false, needsReconnect: false, env: 'production',
+    query: async (sql) => {
+      asked.push(sql);
+      const like = /like '%([^%]*)%'/i.exec(sql);
+      if (like) return live.filter((c) => c.DisplayName.toUpperCase().includes(like[1]));
+      return cached;
+    },
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lv-'));
+  const desk = new QboDesk({ qbo, list: new CustomerGroups(path.join(dir, 'cg')), aliases: new Aliases(''), map: new QboMap(path.join(dir, 'map')), config: { testGroupNames: [] }, groups: async () => [], post: async () => {}, today: () => TODAY, sleep: async () => {}, log: () => {} });
+  return { desk, asked };
+}
+
+test('"Mice Interiors Decoration LLC" finds "MICE INTERIORS DECORATION L.L.C" in the cache, and in QuickBooks itself when the cache has not seen it', async () => {
+  const mice = { Id: '75', DisplayName: 'MICE INTERIORS DECORATION L.L.C', Balance: 1575, Active: true };
+  const others = [{ Id: '1', DisplayName: 'ZED TRADING', Active: true }, { Id: '2', DisplayName: 'HAKIM CARPENTRY', Active: true }];
+  // 1. already in the cache
+  const a = liveDesk({ cached: [mice, ...others], live: [] });
+  const r1 = await a.desk.resolveLoose('Mice Interiors Decoration LLC');
+  assert.deepEqual([r1.id, r1.name], ['75', 'MICE INTERIORS DECORATION L.L.C']);
+  assert.ok(!a.asked.some((s) => /like/i.test(s))); // no live query needed
+  const s1 = await a.desk.resolveStrict('Mice Interiors Decoration LLC');
+  assert.equal(s1.id, '75'); // the exact match for an invoice is loose in the same way
+  // 2. created by the office after the bot started: not in the cache, found live, and the cache learns it
+  const b = liveDesk({ cached: others, live: [mice] });
+  await b.desk.customers(); // the cache is filled before the customer exists
+  const r2 = await b.desk.resolveLoose('Mice Interiors Decoration LLC');
+  assert.deepEqual([r2.id, r2.name], ['75', 'MICE INTERIORS DECORATION L.L.C']);
+  assert.ok(b.asked.some((s) => /like '%DECORATION%'/i.test(s)) && b.asked.some((s) => /like '%MICE%'/i.test(s))); // the longest word and the first word
+  assert.ok(b.desk.cache.customers.some((c) => c.Id === '75'));
+  const before = b.asked.length;
+  await b.desk.resolveLoose('Mice Interiors Decoration LLC');
+  assert.equal(b.asked.filter((s) => /like/i.test(s)).length, 2); // the second time the cache has it
+  assert.ok(b.asked.length >= before);
+  // 3. nothing anywhere: not found, with the nearest (weak ones too) and nothing made
+  const c = liveDesk({ cached: others, live: [] });
+  const r3 = await c.desk.resolveLoose('Mice Interiors Decoration LLC');
+  assert.equal(r3.id, undefined); assert.ok(Array.isArray(r3.options));
+});

@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseStatementRequest } from './period.js';
+import { looseKey } from './namekey.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { staffChecker } from './gate.js';
 import { nameKey } from './customergroups.js';
@@ -159,7 +160,8 @@ export function pvcCode(i) {
 export function itemsNamed(items, name) {
   const k = norm(name);
   if (!k) return [];
-  return items.filter((i) => i.Type !== 'Category' && i.Active !== false && [i.Name, i.Sku, i.FullyQualifiedName].some((x) => x && norm(x) === k));
+  const lk = looseKey(name);
+  return items.filter((i) => i.Type !== 'Category' && i.Active !== false && [i.Name, i.Sku, i.FullyQualifiedName].some((x) => x && (norm(x) === k || (lk && looseKey(x) === lk))));
 }
 
 /** Close names for a stop message: never a choice made for the user. */
