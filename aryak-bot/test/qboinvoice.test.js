@@ -941,3 +941,40 @@ test('the exact line builds a preview for AL EBDA AL MALKI KITCHEN (QuickBooks\'
     assert.equal(t.m.posts[0].body.DocNumber, 'inv-9984'); // QuickBooks' next number, read at the yes
   } finally { setOutLang('fa'); }
 });
+
+// ------------------------------------------------------------------------------------------------ nothing claims a number before the final yes
+test('an old waiting preview that carries a stored number loses it at load; the create reads QuickBooks\' next number; waiting previews never count in the sequence', async () => {
+  const t = mk({ customTxn: true, docNumbers: ['inv-9984', 'inv-9980'] });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  const q = t.store.get('Q1');
+  q.docNumber = 'inv-9979'; // what a preview made before the rule carried (and saved)
+  t.store.save();
+  const reloaded = new InvoiceStore(path.join(t.dir, 'qbo'));
+  assert.equal(reloaded.get('Q1').docNumber, ''); // cleared at load
+  t.inv.store = reloaded;
+  assert.equal((await t.inv.nextDocNumber()).docNumber, 'inv-9985'); // QuickBooks' own latest + 1; no waiting preview takes part
+  reloaded.get('Q1').docNumber = 'inv-9999'; reloaded.get('Q1').attempted = false;
+  assert.equal((await t.inv.nextDocNumber()).docNumber, 'inv-9985'); // even a stored number on a waiting preview is ignored
+  await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(t.m.posts[0].body.DocNumber, 'inv-9985'); // never the old 9979 or 9999
+});
+
+test('a lost answer keeps THIS attempt\'s number for the retry (same invoice); a refused number is chosen again', async () => {
+  const lost = mk({ customTxn: true, docNumbers: ['inv-9984'], postFailures: 4 });
+  await lost.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok((await lost.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('ساخت فاکتور نشد'));
+  assert.equal(lost.store.get('Q1').docNumber, 'inv-9985'); assert.equal(lost.store.get('Q1').attempted, true);
+  await lost.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(lost.m.posts.at(-1).body.DocNumber, 'inv-9985'); // the retry carries the same number
+  assert.ok(lost.m.posts.every((x) => x.body.DocNumber === 'inv-9985')); // every try carried the same number
+  // a 4xx refusal of the number: it is dropped, and the next attempt reads QuickBooks again
+  const t = mk({ customTxn: true, docNumbers: ['inv-9984'] });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  const p = t.store.get('Q1');
+  p.status = 'pending'; p.docNumber = 'inv-9984'; p.attempted = true; // pretend an attempt chose a number the office has since taken
+  t.store.save();
+  const out = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('');
+  assert.ok(out.includes('ساخت فاکتور نشد')); assert.equal(p.docNumber, ''); assert.equal(p.attempted, false);
+  await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(t.m.posts.at(-1).body.DocNumber, 'inv-9985');
+});

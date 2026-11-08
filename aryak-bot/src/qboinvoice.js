@@ -515,7 +515,10 @@ export class Audit {
 
 /** The previews and the creations made (for the caps). */
 export class InvoiceStore {
-  constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-invoices.json') : ''; this.d = { n: 0, previews: {}, creates: [] }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ } }
+  constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-invoices.json') : ''; this.d = { n: 0, previews: {}, creates: [] }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ }
+    // a number is claimed only by a create attempt: a waiting preview from before that rule carries no number
+    for (const q of Object.values(this.d.previews)) if (q.status === 'pending' && !q.attempted && q.docNumber) q.docNumber = '';
+  }
   save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
   nextId() { this.d.n += 1; return `Q${this.d.n}`; }
   add(p) { this.d.previews[p.id] = p; this.save(); return p; }
@@ -566,8 +569,8 @@ export class QboInvoiceDesk {
     const newest = numbers.map(pat).find(Boolean);
     if (!newest) return { error: 'الگوی شمارهٔ فاکتورهای دفتر از آخرین فاکتورها خوانده نشد' };
     const [, prefix, digits] = newest;
-    const waiting = Object.values(this.store.d.previews).filter((q) => q.id !== exceptId && ['pending', 'creating'].includes(q.status) && q.docNumber && this.now() - q.at <= EXPIRY_MS).map((q) => q.docNumber);
-    const same = [...numbers, ...waiting].map(pat).filter((m) => m && m[1].toLowerCase() === prefix.toLowerCase());
+    // only QuickBooks' own invoices count: a preview never holds a number
+    const same = numbers.map(pat).filter((m) => m && m[1].toLowerCase() === prefix.toLowerCase());
     let next = Math.max(...same.map((m) => Number(m[2]))) + 1;
     const pad = digits.startsWith('0') ? digits.length : 0;
     for (let tries = 0; tries < 20; tries++, next++) {
@@ -939,10 +942,10 @@ export class QboInvoiceDesk {
     if (this.inflight.has(p.id)) return [`فاکتور ${p.id} همین حالا در حال ساخته شدن است؛ چند لحظه صبر کنید.`];
     // The number is QuickBooks' own: with custom numbers OFF it is simply left out (QuickBooks assigns it); with them ON (the API cannot ask for the next one) the next
     // number after the latest invoice is read at this moment, exactly what the QuickBooks screen proposes. A retry of the same preview keeps the number it chose.
-    if (p.customTxn && !p.docNumber) {
+    if (p.customTxn && !(p.attempted && p.docNumber)) { // a number chosen by an earlier attempt of THIS preview (a lost answer) is kept; any other is read from QuickBooks now
       const n = await this.nextDocNumber(p.id).catch(() => ({ error: 'x' }));
       if (!n.docNumber) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'no-number' }); return [`شمارهٔ بعدی فاکتور را از کوییک‌بوکس نتوانستم بخوانم؛ ساخته نشد. کمی بعد دوباره «بله #${p.id}» بنویسید.`]; }
-      p.docNumber = n.docNumber; this.store.save();
+      p.docNumber = n.docNumber; p.attempted = true; this.store.save();
     }
     // the attempt is counted and remembered BEFORE the call; the request id belongs to the preview, so a retry returns the same invoice
     p.status = 'creating'; this.store.recordCreate(this.now()); this.store.save();
@@ -954,7 +957,7 @@ export class QboInvoiceDesk {
       created = j?.Invoice;
       if (!created?.Id) throw new Error('no invoice in the answer');
     } catch (e) {
-      p.status = 'pending'; this.inflight.delete(p.id); if (e.status >= 400 && e.status < 500) p.docNumber = ''; this.store.save(); // a refusal of the number is not repeated; a lost answer keeps it (same request, same invoice)
+      p.status = 'pending'; this.inflight.delete(p.id); if (e.status >= 400 && e.status < 500) { p.docNumber = ''; p.attempted = false; } this.store.save(); // a refusal of the number is not repeated; a lost answer keeps it (same request, same invoice)
       this.audit.add({ event: 'failed', previewId: p.id, approver: 'owner', status: e.status || 0 });
       this.log(`QuickBooks invoice create failed: ${e.name} ${e.status || ''}`);
       return [`ساخت فاکتور نشد: ${e.message}. پیش‌نمایش می‌ماند؛ همان «بله #${p.id}» دوباره امن است (دو فاکتور ساخته نمی‌شود).`];
