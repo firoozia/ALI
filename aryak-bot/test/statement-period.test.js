@@ -277,3 +277,26 @@ test('a read-only action with one clearly best candidate is done and said: «(ح
   const exact = await desk.statementFor('Al afeef', { privateJid: 'x@s.whatsapp.net' });
   assert.equal(exact.ok, true); assert.ok(!exact.text.includes('حدس'));
 });
+
+// ------------------------------------------------------------------------------------------------ a verb at the end of the customer text, and a very short name
+test('a Persian verb at the end of the customer text is stripped; the older exact form is left to this reader only when a verb is there', () => {
+  for (const t of ['آتوسا صورت‌حساب AL بفرست', 'صورت‌حساب AL رو بفرست', 'صورت‌حساب AL را بفرست', 'صورت‌حساب AL برام بفرست', 'صورت‌حساب AL برای من بفرست', 'صورت‌حساب AL بده', 'صورت‌حساب AL بزن', 'صورت‌حساب AL کن']) {
+    assert.equal(parseQboCommand(t), null, t); // not the older exact form
+    const r = parseInvoiceCommand(t);
+    assert.equal(r?.type, 'statement_nl', t); assert.equal(r.customer, 'AL', t);
+  }
+  assert.deepEqual(parseQboCommand('صورت‌حساب AL'), { type: 'statement', name: 'AL' }); // no verb: as before
+});
+
+test('a very short name («AL») gives a numbered list of the best candidates, never "not found" and never a guess between them', async () => {
+  const { desk, posted } = mkDesk([{ Id: '1', DisplayName: 'AL AFEEF KITCHEN' }, { Id: '2', DisplayName: 'AL SAIFI DOORS' }, { Id: '3', DisplayName: 'AL MASTER WOOD INDUSTRIES LLC FOR TRADING' }, { Id: '4', DisplayName: 'ZED TRADING' }]);
+  const r = await desk.statementFor('AL', { privateJid: 'x@s.whatsapp.net', period: null });
+  assert.equal(r.ok, false); assert.equal(r.ask, true);
+  assert.match(r.text, /۱\. .*\n۲\. .*\n۳\. /);
+  assert.deepEqual([...r.options].sort(), ['AL AFEEF KITCHEN', 'AL MASTER WOOD INDUSTRIES LLC FOR TRADING', 'AL SAIFI DOORS']);
+  assert.ok(!r.options.includes('ZED TRADING'));
+  assert.equal(posted.length, 0);
+  // and the answer «شماره دو» picks the second listed
+  const at = parseChoice('شماره دو', r.options);
+  assert.equal(r.options[at], r.options[1]);
+});

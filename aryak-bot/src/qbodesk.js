@@ -31,6 +31,8 @@ export function parseQboCommand(text) {
   if ((m = /^تطبیق\s+(\d+)\s*نه$/u.exec(s))) return { type: 'skip', n: Number(m[1]) };
   if ((m = /^صورت\s*حساب\s+(.+)$/u.exec(s))) {
     if (m[1].trim() !== 'همه' && hasPeriod(m[1])) return null; // with a period it is the free-form request (period.js), not a customer name
+    // a verb at the END («AL بفرست», «Cedar رو بفرست», «برام بده», «کن») is free words too: that reader strips it and answers in the asker's own chat
+    if (/\s(?:(?:رو|را|برام|برایم|برای\s+من|به\s+من|لطفا)\s+)*(?:بفرست|بفرستید|بفرستین|بده|بدید|بدهید|بزن|بزنید|کن|کنید)$/u.test(m[1].trim())) return null;
     return m[1].trim() === 'همه' ? { type: 'all' } : { type: 'statement', name: m[1].trim() };
   }
   return null;
@@ -345,6 +347,10 @@ export class QboDesk {
   async resolveSpoken(typed) {
     const r = await this.resolveLoose(typed);
     if (r.id) return { id: r.id, name: r.name || r.ours, via: r.loose ? 'words' : 'exact' };
+    if (r.candidates?.length > 1) { // several names hold the typed words (a short «AL»): a numbered list of the best, never a guess between them
+      const ranked = rankNames(typed, r.candidates).map((x) => x.name);
+      return { many: [...new Set(ranked)].slice(0, 5) };
+    }
     const all = await this.customers();
     const names = all.map((c) => ({ name: c.DisplayName || c.CompanyName || '', alts: [c.CompanyName, c.FullyQualifiedName].filter((x) => x && x !== c.DisplayName), id: String(c.Id) }));
     for (const row of this.list.rows()) names.push({ name: row.customer, alts: [], id: '', approved: true }); // the approved list (Persian names too)
