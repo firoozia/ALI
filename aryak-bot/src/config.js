@@ -96,6 +96,10 @@ export function loadConfig(env = process.env) {
     costModelUsd: Number(env.COST_MODEL_USD || 0.01),
     costVisionUsd: Number(env.COST_VISION_USD || 0.012),
     costSpeechUsd: Number(env.COST_SPEECH_USD || 0.016),
+    visionModel: (env.VISION_MODEL || 'claude-haiku-5-5').trim(), // the model that reads a picture or a scanned page first
+    visionEscalateModel: (env.VISION_ESCALATE_MODEL || 'claude-sonnet-5-5').trim(), // read again with this one only when a fact fails (never on the model's own confidence)
+    costPrices: (() => { try { return JSON.parse(env.COST_PRICES || '{}'); } catch { return {}; } })(), // JSON { "model": [input, output] } US dollars per million tokens, over the built-in table
+    costSpeechPerMinute: Number(env.COST_SPEECH_USD_PER_MIN || 0.016), // speech to text, dollars per minute of audio
     // an invoice with a meaningless file name is re-posted with the number and customer printed on it: file (default), line, off
     invoiceNameMode: nameMode(env.INVOICE_NAME_LINE),
     // the owner can order an invoice to be sent into the customer's own group (his yes needed); the test customer goes to the test group

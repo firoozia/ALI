@@ -6,6 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { visionRead } from './vision.js';
 import { normalizeLetters } from './text.js';
 import { matchCod } from './captions.js';
 import { productCode } from './codes.js';
@@ -123,12 +124,25 @@ export async function extractEvent({ client, config, role, caption = '', images 
       ...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mimeType || 'image/jpeg', data: i.base64 } })),
       { type: 'text', text: caption ? `Message text: ${caption}` : 'No text, only the picture.' },
     ];
-    const res = await client.beta.messages.create({
-      model: config.model, max_tokens: 800, system: EXTRACT_RULES[role], messages: [{ role: 'user', content }],
+    const call = (model) => client.beta.messages.create({
+      model, max_tokens: 800, system: EXTRACT_RULES[role], messages: [{ role: 'user', content }],
       output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
     });
-    const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    const v = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
+    const parse = (res) => { const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); return JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); };
+    let v;
+    if (images.length) {
+      // a photo: the cheap model first; the strong one only if the answer says it is relevant but misses what that kind of message must hold
+      const r = await visionRead({
+        config, call, parse,
+        check: (x) => {
+          if (!x.relevant) return { ok: true };
+          if (role === 'payment') return Number(x.amount) > 0 || x.kind === 'statement' ? { ok: true } : { ok: false, reason: 'missing' };
+          return String(x.customer || '').trim() || (Array.isArray(x.lines) && x.lines.length) ? { ok: true } : { ok: false, reason: 'missing' };
+        },
+      });
+      v = r.value;
+      if (!v) return null;
+    } else v = parse(await call(config.model));
     if (!v.relevant) return null;
     const lines = (Array.isArray(v.lines) ? v.lines : []).map((l) => ({ code: normCode(l?.code), quantity: Number(l?.quantity) > 0 ? Number(l.quantity) : null, unit: normUnit(l?.unit) })).filter((l) => l.code || l.quantity);
     if (role === 'payment') {

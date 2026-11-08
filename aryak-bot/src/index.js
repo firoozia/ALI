@@ -64,6 +64,10 @@ import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, N
 import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
 import { shouldProcess, OwnerSeen } from './intake.js';
+import { documentBlock, setDocMeter } from './pdftext.js';
+import { setVisionMeter } from './vision.js';
+import { CostMeter } from './cost.js';
+import { planVoice, VoiceGate } from './voicegate.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -86,10 +90,15 @@ try {
     const group = usageCtx.getStore()?.group || '-';
     usage.count(group, 'model');
     if (hasVisual(params)) usage.count(group, 'vision');
-    return rawCreate(params, ...rest);
+    const res = await rawCreate(params, ...rest);
+    try { cost.model(params.model, res?.usage, group); } catch { /* the cost log never stops an answer */ }
+    return res;
   };
 } catch (e) { console.warn(`paid calls are not counted: ${e.message}`); }
-setInterval(() => usage.save(), 60 * 1000).unref();
+// The real cost: tokens per model from each answer, seconds of speech, photo reads (cheap first, strong on a failed check), PDFs (text layer free).
+const cost = new CostMeter(path.join(config.authDir, 'usage'), { timeZone: config.timezone, prices: config.costPrices, speechPerMinute: config.costSpeechPerMinute, log: (s) => logger.info(s) });
+setDocMeter(cost); setVisionMeter(cost);
+setInterval(() => { usage.save(); cost.save(); }, 60 * 1000).unref();
 // The prompt: the rules and knowledge files, plus what the owner approved from the experience store (rebuilt when it changes).
 let systemCache = { version: -1, text: '' };
 const systemPrompt = () => {
@@ -146,6 +155,7 @@ const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availabilit
 const followDesk = new VoiceDesk(); // a question the assistant asked a person; their next message answers it
 const sttNotice = new Map(); // chat -> when it was last told that voice cannot be heard
 const voiceDesk = new VoiceDesk(); // what was understood from a voice note, waiting for a yes
+const voiceGate = new VoiceGate(); // the transcript of a voice note that would change something, waiting for the speaker's «بله»
 const transcribe = speechTranscriber({
   languages: config.speechLanguages, token: metadataToken(), minConfidence: config.speechMinConfidence,
   phrases: [...new Set([config.displayName, ...DEFAULT_PHRASES])],
@@ -320,7 +330,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); cost.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [cost.line() || usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -634,6 +644,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_mobile': return qboBulk.planMobiles();
     case 'bulk_edge': return qboBulk.planEdgeList();
     case 'bulk_old_edge': return qboBulk.planOldEdge();
+    case 'cost_report': return [cost.report(ic.range)];
     case 'bulk_edge_names': return qboBulk.planEdgeNames();
     case 'bulk_undo': return qboBulk.planUndo({ scope: ic.scope, source: ic.source });
     case 'bulk_catalog': return qboBulk.planCatalog({ edge: ic.edge !== false });
@@ -930,14 +941,18 @@ async function understandPhotos(messagesWithImages, caption, fallbackLang, force
     try { images.push(await m.loadImage()); } catch (e) { logger.warn(`photo download failed: ${e.message}`); }
   }
   if (!images.length) return { ok: false, reason: 'error' };
-  return understandImages({ images, caption, config, client, fallbackLang, forceLang, log: (s) => logger.info(s) });
+  return understandImages({
+    images, caption, config, client, fallbackLang, forceLang, log: (s) => logger.info(s),
+    // a code the stock sheet has never heard of is a reason to look again (a sheet that does not answer is not)
+    knownCode: async (code) => { try { const r = await fetchStock(config, { code }); return !!(r.found || r.ambiguous); } catch { return true; } },
+  });
 }
 
 /** Reads one voice note: download, speech to text, intent. Never throws. */
 async function understandAudio(load, seconds, forceLang = '') {
   // A long note is not even downloaded.
   if (seconds > MAX_SECONDS) { logger.info(`voice: ${seconds} s is too long, skipped`); return { ok: false, reason: 'too long' }; }
-  try { return await understand({ buffer: await load(), seconds, config, client, transcribe: async (...a) => { usage.count(usageCtx.getStore()?.group || '-', 'speech'); return transcribe(...a); }, forceLang, log: (s) => logger.info(s) }); }
+  try { const buffer = await load(); cost.voice(seconds); return await understand({ buffer, seconds, config, client, transcribe: async (...a) => { usage.count(usageCtx.getStore()?.group || '-', 'speech'); return transcribe(...a); }, forceLang, log: (s) => logger.info(s) }); }
   catch (e) { logger.warn(`voice failed: ${e.message}`); return { ok: false, reason: 'error' }; }
 }
 
@@ -1081,7 +1096,7 @@ async function handlePriceFlow({ raw, content, text, key, reply, role, where, im
     const buf = await downloadMediaMessage(raw, 'buffer', {});
     const b64 = buf.toString('base64');
     blocks = [
-      image ? { type: 'image', source: { type: 'base64', media_type: String(image.mimetype || 'image/jpeg').split(';')[0], data: b64 } } : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+      documentBlock({ base64: b64, mimeType: image ? String(image.mimetype || 'image/jpeg').split(';')[0] : 'application/pdf' }), // a PDF with a text layer is sent as text (free)
       { type: 'text', text: text || 'Price list.' },
     ];
   }
@@ -1224,6 +1239,18 @@ async function handleStaffChat(raw, chatId, group) {
     if (keepLanguage) keepLang.add(content);
     return sock.sendMessage(chatId, content, { quoted: raw });
   };
+  // A voice note that would change something waits for its «بله»: the same person's yes runs the transcript as if typed, a no drops it,
+  // and any other text is the corrected text that takes its place (it is simply handled as typed).
+  const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
+  const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  const waiting = text && !audio ? voiceGate.get(gateKey) : null;
+  if (waiting) {
+    voiceGate.clear(gateKey);
+    const k = answerKind(text);
+    if (k === 'yes') { trace(where, role, 'voice note: the yes came, the transcript is run as typed'); return rerunAsText(waiting.text); }
+    if (k === 'no') { await reply(staffLang === 'en' ? 'Cancelled.' : 'لغو شد.'); return true; }
+    trace(where, role, 'voice note: a corrected text replaces the transcript');
+  }
   // The sales manager answers a request about stock ("#12 yes", a reply to the question, or the only open one).
   if (!group && avail.open.size) {
     const reply0 = parseManagerReply(text, answerKind);
@@ -1463,6 +1490,14 @@ async function handleStaffChat(raw, chatId, group) {
     const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
     const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
     const spoken = u.lang || (u.transcript ? detectLang(u.transcript) : 'fa');
+    // the transcript is echoed first; a plain question then runs at once, what would change something waits for the yes
+    const pv = planVoice({ transcript: u.transcript, lang: spoken, explicit, named, priv: !group, unclear: u.reason === 'unclear' });
+    if (pv.mode !== 'old') {
+      await sock.sendMessage(chatId, { text: `${isSelf ? '🤖 ' : ''}${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}` }, { quoted: raw });
+      if (pv.mode === 'ask') { voiceGate.set(gateKey, u.transcript.trim()); trace(where, role, 'voice note: it would change something, waiting for the yes'); return true; }
+      trace(where, role, 'voice note: a plain question, run at once as typed');
+      return rerunAsText(u.transcript.trim());
+    }
     if (action === 'confirm') {
       voiceDesk.set(key, { requestText: u.requestText, lang: u.lang });
       trace(where, role, `voice note understood (${u.intent}), reply language ${u.lang}: asking for confirmation`);

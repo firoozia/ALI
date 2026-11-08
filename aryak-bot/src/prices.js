@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeDigits, normalizeLetters } from './text.js';
 import { productCode } from './codes.js';
+import { visionRead } from './vision.js';
 
 const UNIT_ALIASES = { m: 'm', mtr: 'm', meter: 'm', metre: 'm', meters: 'm', متر: 'm', roll: 'roll', رول: 'roll', pcs: 'pcs', pc: 'pcs', piece: 'pcs', عدد: 'pcs', carton: 'carton', کارتن: 'carton' };
 
@@ -179,12 +180,18 @@ export const PRICE_RULES = `You read a price list given by the owner of ARYAK (P
 /** Asks Claude for the table. [blocks]: user content blocks (text, image, document). Returns { currency, items, exceptions } or null. */
 export async function parsePriceDocument({ client, config, blocks }) {
   try {
-    const res = await client.beta.messages.create({
-      model: config.model, max_tokens: 8000, system: PRICE_RULES, messages: [{ role: 'user', content: blocks }],
+    const call = (model) => client.beta.messages.create({
+      model, max_tokens: 8000, system: PRICE_RULES, messages: [{ role: 'user', content: blocks }],
       output_config: { effort: 'medium' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
     });
-    const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    const v = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
+    const parse = (res) => { const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); return JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); };
+    let v;
+    if (blocks.some((b) => b.type === 'image' || b.type === 'document')) {
+      // a photo or a scanned list: the cheap model first, the strong one only if no price could be read from it
+      const r = await visionRead({ config, call, parse, check: (x) => ((Array.isArray(x.items) && x.items.some((i) => Number(i?.price) > 0)) || (Array.isArray(x.exceptions) && x.exceptions.length) ? { ok: true } : { ok: false, reason: 'unreadable' }) });
+      v = r.value;
+      if (!v) return null;
+    } else v = parse(await call(config.model));
     const items = {};
     for (const i of Array.isArray(v.items) ? v.items : []) {
       const code = normCode(i?.code);

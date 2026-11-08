@@ -45,6 +45,7 @@ export function parseInvoiceCommand(text) {
   if (/^موبایل\s+مشتری(?:\s*ها)?$/u.test(s)) return { type: 'bulk_mobile' };
   if (/^برگرداندن\s+نوار\s+لبه$/u.test(s)) return { type: 'bulk_undo', scope: 'edge' };
   if (/^دسته\s+و\s+کد\s+نوار\s+لبه$/u.test(s)) return { type: 'bulk_edge' };
+  if ((m = /^هزینه\s*(?:ی\s*)?(امروز|هفته)$/u.exec(s))) return { type: 'cost_report', range: m[1] === 'هفته' ? 'week' : 'today' }; // what the paid calls cost: today or this week
   if (/^نام\s+و\s+شرح\s+نوار\s+لبه$/u.test(s)) return { type: 'bulk_edge_names' };
   if (/^حذف\s+نوار\s+لبه(?:\s*ها(?:ی)?)?\s+قدیمی$/u.test(s)) return { type: 'bulk_old_edge' };
   if ((m = /^برگرداندن\s+([CEMTP])\s*(\d+)$/iu.exec(s))) return { type: 'bulk_undo', scope: 'all', source: `${m[1].toUpperCase()}${m[2]}` };

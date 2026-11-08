@@ -3,6 +3,7 @@
 // only after a clear yes does the request go on as if it had been typed. Nothing is acted on from a photo alone.
 
 import { confirmItems, detectLang, langOf, requestFromItems } from './lang.js';
+import { visionRead } from './vision.js';
 
 /** What Claude's vision accepts, and the largest picture we send (WhatsApp photos are far smaller). */
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -27,28 +28,34 @@ const bytesOf = (base64) => Math.floor((String(base64 || '').length * 3) / 4);
  * reason is 'unreadable' (blurred or nothing legible), 'other' (not an order or stock photo), 'too big', or 'error'.
  * [fallbackLang]: the language when neither the picture nor the caption tells.
  */
-export async function understandImages({ images, caption = '', config, client, fallbackLang = 'fa', log = () => {}, forceLang = '' }) {
+export async function understandImages({ images, caption = '', config, client, fallbackLang = 'fa', log = () => {}, forceLang = '', knownCode = null }) {
   const usable = images.filter((i) => IMAGE_TYPES.includes(String(i.mimeType || '').toLowerCase()) && bytesOf(i.base64) <= MAX_IMAGE_BYTES).slice(-MAX_IMAGES);
   if (!usable.length) { log(`photo: ${images.length} picture(s), none usable (type or size)`); return { ok: false, reason: 'too big' }; }
   let v;
   try {
-    const res = await client.beta.messages.create({
-      model: config.model,
-      max_tokens: 1500,
-      system: IMAGE_RULES,
-      messages: [{
-        role: 'user',
-        content: [
-          ...usable.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mimeType, data: i.base64 } })),
-          { type: 'text', text: caption ? `Caption sent with the picture: ${caption}` : 'No caption.' },
-        ],
-      }],
-      output_config: { effort: 'low' },
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
+    const content = [
+      ...usable.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mimeType, data: i.base64 } })),
+      { type: 'text', text: caption ? `Caption sent with the picture: ${caption}` : 'No caption.' },
+    ];
+    // the cheap model reads first; the strong one reads the SAME pictures again only when a fact fails: the reader says unreadable, it counts unclear
+    // codes, or a code it read is not in the stock sheet. Its own confidence never decides.
+    const r = await visionRead({
+      config,
+      call: (model) => client.beta.messages.create({ model, max_tokens: 1500, system: IMAGE_RULES, messages: [{ role: 'user', content }], output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }),
+      parse: (res) => { const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); return JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); },
+      check: async (x) => {
+        if (x.readable === false) return { ok: false, reason: 'unreadable' };
+        if (Math.max(0, Number(x.unclear) || 0) > 0) return { ok: false, reason: 'unclear' };
+        if (knownCode && ['stock', 'order'].includes(x.intent)) {
+          for (const it of (Array.isArray(x.items) ? x.items : []).slice(0, 12)) { const code = String(it?.code || '').trim(); if (code && !(await knownCode(code))) return { ok: false, reason: 'unknown-code' }; }
+        }
+        return { ok: true };
+      },
+      log,
     });
-    const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    v = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1));
+    v = r.value;
+    if (!v || typeof v !== 'object') throw new Error('the reader gave no usable answer');
+    if (r.escalated) log(`photo: read again with ${r.model} because of ${r.reason}${r.checked.ok ? '' : ' (it still failed the checks)'}`);
   } catch (e) {
     log(`photo: reading failed: ${e.message}`);
     return { ok: false, reason: 'error' };
