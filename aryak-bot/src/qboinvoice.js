@@ -88,8 +88,12 @@ export function parseInvoiceCommand(text) {
   if (new RegExp(`^توقف\\s*${QB}$`, 'u').test(s)) return { type: 'pause' };
   if (new RegExp(`^ادامه\\s*${QB}$`, 'u').test(s)) return { type: 'resume' };
   if (new RegExp(`^گزارش\\s*${QB}$`, 'u').test(s)) return { type: 'audit' };
-  if ((m = /^لغو\s+مجوز\s+فاکتور\s+\+?([\d\s-]{7,20})$/u.exec(s))) return { type: 'auth_remove', number: m[1] };
-  if ((m = /^مجوز\s+فاکتور\s+\+?([\d\s-]{7,20})$/u.exec(s))) return { type: 'auth_add', number: m[1] };
+  const ST = String.raw`صورت\s*حساب|صورت‌حساب|استیتمنت|استیت‌منت|statement`; // «مجوز صورت‌حساب <شماره>»: statements only
+  const NUM = String.raw`\+?([\d۰-۹٠-٩\s-]{7,20})`;
+  if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${ST})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], scope: 'statement' };
+  if ((m = new RegExp(String.raw`^مجوز\s+(?:${ST})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], scope: 'statement' };
+  if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+فاکتور\s+${NUM}$`, 'u').exec(s))) return { type: 'auth_remove', number: m[1], scope: 'invoice' };
+  if ((m = new RegExp(String.raw`^مجوز\s+فاکتور\s+${NUM}$`, 'u').exec(s))) return { type: 'auth_add', number: m[1], scope: 'both' };
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
   if (/^کدهای\s+مالیات$/u.test(s)) return { type: 'tax_list' };
   if ((m = /^کد\s+مالیات\s+(.+?)\s*=\s*(.+)$/u.exec(s))) return { type: 'tax_set', customer: m[1].trim(), code: m[2].trim() };
@@ -365,10 +369,28 @@ export class AuthStore {
   save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
   static clean(number) { const d = latin(number).replace(/\D/g, ''); return d.length >= 8 && d.length <= 15 ? d : ''; }
   numbers() { return this.d.people.map((p) => p.number); }
-  add(number, now = Date.now()) { const n = AuthStore.clean(number); if (!n) return false; if (!this.d.people.some((p) => p.number === n)) this.d.people.push({ number: n, at: new Date(now).toISOString() }); this.save(); return n; }
-  remove(number) { const n = AuthStore.clean(number); const len = this.d.people.length; this.d.people = this.d.people.filter((p) => p.number !== n); this.save(); return this.d.people.length < len; }
+  /** What a person may ask: 'both' (invoices and statements; an entry with no scope is this) or 'statement' (statements only). */
+  scopeOf(number) { const p = this.d.people.find((x) => x.number === AuthStore.clean(number)); return p ? (p.scope === 'statement' ? 'statement' : 'both') : ''; }
+  /** [scope]: 'both' (the older «مجوز فاکتور») or 'statement'. Said again, the newest word wins. */
+  add(number, now = Date.now(), scope = 'both') {
+    const n = AuthStore.clean(number); if (!n) return false;
+    const have = this.d.people.find((p) => p.number === n);
+    const kept = scope === 'statement' ? 'statement' : 'both';
+    if (have) have.scope = kept; else this.d.people.push({ number: n, at: new Date(now).toISOString(), scope: kept });
+    this.save(); return n;
+  }
+  /** [scope] 'statement' (or the older call): the person is removed. 'invoice': only the invoice right goes, a statement right stays. */
+  remove(number, scope = 'statement') {
+    const n = AuthStore.clean(number); const have = this.d.people.find((p) => p.number === n);
+    if (!have) return false;
+    if (scope === 'invoice') { if (this.scopeOf(n) !== 'both') return false; have.scope = 'statement'; this.save(); return true; }
+    this.d.people = this.d.people.filter((p) => p.number !== n); this.save(); return true;
+  }
+  list() { return this.d.people.map((p) => ({ number: p.number, scope: p.scope === 'statement' ? 'statement' : 'both' })); }
   /** Is this sender (jid, alt jid, lid mapped) an authorized person? */
   isAuthorized(who, lidToPhone = new Map()) { return staffChecker(this.numbers(), lidToPhone)(who) === true; }
+  /** May this sender ask for invoices? (not a statement-only person) */
+  mayInvoice(who, lidToPhone = new Map()) { return this.d.people.some((p) => p.scope !== 'statement' && staffChecker([p.number], lidToPhone)(who) === true); }
 }
 
 /** The item codes the owner taught ("کد 1810 = PVC 1810"): for one customer (by QuickBooks id) or for everybody. Kept on the VM. */

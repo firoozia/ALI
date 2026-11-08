@@ -110,8 +110,8 @@ test('the words: the request with its lines, yes and no with the preview id, the
   assert.deepEqual(parseInvoiceCommand('توقف کوییک‌بوکس'), { type: 'pause' });
   assert.deepEqual(parseInvoiceCommand('ادامهٔ کوییک‌بوکس'), { type: 'resume' });
   assert.deepEqual(parseInvoiceCommand('گزارش کوییک‌بوکس'), { type: 'audit' });
-  assert.deepEqual(parseInvoiceCommand('مجوز فاکتور 971 50 111 2222'), { type: 'auth_add', number: '971 50 111 2222' });
-  assert.deepEqual(parseInvoiceCommand('لغو مجوز فاکتور 971501112222'), { type: 'auth_remove', number: '971501112222' });
+  assert.deepEqual(parseInvoiceCommand('مجوز فاکتور 971 50 111 2222'), { type: 'auth_add', number: '971 50 111 2222', scope: 'both' });
+  assert.deepEqual(parseInvoiceCommand('لغو مجوز فاکتور 971501112222'), { type: 'auth_remove', number: '971501112222', scope: 'invoice' });
   assert.deepEqual(parseInvoiceCommand('مجوزها'), { type: 'auth_list' });
   assert.equal(parseInvoiceCommand('سلام'), null);
 });
