@@ -401,6 +401,16 @@ const JOBS = {
     body: (cur, ch, p) => (String(cur.SalesTaxCodeRef?.value || '') === p.params.codeId ? null : { SalesTaxCodeRef: { value: p.params.codeId } }),
     audit: (cur, body, p) => ({ field: 'SalesTaxCodeRef', old: String(cur.SalesTaxCodeRef?.value || ''), new: p.params.codeId }),
   },
+  I: {
+    title: 'قیمت شامل مالیات فروش', entity: 'item', fields: ['SalesTaxIncluded'],
+    body: (cur) => (cur.SalesTaxIncluded === true ? { SalesTaxIncluded: false } : null),
+    audit: (cur) => ({ field: 'SalesTaxIncluded', old: 'true', new: 'false' }),
+  },
+  J: {
+    title: 'برگرداندن قیمت شامل مالیات فروش', entity: 'item', fields: ['SalesTaxIncluded'],
+    body: (cur) => (cur.SalesTaxIncluded === true ? null : { SalesTaxIncluded: true }),
+    audit: (cur) => ({ field: 'SalesTaxIncluded', old: 'false', new: 'true' }),
+  },
   C: {
     title: 'دسته و کد کالاها', entity: 'item', fields: ['Type', 'Name', 'ParentRef', 'SubItem', 'Sku'],
     body: (cur, ch, p) => {
@@ -543,6 +553,44 @@ export class QboBulkDesk {
       header: 'مالیات کالاها', params: { codeId: code.id, codeName: code.name },
       summary: `کد «${code.name}» برای کالاهای نوع موجودی، غیرموجودی و خدمت: از ${fa(items.length)} کالا ${fa(r.changes.length)} تغییر می‌کند و ${fa(r.unchanged)} از پیش درست است. فقط کد مالیات فروش کالا عوض می‌شود.`,
       lines: r.changes.map((c, i) => `${fa(i + 1)}. ${c.label}: ${allCodes.get(c.old) || 'بدون کد'} → ${code.name}`),
+    });
+  }
+
+  // ------------------------------------------------------------------------------------------------ I: «price includes sales tax» OFF on every item
+  /** The report (read only) and, when some items have the box on, the preview of the change: only that one flag; the purchase side is reported, never changed. */
+  async planTaxInclusive() {
+    const blocked = this.guard();
+    if (blocked) return [blocked];
+    const items = (await this.items(true)).filter((i) => ITEM_TYPES.includes(i.Type));
+    const sales = items.filter((i) => i.SalesTaxIncluded === true);
+    const purchase = items.filter((i) => i.PurchaseTaxIncluded === true);
+    const list = (arr) => arr.slice(0, 25).map((i) => `• ${i.Name}`).join('\n') + (arr.length > 25 ? `\n… +${arr.length - 25} more` : '');
+    const report = [
+      `Price is inclusive of sales tax — read from ${items.length} items (nothing changed):`,
+      `Sales side ON: ${sales.length}${sales.length ? `\n${list(sales)}` : ''}`,
+      `Purchase side ON: ${purchase.length}${purchase.length ? `\n${list(purchase)}` : ''} (reported only; this side is not changed)`,
+    ].join('\n');
+    if (!sales.length) return [report, 'The sales box is already OFF on every item; nothing to change.'];
+    const preview = this.make('I', { changes: sales.map((i) => ({ id: String(i.Id), label: i.Name, old: 'true', new: 'false' })), skipped: [], unchanged: items.length - sales.length }, {
+      header: 'قیمت شامل مالیات فروش', summary: `Only the box «price includes sales tax» (sales side) is switched OFF on ${sales.length} items. No other field and no existing invoice changes. Undo: «undo tax inclusive I<n>».`,
+      lines: sales.map((i, k) => `${k + 1}. ${i.Name}`),
+    });
+    return [report, ...preview];
+  }
+
+  /** The undo of an «I» job: the box is put back ON on exactly the items that job changed. */
+  async planUndoTaxInclusive(source) {
+    const blocked = this.guard();
+    if (blocked) return [blocked];
+    const src = String(source || '').toUpperCase();
+    const ids = [...new Set(this.audit.all().filter((e) => e.event === 'bulk-change' && e.kind === 'I' && e.previewId === src && e.qboId).map((e) => String(e.qboId)))];
+    if (!ids.length) return [`No change of ${src || 'an I job'} was found in the audit log; nothing to undo.`];
+    const items = await this.items(true);
+    const byId = new Map(items.map((i) => [String(i.Id), i]));
+    const changes = ids.map((id) => ({ id, label: byId.get(id)?.Name || `item ${id}`, old: 'false', new: 'true' }));
+    return this.make('J', { changes, skipped: [], unchanged: 0 }, {
+      header: `برگرداندن ${src}`, summary: `The box «price includes sales tax» is put back ON on the ${changes.length} items that ${src} changed. Nothing else.`,
+      lines: changes.map((c, k) => `${k + 1}. ${c.label}`), params: { source: src },
     });
   }
 

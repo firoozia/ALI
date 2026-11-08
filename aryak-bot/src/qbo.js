@@ -347,9 +347,10 @@ export class Qbo {
     //   customer: the name (DisplayName, CompanyName), or the e-mail (PrimaryEmailAddr), or the mobile (Mobile); never a mix of the jobs
     //   item: the sales tax code (SalesTaxCodeRef), or the base price (UnitPrice); never a mix
     //   item: also its category (ParentRef + SubItem), its SKU, and the NAME of a Category item (Type must say Category)
+    //   item: the box «price includes sales tax» (SalesTaxIncluded) alone
     const SPARSE = {
       customer: [['DisplayName', 'CompanyName'], ['PrimaryEmailAddr'], ['Mobile']],
-      item: [['SalesTaxCodeRef'], ['UnitPrice'], ['ParentRef', 'SubItem'], ['Sku'], ['Type', 'Name']],
+      item: [['SalesTaxCodeRef'], ['UnitPrice'], ['ParentRef', 'SubItem'], ['Sku'], ['Type', 'Name'], ['SalesTaxIncluded']],
     };
     // the only create: a Category item (Name + Type, and for a sub-category its ParentRef with SubItem true; no Id)
     if (method === 'POST' && pathPart === 'item' && body && body.Id === undefined) {

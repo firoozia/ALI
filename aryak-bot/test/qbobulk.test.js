@@ -1134,3 +1134,38 @@ test('F: a 400 on one item is skipped; an item that left its category since the 
   assert.deepEqual(parseInvoiceCommand('بله#F1'), { type: 'yes', id: 'F1' });
 });
 
+
+// ------------------------------------------------------------------------------------------------ «price is inclusive of sales tax» OFF on every item
+test('tax inclusive: the owner\'s words; a read-only report of both sides, then a normal preview (I1) that switches only the sales box OFF; the undo (J) puts it back', async () => {
+  assert.deepEqual(parseInvoiceCommand('check tax inclusive'), { type: 'tax_inclusive' });
+  assert.deepEqual(parseInvoiceCommand('بررسی مالیات شامل قیمت'), { type: 'tax_inclusive' });
+  assert.deepEqual(parseInvoiceCommand('undo tax inclusive I1'), { type: 'tax_inclusive_undo', source: 'I1' });
+  assert.deepEqual(parseInvoiceCommand('yes #I1'), { type: 'yes', id: 'I1' }); assert.deepEqual(parseInvoiceCommand('no J2'), { type: 'no', id: 'J2' });
+  const items = [
+    I(1, 'PVC FILM108', { Sku: '108', SalesTaxIncluded: true }), I(2, 'PVC FILM109', { Sku: '109', SalesTaxIncluded: false, PurchaseTaxIncluded: true }), I(3, 'Hinge 35', { Type: 'NonInventory', SalesTaxIncluded: true, PurchaseTaxIncluded: true }),
+    I(4, 'Labour', { Type: 'Service' }), I(5, 'Folder', { Type: 'Category', SalesTaxIncluded: true }),
+  ];
+  const t = mk({ items });
+  const before = JSON.stringify(t.m.db.Item);
+  const [report, preview] = await t.bulk.planTaxInclusive();
+  assert.match(report, /read from 4 items \(nothing changed\)/); // the Category row is not an item with a price
+  assert.match(report, /Sales side ON: 2\n• PVC FILM108\n• Hinge 35/); assert.match(report, /Purchase side ON: 2\n• PVC FILM109\n• Hinge 35 \(reported only; this side is not changed\)/);
+  assert.match(preview, /#I1/); assert.equal(t.m.posts.length, 0); assert.equal(JSON.stringify(t.m.db.Item), before); // nothing changed yet
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'I1' }); await done;
+  assert.ok(only(t.m.posts, 'item', ['SalesTaxIncluded'])); assert.equal(t.m.posts.length, 2); // a sparse update of that one flag, twice
+  const by = (id) => t.m.db.Item.find((x) => x.Id === id);
+  assert.equal(by('1').SalesTaxIncluded, false); assert.equal(by('3').SalesTaxIncluded, false);
+  assert.equal(by('2').PurchaseTaxIncluded, true); assert.equal(by('3').PurchaseTaxIncluded, true); // the purchase side is never touched
+  assert.equal(by('1').UnitPrice, 10); assert.equal(by('5').SalesTaxIncluded, true); // nothing else, no category
+  assert.match((await t.bulk.planTaxInclusive())[1], /already OFF on every item/);
+  // the undo: exactly the items that job changed
+  const [un] = await t.bulk.planUndoTaxInclusive('I1');
+  assert.match(un, /#J1/); assert.match(un, /put back ON on the 2 items/);
+  const back = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'J1' }); await back;
+  assert.equal(by('1').SalesTaxIncluded, true); assert.equal(by('3').SalesTaxIncluded, true);
+  assert.match((await t.bulk.planUndoTaxInclusive('I9'))[0], /No change of I9 was found/);
+  // nothing outside this field is allowed through the write gate
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Id: '1', SyncToken: '1', sparse: true, SalesTaxIncluded: false, UnitPrice: 5 }), /one allowed field set/);
+});

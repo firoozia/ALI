@@ -61,6 +61,7 @@ import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
 import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
+import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -634,6 +635,25 @@ const qbo = new Qbo({
   onReconnect: () => { const own = ownIds()[0]; if (own && sock) sock.sendMessage(own, { text: '🤖 کوییک‌بوکس باید دوباره وصل شود. بنویسید: اتصال کوییک‌بوکس' }).catch(() => {}); },
 });
 setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); // refresh before the access token expires, not only when a call finds it expired
+const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = await sock.sendMessage(jid, { document: buf, mimetype, fileName, caption }); if (!r) throw new Error('the document was not sent'); };
+let stockDiffRunning = false;
+/** «stock diff»: QuickBooks quantities against the ZINAX sheet (the true stock), read only on both sides; the workbook comes back to the chat that asked. */
+async function runStockDiff(chatId) {
+  const say = (body) => sock.sendMessage(chatId, { text: chatId === ownIds()[0] ? `🤖 ${body}` : body });
+  try {
+    const items = await qboBulk.items(true);
+    const lookup = (code) => fetchStock(config, { code }, fetch, { tries: 2, timeoutMs: [45000, 30000], cache: null, log: () => {}, info: () => {} });
+    const result = await stockDiff({ items, lookup, concurrency: 3, onProgress: (n, total) => logger.info(`stock diff: ${n} of ${total} items read`) });
+    const day = localParts(Date.now(), config.timezone).day;
+    const file = stockDiffFile(result, { date: day });
+    const s = result.summary;
+    await postFile(chatId, file, `stock-diff-${day}.xlsx`, `Stock differences, QuickBooks vs ZINAX (${day}): ${s.differs} differ, ${s.match} match, ${s['only in QuickBooks']} only in QuickBooks`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    await say(`Stock difference file sent: ${result.rows.length} items — match ${s.match}, differs ${s.differs}, only in QuickBooks ${s['only in QuickBooks']}, not tracked in QuickBooks ${s['not tracked in QuickBooks']}, ambiguous in ZINAX ${s['ambiguous in ZINAX']}, could not read ZINAX ${s['could not read ZINAX']}. Largest differences first. Nothing was written to the sheet or to QuickBooks. Items only in ZINAX cannot be listed (the sheet has no list question).`);
+  } catch (e) {
+    logger.warn(`stock diff failed: ${e.name} ${e.message}`);
+    await say(e.paused ? 'QuickBooks is paused by the owner.' : 'The stock difference could not be made now; try again later.');
+  } finally { stockDiffRunning = false; }
+}
 const postDocument = async (jid, buf, fileName, caption) => { const r = await sock.sendMessage(jid, { document: buf, mimetype: 'application/pdf', fileName, caption }); if (!r) throw new Error('the document was not sent'); };
 const allGroups = async () => Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
 const qboChats = new Set(); // private chats of the people the owner authorized: the only extra chats the program may write to
@@ -690,6 +710,15 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
     case 'details': return [qboInvoices.previewDetails(ic.id)];
+    case 'tax_inclusive': return await qboBulk.planTaxInclusive();
+    case 'tax_inclusive_undo': return await qboBulk.planUndoTaxInclusive(ic.source);
+    case 'stock_diff': {
+      const blocked = qboInvoices.guard(); if (blocked) return [blocked];
+      if (stockDiffRunning) return ['A stock difference is already being made; the file will come when it is done.'];
+      stockDiffRunning = true;
+      void runStockDiff(here.chatId || ownIds()[0]);
+      return ['Reading the QuickBooks items and the ZINAX sheet (read only on both sides). It takes a few minutes; the Excel file comes to this chat.'];
+    }
     case 'compare': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return await qboInvoices.compareInvoices(ic.a, ic.b); }
     case 'dry_run': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return await qboInvoices.dryRun(ic.id, ic.against); }
     case 'persian_list': {
@@ -744,7 +773,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRF]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
+      const out = await (id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJ]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
