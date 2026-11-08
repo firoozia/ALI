@@ -1148,8 +1148,8 @@ test('tax inclusive: the owner\'s words; a read-only report of both sides, then 
   const t = mk({ items });
   const before = JSON.stringify(t.m.db.Item);
   const [report, preview] = await t.bulk.planTaxInclusive();
-  assert.match(report, /read from 4 items \(nothing changed\)/); // the Category row is not an item with a price
-  assert.match(report, /Sales side ON: 2\n• PVC FILM108\n• Hinge 35/); assert.match(report, /Purchase side ON: 2\n• PVC FILM109\n• Hinge 35 \(reported only; this side is not changed\)/);
+  assert.match(report, /Price is inclusive of tax — read from 4 items \(nothing changed\)/); // the Category row is not an item with a price
+  assert.match(report, /Sales side ON: 2\n• PVC FILM108\n• Hinge 35/); assert.match(report, /Purchase side ON: 2\n• PVC FILM109\n• Hinge 35 \(offered after the sales side is done: check again\)/);
   assert.match(preview, /#I1/); assert.equal(t.m.posts.length, 0); assert.equal(JSON.stringify(t.m.db.Item), before); // nothing changed yet
   const done = t.finished();
   await t.bulk.decide({ verb: 'yes', id: 'I1' }); await done;
@@ -1158,7 +1158,7 @@ test('tax inclusive: the owner\'s words; a read-only report of both sides, then 
   assert.equal(by('1').SalesTaxIncluded, false); assert.equal(by('3').SalesTaxIncluded, false);
   assert.equal(by('2').PurchaseTaxIncluded, true); assert.equal(by('3').PurchaseTaxIncluded, true); // the purchase side is never touched
   assert.equal(by('1').UnitPrice, 10); assert.equal(by('5').SalesTaxIncluded, true); // nothing else, no category
-  assert.match((await t.bulk.planTaxInclusive())[1], /already OFF on every item/);
+  assert.match((await t.bulk.planTaxInclusive())[1], /purchase side\) is switched OFF on 2 items/); // the sales side is done: the purchase side is offered next
   // the undo: exactly the items that job changed
   const [un] = await t.bulk.planUndoTaxInclusive('I1');
   assert.match(un, /#J1/); assert.match(un, /put back ON on the 2 items/);
@@ -1168,4 +1168,34 @@ test('tax inclusive: the owner\'s words; a read-only report of both sides, then 
   assert.match((await t.bulk.planUndoTaxInclusive('I9'))[0], /No change of I9 was found/);
   // nothing outside this field is allowed through the write gate
   await assert.rejects(() => t.qbo.write('POST', 'item', { Id: '1', SyncToken: '1', sparse: true, SalesTaxIncluded: false, UnitPrice: 5 }), /one allowed field set/);
+});
+
+test('tax inclusive, purchase side: when the sales side is all OFF the check offers its own job (K1) that switches only the purchase box OFF; an item QuickBooks refuses is skipped and named; the undo (L) puts it back', async () => {
+  assert.deepEqual(parseInvoiceCommand('undo tax inclusive K2'), { type: 'tax_inclusive_undo', source: 'K2' });
+  assert.deepEqual(parseInvoiceCommand('yes #K1'), { type: 'yes', id: 'K1' }); assert.deepEqual(parseInvoiceCommand('no L1'), { type: 'no', id: 'L1' });
+  const items = [
+    I(1, 'PVC FILM215', { Sku: '215', SalesTaxIncluded: false, PurchaseTaxIncluded: true }), I(2, 'PVC FILM606', { Sku: '606', SalesTaxIncluded: false, PurchaseTaxIncluded: true }),
+    I(3, 'ROUTER BIT', { Type: 'NonInventory', SalesTaxIncluded: false, PurchaseTaxIncluded: true }), I(4, 'PVC FILM216', { Sku: '216', SalesTaxIncluded: false, PurchaseTaxIncluded: false }),
+  ];
+  const t = mk({ items, rejectIds: ['2'] }); // QuickBooks refuses item 2 (for example its account is inactive)
+  const [report, preview] = await t.bulk.planTaxInclusive();
+  assert.match(report, /Sales side ON: 0\nPurchase side ON: 3\n• PVC FILM215\n• PVC FILM606\n• ROUTER BIT$/);
+  assert.match(preview, /#K1/); assert.match(preview, /purchase side\) is switched OFF on 3 items/); assert.match(preview, /that item is skipped and named in the report/);
+  assert.equal(t.m.posts.length, 0);
+  const done = t.finished();
+  await t.bulk.decide({ verb: 'yes', id: 'K1' }); const text = await done;
+  assert.ok(only(t.m.posts, 'item', ['PurchaseTaxIncluded']));
+  const by = (id) => t.m.db.Item.find((x) => x.Id === id);
+  assert.equal(by('1').PurchaseTaxIncluded, false); assert.equal(by('3').PurchaseTaxIncluded, false); assert.equal(by('2').PurchaseTaxIncluded, true); // the refused one stays, and is named
+  assert.match(text, /PVC FILM606/); assert.match(text, /Income account is inactive/);
+  assert.equal(by('1').SalesTaxIncluded, false); // the sales side was not touched
+  assert.match((await t.bulk.planTaxInclusive())[0], /Purchase side ON: 1\n• PVC FILM606/);
+  const [un] = await t.bulk.planUndoTaxInclusive('K1');
+  assert.match(un, /#L1/); assert.match(un, /purchase tax» is put back ON on the 2 items/);
+  const back = t.finished(); await t.bulk.decide({ verb: 'yes', id: 'L1' }); await back;
+  assert.equal(by('1').PurchaseTaxIncluded, true); assert.equal(by('3').PurchaseTaxIncluded, true);
+  await assert.rejects(() => t.qbo.write('POST', 'item', { Id: '1', SyncToken: '3', sparse: true, PurchaseTaxIncluded: false, SalesTaxIncluded: false }), /one allowed field set/); // never a mix of the two sides in one write
+  // everything OFF on both sides
+  const clean = mk({ items: [I(1, 'PVC FILM215', { SalesTaxIncluded: false, PurchaseTaxIncluded: false })] });
+  assert.match((await clean.bulk.planTaxInclusive())[1], /already OFF on every item, sales and purchase side/);
 });

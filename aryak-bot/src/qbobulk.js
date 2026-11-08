@@ -406,6 +406,16 @@ const JOBS = {
     body: (cur) => (cur.SalesTaxIncluded === true ? { SalesTaxIncluded: false } : null),
     audit: (cur) => ({ field: 'SalesTaxIncluded', old: 'true', new: 'false' }),
   },
+  K: {
+    title: 'قیمت شامل مالیات خرید', entity: 'item', fields: ['PurchaseTaxIncluded'],
+    body: (cur) => (cur.PurchaseTaxIncluded === true ? { PurchaseTaxIncluded: false } : null),
+    audit: () => ({ field: 'PurchaseTaxIncluded', old: 'true', new: 'false' }),
+  },
+  L: {
+    title: 'برگرداندن قیمت شامل مالیات خرید', entity: 'item', fields: ['PurchaseTaxIncluded'],
+    body: (cur) => (cur.PurchaseTaxIncluded === true ? null : { PurchaseTaxIncluded: true }),
+    audit: () => ({ field: 'PurchaseTaxIncluded', old: 'false', new: 'true' }),
+  },
   J: {
     title: 'برگرداندن قیمت شامل مالیات فروش', entity: 'item', fields: ['SalesTaxIncluded'],
     body: (cur) => (cur.SalesTaxIncluded === true ? null : { SalesTaxIncluded: true }),
@@ -566,30 +576,33 @@ export class QboBulkDesk {
     const purchase = items.filter((i) => i.PurchaseTaxIncluded === true);
     const list = (arr) => arr.slice(0, 25).map((i) => `• ${i.Name}`).join('\n') + (arr.length > 25 ? `\n… +${arr.length - 25} more` : '');
     const report = [
-      `Price is inclusive of sales tax — read from ${items.length} items (nothing changed):`,
+      `Price is inclusive of tax — read from ${items.length} items (nothing changed):`,
       `Sales side ON: ${sales.length}${sales.length ? `\n${list(sales)}` : ''}`,
-      `Purchase side ON: ${purchase.length}${purchase.length ? `\n${list(purchase)}` : ''} (reported only; this side is not changed)`,
+      `Purchase side ON: ${purchase.length}${purchase.length ? `\n${list(purchase)}` : ''}${sales.length && purchase.length ? ' (offered after the sales side is done: check again)' : ''}`,
     ].join('\n');
-    if (!sales.length) return [report, 'The sales box is already OFF on every item; nothing to change.'];
-    const preview = this.make('I', { changes: sales.map((i) => ({ id: String(i.Id), label: i.Name, old: 'true', new: 'false' })), skipped: [], unchanged: items.length - sales.length }, {
-      header: 'قیمت شامل مالیات فروش', summary: `Only the box «price includes sales tax» (sales side) is switched OFF on ${sales.length} items. No other field and no existing invoice changes. Undo: «undo tax inclusive I<n>».`,
-      lines: sales.map((i, k) => `${k + 1}. ${i.Name}`),
+    if (!sales.length && !purchase.length) return [report, 'The box is already OFF on every item, sales and purchase side; nothing to change.'];
+    // one side at a time: the sales side first; once it is all OFF, the purchase side is offered. Each is its own owner-approved job with its own undo.
+    const side = sales.length ? { kind: 'I', list: sales, flag: 'sales', header: 'قیمت شامل مالیات فروش', undo: 'I' } : { kind: 'K', list: purchase, flag: 'purchase', header: 'قیمت شامل مالیات خرید', undo: 'K' };
+    const preview = this.make(side.kind, { changes: side.list.map((i) => ({ id: String(i.Id), label: i.Name, old: 'true', new: 'false' })), skipped: [], unchanged: items.length - side.list.length }, {
+      header: side.header, summary: `Only the box «price includes ${side.flag} tax» (${side.flag} side) is switched OFF on ${side.list.length} items. No other field, no existing invoice and not the other side changes. If QuickBooks refuses an item (for example its account), that item is skipped and named in the report. Undo: «undo tax inclusive ${side.undo}<n>».`,
+      lines: side.list.map((i, k) => `${k + 1}. ${i.Name}`),
     });
     return [report, ...preview];
   }
 
-  /** The undo of an «I» job: the box is put back ON on exactly the items that job changed. */
+  /** The undo of an «I» (sales) or «K» (purchase) job: the box is put back ON on exactly the items that job changed. */
   async planUndoTaxInclusive(source) {
     const blocked = this.guard();
     if (blocked) return [blocked];
     const src = String(source || '').toUpperCase();
-    const ids = [...new Set(this.audit.all().filter((e) => e.event === 'bulk-change' && e.kind === 'I' && e.previewId === src && e.qboId).map((e) => String(e.qboId)))];
-    if (!ids.length) return [`No change of ${src || 'an I job'} was found in the audit log; nothing to undo.`];
+    const kind = src.startsWith('K') ? 'K' : 'I';
+    const ids = [...new Set(this.audit.all().filter((e) => e.event === 'bulk-change' && e.kind === kind && e.previewId === src && e.qboId).map((e) => String(e.qboId)))];
+    if (!ids.length) return [`No change of ${src || 'an I or K job'} was found in the audit log; nothing to undo.`];
     const items = await this.items(true);
     const byId = new Map(items.map((i) => [String(i.Id), i]));
     const changes = ids.map((id) => ({ id, label: byId.get(id)?.Name || `item ${id}`, old: 'false', new: 'true' }));
-    return this.make('J', { changes, skipped: [], unchanged: 0 }, {
-      header: `برگرداندن ${src}`, summary: `The box «price includes sales tax» is put back ON on the ${changes.length} items that ${src} changed. Nothing else.`,
+    return this.make(kind === 'K' ? 'L' : 'J', { changes, skipped: [], unchanged: 0 }, {
+      header: `برگرداندن ${src}`, summary: `The box «price includes ${kind === 'K' ? 'purchase' : 'sales'} tax» is put back ON on the ${changes.length} items that ${src} changed. Nothing else.`,
       lines: changes.map((c, k) => `${k + 1}. ${c.label}`), params: { source: src },
     });
   }
