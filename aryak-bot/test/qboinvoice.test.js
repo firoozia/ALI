@@ -64,7 +64,8 @@ function mockQbo(opts = {}) {
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
     const used = opts.docNumbers || (opts.docNumbers = []);
-    if (ent === 'Invoice' && sql.includes('MetaData.CreateTime')) return res(200, { QueryResponse: { Invoice: used.map((n, i) => ({ Id: String(i + 1), DocNumber: n })) } });
+    if (ent === 'Invoice' && sql.includes('MetaData.LastUpdatedTime') && opts.changed) return res(200, { QueryResponse: { Invoice: opts.changed().map((n, i) => ({ Id: String(500 + i), DocNumber: n })) } });
+    if (ent === 'Invoice' && (sql.includes('MetaData.CreateTime') || sql.includes('MetaData.LastUpdatedTime'))) return res(200, { QueryResponse: { Invoice: used.map((n, i) => ({ Id: String(i + 1), DocNumber: n })) } });
     const dn = /DocNumber = '([^']*)'/.exec(sql);
     if (ent === 'Invoice' && dn) return res(200, { QueryResponse: { Invoice: used.includes(dn[1]) ? [{ Id: '1' }] : [] } });
     const byId = /from Customer where Id = '(\d+)'/i.exec(sql);
@@ -977,4 +978,18 @@ test('a lost answer keeps THIS attempt\'s number for the retry (same invoice); a
   assert.ok(out.includes('ساخت فاکتور نشد')); assert.equal(p.docNumber, ''); assert.equal(p.attempted, false);
   await t.inv.decide({ verb: 'yes', id: 'Q1' });
   assert.equal(t.m.posts.at(-1).body.DocNumber, 'inv-9985');
+});
+
+test('the next number is read from QuickBooks at that moment: a renumbered invoice is followed, the last-changed list is read too, and the reason is logged', async () => {
+  const docNumbers = ['inv-9984', 'inv-9979', 'inv-9978'];
+  const t = mk({ customTxn: true, docNumbers });
+  const lines = []; t.inv.log = (x) => lines.push(x);
+  assert.equal((await t.inv.nextDocNumber()).docNumber, 'inv-9985');
+  assert.match(lines.at(-1), /^next number: max inv-9984 in QuickBooks \(\d+ invoices read\) -> inv-9985$/);
+  docNumbers.splice(0, 1); // the owner renumbered inv-9984 to a lower number in QuickBooks
+  assert.equal((await t.inv.nextDocNumber()).docNumber, 'inv-9980'); // nothing of ours remembers 9984
+  assert.match(lines.at(-1), /max inv-9979 in QuickBooks .* -> inv-9980$/);
+  // an invoice changed recently but created long ago (a renumbered old one) is seen through the last-changed list
+  const u = mk({ customTxn: true, docNumbers: ['inv-9975', 'inv-9974'], changed: () => ['inv-9990'] });
+  assert.equal((await u.inv.nextDocNumber()).docNumber, 'inv-9991');
 });

@@ -560,22 +560,29 @@ export class QboInvoiceDesk {
 
   /**
    * The next invoice number when the company numbers by hand: the pattern of the office (the prefix and digits of its newest invoice, "inv-8996"),
-   * the highest number of that pattern among the last invoices and the previews still waiting, plus one, and free. { docNumber } or { error }.
+   * the highest number of that pattern among QuickBooks' own latest invoices (created and last changed), plus one, and free. { docNumber } or { error }.
    */
   async nextDocNumber(exceptId = '') {
-    const j = await this.qbo.get('query', { query: 'select Id, DocNumber from Invoice ORDERBY MetaData.CreateTime DESC STARTPOSITION 1 MAXRESULTS 60' });
-    const numbers = (j?.QueryResponse?.Invoice || []).map((r) => String(r.DocNumber || '')).filter(Boolean);
+    // ONLY QuickBooks, read now (no cache, no number kept by Atossa): the last invoices by creation AND by last change, so an invoice the office renumbered by hand is seen
+    const read = async (order) => (await this.qbo.get('query', { query: `select Id, DocNumber from Invoice ORDERBY ${order} DESC STARTPOSITION 1 MAXRESULTS 60` }))?.QueryResponse?.Invoice || [];
+    const created = await read('MetaData.CreateTime');
+    let changed = [];
+    try { changed = await read('MetaData.LastUpdatedTime'); } catch (e) { this.log(`next number: the last-changed list could not be read (${e.name})`); }
+    const byId = new Map();
+    for (const r of [...changed, ...created]) if (r.DocNumber) byId.set(String(r.Id), String(r.DocNumber));
+    const numbers = created.map((r) => String(r.DocNumber || '')).filter(Boolean);
+    const all = [...byId.values()];
     const pat = (n) => /^(.*?)(\d+)$/.exec(n);
     const newest = numbers.map(pat).find(Boolean);
     if (!newest) return { error: 'الگوی شمارهٔ فاکتورهای دفتر از آخرین فاکتورها خوانده نشد' };
     const [, prefix, digits] = newest;
     // only QuickBooks' own invoices count: a preview never holds a number
-    const same = numbers.map(pat).filter((m) => m && m[1].toLowerCase() === prefix.toLowerCase());
+    const same = all.map(pat).filter((m) => m && m[1].toLowerCase() === prefix.toLowerCase());
     let next = Math.max(...same.map((m) => Number(m[2]))) + 1;
     const pad = digits.startsWith('0') ? digits.length : 0;
     for (let tries = 0; tries < 20; tries++, next++) {
       const candidate = `${prefix}${String(next).padStart(pad, '0')}`;
-      if (!(await this.docNumberTaken(candidate))) return { docNumber: candidate };
+      if (!(await this.docNumberTaken(candidate))) { this.log(`next number: max ${prefix}${String(Math.max(...same.map((m) => Number(m[2])))).padStart(pad, '0')} in QuickBooks (${all.length} invoices read) -> ${candidate}`); return { docNumber: candidate }; }
     }
     return { error: 'شمارهٔ آزاد بعدی پیدا نشد' };
   }
