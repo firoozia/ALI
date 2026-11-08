@@ -76,9 +76,11 @@ import { PendingChoice, parseChoice } from './pendingchoice.js';
 import { mergeTranscripts, isShortCorrection } from './voicemerge.js';
 import { codeKnownInItems } from './qboinvoice.js';
 import { buildSystemPrompt } from './prompt.js';
+import { TRANSLATE_SYSTEM, englishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
 
 const { config, missing } = loadConfig();
+setOutLang(config.replyLanguage);
 config.log = (s) => console.warn(s); // replaced by the logger below
 if (missing.length) {
   console.error(`Missing settings: ${missing.join(', ')}. See README.md.`);
@@ -111,7 +113,7 @@ let systemCache = { version: -1, text: '' };
 const systemPrompt = () => {
   const version = `${experience.version}:${rules.version}`;
   if (systemCache.version !== version) {
-    systemCache = { version, text: [buildSystemPrompt(config.kbDir, config.displayName), rules.promptText(), experience.promptText()].filter(Boolean).join('\n\n') };
+    systemCache = { version, text: [buildSystemPrompt(config.kbDir, config.displayName, config.replyLanguage), rules.promptText(), experience.promptText()].filter(Boolean).join('\n\n') };
   }
   return systemCache.text;
 };
@@ -343,6 +345,15 @@ setInterval(async () => {
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
 }, 60 * 1000).unref();
+
+/** Her fixed Persian sentences, put into English right before they are sent (one small call per new message; the lines she knows are translated without it). */
+async function englishViaModel(chunk) {
+  const res = await client.beta.messages.create({
+    model: config.visionModel, max_tokens: 1500, system: TRANSLATE_SYSTEM,
+    messages: [{ role: 'user', content: chunk }], output_config: { effort: 'low' },
+  });
+  return res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+}
 
 /** The manager's own words, put into the customer's language (numbers, codes and units untouched); the words as they are if that fails. */
 async function translateTo(text, lang) {
@@ -1259,7 +1270,7 @@ const staffHandlersFor = (key, lang = 'fa', persianUnits = false) => ({
       // Which group was meant? The next message of the same person answers, even without the name.
       if (found.ambiguous) followDesk.set(key, { code: i.code, size: i.size || '', options: found.categories, lang });
       return {
-        formatted: formatStaffStock(found, i.code, note, lang, want, { units: persianUnits }),
+        formatted: formatStaffStock(found, i.code, note, lang, want, { units: persianUnits, boldTotal: true }),
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     } catch (e) {
@@ -1361,7 +1372,7 @@ async function handleOnBehalf({ ob, raw, reply, role, where, lang, test = false 
     try { res = await fetchStock(config, { code: line.code, quantity: line.quantity, quantity_unit: line.unit }); } catch (e) { blocks.push(sheetFailed(lang, line.code, isTimeout(e))); continue; }
     const d = classify(res);
     const verdict = d.kind === 'ok' ? 'کافی است؛ می‌شود به مشتری موجود گفت' : d.kind === 'manager' ? 'کافی نیست یا کمتر از حداقل می‌ماند؛ به مدیر فروش گزارش شد' : 'کد ناشناخته یا در چند گروه است';
-    blocks.push(`${formatStaffStock(res, line.code, '', lang)}\n\n→ ${customer}: ${line.quantity} ${line.unit}: ${verdict}`);
+    blocks.push(`${formatStaffStock(res, line.code, '', lang, null, { boldTotal: true })}\n\n→ ${customer}: ${line.quantity} ${line.unit}: ${verdict}`);
     if (d.kind === 'manager' && config.salesManager && !test) {
       const key = `${customer}|${String(res.code).toLowerCase()}|behalf`;
       const last = recent.get(key);
@@ -1506,7 +1517,7 @@ async function handleStaffChat(raw, chatId, group) {
     const pm = /^\s*as\s+(customer|staff|owner)\s*:\s*/i.exec(text);
     if (pm) { text = text.slice(pm[0].length); persona = pm[1].toLowerCase(); }
   }
-  const staffLang = placeLanguage({ kind: group ? 'company-group' : 'private', owner: ownerPerson, persona, written: detectLang(text, 'en'), sentence: isEnglishSentence(text) });
+  const staffLang = config.replyLanguage === 'en' ? 'en' : placeLanguage({ kind: group ? 'company-group' : 'private', owner: ownerPerson, persona, written: detectLang(text, 'en'), sentence: isEnglishSentence(text) });
   const keepLanguage = persona === 'customer' || persona === 'owner'; // a played person keeps its own language, nothing is translated
   const reply = async (body) => {
     const said = staffLang === 'en' ? toEnglish(body) : body;
@@ -2059,7 +2070,7 @@ async function shadowAnalyze({ groupId, subject, label, messages, transcript }) 
   }
   calls++;
   const result = await answer({ client, config, system: systemPrompt(), input: { groupName: subject, customer, transcript, messages: withFollowUp(withText, recentCodeList(groupId)), images: [] }, ctx: { groupId, groupName: subject, customer, messageText: withText.map((m) => m.text).join(' / ') }, recent: shadowRecent });
-  lang = detectLang(withText.map((m) => m.text).join(' '), 'en');
+  lang = config.replyLanguage === 'en' ? 'en' : detectLang(withText.map((m) => m.text).join(' '), 'en');
   const referral = result.managerTexts.length ? 'Would send the sales manager a private report (nothing sent)' : '';
   if (!result.reply && !referral) return { action: 'none' };
   if (!result.reply) return { action: 'manager', note: [note, referral].filter(Boolean).join('\n'), customer, calls };
@@ -2205,7 +2216,9 @@ async function start() {
       const c = cleanOutgoing(a[1].text);
       if (c.changed) { logger.warn('an unresolved placeholder was removed from an outgoing text'); if (!c.text) return undefined; a[1] = { ...a[1], text: c.text }; }
     }
-    if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && !keepLang.has(a[1])) {
+    if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && config.replyLanguage === 'en') {
+      try { const en = await englishOut(a[1].text, englishViaModel); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } catch { /* sent as written */ }
+    } else if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && !keepLang.has(a[1])) {
       try { if (await englishFor(a[0])) { const en = toEnglish(a[1].text); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } } catch { /* sent as written */ }
     }
     const r = await guarded(...a); if (r && isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };

@@ -3,6 +3,7 @@
 // no to an open question) waits: nothing is done until the speaker writes «بله», and a corrected text sent instead replaces the transcript.
 // The transcript of a customer's voice note is never handled here (that stays a question asked back, nothing is sent to the customer).
 
+import { isEnglishOut } from './outlang.js';
 import { parseInvoiceCommand, looksLikeInvoiceRequest } from './qboinvoice.js';
 import { parseTrackerCommand } from './tracker.js';
 import { parsePriceCommand } from './prices.js';
@@ -40,10 +41,11 @@ export function voiceChangesSomething(text) {
 /** «شنیدم: ...» in the speaker's language. */
 export function heardText(lang, transcript) {
   const t = String(transcript || '').trim();
+  if (isEnglishOut()) return `Heard: ${t}`; // English mode: her words are English, what the person said stays as it was said
   if (lang === 'ar') return `سمعت: ${t}`;
   if (lang === 'ur') return `میں نے سنا: ${t}`;
   if (lang === 'hi') return `मैंने सुना: ${t}`;
-  if (lang === 'en') return `I heard: ${t}`;
+  if (lang === 'en') return `Heard: ${t}`;
   return `شنیدم: ${t}`;
 }
 

@@ -6,6 +6,7 @@
 import { productCode } from './codes.js';
 import { sameCustomer } from './tracker.js';
 import { looseWords } from './namekey.js';
+import { isEnglishOut } from './outlang.js';
 
 const DAY = 24 * 3600 * 1000;
 const FA = '۰۱۲۳۴۵۶۷۸۹';
@@ -97,6 +98,11 @@ export function persianDay(ms, timeZone = 'Asia/Dubai') {
 
 /** «برش: ۱۲ متر، ۸ آبان، گروه سفارش آریاک». */
 export function cutLine(total, { label = 'گروه سفارش آریاک', timeZone = 'Asia/Dubai' } = {}) {
+  if (isEnglishOut()) { // «Cut: 12 m, 8 Nov, orders group»
+    const day = new Intl.DateTimeFormat('en-GB', { timeZone, day: 'numeric', month: 'short' }).format(new Date(total.at));
+    const where = /[؀-ۿ]/.test(label) ? 'orders group' : label;
+    return `Cut: ${total.qty} ${total.unit === 'm' ? 'm' : total.unit === 'roll' ? 'roll' : total.unit}, ${day}, ${where}`;
+  }
   const unit = total.unit === 'm' ? 'متر' : total.unit === 'roll' ? 'رول' : total.unit;
   return `برش: ${faDigits(total.qty)} ${unit}، ${persianDay(total.at, timeZone)}، ${label}`;
 }

@@ -26,6 +26,7 @@ const GROUPS = {
 /** All the fixed words, per language. A function takes the figures it needs. */
 const L = {
   fa: {
+    codeWord: 'کد', totalWord: 'جمع', freeWord: 'آزاد',
     head: (code, cat, v) => `موجودی کد ${code} (${cat}) ${v}`,
     ok: 'کافی است', low: 'خیلی کم است', none: 'ندارد',
     size: 'سایز', sizes: 'اندازه‌های ثبت‌شده', free: 'آزاد', reserved: 'رزرو', min: 'حداقل موجودی', packages: 'بسته', place: 'محل',
@@ -45,6 +46,7 @@ const L = {
     noConv: 'تبدیل واحد ممکن نشد؛ مقدار قابل مقایسه نیست',
   },
   ar: {
+    codeWord: 'الكود', totalWord: 'الإجمالي', freeWord: 'المتاح',
     head: (code, cat, v) => `مخزون الكود ${code} (${cat}) ${v}`,
     ok: 'كافٍ', low: 'منخفض جدًا', none: 'غير متوفر',
     size: 'الحجم', sizes: 'الأحجام المسجلة', free: 'المتاح', reserved: 'المحجوز', min: 'الحد الأدنى للمخزون', packages: 'العبوات', place: 'الموقع',
@@ -63,6 +65,7 @@ const L = {
     noConv: 'تعذّر تحويل الوحدة؛ لا يمكن المقارنة',
   },
   en: {
+    codeWord: 'Code', totalWord: 'Total', freeWord: 'free',
     head: (code, cat, v) => `Stock of code ${code} (${cat}) ${v}`,
     ok: 'is enough', low: 'is very low', none: 'is none',
     size: 'Size', sizes: 'Sizes on record', free: 'Free', reserved: 'Reserved', min: 'Minimum stock', packages: 'Packages', place: 'Location',
@@ -81,6 +84,7 @@ const L = {
     noConv: 'the unit could not be converted; cannot compare',
   },
   ur: {
+    codeWord: 'کوڈ', totalWord: 'کل', freeWord: 'دستیاب',
     head: (code, cat, v) => `کوڈ ${code} (${cat}) کا اسٹاک ${v}`,
     ok: 'کافی ہے', low: 'بہت کم ہے', none: 'دستیاب نہیں',
     size: 'سائز', sizes: 'رجسٹرڈ سائز', free: 'دستیاب', reserved: 'محفوظ شدہ', min: 'کم از کم اسٹاک', packages: 'پیکٹ', place: 'مقام',
@@ -178,7 +182,10 @@ function askedLine(result, a, want, t, unit, shown0 = unit) {
   return ['', line, `→ ${verdict.replace(` ${unit}`, ` ${shown0}`)}`];
 }
 
-/** The one block of a botStock result, in [lang]. */
+/** A quantity for the big first line: thousands separated, at most two decimals (1,104.9). */
+export const bigNum = (n) => Number(num(n)).toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+/** The one block of a botStock result, in [lang]. [opts.boldTotal]: the total stands alone on the first line in WhatsApp bold. */
 export function stockBlocks(result, lang = 'fa', want = null, opts = {}) {
   const t = wordsOf(lang, !!opts.units);
   const unit = result.unit || '';
@@ -192,7 +199,10 @@ export function stockBlocks(result, lang = 'fa', want = null, opts = {}) {
   const nothing = a.sizes.length > 1 && a.free === 0 && a.reserved === 0;
   const sizeLine = a.sizes.length > 1 ? `- ${t.sizes}: ${a.sizes.join(t.and)}` : `- ${t.size}: ${a.sizes[0] || '—'}`;
   if (nothing) return [[t.head(result.code, cat, t.none), sizeLine].join('\n')];
+  const total = a.free + a.reserved;
+  const big = opts.boldTotal ? [`*${t.codeWord} ${result.code} — ${t.totalWord}: ${bigNum(total)} ${du}${a.reserved > 0 ? ` (${t.freeWord} ${bigNum(a.free)} ${du})` : ''}*`] : [];
   const lines = [
+    ...big,
     t.head(result.code, cat, low ? t.low : t.ok),
     sizeLine,
     `- ${t.free}: ${num(a.free)} ${du}`,

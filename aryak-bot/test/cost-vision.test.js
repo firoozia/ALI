@@ -252,7 +252,7 @@ test('voice: what changes something waits for a yes; a plain question runs at on
 
 test('voice: the echo in the speaker\'s language, the plan per case, and the pending yes that expires', () => {
   assert.equal(heardText('fa', ' موجودی ۴۰۸ '), 'شنیدم: موجودی ۴۰۸');
-  assert.equal(heardText('ar', 'x'), 'سمعت: x'); assert.equal(heardText('en', 'x'), 'I heard: x');
+  assert.equal(heardText('ar', 'x'), 'سمعت: x'); assert.equal(heardText('en', 'x'), 'Heard: x');
   let p = planVoice({ transcript: 'موجودی کد 408', lang: 'fa', priv: true });
   assert.deepEqual([p.mode, p.echo, p.prompt], ['run', 'شنیدم: موجودی کد 408', '']);
   p = planVoice({ transcript: 'فاکتور بساز', lang: 'fa', priv: true });
@@ -355,6 +355,8 @@ test('voice: Persian, Arabic and Urdu transcripts are echoed in their language; 
 import { deliver, captionCustomerName } from '../src/photoflow.js';
 import { stripPrefixes } from '../src/image.js';
 import { looksLikeCorrection } from '../src/voicegate.js';
+import { setOutLang } from '../src/outlang.js';
+setOutLang('fa'); // these tests read the Persian sentences; the English output is tested in english-out.test.js
 
 const reading = (o) => text(JSON.stringify({ readable: true, intent: 'order', language: 'en', items: [], unclear: 0, ...o }));
 const forwardedPhoto = { key: { remoteJid: '97150@s.whatsapp.net', fromMe: true, id: 'FWD1' }, message: { imageMessage: { mimetype: 'image/jpeg', caption: 'Nuqoosh', contextInfo: { isForwarded: true, forwardingScore: 1 } } } };

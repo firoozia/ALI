@@ -31,7 +31,35 @@ const QB = 'کو[ئی]*یک\\s*بوکس';
 
 // ---------------------------------------------------------------------------------------------------------------- the words
 /** What the owner (or an authorized person) wrote, or null. Multi-line: the first line is "فاکتور بساز <customer>", then one item per line. */
+/**
+ * The owner's short English commands, read as the Persian ones (one set of rules behind both): «yes #Q8», «stop quickbooks», «permissions»,
+ * «grant statement 9715…», «revoke invoice 9715…», «cost today», «customer 2», «line 1 = 3», «tax 2», «yes all». null = not one of them.
+ */
+export function englishCommand(text) {
+  const t = latin(String(text || '')).replace(/[.!]+$/u, '').trim();
+  if (!t || /\n/.test(t) || t.length > 80) return null;
+  let m;
+  const QB = String.raw`quick\s*books?`;
+  if ((m = /^(yes|no)\s+all$/i.exec(t))) return `${m[1].toLowerCase() === 'yes' ? 'بله' : 'نه'} همه`;
+  if (new RegExp(String.raw`^(?:stop|pause)\s+${QB}$`, 'i').test(t)) return 'توقف کوییک‌بوکس';
+  if (new RegExp(String.raw`^(?:continue|resume)\s+${QB}$`, 'i').test(t)) return 'ادامه کوییک‌بوکس';
+  if (new RegExp(String.raw`^${QB}\s+(?:report|audit|log)$`, 'i').test(t)) return 'گزارش کوییک‌بوکس';
+  if (/^(?:permissions|permission list|who is authori[sz]ed)$/i.test(t)) return 'مجوزها';
+  if ((m = /^cost\s+(today|week)$/i.exec(t))) return `هزینه ${m[1].toLowerCase() === 'week' ? 'هفته' : 'امروز'}`;
+  if (/^tax codes$/i.test(t)) return 'کدهای مالیات';
+  if ((m = /^(grant|revoke)\s+(invoices?|statements?)\s+(\+?[\d\s-]{7,20})$/i.exec(t))) {
+    const word = /^invoice/i.test(m[2]) ? 'فاکتور' : 'صورت‌حساب';
+    return `${m[1].toLowerCase() === 'revoke' ? 'لغو ' : ''}مجوز ${word} ${m[3]}`;
+  }
+  if ((m = /^customer\s+(\d+)(\s+#?\s*Q\s*\d+)?$/i.exec(t))) return `مشتری ${m[1]}${m[2] || ''}`;
+  if ((m = /^line\s+(\d+)\s*=\s*(\d+)(\s+#?\s*Q\s*\d+)?$/i.exec(t))) return `سطر ${m[1]} = ${m[2]}${m[3] || ''}`;
+  if ((m = /^tax\s+(\d+)(\s+#?\s*Q\s*\d+)?$/i.exec(t))) return `مالیات ${m[1]}${m[2] || ''}`;
+  return null;
+}
+
 export function parseInvoiceCommand(text) {
+  const asPersian = englishCommand(text);
+  if (asPersian) return parseInvoiceCommand(asPersian);
   const raw = String(text || '').replace(/\r/g, '');
   const first = plain(raw.split('\n')[0]).replace(/^(?:آتوسا|اتوسا)[ ,،:]*/u, '');
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);

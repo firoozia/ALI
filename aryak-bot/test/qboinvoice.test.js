@@ -800,6 +800,8 @@ test('two similar names are two customers and two previews, never merged; «نه
 // ------------------------------------------------------------------------------------------------ the final cut beside each line
 import { Tracker } from '../src/tracker.js';
 import { cutRecords, cutTotal, markCutsInvoiced, unInvoicedCuts, persianDay, cutLine } from '../src/cuts.js';
+import { setOutLang } from '../src/outlang.js';
+setOutLang('fa'); // these tests read the Persian sentences; the English output is tested in english-out.test.js
 
 const CUT_AT = Date.parse('2026-10-30T09:00:00Z'); // 8 Aban 1405 in the books' time zone
 function cutDesk() {

@@ -229,6 +229,8 @@ test('"Mice Interiors Decoration LLC" finds "MICE INTERIORS DECORATION L.L.C" in
 
 // ------------------------------------------------------------------------------------------------ the owner's messages of 2026-11-08, 14:09-14:11
 import { parseChoice, PendingChoice } from '../src/pendingchoice.js';
+import { setOutLang } from '../src/outlang.js';
+setOutLang('fa'); // these tests read the Persian sentences; the English output is tested in english-out.test.js
 
 test('the bot\'s name in Latin and English verbs are stripped: «Atosa send Statement Al afeef» asks for the statement of «Al afeef»', () => {
   for (const t of ['Atosa send Statement Al afeef', 'Atossa give me statement of account Al afeef', 'atousa send SOA Al afeef', 'Atusa make statement Al afeef', 'Atoosa statement Al afeef please']) {

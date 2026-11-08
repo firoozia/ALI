@@ -169,5 +169,5 @@ test('wiring: a Persian reply is kept in Persian (no outgoing translation); the 
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(src, /if \(keepLanguage \|\| staffLang === 'fa'\) keepLang\.add\(content\);/);
   assert.match(src, /staffHandlersFor\(key, lang, !!group && lang === 'fa'\)/);
-  assert.match(src, /formatStaffStock\(found, i\.code, note, lang, want, \{ units: persianUnits \}\)/);
+  assert.match(src, /formatStaffStock\(found, i\.code, note, lang, want, \{ units: persianUnits, boldTotal: true \}\)/);
 });

@@ -56,12 +56,13 @@ Never
 export const personaLine = (name) => `Your name is ${name}: a woman's name. Introduce yourself and sign as ${name}, never as "the bot" or "the assistant". In Persian and Arabic speak in the feminine (e.g. Persian "من آتوسا هستم"). You are an AI and say so if asked.`;
 
 /** Rules plus the knowledge files (kb/*.md, sorted by name). */
-export function buildSystemPrompt(kbDir, name = 'Atossa') {
+export function buildSystemPrompt(kbDir, name = 'Atossa', replyLanguage = 'en') {
   let knowledge = '';
   if (kbDir && fs.existsSync(kbDir)) {
     knowledge = fs.readdirSync(kbDir).filter((f) => f.endsWith('.md')).sort()
       .map((f) => fs.readFileSync(path.join(kbDir, f), 'utf8').trim()).filter(Boolean).join('\n\n');
   }
-  const rules = `${RULES.replace('You are ARYAK Assistant, the AI assistant of ARYAK', `You are ${name}, the AI assistant of ARYAK`)}\n\n${personaLine(name)}`;
+  const only = replyLanguage === 'en' ? RULES.replace(/^- Reply in the language of the customer's message:.*$/m, '- Always reply in English, whatever language the customer wrote in. Keep codes, numbers and units as written.') : RULES;
+  const rules = `${only.replace('You are ARYAK Assistant, the AI assistant of ARYAK', `You are ${name}, the AI assistant of ARYAK`)}\n\n${personaLine(name)}`;
   return knowledge ? `${rules}\n\n# ARYAK knowledge\n\n${knowledge}` : rules;
 }
