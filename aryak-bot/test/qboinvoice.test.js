@@ -633,7 +633,7 @@ test('item by name in any word order, price per piece, the customer checked in Q
   // the customer is not in QuickBooks under that name: the nearest are listed; no customer is made, no invoice
   const t = mk({ customers: [{ Id: '80', DisplayName: 'MICE INTERIORS', Balance: 0 }, { Id: '81', DisplayName: 'MICE DECOR LLC', Balance: 0 }, ...CUSTOMERS], items, extract: async () => extracted, invoices: [] });
   const r = await t.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
-  assert.ok(r.requester.includes('JOWAT PVC GLUE')); // the QuickBooks name of the item, found from "GLUE JOWAT"
+  assert.ok(r.requester.includes('JOWAT PVC GLUE')); // the QuickBooks name of the item, found from "GLUE JOWAT" (one candidate: used, not asked)
   assert.ok(/MICE/.test(r.requester)); // the nearest customers are shown
   assert.equal(t.store.d.n, 0); assert.equal(t.m.posts.length, 0);
   assert.ok(!t.m.calls.some((c) => c.method === 'POST' && /customer/.test(c.url)));
@@ -658,4 +658,42 @@ test('the invoice-send questions speak Persian to the owner and English by defau
   assert.match(chooseText([{ subject: 'A' }]), /^Which group\? Reply with the number:/);
   const warn = confirmText({ read: { ...read, urgent: 2, points: ['x', 'y'], checked: false }, fileName: 'f', group: 'g', alreadySent: 'پیش‌تر', unconfirmed: true, lang: 'fa' });
   assert.match(warn, /این گروه در فهرست تأیید نشده/); assert.match(warn, /بررسی نشده/); assert.match(warn, /۲ ایراد فوری/);
+});
+
+test('one item found by a name in any word order is used and shown; two are asked; the owner\'s price stays with a note beside the QuickBooks price', async () => {
+  const one = [{ Id: '41', Name: 'JOWAT PVC GLUE', Sku: 'JOWAT-25', UnitPrice: 1100, Type: 'Inventory', Active: true }, { Id: '42', Name: 'Hinge 35mm', Sku: 'H35', UnitPrice: 2.5, Type: 'Inventory', Active: true }];
+  const ctx = { items: one };
+  const { pickItem } = await import('../src/qboinvoice.js');
+  assert.deepEqual([pickItem('GLUE JOWAT', ctx).item?.Id, pickItem('GLUE JOWAT', ctx).via], ['41', 'name']);
+  assert.equal(pickItem('jowat glue', ctx).item?.Id, '41');
+  // two candidates: asked, not guessed
+  const two = [...one, { Id: '43', Name: 'JOWAT HOTMELT GLUE', Sku: 'JOWAT-H', UnitPrice: 900, Type: 'Inventory', Active: true }];
+  const r = pickItem('GLUE JOWAT', { items: two });
+  assert.equal(r.item, undefined); assert.match(r.stop(1), /JOWAT PVC GLUE[\s\S]*JOWAT HOTMELT GLUE|JOWAT HOTMELT GLUE[\s\S]*JOWAT PVC GLUE/);
+  // a single word is still not guessed from a longer name
+  assert.equal(pickItem('Hinge', { items: [{ Id: '9', Name: 'Hinge Soft Close', Type: 'Inventory', Active: true }] }).item, undefined);
+  // the preview: the QuickBooks item named, the owner's price 1500 kept, the QuickBooks price 1100 beside it, no stop
+  const extracted = { customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] };
+  const t = mk({ customers: [{ Id: '80', DisplayName: 'MICE INTERIORS DECORATION LLC', Balance: 0 }, ...CUSTOMERS], items: one, extract: async () => extracted, invoices: [{ Id: '801', CustomerRef: { value: '80' }, Line: [{ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { ItemRef: { value: '41' }, TaxCodeRef: { value: '11' } } }] }] });
+  const res = await t.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  const text = res.owner || res.requester;
+  assert.ok(text.includes('JOWAT PVC GLUE')); assert.ok(text.includes('«GLUE JOWAT» را همین کالا گرفتم'));
+  assert.ok(text.includes('قیمت شما 1500 است و قیمت کوییک‌بوکس 1100؛ قیمت شما می‌ماند'));
+  assert.ok(text.includes('@ 1500'));
+  assert.equal(t.m.posts.length, 0); assert.equal(t.store.d.n, 1); // a preview, not an invoice
+});
+
+test('the customer not found: the nearest three among ALL customers (inactive too, LLC and L.L.C ignored), weak ones listed; none says so plainly and suggests creating it', async () => {
+  const items = [{ Id: '41', Name: 'JOWAT PVC GLUE', Sku: 'J', UnitPrice: 1100, Type: 'Inventory', Active: true }];
+  const extracted = { customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] };
+  const near = mk({ customers: [{ Id: '90', DisplayName: 'MICE INTERIOR & DECOR L.L.C', Balance: 0, Active: false }, { Id: '91', DisplayName: 'INTERIORS PLUS', Balance: 0 }, { Id: '92', DisplayName: 'DECORATION HOUSE', Balance: 0 }, { Id: '93', DisplayName: 'ZED TRADING', Balance: 0 }], items, extract: async () => extracted, invoices: [] });
+  const r = await near.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  assert.match(r.requester, /نزدیک‌ترین‌ها/);
+  assert.match(r.requester, /MICE INTERIOR & DECOR L\.L\.C \(غیرفعال\)/);
+  assert.ok(!r.requester.includes('ZED TRADING'));
+  assert.equal(near.store.d.n, 0); assert.equal(near.m.posts.length, 0);
+  const none = mk({ customers: [{ Id: '93', DisplayName: 'ZED TRADING', Balance: 0 }], items, extract: async () => extracted, invoices: [] });
+  const r2 = await none.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  assert.match(r2.requester, /خودتان در کوییک‌بوکس بسازید \(من مشتری نمی‌سازم\)/);
+  assert.ok(!none.m.calls.some((c) => c.method === 'POST' && /customer/.test(c.url)));
 });

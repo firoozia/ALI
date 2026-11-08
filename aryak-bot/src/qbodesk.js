@@ -7,7 +7,7 @@ import path from 'node:path';
 import { clearWinner, customerRowFor, nameKey, rankCustomers, rowGroups } from './customergroups.js';
 import { buildStatementData, loadCustomerData, money, statementPdf } from './qbostatement.js';
 import { groupAllowed, shadowGroup } from './guard.js';
-import { pickSpoken } from './translit.js';
+import { pickSpoken, rankNames } from './translit.js';
 import { hasPeriod } from './period.js';
 
 const fa = (s) => String(s).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
@@ -249,7 +249,16 @@ export class QboDesk {
     hits = hits.filter((c) => !seen.has(String(c.Id)) && seen.add(String(c.Id)));
     if (hits.length === 1) { const name = hits[0].DisplayName || hits[0].CompanyName; return { ours: typed, id: String(hits[0].Id), name, loose: true, typed }; }
     if (hits.length > 1) return { ours: typed, candidates: hits.map((c) => c.DisplayName || c.CompanyName).slice(0, 8) };
-    return { ours: typed, options: matchOne(typed, all).options || [] };
+    const options = matchOne(typed, all).options || [];
+    return { ours: typed, options: options.length ? options : await this.nearestCustomers(typed) };
+  }
+
+  /** The three nearest names among ALL customers, inactive ones too, by token overlap and sound (case, LLC and L.L.C do not matter); even weak ones are listed. */
+  async nearestCustomers(typed) {
+    let rows = [];
+    try { rows = await this.qbo.query('select Id, DisplayName, CompanyName, FullyQualifiedName, Active from Customer where Active in (true, false)'); } catch { rows = await this.customers(); }
+    const people = rows.map((c) => ({ name: c.DisplayName || c.CompanyName || '', alts: [c.CompanyName, c.FullyQualifiedName].filter((x) => x && x !== c.DisplayName), id: String(c.Id), inactive: c.Active === false }));
+    return rankNames(typed, people).filter((r) => r.score > 0.2).slice(0, 3).map((r) => ({ id: r.key.id, name: r.name, label: r.key.inactive ? `${r.name} (غیرفعال)` : r.name }));
   }
 
   /** One statement to the test group (or, for an authorized person, to that person's own private chat). Returns the lines to tell the asker. */

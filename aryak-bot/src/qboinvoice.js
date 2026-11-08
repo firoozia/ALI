@@ -197,6 +197,8 @@ export function pickItem(name, ctx = {}) {
   if (!cands.length) return { stop: (n) => { const close = closeItems(items, name); return `سطر ${fa(n)}: کالای «${name}» در کوییک‌بوکس دقیقاً پیدا نشد؛ اول آن را معرفی کنید.${close.length ? ` نزدیک‌ها: ${close.join(' | ')}` : ''}`; } };
   // a bare code ("108") that only one PVC item carries is that item, even after its SKU became PVC-108 (the code is the number in its name)
   if (!exact.length && cands.length === 1 && /^\d{3,4}$/.test(String(name).trim()) && pvcCode(cands[0]) === Number(String(name).trim())) return { item: cands[0], via: 'code' };
+  // a NAME of two or more words (in any order) that exactly ONE active item holds is that item: no guess is involved; ask only when 2+ remain
+  if (!exact.length && cands.length === 1 && nameKey(name).split(' ').filter(Boolean).length >= 2) return { item: cands[0], via: 'name' };
   const hist = ctx.history ? cands.filter((i) => ctx.history.has(String(i.Id))) : [];
   if (hist.length === 1) return { item: hist[0], via: 'history' };
   return { stop: (n) => `سطر ${fa(n)}: «${name}» چند کالا دارد و بین آن‌ها حدس نمی‌زنم:\n${cands.map((i, k) => `   ${fa(k + 1)}) ${itemLabel(i)} — قیمت ${Number(i.UnitPrice) > 0 ? i.UnitPrice : 'ندارد'}`).join('\n')}\nبنویسید: کد ${name} = <نام دقیق کالا>` };
@@ -219,7 +221,7 @@ export function resolveEntries(entries, ctx) {
     const { c, r } = ok[0];
     if (!(c.qty > 0 && c.qty <= 100000)) { stops.push(`سطر ${fa(n)}: تعداد درست نیست`); return; }
     if (c.price !== null && c.price !== undefined && !(c.price >= 0 && c.price <= 10000000)) { stops.push(`سطر ${fa(n)}: قیمت درست نیست`); return; }
-    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via });
+    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via, typed: c.item });
   });
   return { lines, stops };
 }
@@ -478,7 +480,7 @@ export class QboInvoiceDesk {
     if (!cust.id) {
       if (cust.candidates) problems.customer = `مشتری «${cust.ours}» با چند مشتری می‌خواند و بین آن‌ها حدس نمی‌زنم:\n${cust.candidates.map((c, i) => `   ${fa(i + 1)}) ${c}`).join('\n')}\n   نام کامل یکی را بنویسید.`;
       else {
-        const how = cust.ambiguous ? `چند مشتری با این نام دقیق هست: ${cust.ambiguous.map((c) => c.DisplayName).join(' | ')}` : cust.options?.length ? `نزدیک‌ها: ${cust.options.map((o) => o.name).join(' | ')}` : 'مشتری مشابهی هم پیدا نشد';
+        const how = cust.ambiguous ? `چند مشتری با این نام دقیق هست: ${cust.ambiguous.map((c) => c.DisplayName).join(' | ')}` : cust.options?.length ? `نزدیک‌ترین‌ها (حتی اگر ضعیف): ${cust.options.map((o) => o.label || o.name).join(' | ')}` : 'مشتری مشابهی هم میان همهٔ مشتری‌های کوییک‌بوکس (فعال و غیرفعال) پیدا نشد؛ اگر مشتری تازه است، خودتان در کوییک‌بوکس بسازید (من مشتری نمی‌سازم) و دوباره بنویسید';
         problems.customer = `مشتری «${cust.ours}» با نام دقیق یا انتخاب تأییدشدهٔ مالک در کوییک‌بوکس نیست؛ اول معرفی شود (تطبیق کوییک‌بوکس). ${how}`;
       }
     }
@@ -498,11 +500,12 @@ export class QboInvoiceDesk {
       const amount = fils(l.qty * price);
       const w = [];
       if (listed !== null && l.price !== null && l.price < listed - 0.005) w.push(`قیمت کمتر از قیمت کوییک‌بوکس (${listed})`);
+      if (listed !== null && l.price !== null && l.price > listed + 0.005) w.push(`قیمت شما ${l.price} است و قیمت کوییک‌بوکس ${listed}؛ قیمت شما می‌ماند`); // a note, not a stop
       const code = l.item.Sku || l.item.Name;
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
       if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`);
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
-      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via });
+      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '' });
     }
     let tax = null;
     if (cust.id) { tax = await this.taxFor(cust, cat, recent, lines.map((l) => l.item)); if (tax.error) problems.tax = tax.error; } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
@@ -521,6 +524,7 @@ export class QboInvoiceDesk {
     const taxReal = !!problems.tax && !!cust.id;
     if (problems.tax && !taxReal) parts.push(`مالیات:\n${problems.tax}`);
     if (taxReal && requester === 'owner') parts.push(`مالیات:\n${problems.tax}`);
+    if (parts.length && out.length) parts.push(`کالاهای فهمیده‌شده (تا اینجا درست است):\n${out.map((o, i) => `${fa(i + 1)}. ${o.name} × ${o.qty} @ ${o.price}${o.via === 'name' && o.typed ? ` («${o.typed}» را همین کالا گرفتم)` : ''}`).join('\n')}${warnings.length ? `\n${warnings.join('\n')}` : ''}`);
     if (parts.length || (taxReal && requester !== 'owner')) {
       const message = `فاکتور ساخته نمی‌شود؛ این‌ها را درست کنید:\n${parts.join('\n\n')}`;
       if (taxReal && requester !== 'owner') {
@@ -568,7 +572,7 @@ export class QboInvoiceDesk {
       `پیش‌نمایش فاکتور #${p.id} (درخواست از ${who}) — هنوز چیزی در کوییک‌بوکس ساخته نشده`,
       `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
       ...(p.docNumber ? [`شمارهٔ فاکتور: ${p.docNumber}`] : []),
-      ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : ''}`),
+      ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : ''}`),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
       p.tax.source === 'invoices' ? `مالیات: ${p.tax.name} ${p.tax.rate}٪ (از ${fa(p.tax.n)} سطر از ${fa(p.tax.total)} سطر فاکتورهای قبلی): ${money(p.vat)}` : `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'item' ? '، کد خود کالا' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
       `جمع کل: ${money(p.total)}${p.currency ? ` ${p.currency}` : ''}`,
