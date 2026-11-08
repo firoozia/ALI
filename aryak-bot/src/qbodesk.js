@@ -7,6 +7,8 @@ import path from 'node:path';
 import { clearWinner, customerRowFor, nameKey, rankCustomers, rowGroups } from './customergroups.js';
 import { buildStatementData, loadCustomerData, money, statementPdf } from './qbostatement.js';
 import { groupAllowed, shadowGroup } from './guard.js';
+import { pickSpoken } from './translit.js';
+import { hasPeriod } from './period.js';
 
 const fa = (s) => String(s).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const latin = (s) => String(s).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
@@ -25,7 +27,10 @@ export function parseQboCommand(text) {
   let m = /^تطبیق\s+(\d+)\s*=\s*(\d+)$/u.exec(s);
   if (m) return { type: 'pick', n: Number(m[1]), option: Number(m[2]) };
   if ((m = /^تطبیق\s+(\d+)\s*نه$/u.exec(s))) return { type: 'skip', n: Number(m[1]) };
-  if ((m = /^صورت\s*حساب\s+(.+)$/u.exec(s))) return m[1].trim() === 'همه' ? { type: 'all' } : { type: 'statement', name: m[1].trim() };
+  if ((m = /^صورت\s*حساب\s+(.+)$/u.exec(s))) {
+    if (m[1].trim() !== 'همه' && hasPeriod(m[1])) return null; // with a period it is the free-form request (period.js), not a customer name
+    return m[1].trim() === 'همه' ? { type: 'all' } : { type: 'statement', name: m[1].trim() };
+  }
   return null;
 }
 
@@ -248,6 +253,49 @@ export class QboDesk {
   }
 
   /** One statement to the test group (or, for an authorized person, to that person's own private chat). Returns the lines to tell the asker. */
+  /**
+   * A customer from a name SPOKEN or typed loosely: the exact and loose rules first, then a sound-alike ranking of the QuickBooks names, the approved
+   * list and the aliases (Persian "پالم برد" against "PALM BIRD TRADING LLC"). { id, name } for one clear match; { many: [names] } to ask; { nearest: [names] }.
+   */
+  async resolveSpoken(typed) {
+    const r = await this.resolveLoose(typed);
+    if (r.id) return { id: r.id, name: r.name || r.ours, via: r.loose ? 'words' : 'exact' };
+    const all = await this.customers();
+    const names = all.map((c) => ({ name: c.DisplayName || c.CompanyName || '', alts: [c.CompanyName, c.FullyQualifiedName].filter((x) => x && x !== c.DisplayName), id: String(c.Id) }));
+    for (const row of this.list.rows()) names.push({ name: row.customer, alts: [], id: '', approved: true }); // the approved list (Persian names too)
+    const picked = pickSpoken(typed, names, { strong: 0.7 });
+    const pickName = (x) => { const hit = names.find((n) => n.name === x.name && n.id) || null; return hit; };
+    if (picked.kind === 'one') {
+      const hit = pickName(picked.best);
+      if (hit) return { id: hit.id, name: hit.name, via: 'sound' };
+      const viaRow = await this.resolveStrict(picked.best.name); // an approved-list name: its QuickBooks customer, if it has one
+      if (viaRow.id) return { id: viaRow.id, name: viaRow.name || picked.best.name, via: 'sound' };
+    }
+    const cands = (picked.kind === 'many' ? picked.candidates : picked.kind === 'one' ? [picked.best] : []).map((c) => c.name);
+    if (cands.length > 1) return { many: [...new Set(cands)].slice(0, 5) };
+    return { nearest: [...new Set((picked.nearest || picked.ranked.slice(0, 3)).map((c) => c.name))].slice(0, 3) };
+  }
+
+  /**
+   * A statement for a PERIOD of a customer named in any words, sent to [privateJid] (the asker's own chat). Returns { ok, text }; { ok: false, ask: true } when the
+   * customer must be chosen first (a numbered list) or was not found (the three nearest).
+   */
+  async statementFor(typed, { privateJid, period = null } = {}) {
+    const found = await this.resolveSpoken(typed);
+    if (!found.id) {
+      if (found.many) return { ok: false, ask: true, text: `چند مشتری به «${typed}» می‌خورد؛ شمارهٔ درست را بنویسید:\n${found.many.map((n, i) => `${fa(i + 1)}. ${n}`).join('\n')}`, options: found.many };
+      return { ok: false, ask: true, text: `مشتری‌ای به نام «${typed}» پیدا نشد. نزدیک‌ترین‌ها:\n${(found.nearest || []).map((n, i) => `${fa(i + 1)}. ${n}`).join('\n') || '—'}\nنام درست را بنویسید یا بگویید.`, options: found.nearest || [] };
+    }
+    if (!privateJid) return { ok: false, text: 'مقصد صورت‌حساب مشخص نیست؛ چیزی فرستاده نشد.' };
+    const data = buildStatementData({ ...(await loadCustomerData(this.qbo, found.id)), today: this.today(), ...(period ? { from: period.from, to: period.to } : {}) });
+    const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox' });
+    const safe = (data.customer.name || found.name).replace(/[^\w.-]+/g, '_').slice(0, 40) || 'customer';
+    const cur = data.currency ? `${data.currency} ` : '';
+    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${period.from} to ${period.to}` : 'current'} - balance ${cur}${money(data.closing)}`;
+    await this.post(privateJid, pdf, `statement-${safe}${period ? `-${period.label}` : ''}.pdf`, caption);
+    return { ok: true, name: data.customer.name || found.name, text: `صورت‌حساب «${data.customer.name || found.name}»${period ? ` از ${fa(period.from)} تا ${fa(period.to)}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };
+  }
+
   async statementOne(typed, privateJid = null) {
     const r = await this.resolve(typed);
     if (!r.id) {

@@ -69,6 +69,7 @@ import { setVisionMeter } from './vision.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
+import { mergeTranscripts, isShortCorrection } from './voicemerge.js';
 import { codeKnownInItems } from './qboinvoice.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
@@ -647,6 +648,16 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_edge': return qboBulk.planEdgeList();
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
+    case 'statement_nl': {
+      if (ic.unsupported) return ['ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'];
+      if (!ic.customer) { const out = ['صورت‌حساب کدام مشتری؟ نام را بنویسید یا بگویید.']; out.clarify = true; return out; }
+      const blocked = qboInvoices.guard();
+      if (blocked) return [blocked];
+      const x = await qboDesk.statementFor(ic.customer, { privateJid: ownIds()[0], period: ic.period });
+      const out = [x.text];
+      if (x.ask) out.clarify = true; // the next short answer completes this request
+      return out;
+    }
     case 'bulk_edge_names': return qboBulk.planEdgeNames();
     case 'bulk_undo': return qboBulk.planUndo({ scope: ic.scope, source: ic.source });
     case 'bulk_catalog': return qboBulk.planCatalog({ edge: ic.edge !== false });
@@ -1257,13 +1268,25 @@ async function handleStaffChat(raw, chatId, group) {
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  // the echo of a transcript (merged or not), then by its class: a question runs, a change waits for the yes
+  const actOnTranscript = async (said, lang) => {
+    const pv = planVoice({ transcript: said, lang, priv: true });
+    await sock.sendMessage(chatId, { text: `${isSelf ? '🤖 ' : ''}${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}` }, { quoted: raw });
+    if (pv.mode === 'ask') { voiceGate.set(gateKey, said, 'ask'); trace(where, role, 'voice note: it would change something, waiting for the yes'); return true; }
+    trace(where, role, 'voice note: a plain question, run at once as typed');
+    return rerunAsText(said);
+  };
   const waiting = text && !audio ? voiceGate.get(gateKey) : null;
   if (waiting) {
-    voiceGate.clear(gateKey);
     const k = answerKind(text);
-    if (k === 'yes') { trace(where, role, 'voice note: the yes came, the transcript is run as typed'); return rerunAsText(waiting.text); }
-    if (k === 'no') { await reply(staffLang === 'en' ? 'Cancelled.' : 'لغو شد.'); return true; }
-    trace(where, role, 'voice note: a corrected text replaces the transcript');
+    if (k === 'yes' && waiting.kind === 'ask') { voiceGate.clear(gateKey); trace(where, role, 'voice note: the yes came, the transcript is run as typed'); return rerunAsText(waiting.text); }
+    if (k === 'no') { voiceGate.clear(gateKey); if (waiting.kind === 'ask') { await reply(staffLang === 'en' ? 'Cancelled.' : 'لغو شد.'); return true; } }
+    else if (isShortCorrection(text) && !parseInvoiceCommand(text) && !parseQboCommand(text)) {
+      // a short reply corrects a part of the waiting request: merged into it, never run on its own
+      const merged = await mergeTranscripts({ client, config, original: waiting.text, correction: text });
+      if (merged) { voiceGate.clear(gateKey); trace(where, role, 'voice note: a short reply was merged into the waiting request'); return actOnTranscript(merged, detectLang(merged, 'fa')); }
+      voiceGate.clear(gateKey);
+    } else { voiceGate.clear(gateKey); trace(where, role, 'voice note: a corrected text replaces the transcript'); }
   }
   // The sales manager answers a request about stock ("#12 yes", a reply to the question, or the only open one).
   if (!group && avail.open.size) {
@@ -1378,7 +1401,11 @@ async function handleStaffChat(raw, chatId, group) {
       qboNames.finish = async (parts) => { for (const part of parts) await reply(part); }; // the report at the end of a long update
       qboBulk.finish = qboNames.finish;
       const parts = await qboInvoiceCommand(ic, text);
-      if (parts) { for (const part of parts) await reply(part); return true; } // null: not ours (the older price list answers)
+      if (parts) {
+        for (const part of parts) await reply(part);
+        if (parts.clarify) voiceGate.set(gateKey, text, 'clarify'); // "which customer?": a short answer, typed or spoken, is merged into this request
+        return true;
+      } // null: not ours (the older price list answers)
     }
   }
   // "وضعیت سفارش‌ها" (his own chat, owner only): counts of orders by source and of invoices in each state, last seven days, no names.
@@ -1508,6 +1535,11 @@ async function handleStaffChat(raw, chatId, group) {
     const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
     const spoken = u.lang || (u.transcript ? detectLang(u.transcript) : 'fa');
     // the transcript is echoed first; a plain question then runs at once, what would change something waits for the yes
+    const pendingG = voiceGate.get(gateKey);
+    if (pendingG && u.transcript && isShortCorrection(u.transcript)) {
+      const merged = await mergeTranscripts({ client, config, original: pendingG.text, correction: u.transcript.trim() });
+      if (merged) { voiceGate.clear(gateKey); trace(where, role, 'voice note: a short voice reply was merged into the waiting request'); return actOnTranscript(merged, spoken); }
+    }
     const pv = planVoice({ transcript: u.transcript, lang: spoken, explicit, named, priv: !group, unclear: u.reason === 'unclear' });
     if (pv.mode !== 'old') {
       await sock.sendMessage(chatId, { text: `${isSelf ? '🤖 ' : ''}${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}` }, { quoted: raw });

@@ -24,14 +24,23 @@ const addr = (a) => (a ? [a.Line1, a.Line2, a.Line3, [a.City, a.CountrySubDivisi
  * The statement as plain data. [company]: CompanyInfo; [customer]: Customer; [invoices], [payments], [credits]: all the customer's rows;
  * [today]: yyyy-mm-dd; [days]: the length of the period.
  */
-export function buildStatementData({ company, customer, preferences = null, invoices = [], payments = [], credits = [], today, days = 90 }) {
-  const end = dayNum(today);
-  const start = end - days;
+export function buildStatementData({ company, customer, preferences = null, invoices = [], payments = [], credits = [], today, days = 90, from = '', to = '' }) {
+  // [from], [to]: a chosen period (yyyy-mm-dd). The balance at its end is today's balance less what happened after it; the opening balance is that
+  // closing less the activity of the period. A period that ends today (or later) is the ordinary statement.
+  const historical = !!to && dayNum(to) < dayNum(today);
+  const end = historical ? dayNum(to) : dayNum(today);
+  const start = from ? dayNum(from) : end - days;
   const startIso = new Date(start * DAY).toISOString().slice(0, 10);
   const open = invoices.filter((i) => fils(i.Balance) !== 0);
   const unappliedPayments = payments.reduce((s, p) => s + fils(p.UnappliedAmt), 0);
   const creditBalance = credits.reduce((s, c) => s + fils(c.Balance), 0);
-  const closing = open.reduce((s, i) => s + fils(i.Balance), 0) - unappliedPayments - creditBalance;
+  const closingNow = open.reduce((s, i) => s + fils(i.Balance), 0) - unappliedPayments - creditBalance;
+  const after = historical
+    ? invoices.filter((t) => dayNum(t.TxnDate) > end).reduce((s, t) => s + fils(t.TotalAmt), 0)
+      - payments.filter((t) => dayNum(t.TxnDate) > end).reduce((s, t) => s + fils(t.TotalAmt), 0)
+      - credits.filter((t) => dayNum(t.TxnDate) > end).reduce((s, t) => s + fils(t.TotalAmt), 0)
+    : 0;
+  const closing = closingNow - after;
   const inPeriod = (t) => { const d = dayNum(t.TxnDate); return d >= start && d <= end; };
   const lines = [
     ...invoices.filter(inPeriod).map((t) => ({ date: t.TxnDate, type: 'Invoice', ref: t.DocNumber || '', due: t.DueDate || '', amount: fils(t.TotalAmt) })),
@@ -60,10 +69,10 @@ export function buildStatementData({ company, customer, preferences = null, invo
   return {
     company: { name: company?.CompanyName || company?.LegalName || '', lines: addr(company?.CompanyAddr), email: company?.Email?.Address || '' },
     customer: { name: customer?.DisplayName || customer?.CompanyName || '', lines: addr(customer?.BillAddr) },
-    today, start: startIso, currency, opening, lines, closing, ageing, credit, openItems,
+    today, start: startIso, periodEnd: new Date(end * DAY).toISOString().slice(0, 10), historical, currency, opening, lines, closing, ageing, credit, openItems,
     ageingTotal: Object.values(ageing).reduce((s, v) => s + v, 0) + credit,
-    balanceCheck: { qbo: qbBalance, matches: qbBalance === null ? null : qbBalance === closing },
-    warnings: foreign ? [`Some transactions are in another currency than ${currency}; their amounts are in the transaction currency.`] : [],
+    balanceCheck: { qbo: qbBalance, matches: historical || qbBalance === null ? null : qbBalance === closing },
+    warnings: [...(historical ? ['Balance at the end of the period = today\'s balance less the invoices, payments and credit memos dated after it.'] : []), ...(foreign ? [`Some transactions are in another currency than ${currency}; their amounts are in the transaction currency.`] : [])],
   };
 }
 
@@ -99,7 +108,7 @@ export function statementPdf(data, { sandbox = false } = {}) {
       pdf.text(L, y + 14, data.customer.name || '-', { size: 12, bold: true });
       data.customer.lines.slice(0, 4).forEach((l, i) => pdf.text(L, y + 28 + i * 12, l, { size: 9, gray: 0.3 }));
       pdf.text(R, y, 'Statement period', { size: 9, gray: 0.4, align: 'right' });
-      pdf.text(R, y + 14, `${dmy(data.start)} to ${dmy(data.today)}`, { size: 10, align: 'right' });
+      pdf.text(R, y + 14, `${dmy(data.start)} to ${dmy(data.periodEnd || data.today)}`, { size: 10, align: 'right' });
       pdf.box(330, y + 28, R - 330, 44, 0.94);
       pdf.text(340, y + 44, `Balance due${cur}`, { size: 9, gray: 0.35 });
       pdf.text(R - 10, y + 64, money(data.closing), { size: 15, bold: true, align: 'right' });
@@ -131,9 +140,10 @@ export function statementPdf(data, { sandbox = false } = {}) {
     }
     if (idx === total - 1) {
       pdf.line(L, y - 6, R, y - 6, 0.6);
-      pdf.text(cols.type, y + 6, 'Balance due', { size: 10, bold: true });
+      pdf.text(cols.type, y + 6, data.historical ? 'Balance at end of period' : 'Balance due', { size: 10, bold: true });
       pdf.text(cols.balance, y + 6, `${currency ? `${currency} ` : ''}${money(data.closing)}`, { size: 10, bold: true, align: 'right' });
       y += 36;
+      if (data.historical) { for (const [i, w] of data.warnings.entries()) pdf.text(L, y + i * 11, w, { size: 8, gray: 0.4 }); return; } // no ageing for a past period
       const a = data.ageing;
       const heads = ['Current', '1-30 days', '31-60 days', '61-90 days', 'Over 90 days', 'Total'];
       const vals = [a.current, a.d1_30, a.d31_60, a.d61_90, a.d91, data.ageingTotal];

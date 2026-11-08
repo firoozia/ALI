@@ -8,8 +8,11 @@ import { parseTrackerCommand } from './tracker.js';
 import { parsePriceCommand } from './prices.js';
 import { looksLikeTeaching } from './teach.js';
 import { answerKind } from './voice.js';
+import { parseStatementRequest } from './period.js';
+import { parseQboCommand } from './qbodesk.js';
 
-const READ_ONLY = new Set(['audit', 'tax_list', 'auth_list', 'cost_report', 'price_list']);
+const READ_ONLY = new Set(['audit', 'tax_list', 'auth_list', 'cost_report', 'price_list', 'statement_nl']);
+const dubaiToday = () => new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
 const SEND = /(?:ارسال|بفرست|بفرستید|بفرستین|send|forward)/iu;
 const INVOICE = /(?:فاکتور|invoice|صورت\s*حساب)/iu;
 
@@ -19,6 +22,10 @@ export function voiceChangesSomething(text) {
   if (!t) return false;
   const kind = answerKind(t);
   if (kind === 'yes' || kind === 'no') return true; // a spoken yes or no never approves anything by itself
+  // a statement or a report only READS (the statement goes to the asker's own chat): it runs after the echo, no yes needed
+  if (parseStatementRequest(t, dubaiToday())) return false;
+  const qc = parseQboCommand(t);
+  if (qc && ['status', 'statement'].includes(qc.type)) return false;
   const ic = parseInvoiceCommand(t);
   if (ic) return !READ_ONLY.has(ic.type);
   if (looksLikeInvoiceRequest(t)) return true;
@@ -73,7 +80,8 @@ export function looksLikeCorrection(text) {
 /** What is waiting for the speaker's «بله»: one transcript per person and chat. */
 export class VoiceGate {
   constructor({ ttlMs = 10 * 60 * 1000, now = () => Date.now() } = {}) { this.ttlMs = ttlMs; this.now = now; this.map = new Map(); }
-  set(key, text) { this.map.set(key, { text, at: this.now() }); if (this.map.size > 200) this.map.delete(this.map.keys().next().value); }
+  /** [kind]: 'ask' (a request waiting for its yes) or 'clarify' (a request that ran and needs one more answer, such as which customer). */
+  set(key, text, kind = 'ask') { this.map.set(key, { text, kind, at: this.now() }); if (this.map.size > 200) this.map.delete(this.map.keys().next().value); }
   get(key) { const v = this.map.get(key); if (!v) return null; if (this.now() - v.at > this.ttlMs) { this.map.delete(key); return null; } return v; }
   clear(key) { this.map.delete(key); }
 }
