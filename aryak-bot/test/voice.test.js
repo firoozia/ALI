@@ -216,3 +216,17 @@ test('the declared input rate is read from the Opus header', () => {
   assert.equal(opusInputRate(head), 16000);
   assert.equal(opusInputRate(Buffer.from('not opus at all')), 0);
 });
+
+test('a quiet group: the note is only heard; when it does not name her nothing more is paid and nothing is said; when it does, it is understood as always', async () => {
+  const buf = Buffer.from('ogg'); let intentCalls = 0;
+  const client = { beta: { messages: { create: async () => { intentCalls += 1; return { content: [{ type: 'text', text: JSON.stringify({ intent: 'stock', request_text: 'کد 109 چقدر داریم؟', confirm_text: 'x', codes: ['109'], language: 'fa' }) }] }; } } } };
+  const base = { buffer: buf, seconds: 5, config: { model: 'm', speechMinConfidence: 0.5, botNames: ['آتوسا', 'atossa'] }, client, requireName: true };
+  const other = await understand({ ...base, transcribe: async () => ({ text: 'کد صد و نه چقدر داریم', confidence: 0.9 }) });
+  assert.equal(other.ok, false); assert.equal(other.reason, 'not addressed'); assert.equal(intentCalls, 0);
+  assert.equal(voiceAction({ u: other, explicit: false, namedInTranscript: nameHeard(other.transcript, ['آتوسا']) }), 'silent');
+  for (const said of ['آتوسا کد صد و نه چقدر داریم', 'آتوسا جان کد ۱۰۹', 'Atossa code 109', 'Atosa 109']) {
+    const named = await understand({ ...base, transcribe: async () => ({ text: said, confidence: 0.9 }) });
+    assert.equal(named.ok, true, said);
+  }
+  assert.equal(intentCalls, 4);
+});

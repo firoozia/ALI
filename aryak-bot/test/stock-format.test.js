@@ -149,3 +149,25 @@ test('open pieces: up to six are listed, more are counted, the total stays', () 
   assert.match(one([1, 2, 3, 4, 5, 6, 7]), /باز: 1 m و 2 m و 3 m و 4 m و 5 m و 6 m و 1 قطعهٔ دیگر \(کل 100 m\)/);
   assert.match(one(Array(20).fill(1)), /و 14 قطعهٔ دیگر \(کل 100 m\)/);
 });
+
+test('a Persian answer for a company group: every unit is a Persian word, nothing in English (units option)', () => {
+  const packs = { ...low, free: 1104.9, reserved: 0, sizes: [{ size: '0.30*1400', free: 1104.9, packages: 14, open: 4, limit: 200, packs: [{ qty: 120, count: 9 }], pieces: [5, 5, 3.7, 11.2] }], locations: ['Warehouse 2: 5', 'Showroom: 1'] };
+  const t = formatStaffStock(packs, '109', '', 'fa', null, { units: true });
+  assert.match(t, /- آزاد: 1104\.9 متر/); assert.match(t, /- رزرو: 0 متر/); assert.match(t, /- حداقل موجودی: 200 متر/);
+  assert.match(t, /- بسته: 9 بسته 120 متر \+ باز: 5 متر و 5 متر و 3\.7 متر و 11\.2 متر \(کل 1104\.9 متر\)/);
+  assert.ok(!/[ ]m\b/.test(t), t); // no Latin unit left
+  assert.match(t, /- محل: Warehouse 2، Showroom$/m); // the places stay as the sheet has them
+  // without the option the older answer keeps the sheet's own unit
+  assert.match(formatStaffStock(packs, '109', '', 'fa'), /- آزاد: 1104\.9 m/);
+  // a requested quantity is in Persian words too
+  const asked = formatStaffStock(packs, '109', '', 'fa', { quantity: 30, unit: 'm' }, { units: true });
+  assert.match(asked, /- درخواست: 30 متر، آزاد: 1104\.9 متر/);
+});
+
+test('wiring: a Persian reply is kept in Persian (no outgoing translation); the group stock answer asks for Persian unit words', async () => {
+  const fs = await import('node:fs'); const path = await import('node:path');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(src, /if \(keepLanguage \|\| staffLang === 'fa'\) keepLang\.add\(content\);/);
+  assert.match(src, /staffHandlersFor\(key, lang, !!group && lang === 'fa'\)/);
+  assert.match(src, /formatStaffStock\(found, i\.code, note, lang, want, \{ units: persianUnits \}\)/);
+});

@@ -145,7 +145,7 @@ export function normalizeSpokenNumbers(text) {
 }
 
 /** Ways the recogniser writes the assistant's name; "آدرس" counts only right before موجودی or کد. */
-const NAME_FORMS = ['آتوسا', 'اتوسا', 'اتوصا', 'آتوصا', 'آتوسه', 'اتوسه', 'atossa', 'atosa'].map((n) => normalizeLetters(n));
+const NAME_FORMS = ['آتوسا', 'اتوسا', 'اتوصا', 'آتوصا', 'آتوسه', 'اتوسه', 'atossa', 'atosa', 'atousa', 'atoosa', 'atusa'].map((n) => normalizeLetters(n));
 export function nameHeard(transcript, names = []) {
   const words = normalizeDigits(normalizeLetters(transcript)).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const known = new Set([...NAME_FORMS, ...names.map(normalizeLetters)]);
@@ -154,13 +154,15 @@ export function nameHeard(transcript, names = []) {
   return i >= 0 && ['موجودی', 'کد'].includes(words[i + 1]);
 }
 
-export async function understand({ buffer, seconds = 0, config, client, transcribe, log = () => {}, forceLang = '' }) {
+export async function understand({ buffer, seconds = 0, config, client, transcribe, log = () => {}, forceLang = '', requireName = false }) {
   if (!buffer?.length) return { ok: false, reason: 'empty' };
   if (buffer.length > 9 * 1024 * 1024 || seconds > MAX_SECONDS) return { ok: false, reason: 'too long' };
   let t;
   try { t = await transcribe(buffer); } catch (e) { log(`voice: speech-to-text failed: ${e.message}`); return { ok: false, reason: 'speech error' }; }
   log(`voice: transcript ${t.text.length} characters, confidence ${Math.round(t.confidence * 100) / 100}${t.language ? `, language ${t.language}` : ''}`);
   if (!t.text.trim() || t.confidence < (config.speechMinConfidence ?? 0.5)) return { ok: false, reason: 'unclear', transcript: t.text };
+  // a quiet group: the note was only heard to see whether it names her; if it does not, nothing more is paid and nothing is said
+  if (requireName && !nameHeard(t.text, config.botNames || [])) return { ok: false, reason: 'not addressed', transcript: t.text };
   let i;
   try { i = await extractIntent({ client, config, transcript: normalizeSpokenNumbers(t.text), forceLang }); } catch (e) { log(`voice: intent failed: ${e.message}`); return { ok: false, reason: 'intent error' }; }
   if (!i) { log('voice: no stock or order request found'); return { ok: false, reason: 'no intent', transcript: t.text }; }

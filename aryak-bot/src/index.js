@@ -1169,10 +1169,10 @@ async function understandPhotos(messagesWithImages, caption, fallbackLang, force
 }
 
 /** Reads one voice note: download, speech to text, intent. Never throws. */
-async function understandAudio(load, seconds, forceLang = '') {
+async function understandAudio(load, seconds, forceLang = '', requireName = false) {
   // A long note is not even downloaded.
   if (seconds > MAX_SECONDS) { logger.info(`voice: ${seconds} s is too long, skipped`); return { ok: false, reason: 'too long' }; }
-  try { const buffer = await load(); cost.voice(seconds); return await understand({ buffer, seconds, config, client, transcribe: async (...a) => { usage.count(usageCtx.getStore()?.group || '-', 'speech'); return transcribe(...a); }, forceLang, log: (s) => logger.info(s) }); }
+  try { const buffer = await load(); cost.voice(seconds); return await understand({ buffer, seconds, config, client, transcribe: async (...a) => { usage.count(usageCtx.getStore()?.group || '-', 'speech'); return transcribe(...a); }, forceLang, requireName, log: (s) => logger.info(s) }); }
   catch (e) { logger.warn(`voice failed: ${e.message}`); return { ok: false, reason: 'error' }; }
 }
 
@@ -1229,7 +1229,7 @@ const jidDigits = (j) => String(j || '').replace(/@.*$/, '').replace(/:\d+$/, ''
 const ownIds = () => [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
 const textOf = (content) => content?.conversation || content?.extendedTextMessage?.text || '';
 
-const staffHandlersFor = (key, lang = 'fa') => ({
+const staffHandlersFor = (key, lang = 'fa', persianUnits = false) => ({
   staff_stock: async (i) => {
     try {
       const want = Number(i.quantity) > 0 ? { quantity: Number(i.quantity), unit: i.quantity_unit || '' } : null;
@@ -1244,7 +1244,7 @@ const staffHandlersFor = (key, lang = 'fa') => ({
       // Which group was meant? The next message of the same person answers, even without the name.
       if (found.ambiguous) followDesk.set(key, { code: i.code, size: i.size || '', options: found.categories, lang });
       return {
-        formatted: formatStaffStock(found, i.code, note, lang, want),
+        formatted: formatStaffStock(found, i.code, note, lang, want, { units: persianUnits }),
         instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.',
       };
     } catch (e) {
@@ -1494,7 +1494,7 @@ async function handleStaffChat(raw, chatId, group) {
   const reply = async (body) => {
     const said = staffLang === 'en' ? toEnglish(body) : body;
     const content = { text: isSelf ? `🤖 ${said}` : said };
-    if (keepLanguage) keepLang.add(content);
+    if (keepLanguage || staffLang === 'fa') keepLang.add(content); // a Persian answer is not turned into English by the outgoing hook
     // every reply is accounted for: quoted first (a forwarded picture as the quote may not go through), then plain; the log says what really happened
     const d = await deliver({ send: (...a) => sock.sendMessage(...a), chatId, content, quoted: raw, where, log: (s) => logger.info(s) });
     lastReplyOk = d.ok;
@@ -1529,7 +1529,8 @@ async function handleStaffChat(raw, chatId, group) {
   // the echo of a transcript (merged or not), then by its class: a question runs, a change waits for the yes
   const actOnTranscript = async (said, lang) => {
     const pv = planVoice({ transcript: said, lang, priv: true });
-    await sock.sendMessage(chatId, { text: `${isSelf ? '🤖 ' : ''}${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}` }, { quoted: raw });
+    const echoed = `${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}`;
+    await sock.sendMessage(chatId, group ? persianText(echoed) : { text: `${isSelf ? '🤖 ' : ''}${echoed}` }, { quoted: raw });
     if (pv.mode === 'ask') { voiceGate.set(gateKey, said, 'ask'); trace(where, role, 'voice note: it would change something, waiting for the yes'); return true; }
     trace(where, role, 'voice note: a plain question, run at once as typed');
     return rerunAsText(said);
@@ -1573,7 +1574,7 @@ async function handleStaffChat(raw, chatId, group) {
   });
   // Cost control: in the cut, delivery, confirmation, information and invoices groups a photo or a voice note is never read by itself
   // (no download, no vision, no speech); only a message that addresses her by name, or answers her, may be.
-  if ((audio || image) && !mayReadMedia({ group, addressed })) { trace(where, role, 'media left alone (cost control): not addressed to the assistant'); return true; }
+  if ((audio || image) && !mayReadMedia({ group, addressed, voiceFromPermitted: !!audio && !image && (ownerPerson || authorizedPerson || invoicePerson) })) { trace(where, role, 'media left alone (cost control): not addressed to the assistant'); return true; }
   // The pipeline commands of the owner: a hold on delivery until cash is confirmed, the balance of a customer, the open orders.
   if (admin && (!group || group.command)) {
     const tc = parseTrackerCommand(text);
@@ -1787,7 +1788,7 @@ async function handleStaffChat(raw, chatId, group) {
     // in it decide. Addressed anyway: a mention, a reply to the assistant, a private chat, or a note that
     // follows its question.
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
-    const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0, staffLang);
+    const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0, staffLang, !!group?.quiet && !explicit);
     const named = !u.ok && !!u.transcript && nameHeard(u.transcript, config.botNames);
     const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
     const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
@@ -1800,7 +1801,8 @@ async function handleStaffChat(raw, chatId, group) {
     }
     const pv = planVoice({ transcript: u.transcript, lang: spoken, explicit, named, priv: !group, unclear: u.reason === 'unclear' });
     if (pv.mode !== 'old') {
-      await sock.sendMessage(chatId, { text: `${isSelf ? '🤖 ' : ''}${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}` }, { quoted: raw });
+      const echoText = `${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}`;
+      await sock.sendMessage(chatId, group ? persianText(echoText) : { text: `${isSelf ? '🤖 ' : ''}${echoText}` }, { quoted: raw });
       if (pv.mode === 'ask') { voiceGate.set(gateKey, u.transcript.trim()); trace(where, role, 'voice note: it would change something, waiting for the yes'); return true; }
       trace(where, role, 'voice note: a plain question, run at once as typed');
       return rerunAsText(u.transcript.trim());
@@ -1897,7 +1899,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   if (!addressed && !confirmed && !engaged) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
   const answerText = await staffAnswer({
-    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key, lang), lang, today: todayLine(new Date(), config.timezone),
+    client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), who: raw.pushName || '', handlers: staffHandlersFor(key, lang, !!group && lang === 'fa'), lang, today: todayLine(new Date(), config.timezone),
   });
   trace(where, role, `${answerText ? 'answered' : 'no reply (the model chose silence)'}, reply language ${lang}`);
   if (answerText) await reply(answerText);

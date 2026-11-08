@@ -30,6 +30,7 @@ const L = {
     ok: 'کافی است', low: 'خیلی کم است', none: 'ندارد',
     size: 'سایز', sizes: 'اندازه‌های ثبت‌شده', free: 'آزاد', reserved: 'رزرو', min: 'حداقل موجودی', packages: 'بسته', place: 'محل',
     and: ' و ', comma: '،',
+    units: { m: 'متر', mtr: 'متر', meter: 'متر', metre: 'متر', roll: 'رول', rolls: 'رول', pcs: 'عدد', pc: 'عدد', kg: 'کیلوگرم', ctn: 'کارتن' }, // Persian answers carry Persian unit words end to end
     pack: (n, q, u) => `${n} بسته ${q} ${u}`, open: 'باز', more: (n) => `${n} قطعهٔ دیگر`, total: (n, u) => `(کل ${n} ${u})`, noPackages: 'بدون بسته',
     pk: (n) => `${n} بسته`, allOpen: 'باز شده', untouched: 'دست‌نخورده', someOpen: (n) => `${n} باز شده`,
     warning: (n, u) => `⚠️  موجودی آزاد زیر حداقل موجودی (${n} ${u}) است`,
@@ -100,7 +101,7 @@ const L = {
 };
 
 /** Hindi has no table of its own: its stock block is written in English. */
-const wordsOf = (lang) => L[langOf(lang) === 'hi' ? 'en' : langOf(lang)] || L.fa;
+const wordsOf = (lang, units = false) => { const t = L[langOf(lang) === 'hi' ? 'en' : langOf(lang)] || L.fa; return units || !t.units ? t : { ...t, units: undefined }; }; // unit words (متر) only when asked: the older answers keep the sheet's own units
 const groupsOf = (lang) => GROUPS[langOf(lang) === 'hi' ? 'en' : langOf(lang)] || GROUPS.fa;
 
 /** "5 بسته 120 m + باز: 35 m و 45 m (کل 680 m)"; more than six open pieces: the first six, then "and N more". */
@@ -162,25 +163,26 @@ export function aggregate(rows, result) {
  * A requested quantity against the free stock: the request, what is free and a clear verdict (enough / short by N / enough but
  * under the minimum). [want] is { quantity, unit } as asked; the sheet's own conversion (askedInUnit) wins when it has one.
  */
-function askedLine(result, a, want, t, unit) {
+function askedLine(result, a, want, t, unit, shown0 = unit) {
   const q = Number(want?.quantity);
   if (!(q > 0)) return null;
   const shown = `${num(q)}`;
-  const shownUnit = want.unit || unit;
-  const line = t.asked(shown, shownUnit, `${num(a.free)} ${unit}`);
+  const shownUnit = want.unit ? (t.units?.[String(want.unit).toLowerCase()] || want.unit) : shown0;
+  const line = t.asked(shown, shownUnit, `${num(a.free)} ${shown0}`);
   let inUnit = Number(result.askedInUnit) || 0;
   if (!inUnit && (!want.unit || want.unit === unit)) inUnit = q;
   if (result.qtyChecked === false || !inUnit) return ['', line, `→ ${t.noConv}`];
   const free = a.free;
   const verdict = inUnit > free + 1e-6 ? t.shortBy(num(inUnit - free), unit)
     : a.limit > 0 && free - inUnit < a.limit - 1e-6 ? t.tight : t.enough;
-  return ['', line, `→ ${verdict}`];
+  return ['', line, `→ ${verdict.replace(` ${unit}`, ` ${shown0}`)}`];
 }
 
 /** The one block of a botStock result, in [lang]. */
-export function stockBlocks(result, lang = 'fa', want = null) {
-  const t = wordsOf(lang);
+export function stockBlocks(result, lang = 'fa', want = null, opts = {}) {
+  const t = wordsOf(lang, !!opts.units);
   const unit = result.unit || '';
+  const du = t.units?.[unit.toLowerCase()] || unit; // the unit as written in this language
   const cat = groupsOf(lang)[String(result.category || '').toLowerCase()] || result.category || '';
   let rows = (result.sizes && result.sizes.length ? result.sizes : [{ size: result.size || '', free: result.free, packages: 0, open: 0, limit: result.limit }]);
   const real = rows.filter((s) => !isPlaceholder(s));
@@ -193,15 +195,15 @@ export function stockBlocks(result, lang = 'fa', want = null) {
   const lines = [
     t.head(result.code, cat, low ? t.low : t.ok),
     sizeLine,
-    `- ${t.free}: ${num(a.free)} ${unit}`,
-    `- ${t.reserved}: ${num(a.reserved)} ${unit}`,
-    `- ${t.min}: ${num(a.limit)} ${unit}`,
-    `- ${t.packages}: ${a.packs ? packsLine(a, unit, a.free + a.reserved, t) : packagesLine(a.packages, a.open, t)}`,
+    `- ${t.free}: ${num(a.free)} ${du}`,
+    `- ${t.reserved}: ${num(a.reserved)} ${du}`,
+    `- ${t.min}: ${num(a.limit)} ${du}`,
+    `- ${t.packages}: ${a.packs ? packsLine(a, du, a.free + a.reserved, t) : packagesLine(a.packages, a.open, t)}`,
     `- ${t.place}: ${a.places.length ? a.places.join(`${t.comma} `) : '—'}`,
   ];
-  const ask = askedLine(result, a, want, t, unit);
+  const ask = askedLine(result, a, want, t, unit, du);
   if (ask) lines.push(...ask);
-  if (low) lines.push('', t.warning(num(a.limit), unit));
+  if (low) lines.push('', t.warning(num(a.limit), du));
   return [lines.join('\n')];
 }
 
@@ -209,11 +211,11 @@ export function stockBlocks(result, lang = 'fa', want = null) {
  * The whole answer for a botStock result in [lang]. [note]: a line put first (for example "the size you named is not
  * registered, this is the whole code").
  */
-export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa', want = null) {
-  const t = wordsOf(lang);
+export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa', want = null, opts = {}) {
+  const t = wordsOf(lang, !!opts.units);
   if (!result.found) return t.notFound(result.code || askedCode);
   if (result.ambiguous) return t.ambiguous(askedCode, result.categories.map((c, i) => `${i + 1}) ${c}`).join('\n'));
   if (result.sizeFound === false) return t.noSize(result.code, result.size, (result.sizes || []).join(`${t.comma} `) || '—');
   const old = result.stale ? t.stale(result.ageMinutes) : '';
-  return [note, old, ...stockBlocks(result, lang, want)].filter(Boolean).join('\n\n');
+  return [note, old, ...stockBlocks(result, lang, want, opts)].filter(Boolean).join('\n\n');
 }

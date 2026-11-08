@@ -4,9 +4,9 @@
 // the Invoices group, which have their own flow. The test group, the command group and private staff chats are not quiet.
 
 /** May this photo or voice note be downloaded and read (paid)? [group]: { quiet } of the chat; [addressed]: she is called or answered. */
-export function mayReadMedia({ group, addressed }) {
+export function mayReadMedia({ group, addressed, voiceFromPermitted = false }) {
   if (!group?.quiet) return true;
-  return !!addressed;
+  return !!addressed || !!voiceFromPermitted; // a voice cannot say her name before it is heard: the owner's and a permitted person's voice is transcribed (cheap); it is acted on only if it names her
 }
 
 /** May the tracker send a photo or an unreadable caption to the model? Only when TRACK_MODEL is on. */

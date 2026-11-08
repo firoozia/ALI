@@ -36,9 +36,9 @@ test('the free caption reader still records the captions of every tracked group'
 
 test('the source: media is left alone before any download, the model fallback is gated, no reply is posted, the earlier picture is found for "the picture above"', () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  const quiet = src.indexOf('mayReadMedia({ group, addressed })');
+  const quiet = src.indexOf('mayReadMedia({ group, addressed, voiceFromPermitted');
   assert.ok(quiet > 0);
-  assert.match(src.slice(quiet, quiet + 220), /media left alone[^\n]*\n\s*return true;|media left alone[^\n]*return true;/); // consumed, no reply
+  assert.match(src.slice(quiet, quiet + 420), /media left alone[^\n]*\n\s*return true;|media left alone[^\n]*return true;/); // consumed, no reply
   // the gate comes before every place the picture or the voice note is downloaded in the staff flow
   const firstDownload = src.indexOf("downloadMediaMessage(imageRaw, 'buffer'");
   const firstAudioDownload = src.indexOf("understandAudio(() => downloadMediaMessage(raw, 'buffer', {})");
@@ -65,4 +65,14 @@ test('the paid calls are counted per group and kind, logged, and one line goes i
   assert.equal(hasVisual({ messages: [{ role: 'user', content: 'hello' }] }), false);
   const text = buildDigest({ history: [], requests: [], day, timeZone: 'UTC', events: [], extraLines: [m.line(day)] });
   assert.match(text, /Paid calls today: model 4, vision 1, speech 1/);
+});
+
+test('a quiet group: the voice of the owner or of a permitted person is heard (cheap); a photo and anyone else\'s voice stay unread', () => {
+  const group = { quiet: true };
+  assert.equal(mayReadMedia({ group, addressed: false, voiceFromPermitted: true }), true);
+  assert.equal(mayReadMedia({ group, addressed: false, voiceFromPermitted: false }), false);
+  assert.equal(mayReadMedia({ group, addressed: false }), false);
+  const fs2 = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(fs2, /voiceFromPermitted: !!audio && !image && \(ownerPerson \|\| authorizedPerson \|\| invoicePerson\)/); // a photo is never let in by this
+  assert.match(fs2, /staffLang, !!group\?\.quiet && !explicit\)/); // only the name is looked for first
 });
