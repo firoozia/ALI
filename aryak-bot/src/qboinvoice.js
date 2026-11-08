@@ -88,12 +88,12 @@ export function parseInvoiceCommand(text) {
   if (new RegExp(`^توقف\\s*${QB}$`, 'u').test(s)) return { type: 'pause' };
   if (new RegExp(`^ادامه\\s*${QB}$`, 'u').test(s)) return { type: 'resume' };
   if (new RegExp(`^گزارش\\s*${QB}$`, 'u').test(s)) return { type: 'audit' };
-  const ST = String.raw`صورت\s*حساب|صورت‌حساب|استیتمنت|استیت‌منت|statement`; // «مجوز صورت‌حساب <شماره>»: statements only
+  // Every permission is its own word: «مجوز <word> <number>» gives it, «لغو مجوز <word> <number>» takes it. A new one is one row in PERMISSIONS.
   const NUM = String.raw`\+?([\d۰-۹٠-٩\s-]{7,20})`;
-  if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${ST})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], scope: 'statement' };
-  if ((m = new RegExp(String.raw`^مجوز\s+(?:${ST})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], scope: 'statement' };
-  if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+فاکتور\s+${NUM}$`, 'u').exec(s))) return { type: 'auth_remove', number: m[1], scope: 'invoice' };
-  if ((m = new RegExp(String.raw`^مجوز\s+فاکتور\s+${NUM}$`, 'u').exec(s))) return { type: 'auth_add', number: m[1], scope: 'both' };
+  for (const [perm, def] of Object.entries(PERMISSIONS)) {
+    if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], perm };
+    if ((m = new RegExp(String.raw`^مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], perm };
+  }
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
   if (/^کدهای\s+مالیات$/u.test(s)) return { type: 'tax_list' };
   if ((m = /^کد\s+مالیات\s+(.+?)\s*=\s*(.+)$/u.exec(s))) return { type: 'tax_set', customer: m[1].trim(), code: m[2].trim() };
@@ -362,35 +362,55 @@ export function totals(lines, ratePct) {
   return { subtotal: sub, vat, total: sub + vat };
 }
 
+// ---------------------------------------------------------------------------------------------------------------- the permissions
+/** What the owner can give a person, each SEPARATELY: [words] is how he writes it (regex), [label] how it is listed. Add «موجودی», «گزارش» … here the same way. */
+export const PERMISSIONS = {
+  invoice: { words: 'فاکتور|invoice', label: 'فاکتور' },
+  statement: { words: String.raw`صورت\s*حساب|صورت‌حساب|استیتمنت|استیت‌منت|statement`, label: 'صورت‌حساب' },
+};
+
 // ---------------------------------------------------------------------------------------------------------------- the stores
 /** Who the owner authorized to ask for invoices and statements (their numbers), kept on the VM. */
 export class AuthStore {
-  constructor(dir = '') { this.file = dir ? path.join(dir, 'qbo-authorized.json') : ''; this.d = { people: [] }; try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ } }
+  constructor(dir = '') {
+    this.file = dir ? path.join(dir, 'qbo-authorized.json') : ''; this.d = { people: [] };
+    try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ }
+    this.migrate();
+  }
+  /** Older files: no «grants» meant invoices AND statements, and scope «statement» meant statements only. Each becomes separate grants, so nobody gains or loses anything. */
+  migrate() {
+    let changed = false;
+    for (const p of this.d.people) {
+      if (Array.isArray(p.grants)) continue;
+      p.grants = p.scope === 'statement' ? ['statement'] : ['invoice', 'statement'];
+      delete p.scope; changed = true;
+    }
+    if (changed) this.save();
+  }
   save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
   static clean(number) { const d = latin(number).replace(/\D/g, ''); return d.length >= 8 && d.length <= 15 ? d : ''; }
   numbers() { return this.d.people.map((p) => p.number); }
-  /** What a person may ask: 'both' (invoices and statements; an entry with no scope is this) or 'statement' (statements only). */
-  scopeOf(number) { const p = this.d.people.find((x) => x.number === AuthStore.clean(number)); return p ? (p.scope === 'statement' ? 'statement' : 'both') : ''; }
-  /** [scope]: 'both' (the older «مجوز فاکتور») or 'statement'. Said again, the newest word wins. */
-  add(number, now = Date.now(), scope = 'both') {
-    const n = AuthStore.clean(number); if (!n) return false;
-    const have = this.d.people.find((p) => p.number === n);
-    const kept = scope === 'statement' ? 'statement' : 'both';
-    if (have) have.scope = kept; else this.d.people.push({ number: n, at: new Date(now).toISOString(), scope: kept });
+  grantsOf(number) { const p = this.d.people.find((x) => x.number === AuthStore.clean(number)); return p ? [...p.grants] : []; }
+  /** Give one permission (the person is added if new). false = the number is not valid or the permission is unknown. */
+  grant(number, perm, now = Date.now()) {
+    const n = AuthStore.clean(number); if (!n || !PERMISSIONS[perm]) return false;
+    let p = this.d.people.find((x) => x.number === n);
+    if (!p) { p = { number: n, at: new Date(now).toISOString(), grants: [] }; this.d.people.push(p); }
+    if (!p.grants.includes(perm)) p.grants.push(perm);
     this.save(); return n;
   }
-  /** [scope] 'statement' (or the older call): the person is removed. 'invoice': only the invoice right goes, a statement right stays. */
-  remove(number, scope = 'statement') {
-    const n = AuthStore.clean(number); const have = this.d.people.find((p) => p.number === n);
-    if (!have) return false;
-    if (scope === 'invoice') { if (this.scopeOf(n) !== 'both') return false; have.scope = 'statement'; this.save(); return true; }
-    this.d.people = this.d.people.filter((p) => p.number !== n); this.save(); return true;
+  /** Take one permission; a person left with none is removed. false = they did not have it. */
+  revoke(number, perm) {
+    const n = AuthStore.clean(number); const p = this.d.people.find((x) => x.number === n);
+    if (!p || !p.grants.includes(perm)) return false;
+    p.grants = p.grants.filter((g) => g !== perm);
+    if (!p.grants.length) this.d.people = this.d.people.filter((x) => x !== p);
+    this.save(); return true;
   }
-  list() { return this.d.people.map((p) => ({ number: p.number, scope: p.scope === 'statement' ? 'statement' : 'both' })); }
-  /** Is this sender (jid, alt jid, lid mapped) an authorized person? */
-  isAuthorized(who, lidToPhone = new Map()) { return staffChecker(this.numbers(), lidToPhone)(who) === true; }
-  /** May this sender ask for invoices? (not a statement-only person) */
-  mayInvoice(who, lidToPhone = new Map()) { return this.d.people.some((p) => p.scope !== 'statement' && staffChecker([p.number], lidToPhone)(who) === true); }
+  list() { return this.d.people.map((p) => ({ number: p.number, grants: [...p.grants] })); }
+  /** Has this sender (jid, alt jid, lid mapped) the permission [perm]? With no [perm]: any permission at all. */
+  has(who, perm = '', lidToPhone = new Map()) { return this.d.people.some((p) => (!perm || p.grants.includes(perm)) && staffChecker([p.number], lidToPhone)(who) === true); }
+  isAuthorized(who, lidToPhone = new Map()) { return this.has(who, '', lidToPhone); }
 }
 
 /** The item codes the owner taught ("کد 1810 = PVC 1810"): for one customer (by QuickBooks id) or for everybody. Kept on the VM. */

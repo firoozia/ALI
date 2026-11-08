@@ -128,7 +128,7 @@ test('wiring: the group statement turn runs for the owner and the authorized onl
   assert.match(turn, /pending\.by === by/); // a numbered choice belongs to the person who asked
   assert.doesNotMatch(turn, /toEnglish/); // never turned into English
   assert.match(src, /groupStatementTurn\(\{ raw, chatId, text, ctx: \(content\.extendedTextMessage \|\| \{\}\)\.contextInfo \|\| \{\}, owner: ownerPerson, authorized: authorizedPerson/);
-  assert.match(src, /qboAuth\.isAuthorized\(who, info\.lidToPhone\)\) \{\s*const gctx/); // an authorized person who is not staff is taken before the staff check
+  assert.match(src, /qboAuth\.has\(who, 'statement', info\.lidToPhone\)\) \{\s*const gctx/); // an authorized person who is not staff is taken before the staff check
 });
 
 test('wiring: in a customer group only the owner\'s request counts; it asks in his own chat first and nothing goes to the group', () => {
@@ -193,40 +193,45 @@ test('the ask line for a private chat names the chat, not a group', () => {
 });
 
 // ------------------------------------------------------------------------------------------------ the scope of an authorized person
-import { AuthStore } from '../src/qboinvoice.js';
+import { AuthStore, PERMISSIONS } from '../src/qboinvoice.js';
 
-test('«مجوز صورت‌حساب <شماره>» (and its spellings, Persian digits) is statements only; «مجوز فاکتور» is both', () => {
+test('«مجوز <چیز> <شماره>»: every permission is its own word (statement spellings, Persian digits); «لغو مجوز …» takes it', () => {
   for (const t of ['مجوز صورت‌حساب 971528493119', 'مجوز صورتحساب ۹۷۱۵۲۸۴۹۳۱۱۹', 'مجوز استیتمنت +971528493119']) {
-    const ic = parseInvoiceCommand(t); assert.equal(ic.type, 'auth_add', t); assert.equal(ic.scope, 'statement', t); assert.equal(AuthStore.clean(ic.number), '971528493119');
+    const ic = parseInvoiceCommand(t); assert.equal(ic.type, 'auth_add', t); assert.equal(ic.perm, 'statement', t); assert.equal(AuthStore.clean(ic.number), '971528493119');
   }
-  assert.deepEqual(parseInvoiceCommand('مجوز فاکتور 971528493119'), { type: 'auth_add', number: '971528493119', scope: 'both' });
-  assert.deepEqual(parseInvoiceCommand('لغو مجوز صورت‌حساب 971528493119'), { type: 'auth_remove', number: '971528493119', scope: 'statement' });
-  assert.deepEqual(parseInvoiceCommand('لغو مجوز فاکتور 971528493119'), { type: 'auth_remove', number: '971528493119', scope: 'invoice' });
+  assert.deepEqual(parseInvoiceCommand('مجوز فاکتور 971528493119'), { type: 'auth_add', number: '971528493119', perm: 'invoice' });
+  assert.deepEqual(parseInvoiceCommand('لغو مجوز صورت‌حساب 971528493119'), { type: 'auth_remove', number: '971528493119', perm: 'statement' });
+  assert.deepEqual(parseInvoiceCommand('لغو مجوز فاکتور 971528493119'), { type: 'auth_remove', number: '971528493119', perm: 'invoice' });
   assert.deepEqual(parseInvoiceCommand('مجوزها'), { type: 'auth_list' });
+  assert.deepEqual(Object.keys(PERMISSIONS), ['invoice', 'statement']); // a new permission is one more row here
 });
 
-test('the store: a scope per person, an old entry means both, invoices are refused for a statement-only person', () => {
+test('the store: separate grants; the old file (no grants = both, scope statement = statements) is converted so nobody gains or loses', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'au-'));
-  fs.writeFileSync(path.join(dir, 'qbo-authorized.json'), JSON.stringify({ people: [{ number: '971500000001', at: 'x' }] })); // an older file: no scope
+  fs.writeFileSync(path.join(dir, 'qbo-authorized.json'), JSON.stringify({ people: [{ number: '971528493119', at: 'x' }, { number: '971500000002', at: 'y', scope: 'statement' }, { number: '971500000003', at: 'z', scope: 'both' }] }));
   const a = new AuthStore(dir);
-  assert.equal(a.scopeOf('971500000001'), 'both');
-  a.add('971528493119', Date.now(), 'statement');
-  assert.equal(a.scopeOf('971528493119'), 'statement');
+  assert.deepEqual(a.grantsOf('971528493119'), ['invoice', 'statement']); // the manager keeps exactly what he had
+  assert.deepEqual(a.grantsOf('971500000002'), ['statement']);
+  assert.deepEqual(a.grantsOf('971500000003'), ['invoice', 'statement']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'qbo-authorized.json'), 'utf8')).people[0].grants, ['invoice', 'statement']); // written back
   const who = (n) => ({ sender: `${n}@s.whatsapp.net` });
-  assert.equal(a.isAuthorized(who('971528493119')), true); // may ask a statement
-  assert.equal(a.mayInvoice(who('971528493119')), false); // not an invoice
-  assert.equal(a.mayInvoice(who('971500000001')), true);
-  assert.deepEqual(a.list(), [{ number: '971500000001', scope: 'both' }, { number: '971528493119', scope: 'statement' }]);
-  assert.equal(new AuthStore(dir).scopeOf('971528493119'), 'statement'); // kept on disk
-  assert.equal(a.remove('971500000001', 'invoice'), true); assert.equal(a.scopeOf('971500000001'), 'statement'); // the invoice right goes, the statement right stays
-  assert.equal(a.remove('971500000001', 'invoice'), false); // nothing more to take
-  assert.equal(a.remove('971500000001', 'statement'), true); assert.equal(a.scopeOf('971500000001'), '');
-  a.add('971528493119', Date.now(), 'both'); assert.equal(a.mayInvoice(who('971528493119')), true); // «مجوز فاکتور» later makes it both
+  assert.equal(a.has(who('971500000002'), 'invoice'), false); assert.equal(a.has(who('971500000002'), 'statement'), true);
+  // «مجوز فاکتور» alone no longer gives statements
+  assert.equal(a.grant('971500000009', 'invoice'), '971500000009');
+  assert.equal(a.has(who('971500000009'), 'invoice'), true); assert.equal(a.has(who('971500000009'), 'statement'), false); assert.equal(a.isAuthorized(who('971500000009')), true);
+  assert.equal(a.grant('971500000009', 'nonsense'), false);
+  assert.equal(a.revoke('971528493119', 'invoice'), true); assert.deepEqual(a.grantsOf('971528493119'), ['statement']);
+  assert.equal(a.revoke('971528493119', 'invoice'), false); // did not have it
+  assert.equal(a.revoke('971528493119', 'statement'), true); assert.equal(a.isAuthorized(who('971528493119')), false); // no grant left: gone
+  assert.equal(new AuthStore(dir).grantsOf('971500000002')[0], 'statement'); // kept on disk
+  assert.deepEqual(a.list().find((p) => p.number === '971500000003'), { number: '971500000003', grants: ['invoice', 'statement'] });
 });
 
-test('wiring: a statement-only person gets the one Persian line for an invoice request, and statements work in a private chat', () => {
+test('wiring: each request needs its own permission, with one Persian line when missing; the list names each person\'s permissions', () => {
   assert.match(src, /if \(isRequest && !canInvoice\) \{ await say\('برای درخواست فاکتور مجوز ندارید\.'\); return true; \}/);
-  assert.match(src, /canInvoice: qboAuth\.mayInvoice\(who, info\.lidToPhone\)/);
+  assert.match(src, /if \(\(isStatement \|\| nl\) && !canStatement\) \{ await say\('برای درخواست صورت‌حساب مجوز ندارید\.'\); return true; \}/);
+  assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', info\.lidToPhone\), canStatement: qboAuth\.has\(who, 'statement', info\.lidToPhone\)/);
+  assert.match(src, /authorizedPerson = !!\(group && qboAuth\.has\(who, 'statement', info\.lidToPhone\)\)/); // an invoice-only person gets no statement in a group
   assert.match(src, /statementFor\(nl\.customer, \{ privateJid: chatId, period: nl\.period \}\)/);
-  assert.match(src, /'مجازها:', \.\.\.qboAuth\.list\(\)\.map/); // the list names what each may do
+  assert.match(src, /p\.grants\.map\(\(g\) => PERMISSIONS\[g\]\?\.label \|\| g\)/);
 });

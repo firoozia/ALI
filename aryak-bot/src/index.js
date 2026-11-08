@@ -27,7 +27,7 @@ import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
 import { Qbo, looksLikeConnectLine, parseConnectLine } from './qbo.js';
 import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
-import { Audit, AuthStore, InvoiceStore, ItemCodes, QboInvoiceDesk, TaxChoices, parseInvoiceCommand } from './qboinvoice.js';
+import { Audit, AuthStore, InvoiceStore, ItemCodes, PERMISSIONS, QboInvoiceDesk, TaxChoices, parseInvoiceCommand } from './qboinvoice.js';
 import { extractInvoiceRequest } from './qboextract.js';
 import { NamePreviews, QboNameDesk } from './qbonames.js';
 import { BulkPreviews, PriceDraft, QboBulkDesk } from './qbobulk.js';
@@ -699,13 +699,12 @@ async function qboInvoiceCommand(ic, text) {
     case 'tax_list': return qboInvoices.taxListText();
     case 'item_code': return qboInvoices.setItemCode({ code: ic.code, item: ic.item, customer: ic.customer });
     case 'auth_add': {
-      const scope = ic.scope === 'statement' ? 'statement' : 'both';
-      const n = qboAuth.add(ic.number, Date.now(), scope);
-      if (n) qboInvoices.audit.add({ event: 'authorize', approver: 'owner', reason: `${n} ${scope}` });
-      return [n ? (scope === 'statement' ? `مجوز صورت‌حساب (فقط صورت‌حساب) برای ${n} ثبت شد.` : `مجوز فاکتور و صورت‌حساب برای ${n} ثبت شد. هر فاکتورش منتظر «بله» شما می‌ماند.`) : 'شماره درست نیست (۸ تا ۱۵ رقم با کد کشور).'];
+      const n = qboAuth.grant(ic.number, ic.perm);
+      if (n) qboInvoices.audit.add({ event: 'authorize', approver: 'owner', reason: `${n} ${ic.perm}` });
+      return [n ? `مجوز ${PERMISSIONS[ic.perm].label} برای ${n} ثبت شد.${ic.perm === 'invoice' ? ' هر فاکتورش منتظر «بله» شما می‌ماند. (صورت‌حساب مجوز جدا دارد.)' : ''}` : 'شماره درست نیست (۸ تا ۱۵ رقم با کد کشور).'];
     }
-    case 'auth_remove': { const ok = qboAuth.remove(ic.number, ic.scope === 'invoice' ? 'invoice' : 'statement'); if (ok) qboInvoices.audit.add({ event: 'deauthorize', approver: 'owner', reason: ic.scope || '' }); return [ok ? (ic.scope === 'invoice' ? 'مجوز فاکتور برداشته شد؛ مجوز صورت‌حساب می‌ماند.' : 'مجوز برداشته شد.') : 'این شماره در فهرست مجازها نبود (یا چنین مجوزی نداشت).']; }
-    case 'auth_list': return [qboAuth.list().length ? ['مجازها:', ...qboAuth.list().map((p) => `• ${p.number}: ${p.scope === 'statement' ? 'صورت‌حساب' : 'فاکتور و صورت‌حساب'}`)].join('\n') : 'کسی مجوز ندارد. بنویسید: مجوز فاکتور <شماره با کد کشور> یا مجوز صورت‌حساب <شماره با کد کشور>'];
+    case 'auth_remove': { const ok = qboAuth.revoke(ic.number, ic.perm); if (ok) qboInvoices.audit.add({ event: 'deauthorize', approver: 'owner', reason: ic.perm }); return [ok ? `مجوز ${PERMISSIONS[ic.perm].label} برداشته شد.` : 'این شماره چنین مجوزی نداشت.']; }
+    case 'auth_list': return [qboAuth.list().length ? ['مجازها:', ...qboAuth.list().map((p) => `• ${p.number}: ${p.grants.map((g) => PERMISSIONS[g]?.label || g).join('، ')}`)].join('\n') : 'کسی مجوز ندارد. بنویسید: مجوز فاکتور <شماره با کد کشور> یا مجوز صورت‌حساب <شماره با کد کشور>'];
     default: return [];
   }
 }
@@ -714,9 +713,9 @@ async function qboInvoiceCommand(ic, text) {
  * A person the owner authorized, in a private chat with the bot: an invoice request (becomes a PREVIEW for the owner; nothing is created) or a
  * statement for one customer (returned to that private chat only). Anything else from them is ignored as before. Replies are short English.
  */
-async function authorizedFlow({ chatId, text, canInvoice = true }) {
+async function authorizedFlow({ chatId, text, canInvoice = false, canStatement = false }) {
   const pend = choiceDesk.get(`pc:${chatId}`); // the number for the customer question she just asked this person
-  if (pend?.kind === 'statement' && !pend.by) {
+  if (pend?.kind === 'statement' && !pend.by && canStatement) {
     const at = parseChoice(text, pend.options);
     if (at >= 0) {
       choiceDesk.clear(`pc:${chatId}`);
@@ -734,6 +733,7 @@ async function authorizedFlow({ chatId, text, canInvoice = true }) {
   qboChats.add(chatId);
   const say = (t) => sock.sendMessage(chatId, { text: t });
   if (isRequest && !canInvoice) { await say('برای درخواست فاکتور مجوز ندارید.'); return true; }
+  if ((isStatement || nl) && !canStatement) { await say('برای درخواست صورت‌حساب مجوز ندارید.'); return true; }
   try {
     if (nl) {
       if (nl.unsupported || !nl.customer) { await say(nl.unsupported ? 'ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی یا بازهٔ تاریخ بگویید.' : 'صورت‌حساب کدام مشتری؟ نام را بنویسید.'); return true; }
@@ -1438,13 +1438,13 @@ async function handleStaffChat(raw, chatId, group) {
     let staff = staffChecker(config.staffNumbers, info.lidToPhone)(who);
     if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(who); }
     // a person the owner authorized for invoices and statements: only those commands are taken, in a private chat (the rest is ignored as before)
-    if (!group && text && qboAuth.isAuthorized(who, info.lidToPhone) && (await authorizedFlow({ chatId, text, canInvoice: qboAuth.mayInvoice(who, info.lidToPhone) }))) { trace(where, 'authorized', 'QuickBooks request'); return true; }
+    if (!group && text && qboAuth.isAuthorized(who, info.lidToPhone) && (await authorizedFlow({ chatId, text, canInvoice: qboAuth.has(who, 'invoice', info.lidToPhone), canStatement: qboAuth.has(who, 'statement', info.lidToPhone) }))) { trace(where, 'authorized', 'QuickBooks request'); return true; }
     // an authorized person (not staff) may ask for a statement by her name in an internal group; nothing else of theirs is taken
-    if (group && !staff && text && !audio && !image && qboAuth.isAuthorized(who, info.lidToPhone)) {
+    if (group && !staff && text && !audio && !image && qboAuth.has(who, 'statement', info.lidToPhone)) {
       const gctx = (content.extendedTextMessage || {}).contextInfo || {};
       if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: true, where, role: 'authorized' })) return true;
     }
-    authorizedPerson = !!(group && qboAuth.isAuthorized(who, info.lidToPhone));
+    authorizedPerson = !!(group && qboAuth.has(who, 'statement', info.lidToPhone));
     if (!staff) { trace(where, 'not-staff', group ? 'left to the customer flow' : 'ignored: private chat from a number that is not staff'); return false; }
     admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
     ownerPerson = staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;

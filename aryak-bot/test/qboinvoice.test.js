@@ -110,8 +110,8 @@ test('the words: the request with its lines, yes and no with the preview id, the
   assert.deepEqual(parseInvoiceCommand('توقف کوییک‌بوکس'), { type: 'pause' });
   assert.deepEqual(parseInvoiceCommand('ادامهٔ کوییک‌بوکس'), { type: 'resume' });
   assert.deepEqual(parseInvoiceCommand('گزارش کوییک‌بوکس'), { type: 'audit' });
-  assert.deepEqual(parseInvoiceCommand('مجوز فاکتور 971 50 111 2222'), { type: 'auth_add', number: '971 50 111 2222', scope: 'both' });
-  assert.deepEqual(parseInvoiceCommand('لغو مجوز فاکتور 971501112222'), { type: 'auth_remove', number: '971501112222', scope: 'invoice' });
+  assert.deepEqual(parseInvoiceCommand('مجوز فاکتور 971 50 111 2222'), { type: 'auth_add', number: '971 50 111 2222', perm: 'invoice' });
+  assert.deepEqual(parseInvoiceCommand('لغو مجوز فاکتور 971501112222'), { type: 'auth_remove', number: '971501112222', perm: 'invoice' });
   assert.deepEqual(parseInvoiceCommand('مجوزها'), { type: 'auth_list' });
   assert.equal(parseInvoiceCommand('سلام'), null);
 });
@@ -301,17 +301,17 @@ test('the only write that exists is "create an invoice": a delete, a void, a pay
 test('the authorized people: add, remove, list; a number is matched by its phone number, also through the alt id of a lid chat', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-'));
   const a = new AuthStore(dir);
-  assert.equal(a.add('+971 50 111 2222'), '971501112222');
-  assert.equal(a.add('12'), false);
-  assert.equal(a.add('۹۷۱۵۰۳۳۳۴۴۴۴'), '971503334444');
+  assert.equal(a.grant('+971 50 111 2222', 'invoice'), '971501112222');
+  assert.equal(a.grant('12', 'invoice'), false);
+  assert.equal(a.grant('۹۷۱۵۰۳۳۳۴۴۴۴', 'invoice'), '971503334444');
   assert.deepEqual(a.numbers(), ['971501112222', '971503334444']);
   assert.equal(a.isAuthorized({ sender: '971501112222@s.whatsapp.net' }), true);
   assert.equal(a.isAuthorized({ sender: '55555@lid', senderAlt: '971501112222@s.whatsapp.net' }), true);
   assert.equal(a.isAuthorized({ sender: '971509999999@s.whatsapp.net' }), false);
   assert.equal(a.isAuthorized({ sender: '55555@lid' }), false);
   assert.deepEqual(new AuthStore(dir).numbers(), ['971501112222', '971503334444']); // kept on disk
-  assert.equal(a.remove('971501112222'), true);
-  assert.equal(a.remove('971501112222'), false);
+  assert.equal(a.revoke('971501112222', 'invoice'), true);
+  assert.equal(a.revoke('971501112222', 'invoice'), false);
   assert.equal(new AuthStore(dir).isAuthorized({ sender: '971501112222@s.whatsapp.net' }), false);
 });
 
