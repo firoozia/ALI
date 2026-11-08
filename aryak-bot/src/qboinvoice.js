@@ -69,8 +69,8 @@ export function parseInvoiceCommand(text) {
   const s = plain(raw).replace(/[.!؟?]+$/u, '').trim();
   {
     // yes / no with the id before or after (right-to-left typing), with or without spaces and #; or the bare word (the desk then looks for the one open preview)
-    const W = 'بله|اره|آره|نه|خیر|yes|no';
-    const isYes = (w) => /^(?:بله|اره|آره|yes)$/iu.test(w);
+    const W = 'بله|اره|آره|اوکی|نه|خیر|yes|no|ok|okay';
+    const isYes = (w) => /^(?:بله|اره|آره|اوکی|yes|ok|okay)$/iu.test(w);
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
     if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFS])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }

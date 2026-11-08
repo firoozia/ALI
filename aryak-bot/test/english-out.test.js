@@ -81,3 +81,20 @@ test('the switch: REPLY_LANGUAGE=en by default; fa goes back; the customer rule 
   assert.match(src, /const staffLang = config\.replyLanguage === 'en' \? 'en' :/);
   assert.match(src, /lang = config\.replyLanguage === 'en' \? 'en' : detectLang\(withText/); // customers too
 });
+
+test('a bare yes: any case, ok, Persian words; with a full code it always names the preview; the one-waiting rule and the several-waiting listing are in place for the self chat and the internal groups', () => {
+  for (const said of ['yes', 'Yes', 'YES', 'ok', 'OK', 'okay', 'بله', 'اره', 'آره', 'اوکی']) assert.deepEqual(parseInvoiceCommand(said), { type: 'yes', id: '' }, said);
+  for (const said of ['no', 'No', 'NO', 'نه', 'خیر']) assert.deepEqual(parseInvoiceCommand(said), { type: 'no', id: '' }, said);
+  assert.deepEqual(parseInvoiceCommand('YES #Q12'), { type: 'yes', id: 'Q12' }); assert.deepEqual(parseInvoiceCommand('ok #S3'), { type: 'yes', id: 'S3' }); assert.deepEqual(parseInvoiceCommand('no #N1'), { type: 'no', id: 'N1' });
+  assert.equal(parseInvoiceCommand('yes please'), null); // a sentence is not an answer
+  const at = src.indexOf("case 'yes': case 'no': {");
+  const block = src.slice(at, at + 1700);
+  assert.match(block, /\.\.\.qboInvoices\.openIds\(\), \.\.\.qboNames\.openIds\(\), \.\.\.qboBulk\.openIds\(\), \.\.\.groupStatements\.openIds\(\)/); // previews of every kind
+  assert.match(block, /if \(!open\.length\) return null;/); // none waiting: not ours
+  assert.match(block, /previews are waiting: .*Nothing was done\. Reply with the full code, for example: /); // several: listed, nothing done
+  assert.match(block, /'Approved' : 'Cancelled'\} #\$\{id\}\./); // the reply names which one
+  const turn = src.slice(src.indexOf('async function groupStatementTurn'), src.indexOf('async function prepareGroupStatement'));
+  assert.match(turn, /bareOk = dec && \(dec\.type === 'yes' \|\| dec\.type === 'no'\) && !dec\.id && !bareAnswerYieldsToPending\(/); // internal groups, owner only (inside if (owner)), unless a photo or voice question waits
+  assert.ok(turn.indexOf('if (owner) {') < turn.indexOf('bareOk'));
+  assert.match(turn, /voiceDesk\.get\(`s:\$\{chatId\}:\$\{person\}`\) \|\| followDesk\.get\(`s:\$\{chatId\}:\$\{person\}`\) \|\| voiceGate\.get\(`vg:\$\{chatId\}:\$\{person\}`\)/);
+});

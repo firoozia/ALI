@@ -77,7 +77,7 @@ import { PendingChoice, parseChoice } from './pendingchoice.js';
 import { mergeTranscripts, isShortCorrection } from './voicemerge.js';
 import { codeKnownInItems } from './qboinvoice.js';
 import { buildSystemPrompt } from './prompt.js';
-import { TRANSLATE_SYSTEM, englishOut, setOutLang } from './outlang.js';
+import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
 
 const { config, missing } = loadConfig();
@@ -719,8 +719,11 @@ async function qboInvoiceCommand(ic, text) {
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
         const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds()];
         if (!open.length) return null;
-        if (open.length > 1) return [`چند پیش‌نمایش باز است: ${open.map((x) => `#${x}`).join('، ')}. چیزی انجام نشد؛ شمارهٔ پیش‌نمایش را بنویسید، مثل: ${ic.type === 'yes' ? 'بله' : 'نه'} #${open[0]}`];
-        id = open[0]; said = `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
+        if (open.length > 1) {
+          if (isEnglishOut()) return [`${open.length} previews are waiting: ${open.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the full code, for example: ${ic.type === 'yes' ? 'yes' : 'no'} #${open[0]}`];
+          return [`چند پیش‌نمایش باز است: ${open.map((x) => `#${x}`).join('، ')}. چیزی انجام نشد؛ شمارهٔ پیش‌نمایش را بنویسید، مثل: ${ic.type === 'yes' ? 'بله' : 'نه'} #${open[0]}`];
+        }
+        id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
       const out = await (id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRF]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
       return said ? [said + out[0], ...out.slice(1)] : out;
@@ -913,6 +916,13 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
   // The owner's «بله #Q5» / «نه #Q5» (or the number of a statement waiting for a customer's group) typed in this internal group: the same decision as in his own chat.
   if (owner) {
     const dec = parseInvoiceCommand(text);
+    const person = jidDigits(raw.key.participant || raw.key.remoteJid);
+    // a bare yes or no counts here too (one waiting preview of any kind), unless a photo or voice question was asked last in this chat
+    const bareOk = dec && (dec.type === 'yes' || dec.type === 'no') && !dec.id && !bareAnswerYieldsToPending(dec, !!(voiceDesk.get(`s:${chatId}:${person}`) || followDesk.get(`s:${chatId}:${person}`) || voiceGate.get(`vg:${chatId}:${person}`)));
+    if (bareOk) {
+      const parts = await qboInvoiceCommand(dec, text);
+      if (parts) { trace(where, role, `the owner's bare ${dec.type} typed in an internal group`); for (const part of parts) await sayIn(raw, chatId, where, part); return true; }
+    }
     if (dec && (dec.type === 'yes' || dec.type === 'no') && /^[QS]\d+$/.test(dec.id || '')) {
       trace(where, role, `the owner's ${dec.type} for #${dec.id} typed in an internal group`);
       for (const part of (await qboInvoiceCommand(dec, text)) || []) await sayIn(raw, chatId, where, part);
