@@ -1283,7 +1283,7 @@ test('the owner\'s sample: the price asked for wins on its line (marked, item pr
   try {
     const items = [{ Id: '5', Name: 'PVC FILM505', Sku: 'PVC-505', UnitPrice: 11, Type: 'Inventory', Active: true }, { Id: '2', Name: 'PVC FILM211', Sku: 'PVC-211', UnitPrice: 12, Type: 'Inventory', Active: true }];
     const t = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0 }], items });
-    t.inv.crossOf = () => ({ problems: ['211: no order found', '503: cut 8m on 07/11, not invoiced'] });
+    t.inv.crossOf = () => ({ problems: ['211: no order found', '503: cut 8m on 07/11, not invoiced'], more: 2 });
     const r = await t.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m 211=20 /10aed', requester: 'owner' });
     assert.equal(r.owner, [
       '*Invoice* #Q1',
@@ -1294,6 +1294,7 @@ test('the owner\'s sample: the price asked for wins on its line (marked, item pr
       'Cross-check (Aryak Orders):',
       '⚠ 211: no order found',
       '⚠ 503: cut 8m on 07/11, not invoiced',
+      '+2 more',
       'Yes/No',
     ].join('\n'));
     // the line carries the price asked for; no item price is written anywhere in QuickBooks
@@ -1308,7 +1309,7 @@ test('the owner\'s sample: the price asked for wins on its line (marked, item pr
     const u = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0 }], items });
     u.inv.crossOf = () => ({ problems: [] });
     const ok = await u.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m', requester: 'owner' });
-    assert.ok(ok.owner.split('\n').includes('Cross-check (Aryak Orders): ✔ all match'));
+    assert.ok(!ok.owner.includes('Cross-check')); // everything matches: no section at all
     // no cutting data wired (the group is not watched): the section is left out, nothing is claimed
     const n = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0 }], items });
     assert.ok(!(await n.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m', requester: 'owner' })).owner.includes('Cross-check'));

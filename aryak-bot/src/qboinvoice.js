@@ -613,6 +613,24 @@ export class QboInvoiceDesk {
     return { terms, memo, source, template, customer, flags };
   }
 
+  /**
+   * The customer's invoice lines in QuickBooks of the last 40 days (the office's on the screen and ours), for the cross-check with the cutting group:
+   * [{ codes: [item sku, item name], qty, number, at }], or null when QuickBooks could not be read.
+   */
+  async customerInvoiceLines(customerId, cat = null) {
+    if (!customerId) return null;
+    try {
+      const since = new Date(this.now() - 40 * DAY).toISOString().slice(0, 10);
+      const rows = await this.qbo.query(`select * from Invoice where CustomerRef = '${qboEscape(customerId)}' and TxnDate >= '${since}'`);
+      const items = new Map((cat?.items || []).map((i) => [String(i.Id), i]));
+      return rows.flatMap((inv) => (inv.Line || []).filter((l) => l.DetailType === 'SalesItemLineDetail').map((l) => {
+        const it = items.get(String(l.SalesItemLineDetail?.ItemRef?.value)) || null;
+        const name = it?.Name || l.SalesItemLineDetail?.ItemRef?.name || '';
+        return { codes: [String(it?.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(name).replace(/^.*?(\d{3,5})$/, '$1'), name].filter(Boolean), qty: Number(l.SalesItemLineDetail?.Qty) || 0, number: String(inv.DocNumber || ''), at: Date.parse(`${inv.TxnDate}T00:00:00Z`) || 0 };
+      }));
+    } catch (e) { this.log(`cross-check: the customer's invoices could not be read (${e.name})`); return null; }
+  }
+
   async customerRecord(id) { return (await this.qbo.query(`select * from Customer where Id = '${qboEscape(id)}'`))[0] || null; }
 
   /** Is this document number already used by an invoice? */
@@ -897,7 +915,7 @@ export class QboInvoiceDesk {
       guesses: (guesses.customer || guesses.lines.length || guesses.tax) ? guesses : null,
       // what the owner's yes will remember, so that the next time it is exact and not a guess
       aliases: { customer: (cust.guessed || cust.chosen) ? { text: customerText, id: cust.id, name: cust.name } : null, items: out.filter((l) => (l.via === 'guess' || l.chosen) && l.typed).map((l) => ({ typed: l.typed, itemId: l.itemId, name: l.name })) },
-      cross: this.crossOf ? this.crossOf(cutName, out.map((l) => ({ code: l.typed, sku: l.sku, name: l.name, qty: l.qty }))) : null, // against the cutting group: warnings only
+      cross: this.crossOf ? this.crossOf(cutName, out.map((l) => ({ code: l.typed, sku: l.sku, name: l.name, qty: l.qty })), await this.customerInvoiceLines(cust.id, cat)) : null, // against the cutting group: warnings only
       req: { customerText, entries, overrides, po },
       ...(po ? { po } : {}),
       ...(origin ? { origin } : {}), // the chat the request came from: the PDF goes back there
@@ -953,7 +971,7 @@ export class QboInvoiceDesk {
       ...(p.po ? [`PO: *${p.po}*`] : []),
       ...p.lines.map((l, i) => `${i + 1}. ${named(l)} (${l.qty} ×${l.price} = ${money(l.amount)})${l.override ? ` ✎ your price (system ${Number(l.override.system).toFixed(2)})` : ''}`),
       `Total: *${money(p.total)}${p.currency ? ` ${p.currency}` : ''}*`,
-      ...(p.cross ? (p.cross.problems.length ? ['Cross-check (Aryak Orders):', ...p.cross.problems.map((x) => `⚠ ${x}`)] : ['Cross-check (Aryak Orders): ✔ all match']) : []),
+      ...(p.cross?.problems?.length ? ['Cross-check (Aryak Orders):', ...p.cross.problems.map((x) => `⚠ ${x}`), ...(p.cross.more ? [`+${p.cross.more} more`] : [])] : []), // nothing at all when everything matches
       ...flags,
       answer,
     ].join('\n');

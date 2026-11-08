@@ -112,16 +112,30 @@ const dm = (ms, timeZone = 'Asia/Dubai') => { const [y, m, d] = new Intl.DateTim
 const amount = (qty, unit) => `${Math.round(qty * 1000) / 1000}${unit === 'm' ? 'm' : unit === 'roll' ? ' roll' : ` ${unit}`}`;
 
 /**
- * [lines]: [{ code, sku, name, qty }] of the invoice. Returns { problems: ['211: no order found', '505: already invoiced (inv-9981) on 07/11',
- * '503: cut 8m on 07/11, not invoiced', '505: cut 8m on 07/11, invoice has 10'] }. «Orders cut for this customer and missing from the invoice» are
- * the cuts of the last [windowDays] days that no invoice took and that no line of this invoice carries.
+ * [lines]: [{ code, sku, name, qty }] of the invoice. [invoiced]: the customer's invoice lines in QuickBooks since the cuts (the office's on the screen AND ours):
+ * [{ codes: [..], qty, number, at }], or null when QuickBooks could not be read (then «not invoiced» and «already invoiced» are not claimed). A cut counts as invoiced
+ * when the invoices of that code since the cut day carry its quantity (oldest cut first). Returns { problems, more }: at most [max] lines, then the count of the rest.
+ * Problems: '211: no order found', '507: already invoiced (inv-9981) on 06/11', '509: cut 12m on 06/11, invoice has 10', '503: cut 8m on 07/11, not invoiced'.
  */
-export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai' } = {}) {
+export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai', invoiced = null, max = 5 } = {}) {
   const rows = [];
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
     if (!(sameCutCustomer(e.customer, customer) || sameCutCustomer(e.customerTyped, customer))) continue;
-    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, invoiced: l.invoiced || null }); });
+    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, left: l.invoiced ? 0 : Number(l.quantity), by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
+  }
+  // QuickBooks' own invoices take the cuts they carry: per code, the oldest cut first, only invoices dated on or after the cut day
+  const same = (r, inv) => (inv.codes || []).some((k) => code(k) === r.code || (r.digits && digitsOf(k) === r.digits));
+  if (invoiced) {
+    const pool = invoiced.map((inv) => ({ ...inv, rest: Number(inv.qty) || 0 }));
+    for (const r of [...rows].sort((a, b) => a.at - b.at)) {
+      if (r.left <= 0.001) continue;
+      for (const inv of pool) {
+        if (inv.rest <= 0.001 || !same(r, inv) || inv.at < r.at - DAY) continue;
+        const take = Math.min(inv.rest, r.left); inv.rest -= take; r.left -= take; r.by = r.by || { number: inv.number, at: inv.at };
+        if (r.left <= 0.001) break;
+      }
+    }
   }
   const problems = [];
   const taken = new Set();
@@ -131,17 +145,19 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
     const wantedDigits = new Set([...wanted].map(digitsOf).filter((d) => d.length >= 2));
     const mine = rows.filter((r) => wanted.has(r.code) || (r.digits && wantedDigits.has(r.digits)));
     mine.forEach((r) => taken.add(r));
-    const open = mine.filter((r) => !r.invoiced);
-    const done = mine.filter((r) => r.invoiced);
+    const open = mine.filter((r) => r.left > 0.001);
+    const done = mine.filter((r) => r.left <= 0.001);
     if (!mine.length) problems.push(`${shown}: no order found`);
-    else if (!open.length) problems.push(`${shown}: already invoiced${done[0].invoiced.number ? ` (${done[0].invoiced.number})` : ''} on ${dm(done[0].at, timeZone)}`);
-    else {
-      const total = open.reduce((x, r) => x + r.qty, 0);
-      if (Math.abs(total - Number(ln.qty)) > 0.001) problems.push(`${shown}: cut ${amount(total, open[0].unit)} on ${dm(open[0].at, timeZone)}, invoice has ${ln.qty}`);
+    else if (!open.length) { if (invoiced || done[0].tracked) problems.push(`${shown}: already invoiced${done[0].by?.number ? ` (${done[0].by.number})` : ''} on ${dm(done[0].by?.at || done[0].at, timeZone)}`); }
+    else if (open.every((r) => r.unit === 'm')) { // meters against meters only: a count of pieces is another measure
+      const total = open.reduce((x, r) => x + r.left, 0);
+      if (Math.abs(total - Number(ln.qty)) > 0.001) problems.push(`${shown}: cut ${amount(total, 'm')} on ${dm(open[0].at, timeZone)}, invoice has ${ln.qty}`);
     }
   }
-  const missing = new Map();
-  for (const r of rows) if (!r.invoiced && !taken.has(r)) missing.set(r.code, [...(missing.get(r.code) || []), r]);
-  for (const [k, list] of missing) problems.push(`${k}: cut ${amount(list.reduce((x, r) => x + r.qty, 0), list[0].unit)} on ${dm(list[0].at, timeZone)}, not invoiced`);
-  return { problems };
+  if (invoiced) { // orders cut for this customer that no invoice (the office's or ours) carries and no line of this invoice takes
+    const missing = new Map();
+    for (const r of rows) if (r.left > 0.001 && !taken.has(r)) missing.set(r.code, [...(missing.get(r.code) || []), r]);
+    for (const [k, list] of missing) problems.push(`${k}: cut ${amount(list.reduce((x, r) => x + r.left, 0), list[0].unit)} on ${dm(list[0].at, timeZone)}, not invoiced`);
+  }
+  return { problems: problems.slice(0, max), more: Math.max(0, problems.length - max) };
 }
