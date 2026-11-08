@@ -873,7 +873,10 @@ export class QboInvoiceDesk {
 
   previewShort(p) {
     const code = (l) => String(l.typed || '').trim() || (/\d{2,}/.exec(l.sku || l.name) || [''])[0];
-    const named = (l) => { const k = code(l); if (!k) return l.name; const i = l.name.toLowerCase().indexOf(k.toLowerCase()); return i >= 0 ? `${l.name.slice(0, i)}*${l.name.slice(i, i + k.length)}*${l.name.slice(i + k.length)}` : `${l.name} *${k}*`; };
+    const named = (l) => { const k = code(l); if (!k) return l.name; const i = l.name.toLowerCase().indexOf(k.toLowerCase()); if (i < 0) return `${l.name} *${k}*`;
+      const before = l.name.slice(0, i); const after = l.name.slice(i + k.length);
+      // WhatsApp shows *bold* only when the opening asterisk follows a space (or the start) and the closing one a space (or the end): a name that glues the code gets a space
+      return `${before}${before && !/\s$/.test(before) ? ' ' : ''}*${l.name.slice(i, i + k.length)}*${after && !/^[\s.,;:)]/.test(after) ? ' ' : ''}${after}`; };
     const many = p.lines.length > 1;
     const flags = [];
     if (p.guesses?.customer) flags.push(`⚠ guess: ${p.guesses.customer.text} → ${p.customer.name}`);

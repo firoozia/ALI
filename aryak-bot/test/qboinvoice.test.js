@@ -1088,3 +1088,15 @@ test('the statement confirmation is short too, and the Persian mode keeps the ol
   const t = mk(); // Persian mode: the full old preview as before
   return t.inv.request({ text: REQ, requester: 'owner' }).then((r) => { assert.ok(r.owner.startsWith('پیش‌نمایش فاکتور #Q1')); });
 });
+
+test('the bold code is separated from a name that glues it (PVC FILM509 -> PVC FILM *509*), and from what follows', async () => {
+  setOutLang('en');
+  try {
+    const items = [{ Id: '9', Name: 'PVC FILM509', Sku: 'PVC-509', UnitPrice: 11, Type: 'Inventory', Active: true }, { Id: '10', Name: 'EDGE0.4MM-215X', Sku: 'ED-215', UnitPrice: 2, Type: 'Inventory', Active: true }];
+    const t = mk({ customers: [{ Id: '91', DisplayName: 'HIGH POINT', CompanyName: 'HIGH POINT LLC', Balance: 0 }], items });
+    const r = await t.inv.request({ text: 'Atossa invoice for HIGH POINT 509=8M 215=3M', requester: 'owner' });
+    const lines = r.owner.split('\n');
+    assert.ok(lines.includes('1. PVC FILM *509* (8 ×11 = 88.00)'), lines.join(' | '));
+    assert.ok(lines.some((l) => /^2\. EDGE0\.4MM-\*215\*\s?X \(3 ×2 = 6\.00\)$|^2\. EDGE0\.4MM- \*215\* X \(3 ×2 = 6\.00\)$/.test(l)), lines.join(' | '));
+  } finally { setOutLang('fa'); }
+});
