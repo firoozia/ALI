@@ -95,3 +95,30 @@ test('the owner\'s words: the list of Persian names and a correction, in Persian
   const same = 'Persian name: AR-RAD = آر راد';
   assert.equal(await englishOut(same, async () => { calls += 1; return ''; }), same); assert.equal(calls, 0);
 });
+
+test('an exact two-word match wins over a close but looser name; two exact matches are still asked', () => {
+  const ar = 'AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC';
+  const r = pickSpoken('الراد', [ar, 'ALRAHAD'], { strong: 0.7 });
+  assert.equal(r.kind, 'one'); assert.equal(r.best.name, ar); // 0.776 against 0.75: not "about equally good", AR + RAD fits every sound
+  const both = pickSpoken('الراد', ['AR RAD', 'AL RAAD'], { strong: 0.7 });
+  assert.equal(both.kind, 'many'); // two names fit exactly: the owner chooses
+});
+
+test('English statement lines are written in English at once: a statement of account, never an invoice', async () => {
+  const { setOutLang } = await import('../src/outlang.js');
+  const customers = [{ Id: '70', DisplayName: 'AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC', Balance: 0 }, { Id: '72', DisplayName: 'AL RAAD', Balance: 0 }, { Id: '71', DisplayName: 'ZED TRADING' }, { Id: '73', DisplayName: 'AR RAD', Balance: 0 }];
+  setOutLang('en');
+  try {
+    const desk = mkDesk(customers);
+    const many = await desk.statementFor('الراد', { privateJid: 'x@s.whatsapp.net' });
+    assert.equal(many.ask, true); assert.match(many.text, /^Several customers match "الراد"; write the right number:\n1\. /);
+    const none = await desk.statementFor('اف', { privateJid: 'x@s.whatsapp.net' });
+    assert.match(none.text, /^No customer named "اف" was found\. Closest:/);
+    const one = await mkDesk([customers[0], customers[2]]).statementFor('الراد', { privateJid: 'x@s.whatsapp.net', period: { from: '2026-10-01', to: '2026-10-31', label: '2026-10' } });
+    assert.equal(one.ok, true);
+    assert.match(one.text, /^Statement of account for "AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC" \(guessed from "الراد"; tell me if it is another customer\) from 2026-10-01 to 2026-10-31 sent \(balance /);
+    assert.doesNotMatch(one.text, /invoice/i);
+  } finally { setOutLang('fa'); }
+  const { TRANSLATE_SYSTEM } = await import('../src/outlang.js');
+  assert.match(TRANSLATE_SYSTEM, /NEVER "invoice"/);
+});

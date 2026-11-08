@@ -2,6 +2,7 @@
 // "صورت‌حساب <customer>" and "صورت‌حساب همه" (at most 50, a gap between posts). READ ONLY: nothing is ever written to QuickBooks here. Every statement
 // is posted ONLY to the test group, whatever is asked: the desk has no target to choose, it asks for "the test group" and nothing else.
 
+import { isEnglishOut } from './outlang.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clearWinner, customerRowFor, nameKey, rankCustomers, rowGroups } from './customergroups.js';
@@ -376,6 +377,10 @@ export class QboDesk {
   async statementFor(typed, { privateJid, period = null, hold = false } = {}) {
     const found = await this.resolveSpoken(typed);
     if (!found.id) {
+      if (isEnglishOut()) { // written in English at once (not translated): a statement is a statement of account, never an invoice
+        if (found.many) return { ok: false, ask: true, text: `Several customers match "${typed}"; write the right number:\n${found.many.map((n, i) => `${i + 1}. ${n}`).join('\n')}`, options: found.many };
+        return { ok: false, ask: true, text: `No customer named "${typed}" was found. Closest:\n${(found.nearest || []).map((n, i) => `${i + 1}. ${n}`).join('\n') || '-'}\nWrite the right name.`, options: found.nearest || [] };
+      }
       if (found.many) return { ok: false, ask: true, text: `چند مشتری به «${typed}» می‌خورد؛ شمارهٔ درست را بنویسید:\n${found.many.map((n, i) => `${fa(i + 1)}. ${n}`).join('\n')}`, options: found.many };
       return { ok: false, ask: true, text: `مشتری‌ای به نام «${typed}» پیدا نشد. نزدیک‌ترین‌ها:\n${(found.nearest || []).map((n, i) => `${fa(i + 1)}. ${n}`).join('\n') || '—'}\nنام درست را بنویسید یا بگویید.`, options: found.nearest || [] };
     }
@@ -390,6 +395,11 @@ export class QboDesk {
     await this.post(privateJid, pdf, fileName, caption);
     // a read-only action with ONE clearly best candidate is done and said, not asked: «(حدس از …)»
     const guessed = found.via === 'sound' ? ` (حدس از «${typed}» — اگر مشتری دیگری بود بنویسید)` : '';
+    if (isEnglishOut()) {
+      const shown = data.customer.name || found.name;
+      const note = found.via === 'sound' ? ` (guessed from "${typed}"; tell me if it is another customer)` : '';
+      return { ok: true, name: shown, guessed: !!guessed, text: `Statement of account for "${shown}"${note}${period ? ` from ${period.from} to ${period.to}` : ''} sent (balance ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? ', closing balance of the period' : ''}).` };
+    }
     return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(period.from)} تا ${fa(period.to)}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };
   }
 

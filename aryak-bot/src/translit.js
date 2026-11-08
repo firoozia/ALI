@@ -68,10 +68,13 @@ export function skeletonVariants(word) {
  * How well the spoken words fit one name: every spoken word is matched to its best word in the name (or to two joined words: "بردپالم"); the score is the
  * mean, lowered a little for each word of the name that was not spoken (a name with TRADING LLC after it is still the same company).
  */
-export function scoreName(spoken, name) {
+export function scoreName(spoken, name) { return scoreDetail(spoken, name).score; }
+
+/** { score, raw }: [raw] is the match of the spoken words before the penalty for the words of the name that were not spoken (1 = every spoken word fits a word of the name exactly). */
+export function scoreDetail(spoken, name) {
   const spokenWords = tokensOf(spoken).filter((t) => skeleton(t));
   const nt = tokensOf(name).map(skeleton).filter(Boolean);
-  if (!spokenWords.length || !nt.length) return 0;
+  if (!spokenWords.length || !nt.length) return { score: 0, raw: 0 };
   const used = new Set();
   let total = 0;
   for (const word of spokenWords) { // every spoken word takes its best word of the name (or two joined: «بردپالم», «AR»+«RAD»); a word of the name is used once
@@ -86,18 +89,20 @@ export function scoreName(spoken, name) {
     take.forEach((i) => used.add(i));
     total += best;
   }
-  let score = total / spokenWords.length;
+  const raw = total / spokenWords.length;
+  let score = raw;
   const extra = Math.max(0, nt.length - spokenWords.length);
   score *= 1 - Math.min(0.2, extra * 0.05);
   if (spokenWords.length > nt.length) score *= 0.85; // more words spoken than the name has
-  return score;
+  return { score, raw };
 }
 
 /** The names ranked for a spoken name: [{ name, score }] best first. [names]: strings, or { name, alts: [] } (the best of the alternatives counts). */
 export function rankNames(spoken, names) {
   const ranked = (names || []).map((n) => {
     const all = typeof n === 'string' ? [n] : [n.name, ...(n.alts || [])].filter(Boolean);
-    return { name: typeof n === 'string' ? n : n.name, key: n, score: Math.max(0, ...all.map((x) => scoreName(spoken, x))) };
+    const best = all.map((x) => scoreDetail(spoken, x)).sort((a, b) => b.score - a.score)[0] || { score: 0, raw: 0 };
+    return { name: typeof n === 'string' ? n : n.name, key: n, score: Math.max(0, best.score), raw: best.raw };
   }).filter((r) => r.name);
   return ranked.sort((a, b) => b.score - a.score);
 }
@@ -109,6 +114,8 @@ export function rankNames(spoken, names) {
 export function pickSpoken(spoken, names, { strong = 0.72, gap = 0.12 } = {}) {
   const ranked = rankNames(spoken, names);
   const fits = ranked.filter((r) => r.score >= strong);
+  // one name fits every spoken word EXACTLY (AR + RAD) and no other does: it wins, even if a longer name is still fairly close
+  if (fits.length > 1 && fits[0].raw >= 0.96 && fits[1].raw < 0.96) return { kind: 'one', best: fits[0], ranked };
   if (fits.length === 1 || (fits.length > 1 && fits[0].score - fits[1].score >= gap)) return { kind: 'one', best: fits[0], ranked };
   if (fits.length > 1) return { kind: 'many', candidates: fits.slice(0, 5), ranked };
   return { kind: 'none', nearest: ranked.slice(0, 3), ranked };

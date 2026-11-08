@@ -49,6 +49,7 @@ export const TRANSLATE_SYSTEM = `You translate short WhatsApp messages of a comp
 - Keep WhatsApp formatting (*bold*, _italic_). Keep line-leading numbers and bullets.
 - A phrase in «guillemets» that is a command the person types (for example «بله #Q8», «نه #Q8») becomes the English command in quotes: "yes #Q8", "no #Q8". «بله همه» is "yes all".
 - Money is written with its currency code, for example 504.00 AED. Dates like «8 Nov 2026» stay in that form; a Persian-calendar date is written as its Persian-calendar day and month name in English letters.
+- «صورت‌حساب» and «صورتحساب» mean "statement of account" (a customer's balance document), NEVER "invoice"; «فاکتور» means "invoice". Keep the two apart.
 - The assistant speaks in the first person as a woman and is polite and short.`;
 
 export const _memorySize = () => memory.size;
