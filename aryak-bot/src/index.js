@@ -648,6 +648,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_edge': return qboBulk.planEdgeList();
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
+    case 'adjust': return qboInvoices.adjust(ic);
     case 'statement_nl': {
       if (ic.unsupported) return ['ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'];
       if (!ic.customer) { const out = ['صورت‌حساب کدام مشتری؟ نام را بنویسید یا بگویید.']; out.clarify = true; return out; }

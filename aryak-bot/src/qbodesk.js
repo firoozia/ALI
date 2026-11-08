@@ -288,6 +288,25 @@ export class QboDesk {
     return [...found.values()];
   }
 
+  /**
+   * A best guess for a customer that could not be settled: { best: { id, name }, alts: [{ id, name }], reason } or null when there is nothing to guess from.
+   * [r]: the resolveLoose answer (several exact names, several word matches, or the nearest names). Used only for a PREVIEW; nothing is applied before the owner's yes.
+   */
+  async guessCustomer(typed, r) {
+    const all = await this.customers();
+    const rowOf = (name) => all.find((c) => (c.DisplayName || c.CompanyName) === name);
+    let list = []; let reason = '';
+    if (r.ambiguous?.length) { list = r.ambiguous.map((c) => ({ id: String(c.Id), name: c.DisplayName || c.CompanyName })); reason = 'چند مشتری با این نام'; }
+    else if (r.candidates?.length) { list = r.candidates.map((n) => { const c = rowOf(n); return c ? { id: String(c.Id), name: n } : null; }).filter(Boolean); reason = 'چند مشتری با این واژه‌ها'; }
+    else if (r.options?.length) { list = r.options.map((o) => ({ id: String(o.id), name: o.name, label: o.label })); reason = 'نزدیک‌ترین نام'; }
+    if (!list.length) return null;
+    const ranked = rankNames(typed, list.map((x) => ({ name: x.name, key: x })));
+    if (!r.ambiguous?.length && !r.candidates?.length && !(ranked[0]?.score >= 0.5)) return null; // the nearest names are only SHOWN when none is near enough to be a guess
+    const ordered = ranked.map((x) => x.key.key || x.key);
+    const norm = (x) => ({ id: x.id, name: x.name, ...(x.label ? { label: x.label } : {}) });
+    return { best: norm(ordered[0]), alts: ordered.slice(1, 4).map(norm), reason };
+  }
+
   /** The three nearest names among ALL customers, inactive ones too, by token overlap and sound (case, LLC and L.L.C do not matter); even weak ones are listed. */
   async nearestCustomers(typed) {
     let rows = [];

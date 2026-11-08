@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseStatementRequest } from './period.js';
 import { looseKey } from './namekey.js';
+import { rankNames, scoreName } from './translit.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { staffChecker } from './gate.js';
 import { nameKey } from './customergroups.js';
@@ -51,6 +52,13 @@ export function parseInvoiceCommand(text) {
   if (/^نام\s+و\s+شرح\s+نوار\s+لبه$/u.test(s)) return { type: 'bulk_edge_names' };
   if (/^حذف\s+نوار\s+لبه(?:\s*ها(?:ی)?)?\s+قدیمی$/u.test(s)) return { type: 'bulk_old_edge' };
   if ((m = /^برگرداندن\s+([CEMTP])\s*(\d+)$/iu.exec(s))) return { type: 'bulk_undo', scope: 'all', source: `${m[1].toUpperCase()}${m[2]}` };
+  { // change one guess of the open preview: «مشتری ۲»، «سطر ۱ = ۳»، «مالیات ۲» (optionally with «#Q3»)
+    const idPart = String.raw`(?:\s*#?\s*Q\s*(\d+))?`;
+    let a = new RegExp(String.raw`^مشتری\s*(\d+)${idPart}$`, 'iu').exec(s);
+    if (a) return { type: 'adjust', what: 'customer', pick: Number(a[1]), id: a[2] ? `Q${a[2]}` : '' };
+    if ((a = new RegExp(String.raw`^سطر\s*(\d+)\s*=\s*(\d+)${idPart}$`, 'iu').exec(s))) return { type: 'adjust', what: 'line', n: Number(a[1]), pick: Number(a[2]), id: a[3] ? `Q${a[3]}` : '' };
+    if ((a = new RegExp(String.raw`^مالیات\s*(\d+)${idPart}$`, 'iu').exec(s))) return { type: 'adjust', what: 'tax', pick: Number(a[1]), id: a[2] ? `Q${a[2]}` : '' };
+  }
   if (/^دسته\s+و\s+کد\s+کالا(?:\s*ها)?$/u.test(s)) return { type: 'bulk_catalog' };
   if (/^دسته\s+و\s+کد\s+پی\s*وی\s*سی$/u.test(s)) return { type: 'bulk_catalog', edge: false }; // the PVC film part only: no edge banding change at all
   if (/^مالیات\s+کالاها(?:\s+دبی)?$/u.test(s)) return { type: 'bulk_tax' };
@@ -224,6 +232,52 @@ export function resolveEntries(entries, ctx) {
     if (!(c.qty > 0 && c.qty <= 100000)) { stops.push(`سطر ${fa(n)}: تعداد درست نیست`); return; }
     if (c.price !== null && c.price !== undefined && !(c.price >= 0 && c.price <= 10000000)) { stops.push(`سطر ${fa(n)}: قیمت درست نیست`); return; }
     lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via, typed: c.item });
+  });
+  return { lines, stops };
+}
+
+/**
+ * A best guess for an item that could not be settled: { item, alts: [item], reason } or null when nothing is near. The customer's history first, then the
+ * word and sound closeness of the names. Used only for a PREVIEW; the owner's yes applies it.
+ */
+export function guessItem(name, ctx = {}) {
+  const items = (ctx.items || []).filter((i) => i && i.Type !== 'Category' && i.Active !== false);
+  const exact = itemsNamed(items, name);
+  let pool = exact.length ? exact : itemsContaining(items, name);
+  let reason = pool.length ? 'چند کالا با این نام' : '';
+  if (!pool.length) {
+    const ranked = rankNames(name, items.map((i) => ({ name: i.Name, alts: [i.Sku, i.FullyQualifiedName].filter(Boolean), item: i })));
+    pool = ranked.filter((r) => r.score >= 0.6).slice(0, 4).map((r) => r.key.item);
+    reason = 'نزدیک‌ترین نام';
+  }
+  if (!pool.length) return null;
+  const hist = ctx.history ? pool.filter((i) => ctx.history.has(String(i.Id))) : [];
+  const rest = pool.filter((i) => !hist.includes(i)).sort((a, b) => scoreName(name, b.Name) - scoreName(name, a.Name));
+  const ordered = [...hist, ...rest];
+  return { item: ordered[0], alts: ordered.slice(1, 4), reason: hist.length ? 'از خریدهای قبلی مشتری' : reason };
+}
+
+/** Like resolveEntries, but an item that cannot be settled is GUESSED (guessItem) and marked; a line is stopped only when nothing is near. */
+export function resolveEntriesGuess(entries, ctx) {
+  const lines = []; const stops = [];
+  entries.forEach((e, i) => {
+    const n = i + 1;
+    const cands = e.cands || [];
+    if (!cands.length) { stops.push(`سطر ${fa(n)} را نفهمیدم: «${String(e.raw).slice(0, 60)}» — قالب: نام کالا، تعداد، قیمت (قیمت اختیاری)`); return; }
+    const tried = cands.map((c) => ({ c, r: pickItem(c.item, ctx) }));
+    const ok = tried.filter((t) => t.r.item);
+    if (ok.length > 1) { stops.push(`سطر ${fa(n)}: «${String(e.raw).slice(0, 60)}» بیش از یک جور خوانده می‌شود؛ با ویرگول بنویسید: نام کالا، تعداد، قیمت`); return; }
+    let c; let r; let guess = null;
+    if (ok.length === 1) ({ c, r } = ok[0]);
+    else {
+      c = cands[0];
+      const g = guessItem(c.item, ctx);
+      if (!g) { stops.push(tried[0].r.stop(n)); return; }
+      r = { item: g.item, via: 'guess' }; guess = { alts: g.alts, reason: g.reason };
+    }
+    if (!(c.qty > 0 && c.qty <= 100000)) { stops.push(`سطر ${fa(n)}: تعداد درست نیست`); return; }
+    if (c.price !== null && c.price !== undefined && !(c.price >= 0 && c.price <= 10000000)) { stops.push(`سطر ${fa(n)}: قیمت درست نیست`); return; }
+    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via, typed: c.item, guess });
   });
   return { lines, stops };
 }
@@ -408,9 +462,24 @@ export class QboInvoiceDesk {
     if (own.length && own[0] && own.every((x) => x === own[0]) && cat.codes.has(own[0])) return { ...cat.codes.get(own[0]), source: 'item' };
     const r = codeFromInvoices(recent, cat.codes);
     if (r.code) return { ...r.code, source: 'invoices', n: r.n, total: r.total, others: r.found.filter((f) => f.id !== r.code.id) };
-    if (r.error === 'none') return { error: `برای «${cust.name}» فاکتور قبلی با کد مالیات در کوییک‌بوکس نیست تا از دفتر خوانده شود. ${ask}` };
+    if (r.error === 'none') return { guessable: true, error: `برای «${cust.name}» فاکتور قبلی با کد مالیات در کوییک‌بوکس نیست تا از دفتر خوانده شود. ${ask}` };
     const seen = r.found.map((f) => `${f.name} (${f.n} سطر)`).join('، ');
-    return { error: `کد مالیات فاکتورهای اخیر «${cust.name}» ${r.error === 'unknown' ? 'ناشناخته است' : 'اکثریت روشنی ندارد (دست‌کم ۹۰٪ سطرها و کد آخرین فاکتور باید یکی باشد)'}: ${seen}. ${ask}` };
+    return { guessable: true, error: `کد مالیات فاکتورهای اخیر «${cust.name}» ${r.error === 'unknown' ? 'ناشناخته است' : 'اکثریت روشنی ندارد (دست‌کم ۹۰٪ سطرها و کد آخرین فاکتور باید یکی باشد)'}: ${seen}. ${ask}` };
+  }
+
+  /**
+   * A tax code to propose when the history gives no clear one: the code most used in the customer's recent invoices, else the one most items carry, else the
+   * only 5% code of the books. { ...code, source: 'guess', reason, alts: [codes] } or null. It is only proposed in a preview; the owner's yes applies it.
+   */
+  taxGuess(cat, recent, items = []) {
+    const count = (ids) => { const m = new Map(); for (const id of ids) if (cat.codes.has(String(id))) m.set(String(id), (m.get(String(id)) || 0) + 1); return [...m].sort((a, b) => b[1] - a[1]).map(([id]) => id); };
+    const fromInvoices = count(recent.flatMap((inv) => (inv.Line || []).map((l) => l.SalesItemLineDetail?.TaxCodeRef?.value).filter(Boolean)));
+    let order = fromInvoices; let reason = 'بیشترین کد در فاکتورهای قبلی مشتری';
+    if (!order.length) { order = count(items.map((i) => i?.SalesTaxCodeRef?.value).filter(Boolean)); reason = 'کدی که بیشتر کالاها دارند'; }
+    if (!order.length) { const five = [...cat.codes.values()].filter((c) => Number(c.rate) === 5); if (five.length === 1) { order = [String(five[0].id)]; reason = 'تنها کد ۵٪ کوییک‌بوکس'; } }
+    if (!order.length) return null;
+    const best = cat.codes.get(order[0]);
+    return { ...best, source: 'guess', reason, alts: order.slice(1, 4).map((id) => cat.codes.get(id)) };
   }
 
   /** The ids of the previews the owner can still say yes or no to (pending, not older than a day). */
@@ -476,9 +545,14 @@ export class QboInvoiceDesk {
     return this.makePreview({ customerText, entries, requester, stop });
   }
 
-  async makePreview({ customerText, entries, requester, stop }) {
-    const cust = await this.desk.resolveLoose(customerText);
+  async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '' }) {
+    let cust = overrides.customer ? { ours: customerText, id: overrides.customer.id, name: overrides.customer.name, loose: true, typed: customerText, chosen: true } : await this.desk.resolveLoose(customerText);
     const problems = { customer: '', items: [], tax: '' };
+    const guesses = { customer: null, lines: [], tax: null }; // what was GUESSED (shown with alternatives; applied only by the owner's yes)
+    if (!cust.id) {
+      const g = await this.desk.guessCustomer(customerText, cust);
+      if (g) { guesses.customer = { text: customerText, reason: g.reason, alts: g.alts }; cust = { ours: cust.ours || customerText, id: g.best.id, name: g.best.name, loose: true, typed: customerText, guessed: true }; }
+    }
     if (!cust.id) {
       if (cust.candidates) problems.customer = `مشتری «${cust.ours}» با چند مشتری می‌خواند و بین آن‌ها حدس نمی‌زنم:\n${cust.candidates.map((c, i) => `   ${fa(i + 1)}) ${c}`).join('\n')}\n   نام کامل یکی را بنویسید.`;
       else {
@@ -492,7 +566,12 @@ export class QboInvoiceDesk {
     const history = new Set();
     for (const inv of recent) for (const l of inv.Line || []) { const id = l.SalesItemLineDetail?.ItemRef?.value; if (id !== undefined && id !== null) history.add(String(id)); }
     const taught = (code) => { if (!cust.id) return null; const t = this.itemCodes.get(cust.id, code); return t ? cat.items.find((i) => String(i.Id) === String(t.itemId)) || null : null; };
-    const { lines, stops } = resolveEntries(entries, { items: cat.items, history, taught });
+    const { lines, stops } = resolveEntriesGuess(entries, { items: cat.items, history, taught });
+    for (const l of lines) { // the owner's choice of another item for a line
+      const pick = overrides.items?.[l.n];
+      const alt = pick ? cat.items.find((i) => String(i.Id) === String(pick)) : null;
+      if (alt) { l.item = alt; l.via = 'chosen'; l.guess = null; l.chosen = true; }
+    }
     problems.items.push(...stops);
     const warnings = []; const out = [];
     for (const l of lines) {
@@ -507,10 +586,18 @@ export class QboInvoiceDesk {
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
       if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`);
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
-      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '' });
+      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '', n: l.n, chosen: !!l.chosen });
+      if (l.guess) guesses.lines.push({ n: l.n, typed: l.typed, reason: l.guess.reason, alts: l.guess.alts.map((a) => ({ itemId: String(a.Id), name: a.Name, price: Number(a.UnitPrice) || 0 })) });
     }
     let tax = null;
-    if (cust.id) { tax = await this.taxFor(cust, cat, recent, lines.map((l) => l.item)); if (tax.error) problems.tax = tax.error; } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
+    if (cust.id) {
+      const picked = overrides.tax ? cat.codes.get(String(overrides.tax)) : null;
+      tax = picked ? { ...picked, source: 'chosen' } : await this.taxFor(cust, cat, recent, lines.map((l) => l.item));
+      if (tax.error) {
+        const g = tax.guessable ? this.taxGuess(cat, recent, lines.map((l) => l.item)) : null;
+        if (g) { guesses.tax = { reason: g.reason, alts: g.alts.map((a) => ({ id: String(a.id), name: a.name, rate: a.rate })) }; tax = g; } else problems.tax = tax.error;
+      }
+    } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
     // the company numbers invoices by hand: the next number of the office's own pattern (an invoice is never made without one)
     let docNumber = '';
     if (cat.customTxn && !problems.customer && !problems.items.length && !(problems.tax && cust.id)) {
@@ -537,15 +624,19 @@ export class QboInvoiceDesk {
       return stop(message);
     }
     const t = totals(out, tax.rate);
-    const id = this.store.nextId();
+    const id = reuseId || this.store.nextId();
     if (tax.source === 'invoices' && tax.others?.length) warnings.push(`در فاکتورهای قبلی این مشتری چند سطر کد دیگری داشت: ${tax.others.map((x) => `${x.name} (${x.n} سطر)`).join('، ')}`);
     const preview = {
       id, nonce: randomBytes(5).toString('hex'), at: this.now(), status: 'pending', requester, customer: { ours: cust.ours, id: cust.id, name: cust.name, from: cust.loose ? cust.typed : '' },
       docNumber, customTxn: cat.customTxn, termId: rec?.SalesTermRef?.value ? String(rec.SalesTermRef.value) : '', billEmail: rec?.PrimaryEmailAddr?.Address || '',
-      lines: out, tax: { id: tax.id, name: tax.name, rate: tax.rate, source: tax.source, n: tax.n, total: tax.total }, ...t, currency: cat.currency, warnings,
+      lines: out, tax: { id: tax.id, name: tax.name, rate: tax.rate, source: tax.source, n: tax.n, total: tax.total, reason: tax.reason || '' }, ...t, currency: cat.currency, warnings,
+      guesses: (guesses.customer || guesses.lines.length || guesses.tax) ? guesses : null,
+      // what the owner's yes will remember, so that the next time it is exact and not a guess
+      aliases: { customer: (cust.guessed || cust.chosen) ? { text: customerText, id: cust.id, name: cust.name } : null, items: out.filter((l) => (l.via === 'guess' || l.chosen) && l.typed).map((l) => ({ typed: l.typed, itemId: l.itemId, name: l.name })) },
+      req: { customerText, entries, overrides },
     };
     this.store.add(preview);
-    this.audit.add({ event: 'preview', requester, previewId: id, total: t.total });
+    this.audit.add({ event: 'preview', requester, previewId: id, total: t.total, ...(preview.guesses ? { guessed: true } : {}) });
     return { requester: `Your invoice request #${id} for ${cust.name} was sent to the owner for approval (total ${money(t.total)}). You will be told when it is created or refused.`, owner: this.previewText(preview) };
   }
 
@@ -572,15 +663,59 @@ export class QboInvoiceDesk {
     const who = p.requester === 'owner' ? 'خودتان' : `شمارهٔ ${p.requester}`;
     return [
       `پیش‌نمایش فاکتور #${p.id} (درخواست از ${who}) — هنوز چیزی در کوییک‌بوکس ساخته نشده`,
-      `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
+      p.guesses?.customer ? `مشتری: ${p.customer.name} (حدس از «${p.guesses.customer.text}»: ${p.guesses.customer.reason})` : `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
+      ...(p.guesses?.customer?.alts?.length ? [...p.guesses.customer.alts.map((a, i) => `   ${fa(i + 1)}) ${a.label || a.name}`), '   (برای تغییر: «مشتری ۱» و …)'] : []),
       ...(p.docNumber ? [`شمارهٔ فاکتور: ${p.docNumber}`] : []),
-      ...p.lines.map((l, i) => `${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : ''}`),
+      ...p.lines.flatMap((l, i) => [`${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : l.via === 'guess' && l.typed ? ` («${l.typed}» ← ${l.name} (حدس: ${(p.guesses?.lines || []).find((g) => g.n === l.n)?.reason || 'نزدیک‌ترین'}))` : l.via === 'chosen' ? ' (انتخاب شما)' : ''}`,
+        ...((p.guesses?.lines || []).find((g) => g.n === l.n)?.alts || []).map((a, k) => `   ${fa(k + 1)}) ${a.name} — قیمت ${a.price || 'ندارد'}${k === 0 ? `   (برای تغییر: «سطر ${fa(l.n)} = ${fa(k + 1)}»)` : ''}`)]),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
       p.tax.source === 'invoices' ? `مالیات: ${p.tax.name} ${p.tax.rate}٪ (از ${fa(p.tax.n)} سطر از ${fa(p.tax.total)} سطر فاکتورهای قبلی): ${money(p.vat)}` : `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'item' ? '، کد خود کالا' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
+      ...(p.guesses?.tax ? [`   مالیات حدس است (${p.guesses.tax.reason})${p.guesses.tax.alts.length ? '؛ دیگر کدها:' : ''}`, ...p.guesses.tax.alts.map((a, i) => `   ${fa(i + 1)}) ${a.name} (${a.rate}٪)${i === 0 ? '   (برای تغییر: «مالیات ۱»)' : ''}`)] : []),
       `جمع کل: ${money(p.total)}${p.currency ? ` ${p.currency}` : ''}`,
       ...(p.warnings.length ? ['⚠️ هشدارها:', ...p.warnings.map((w) => `• ${w}`)] : []),
+      ...(p.guesses ? ['🔶 مواردی که «حدس» نوشته شده تا «بله» شما اعمال نمی‌شود؛ با «بله» همان حدس‌ها پذیرفته و یاد گرفته می‌شود.'] : []),
       `برای ساخت: «بله #${p.id}» — برای لغو: «نه #${p.id}» (۲۴ ساعت اعتبار)`,
     ].join('\n');
+  }
+
+  /**
+   * «مشتری ۲»، «سطر ۱ = ۳»، «مالیات ۲»: another alternative for one guess of an open preview. The preview is rebuilt under the same number and shown again;
+   * nothing is created. [id]: a preview number, or the newest open one that holds guesses.
+   */
+  async adjust({ what, n = 0, pick, id = '' }) {
+    const guard = this.guard();
+    if (guard) return [guard];
+    const p = id ? this.store.get(id) : Object.values(this.store.d.previews).filter((x) => x.status === 'pending' && x.guesses && this.now() - x.at <= EXPIRY_MS).sort((a, b) => b.at - a.at)[0];
+    if (!p || p.status !== 'pending' || !p.guesses || !p.req) return ['پیش‌نمایشی با حدس باز نیست که چیزی در آن عوض شود.'];
+    const g = p.guesses;
+    const ov = JSON.parse(JSON.stringify(p.req.overrides || {}));
+    if (what === 'customer') {
+      const alt = g.customer?.alts?.[pick - 1];
+      if (!alt) return [`برای مشتری گزینهٔ ${fa(pick)} نیست.`];
+      ov.customer = { id: alt.id, name: alt.name };
+    } else if (what === 'line') {
+      const entry = g.lines.find((x) => x.n === n);
+      const alt = entry?.alts?.[pick - 1];
+      if (!alt) return [`برای سطر ${fa(n)} گزینهٔ ${fa(pick)} نیست.`];
+      ov.items = { ...(ov.items || {}), [n]: alt.itemId };
+    } else {
+      const alt = g.tax?.alts?.[pick - 1];
+      if (!alt) return [`برای مالیات گزینهٔ ${fa(pick)} نیست.`];
+      ov.tax = alt.id;
+    }
+    const stop = (msg) => ({ requester: msg, owner: null });
+    const r = await this.makePreview({ customerText: p.req.customerText, entries: p.req.entries, requester: p.requester, stop, overrides: ov, reuseId: p.id });
+    return [r.owner || r.requester];
+  }
+
+  /** What the owner's yes teaches: the customer text and the item texts he accepted become exact next time. */
+  rememberGuesses(p) {
+    try {
+      const a = p.aliases || {};
+      if (a.customer?.id) this.desk.map.set(a.customer.text, a.customer.id, a.customer.name, 'owner');
+      for (const it of a.items || []) this.itemCodes.set('', it.typed, { Id: it.itemId, Name: it.name }, this.now());
+      if ((a.customer || (a.items || []).length)) this.audit.add({ event: 'alias', approver: 'owner', previewId: p.id });
+    } catch (e) { this.log(`aliases could not be saved: ${e.message}`); }
   }
 
   /** The owner's answer in his own chat. Returns the lines to tell him. */
@@ -631,6 +766,7 @@ export class QboInvoiceDesk {
     }
     this.inflight.delete(p.id);
     p.status = 'created';
+    this.rememberGuesses(p);
     p.qbo = { id: String(created.Id), docNumber: created.DocNumber || '', total: fils(created.TotalAmt) };
     this.store.save();
     this.audit.add({ event: 'create', requester: p.requester, approver: 'owner', previewId: p.id, qboId: p.qbo.id, docNumber: p.qbo.docNumber, total: p.qbo.total });

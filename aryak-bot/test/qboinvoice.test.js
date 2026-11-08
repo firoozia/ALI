@@ -161,25 +161,29 @@ test('a request becomes a PREVIEW for the owner: customer, lines, subtotal, VAT 
   assert.ok(!JSON.stringify(t.audit.last(5)).includes('Hinge')); // the audit log has no message text and no lines
 });
 
-test('an unknown customer or item stops with "map this first" and the candidates; a near name is never guessed', async () => {
+test('an unsure customer or item is GUESSED, marked and shown; a request stops only when there is nothing to guess from; nothing is applied before the yes', async () => {
   const t = mk();
-  const unknown = await t.inv.request({ text: 'فاکتور بساز Orion Furnitur\nH35, 1', requester: 'owner' });
-  assert.equal(unknown.owner, null);
-  assert.ok(unknown.requester.includes('تطبیق کوییک‌بوکس') && unknown.requester.includes('Orion Furniture')); // the near name is only SHOWN
-  assert.equal(t.store.d.n, 0);
+  const near = await t.inv.request({ text: 'فاکتور بساز Orion Furnitur\nH35, 1', requester: 'owner' });
+  assert.ok(near.owner.includes('مشتری: Orion Furniture (حدس از «Orion Furnitur»'));
+  assert.ok(near.owner.includes('حدس') && near.owner.includes('بله #Q1'));
+  assert.equal(t.store.get('Q1').guesses.customer.text, 'Orion Furnitur');
+  assert.equal(t.m.posts.length, 0); // a preview only
   const item = await t.inv.request({ text: 'فاکتور بساز Orion Furniture\nHinge 35, 1', requester: 'owner' });
-  assert.ok(item.requester.includes('دقیقاً پیدا نشد') && item.requester.includes('Hinge 35mm'));
+  assert.ok(item.owner.includes('حدس') && item.owner.includes('Hinge'));
   const none = await t.inv.request({ text: 'فاکتور بساز Orion Furniture', requester: 'owner' });
-  assert.ok(none.requester.includes('هر کالا را در یک سطر'));
+  assert.ok(none.requester.includes('هر کالا را در یک سطر')); // nothing to guess from: no line at all
   const noPrice = await t.inv.request({ text: 'فاکتور بساز Orion Furniture\nHS-1, 2', requester: 'owner' });
-  assert.ok(noPrice.requester.includes('قیمتی نیست'));
-  assert.equal(t.store.d.n, 0); // no id is spent on a request that stopped
+  assert.ok(noPrice.requester.includes('قیمتی نیست')); // a price is never guessed
+  const nothing = await t.inv.request({ text: 'فاکتور بساز Qqqqq Wwwww\nH35, 1', requester: 'owner' });
+  assert.equal(nothing.owner, null); // no customer is near
+  assert.equal(t.store.d.n, 2);
   assert.equal(t.m.posts.length, 0);
-  // an auto-matched (fuzzy) choice from the statement is not enough; the owner's confirmed one is
+  // an auto-matched choice is only a guess; the owner's confirmed one is exact
   t.map.set('Cedar Wod', '59', 'Cedar Wood Works', 'auto');
-  assert.equal((await t.inv.request({ text: 'فاکتور بساز Cedar Wod\nH35, 1', requester: 'owner' })).owner, null); // a misspelling mapped automatically is not enough
+  assert.ok((await t.inv.request({ text: 'فاکتور بساز Cedar Wod\nH35, 1', requester: 'owner' })).owner.includes('(حدس از «Cedar Wod»'));
   t.map.set('Cedar Wod', '59', 'Cedar Wood Works', 'owner');
-  assert.ok((await t.inv.request({ text: 'فاکتور بساز Cedar Wod\nH35, 1', requester: 'owner' })).owner.includes('Cedar Wood Works')); // the owner's confirmed choice is
+  const exact = (await t.inv.request({ text: 'فاکتور بساز Cedar Wod\nH35, 1', requester: 'owner' })).owner;
+  assert.ok(exact.includes('Cedar Wood Works') && !exact.includes('(حدس از'));
   assert.ok((await t.inv.request({ text: 'فاکتور بساز Cedar\nH35, 1', requester: 'owner' })).owner.includes('(از «Cedar»)')); // one customer holds the word: used and shown
 });
 
@@ -348,46 +352,44 @@ test('the audit report shows the last ten events with no message text', async ()
   assert.ok(fs.readFileSync(path.join(t.dir, 'qbo', 'qbo-audit.log'), 'utf8').trim().split('\n').length === 13); // append-only: every preview and the create
 });
 
-test('the VAT code is that of THE CUSTOMER: zero-rated customers pay no VAT, an unclear customer stops with what was found, the owner\'s choice is kept', async () => {
-  // a customer whose recent invoices are zero-rated (an export): the preview shows 0% and no VAT
+test('the VAT code is that of THE CUSTOMER: zero-rated customers pay no VAT, an unclear customer gets a GUESSED code with the others as alternatives, the owner\'s choice is kept', async () => {
   const zero = mk({ invoices: [{ Id: '601', Line: [invLine('12'), invLine('12')] }] });
   const r = await zero.inv.request({ text: REQ, requester: 'owner' });
   assert.ok(r.owner.includes('مالیات: Zero rated 0٪ (از ۲ سطر از ۲ سطر فاکتورهای قبلی): 0.00') && r.owner.includes('جمع کل: 28.30 AED'));
   assert.equal(zero.store.get('Q1').tax.id, '12');
   await zero.inv.decide({ verb: 'yes', id: 'Q1' });
   assert.deepEqual(zero.m.posts[0].body.Line.map((l) => l.SalesItemLineDetail.TaxCodeRef.value), ['12', '12']);
-  // the lines disagree: stop, list what was found, ask the owner
+  // the lines disagree: the code used most is proposed as a guess, the other one is an alternative
   const mixed = mk({ invoices: [{ Id: '602', Line: [invLine('11'), invLine('12')] }] });
-  const stop = await mixed.inv.request({ text: REQ, requester: 'owner' });
-  assert.equal(stop.owner, null);
-  assert.ok(stop.requester.includes('اکثریت روشنی ندارد') && stop.requester.includes('5% S (1 سطر)') && stop.requester.includes('Zero rated (1 سطر)') && stop.requester.includes('کد مالیات Orion Furniture = '));
-  assert.equal(mixed.store.d.n, 0);
-  // no invoices at all: stop too
+  const guess = await mixed.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(guess.owner.includes('مالیات حدس است') && guess.owner.includes('«مالیات ۱»'));
+  assert.equal(mixed.store.get('Q1').tax.source, 'guess');
+  // «مالیات ۱» takes the alternative and rebuilds the same preview
+  const changed = (await mixed.inv.adjust({ what: 'tax', pick: 1 })).join('');
+  assert.ok(changed.includes('پیش‌نمایش فاکتور #Q1'));
+  assert.equal(mixed.store.get('Q1').tax.source, 'chosen'); assert.equal(mixed.store.d.n, 1);
+  // no invoice lines at all: the only 5% code is proposed
   const none = mk({ invoices: [{ Id: '603', Line: [] }] });
-  assert.ok((await none.inv.request({ text: REQ, requester: 'owner' })).requester.includes('فاکتور قبلی با کد مالیات'));
-  // an authorized person cannot choose: he is told the owner was asked, and the OWNER gets the details
+  const nr = await none.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(nr.owner.includes('مالیات حدس است') && nr.owner.includes('تنها کد ۵٪'));
+  // an authorized person gets the same flow: his request is told as sent, and the OWNER gets the preview with the guess
   const auth = mk({ invoices: [{ Id: '604', Line: [invLine('11'), invLine('12')] }] });
   const ar = await auth.inv.request({ text: REQ, requester: '971501112222' });
-  assert.ok(ar.requester.includes('chosen by the owner') && !ar.requester.includes('Zero rated'));
-  assert.ok(ar.owner.includes('971501112222') && ar.owner.includes('Zero rated (1 سطر)'));
-  // the owner chooses; it is stored on the VM by QuickBooks customer id and used from then on
-  assert.ok((await mixed.inv.setTaxChoice({ customer: 'Orion Furniture', code: 'zero rated' })).join('').includes('Zero rated'));
-  assert.deepEqual(mixed.inv.taxChoices.get('58').codeId, '12');
-  assert.equal(new TaxChoices(path.join(mixed.dir, 'qbo')).get('58').name, 'Zero rated');
-  const after = await mixed.inv.request({ text: REQ, requester: 'owner' });
-  assert.ok(after.owner.includes('مالیات 0٪ (Zero rated، انتخاب مالک)'));
+  assert.ok(ar.requester.includes('#Q1') && ar.owner.includes('971501112222') && ar.owner.includes('مالیات حدس است'));
+  // the owner chooses a code for good; it is stored on the VM by QuickBooks customer id and used from then on
+  const fixed = mk({ invoices: [{ Id: '602', Line: [invLine('11'), invLine('12')] }] });
+  assert.ok((await fixed.inv.setTaxChoice({ customer: 'Orion Furniture', code: 'zero rated' })).join('').includes('Zero rated'));
+  assert.deepEqual(fixed.inv.taxChoices.get('58').codeId, '12');
+  assert.equal(new TaxChoices(path.join(fixed.dir, 'qbo')).get('58').name, 'Zero rated');
+  const after = await fixed.inv.request({ text: REQ, requester: 'owner' });
+  assert.ok(after.owner.includes('مالیات 0٪ (Zero rated، انتخاب مالک)') && !after.owner.includes('مالیات حدس'));
   // a code that does not exist, a customer that is not exact
-  assert.ok((await mixed.inv.setTaxChoice({ customer: 'Orion Furniture', code: 'Nope' })).join('').includes('کدهای موجود'));
-  assert.ok((await mixed.inv.setTaxChoice({ customer: 'Orion Furnitur', code: '5% S' })).join('').includes('معرفی شود'));
-  assert.ok((await mixed.inv.taxListText()).join('').includes('5% S — 5٪') && (await mixed.inv.taxListText()).join('').includes('Zero rated — 0٪'));
+  assert.ok((await fixed.inv.setTaxChoice({ customer: 'Orion Furniture', code: 'Nope' })).join('').includes('کدهای موجود'));
+  assert.ok((await fixed.inv.setTaxChoice({ customer: 'Orion Furnitur', code: '5% S' })).join('').includes('معرفی شود'));
+  assert.ok((await fixed.inv.taxListText()).join('').includes('5% S — 5٪') && (await fixed.inv.taxListText()).join('').includes('Zero rated — 0٪'));
   // the setting stays as an owner override over everything
   const over = mk({ invoices: [{ Id: '605', Line: [invLine('11')] }], config: { qboTaxCode: 'Zero rated' } });
-  assert.ok((await over.inv.request({ text: REQ, requester: 'owner' })).owner.includes('مالیات 0٪ (Zero rated، تنظیم مالک)'));
-  const badOver = mk({ config: { qboTaxCode: 'Nope' } });
-  assert.ok((await badOver.inv.request({ text: REQ, requester: 'owner' })).requester.includes('QBO_TAX_CODE'));
-  // the words
-  assert.deepEqual(parseInvoiceCommand('کد مالیات Orion Furniture = Zero rated'), { type: 'tax_set', customer: 'Orion Furniture', code: 'Zero rated' });
-  assert.deepEqual(parseInvoiceCommand('کدهای مالیات'), { type: 'tax_list' });
+  assert.ok((await over.inv.request({ text: REQ, requester: 'owner' })).owner.includes('Zero rated'));
 });
 
 // ------------------------------------------------------------------------------------------------ the owner's real first request
@@ -453,21 +455,27 @@ test('the owner\'s exact message: "Ar-rad" is found as the one customer that hol
   assert.deepEqual(t.m.posts[0].body.Line.map((l) => [l.SalesItemLineDetail.ItemRef.value, l.SalesItemLineDetail.Qty, l.SalesItemLineDetail.UnitPrice]), [['31', 32.5, 12], ['32', 14.5, 12], ['35', 5, 8]]);
 });
 
-test('a code that fits several items and was never bought: the candidates are listed with their prices and the request stops; the owner teaches the code once', async () => {
+test('a code that fits several items and was never bought: the best candidate is GUESSED, the others are numbered alternatives; the owner picks one or teaches the code once', async () => {
   const t = realMk({ invoices: hist('31') });
-  const stop = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
-  assert.equal(stop.owner, null);
-  for (const s of ['سطر ۳', '«1810» چند کالا دارد', '۱) 1810 edge banding — قیمت 4.5', '۲) B 1810 [B1810] — قیمت 5', '۳) PVC 1810 [P1810] — قیمت 8.5', 'کد 1810 = <نام دقیق کالا>']) assert.ok(stop.requester.includes(s), s);
-  assert.equal(t.store.d.n, 0);
+  const guess = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.ok(guess.owner); // a preview, not a stop
+  for (const s of ['حدس', '۱) ', '۲) ', 'قیمت ', '«سطر ۳ = ۱»']) assert.ok(guess.owner.includes(s), s);
+  const pv = t.store.get('Q1');
+  assert.equal(pv.guesses.lines.length, 1); assert.equal(pv.guesses.lines[0].alts.length, 2); // three candidates: one guessed, two alternatives
   assert.equal(itemsContaining(REAL_ITEMS, '1810').length, 3);
   assert.equal(itemsContaining(REAL_ITEMS, '181').length, 0); // whole words only
-  // two candidates bought before: still no choice made
-  const two = realMk({ invoices: hist('34', '35') });
-  assert.equal((await two.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).owner, null);
-  // he teaches it for everybody
+  // «سطر ۳ = ۲» takes the second alternative and rebuilds the same preview
+  const alt2 = pv.guesses.lines[0].alts[1];
+  const rebuilt = (await t.inv.adjust({ what: 'line', n: 3, pick: 2 })).join('');
+  assert.ok(rebuilt.includes('پیش‌نمایش فاکتور #Q1') && rebuilt.includes('(انتخاب شما)') && rebuilt.includes(alt2.name));
+  assert.equal(t.store.d.n, 1);
+  // the yes remembers the chosen item for the typed code: next time it is exact
+  await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(new ItemCodes(path.join(t.dir, 'qbo')).get('', '1810').itemId, alt2.itemId);
+  // he can also teach it for everybody by a command
   assert.ok((await t.inv.setItemCode({ code: '1810', item: 'PVC 1810', customer: '' })).join('').includes('برای همهٔ مشتری‌ها'));
   const again = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
-  assert.ok(again.owner.includes('PVC 1810 [P1810] × 5 @ 8 = 40.00 (کد آموخته‌شدهٔ مالک)'));
+  assert.ok(again.owner.includes('PVC 1810 [P1810] × 5 @ 8 = 40.00 (کد آموخته‌شدهٔ مالک)') && !again.owner.includes('حدس'));
   assert.equal(new ItemCodes(path.join(t.dir, 'qbo')).get('70', '1810').name, 'PVC 1810'); // kept on the VM
   // taught for one customer only: another customer is not affected
   const one = realMk({ invoices: hist('31') });
@@ -479,26 +487,28 @@ test('a code that fits several items and was never bought: the candidates are li
   assert.ok((await t.inv.setItemCode({ code: '1810', item: '1810', customer: '' })).join('').includes('دقیقاً پیدا نشد')); // "1810" alone is not an item name
 });
 
-test('a short customer name: exactly one match is used and shown; several are listed and the request stops; none says map it first', async () => {
+test('a short customer name: exactly one match is used and shown; several are GUESSED with the others listed; none near stops', async () => {
   const two = realMk({ customers: [ARRAD, { Id: '71', DisplayName: 'Ar Rad Trading', Balance: 0 }, ...CUSTOMERS] });
   const r = await two.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
-  assert.equal(r.owner, null);
-  assert.ok(r.requester.includes('بین آن‌ها حدس نمی‌زنم') && r.requester.includes('۱) AR-RAD INTERNATIONAL') && r.requester.includes('۲) Ar Rad Trading'));
-  assert.equal(two.store.d.n, 0);
+  assert.ok(r.owner.includes('(حدس از «Ar-rad»: چند مشتری با این واژه‌ها)'));
+  assert.ok(r.owner.includes('۱) ') && /AR-RAD INTERNATIONAL|Ar Rad Trading/.test(r.owner));
+  assert.equal(two.store.get('Q1').guesses.customer.alts.length, 1);
+  // «مشتری ۱» takes the alternative; the yes remembers it as the customer for «Ar-rad»
+  const other = two.store.get('Q1').guesses.customer.alts[0];
+  assert.ok((await two.inv.adjust({ what: 'customer', pick: 1 })).join('').includes(other.name));
+  await two.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(two.map.get('Ar-rad').id, other.id); assert.equal(two.map.get('Ar-rad').how, 'owner');
   const nobody = realMk({ extract: async () => ({ ...EXTRACTED, customer: 'Zorvan' }) });
-  assert.ok((await nobody.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).requester.includes('تطبیق کوییک‌بوکس'));
-  // a word that is only part of a word is not a match ("rad" is not "radiant")
+  assert.equal((await nobody.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).owner, null); // nothing is near: it stops
+  // a word that is only part of a word is not a match ("rad" is not "radiant"): nothing is exact, the nearest is only a guess
   const part = realMk({ customers: [{ Id: '72', DisplayName: 'RADIANT LIGHTING', Balance: 0 }, ...CUSTOMERS], extract: async () => ({ ...EXTRACTED, customer: 'rad' }) });
-  assert.ok((await part.inv.request({ text: OWNER_MESSAGE, requester: 'owner' })).requester.includes('تطبیق کوییک‌بوکس'));
-  // the approved list: a group name holds the words, its customer is found in QuickBooks by those words
-  const viaList = realMk({ extract: async () => ({ ...EXTRACTED, customer: 'Ibn Ajmi' }) });
-  const v = await viaList.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
-  assert.equal(v.owner, null); // the row's name is not in QuickBooks under those words, so nothing is guessed
+  const pr = await part.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.ok(pr.owner === null || pr.owner.includes('(حدس از «rad»'));
   // and an authorized person gets the same flow: the preview goes to the owner
   const auth = realMk({ invoices: hist('31', '35') });
   const ar = await auth.inv.request({ text: OWNER_MESSAGE, requester: '971501112222' });
   assert.ok(ar.requester.includes('#Q1') && ar.owner.includes('شمارهٔ 971501112222') && ar.owner.includes('(از «Ar-rad»)'));
-});
+})
 
 test('the tax code is the clear majority of the recent lines (at least 90%) AND the code of the most recent invoice; otherwise the owner is asked', () => {
   const codes = taxCodeMap(TAXCODES, TAXRATES);
@@ -522,28 +532,28 @@ test('the tax code is the clear majority of the recent lines (at least 90%) AND 
   assert.equal(codeFromInvoices([inv(...many(10, '99'))], codes).error, 'unknown');
 });
 
-test('all the stops come in ONE reply: customer, items and tax; the minority tax lines are mentioned in the preview', async () => {
+test('every unsure field is GUESSED in ONE preview (customer, item, tax) with alternatives; the minority tax lines are mentioned; a stop only for nothing to guess from', async () => {
   const t = mk({ invoices: [{ Id: '701', Line: [...Array.from({ length: 29 }, () => invLine('11')), invLine('12')] }, { Id: '702', Line: Array.from({ length: 5 }, () => invLine('11')) }] });
   const r = await t.inv.request({ text: REQ, requester: 'owner' });
   assert.ok(r.owner.includes('مالیات: 5% S 5٪ (از ۳۴ سطر از ۳۵ سطر فاکتورهای قبلی)'));
   assert.ok(r.owner.includes('در فاکتورهای قبلی این مشتری چند سطر کد دیگری داشت: Zero rated (1 سطر)'));
   assert.equal(t.store.get('Q1').tax.n, 34);
-  // an unknown customer, an unknown item and an unclear tax code: one message with the three sections
+  // an unsure customer, an unsure item and an unclear tax code: one preview with the three guesses
   const bad = mk({ invoices: [{ Id: '703', Line: [invLine('11'), invLine('12')] }] });
-  const all = await bad.inv.request({ text: 'فاکتور بساز Orion Furnitur\nNo Such Item, 2, 3\nH35, 1', requester: 'owner' });
-  assert.equal(all.owner, null);
-  for (const s of ['مشتری:', 'مشتری «Orion Furnitur»', 'کالاها:', 'سطر ۱: کالای «No Such Item»', 'مالیات:', 'بعد از مشخص شدن مشتری']) assert.ok(all.requester.includes(s), s);
-  assert.equal(bad.store.d.n, 0);
-  // a known customer with unknown items AND an unclear tax code: both stops at once
+  const all = await bad.inv.request({ text: 'فاکتور بساز Orion Furnitur\nHinge 35, 2, 3\nH35, 1', requester: 'owner' });
+  assert.ok(all.owner);
+  for (const s of ['مشتری: Orion Furniture (حدس از «Orion Furnitur»', 'حدس: ', 'مالیات حدس است', '🔶']) assert.ok(all.owner.includes(s), s);
+  const g = bad.store.get('Q1').guesses;
+  assert.ok(g.customer && g.lines.length >= 1 && g.tax);
+  assert.equal(bad.m.posts.length, 0); // nothing is applied before the yes
+  // an item that is nowhere near stops; a known customer with it too
   const two = mk({ invoices: [{ Id: '704', Line: [invLine('11'), invLine('12')] }] });
-  const both = await two.inv.request({ text: 'فاکتور بساز Orion Furniture\nNo Such Item, 2, 3', requester: 'owner' });
-  assert.ok(both.requester.includes('کالاها:') && both.requester.includes('No Such Item') && both.requester.includes('مالیات:') && both.requester.includes('اکثریت روشنی ندارد'));
-  assert.ok(!both.requester.includes('مشتری:'));
-  // an authorized person: what he can fix is shown to him, the tax detail goes to the owner only
+  const stop = await two.inv.request({ text: 'فاکتور بساز Orion Furniture\nZzzzz Qqqqq, 2, 3', requester: 'owner' });
+  assert.equal(stop.owner, null); assert.ok(stop.requester.includes('کالاها:') && stop.requester.includes('Zzzzz Qqqqq'));
+  // an authorized person: the request is told as sent, the owner gets the preview with the guesses
   const auth = mk({ invoices: [{ Id: '705', Line: [invLine('11'), invLine('12')] }] });
-  const ar = await auth.inv.request({ text: 'فاکتور بساز Orion Furniture\nNo Such Item, 2, 3', requester: '971501112222' });
-  assert.ok(ar.requester.includes('کالاها:') && ar.requester.includes('مالک باید کد را انتخاب کند') && !ar.requester.includes('Zero rated'));
-  assert.ok(ar.owner.includes('971501112222') && ar.owner.includes('Zero rated (1 سطر)'));
+  const ar = await auth.inv.request({ text: 'فاکتور بساز Orion Furniture\nH35, 2, 3', requester: '971501112222' });
+  assert.ok(ar.requester.includes('#Q1') && ar.owner.includes('971501112222') && ar.owner.includes('مالیات حدس است'));
 });
 
 test('when the company numbers invoices by hand: the next number of the office\'s own pattern is in the preview, checked again before the create, and an invoice is never made without one', async () => {
@@ -627,22 +637,23 @@ test('the extraction is told about words for quantity, packaging, an item by nam
   for (const needle of ['دو تا', 'گالن ۲۵ کیلویی', 'NOT the product', 'by NAME', 'به قیمت هر عدد', 'فاکتور کن']) assert.ok(prompts[0].includes(needle), needle);
 });
 
-test('item by name in any word order, price per piece, the customer checked in QuickBooks: nothing is created, the nearest names are asked', async () => {
+test('item by name in any word order, price per piece, the customer GUESSED from the nearest names; nothing is created and nothing is applied before the yes', async () => {
   const items = [{ Id: '41', Name: 'JOWAT PVC GLUE', Sku: 'JOWAT-25', UnitPrice: 1400, Type: 'Inventory', Active: true, Description: 'Jowat glue 25 kg' }, { Id: '42', Name: 'Hinge 35mm', Sku: 'H35', UnitPrice: 2.5, Type: 'Inventory', Active: true }];
   const extracted = { customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] };
-  // the customer is not in QuickBooks under that name: the nearest are listed; no customer is made, no invoice
+  // the customer is not exact: the nearest is the guess and the others are alternatives; no customer is made, no invoice
   const t = mk({ customers: [{ Id: '80', DisplayName: 'MICE INTERIORS', Balance: 0 }, { Id: '81', DisplayName: 'MICE DECOR LLC', Balance: 0 }, ...CUSTOMERS], items, extract: async () => extracted, invoices: [] });
   const r = await t.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
-  assert.ok(r.requester.includes('JOWAT PVC GLUE')); // the QuickBooks name of the item, found from "GLUE JOWAT" (one candidate: used, not asked)
-  assert.ok(/MICE/.test(r.requester)); // the nearest customers are shown
-  assert.equal(t.store.d.n, 0); assert.equal(t.m.posts.length, 0);
+  const text = r.owner || r.requester;
+  assert.ok(text.includes('JOWAT PVC GLUE')); // the QuickBooks name of the item, found from "GLUE JOWAT"
+  assert.ok(/MICE/.test(text) && text.includes('حدس از «Mice Interiors Decoration LLC»'));
+  assert.equal(t.m.posts.length, 0);
   assert.ok(!t.m.calls.some((c) => c.method === 'POST' && /customer/.test(c.url)));
-  // the customer exists (any case): the preview is made with 2 x 1500 on the QuickBooks item
-  const ok = mk({ customers: [{ Id: '80', DisplayName: 'MICE INTERIORS DECORATION LLC', Balance: 0 }, ...CUSTOMERS], items, extract: async () => extracted, invoices: [{ Id: '801', CustomerRef: { value: '80' }, Line: [{ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { ItemRef: { value: '41' }, TaxCodeRef: { value: '11' } } }] }] });
+  // the customer exists (any case, L.L.C): used and not a guess; the preview has 2 x 1500 on the QuickBooks item
+  const ok = mk({ customers: [{ Id: '80', DisplayName: 'MICE INTERIORS DECORATION L.L.C', Balance: 0 }, ...CUSTOMERS], items, extract: async () => extracted, invoices: [{ Id: '801', CustomerRef: { value: '80' }, Line: [{ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { ItemRef: { value: '41' }, TaxCodeRef: { value: '11' } } }] }] });
   const r2 = await ok.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
-  assert.ok(r2.owner || r2.requester);
-  const text = r2.owner || r2.requester;
-  assert.ok(text.includes('JOWAT PVC GLUE')); assert.ok(/2\s*×\s*1500|1500/.test(text));
+  const text2 = r2.owner || r2.requester;
+  assert.ok(text2.includes('JOWAT PVC GLUE') && /@ 1500/.test(text2));
+  assert.ok(text2.includes('مشتری: MICE INTERIORS DECORATION L.L.C') && !text2.includes('(حدس از «Mice'));
   assert.equal(ok.m.posts.length, 0); // a preview only: the owner's yes makes the invoice
 });
 
@@ -683,17 +694,47 @@ test('one item found by a name in any word order is used and shown; two are aske
   assert.equal(t.m.posts.length, 0); assert.equal(t.store.d.n, 1); // a preview, not an invoice
 });
 
-test('the customer not found: the nearest three among ALL customers (inactive too, LLC and L.L.C ignored), weak ones listed; none says so plainly and suggests creating it', async () => {
+test('the customer not found: the nearest among ALL customers (inactive too, LLC and L.L.C ignored) is the guess and the others are alternatives; none near says so plainly and suggests creating it', async () => {
   const items = [{ Id: '41', Name: 'JOWAT PVC GLUE', Sku: 'J', UnitPrice: 1100, Type: 'Inventory', Active: true }];
   const extracted = { customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] };
   const near = mk({ customers: [{ Id: '90', DisplayName: 'MICE INTERIOR & DECOR L.L.C', Balance: 0, Active: false }, { Id: '91', DisplayName: 'INTERIORS PLUS', Balance: 0 }, { Id: '92', DisplayName: 'DECORATION HOUSE', Balance: 0 }, { Id: '93', DisplayName: 'ZED TRADING', Balance: 0 }], items, extract: async () => extracted, invoices: [] });
   const r = await near.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
-  assert.match(r.requester, /نزدیک‌ترین‌ها/);
-  assert.match(r.requester, /MICE INTERIOR & DECOR L\.L\.C \(غیرفعال\)/);
-  assert.ok(!r.requester.includes('ZED TRADING'));
-  assert.equal(near.store.d.n, 0); assert.equal(near.m.posts.length, 0);
+  assert.ok(r.owner);
+  assert.match(r.owner, /مشتری: MICE INTERIOR & DECOR L\.L\.C \(غیرفعال\)|مشتری: MICE INTERIOR & DECOR L\.L\.C/);
+  assert.ok(!r.owner.includes('ZED TRADING'));
+  assert.equal(near.m.posts.length, 0);
   const none = mk({ customers: [{ Id: '93', DisplayName: 'ZED TRADING', Balance: 0 }], items, extract: async () => extracted, invoices: [] });
   const r2 = await none.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  assert.equal(r2.owner, null);
   assert.match(r2.requester, /خودتان در کوییک‌بوکس بسازید \(من مشتری نمی‌سازم\)/);
   assert.ok(!none.m.calls.some((c) => c.method === 'POST' && /customer/.test(c.url)));
+});
+
+test('the owner\'s Mice Interiors message: a preview with the customer GUESSED and the item GUESSED, 1500 beside the QuickBooks 1100; the yes applies and remembers both', async () => {
+  const items = [{ Id: '41', Name: 'JOWAT PVC GLUE', Sku: 'JOWAT-25', UnitPrice: 1100, Type: 'Inventory', Active: true }, { Id: '43', Name: 'JOWAT PVC GLUE 5KG', Sku: 'JOWAT-5', UnitPrice: 300, Type: 'Inventory', Active: true }];
+  const extracted = { customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] };
+  const hist41 = [{ Id: '801', CustomerRef: { value: '90' }, Line: [{ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { ItemRef: { value: '99' }, TaxCodeRef: { value: '11' } } }] }];
+  const t = mk({ customers: [{ Id: '90', DisplayName: 'MICE INTERIOR & DECOR L.L.C', Balance: 0 }, ...CUSTOMERS], items, extract: async () => extracted, invoices: hist41 });
+  const r = await t.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  assert.ok(r.owner, r.requester);
+  for (const s of ['مشتری: MICE INTERIOR & DECOR L.L.C (حدس از «Mice Interiors Decoration LLC»', '«GLUE JOWAT» ← JOWAT PVC GLUE', '(حدس: ', '× 2 @ 1500', '۱) JOWAT PVC GLUE 5KG', '«سطر ۱ = ۱»', 'قیمت شما 1500 است و قیمت کوییک‌بوکس 1100', '🔶', 'بله #Q1']) assert.ok(r.owner.includes(s), s);
+  assert.equal(t.m.posts.length, 0); assert.equal(t.store.d.n, 1);
+  // the owner changes one guess by number: the same preview is rebuilt and shown again
+  const re = (await t.inv.adjust({ what: 'line', n: 1, pick: 1 })).join('');
+  assert.ok(re.includes('JOWAT PVC GLUE 5KG') && re.includes('(انتخاب شما)') && re.includes('پیش‌نمایش فاکتور #Q1'));
+  assert.equal(t.store.d.n, 1); assert.equal(t.m.posts.length, 0);
+  // only his yes creates; then both guesses are remembered as exact
+  await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(t.m.posts.length, 1);
+  assert.equal(t.m.posts[0].body.CustomerRef.value, '90'); assert.equal(t.m.posts[0].body.Line[0].SalesItemLineDetail.ItemRef.value, '43');
+  assert.deepEqual([t.map.get('Mice Interiors Decoration LLC').id, t.map.get('Mice Interiors Decoration LLC').how], ['90', 'owner']);
+  assert.equal(t.itemCodes.get('', 'GLUE JOWAT').itemId, '43');
+  // the next time the same words are exact: no guess marks
+  const again = await t.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  assert.ok(again.owner && !again.owner.includes('(حدس') && !again.owner.includes('🔶'));
+  // the words of the adjustments
+  assert.deepEqual(parseInvoiceCommand('مشتری ۲'), { type: 'adjust', what: 'customer', pick: 2, id: '' });
+  assert.deepEqual(parseInvoiceCommand('سطر ۱ = ۳'), { type: 'adjust', what: 'line', n: 1, pick: 3, id: '' });
+  assert.deepEqual(parseInvoiceCommand('مالیات ۲ #Q4'), { type: 'adjust', what: 'tax', pick: 2, id: 'Q4' });
+  assert.deepEqual((await t.inv.adjust({ what: 'tax', pick: 1, id: 'Q9' })), ['پیش‌نمایشی با حدس باز نیست که چیزی در آن عوض شود.']);
 });
