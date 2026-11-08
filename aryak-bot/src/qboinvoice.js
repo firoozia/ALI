@@ -524,7 +524,7 @@ export class QboInvoiceDesk {
     const taxReal = !!problems.tax && !!cust.id;
     if (problems.tax && !taxReal) parts.push(`مالیات:\n${problems.tax}`);
     if (taxReal && requester === 'owner') parts.push(`مالیات:\n${problems.tax}`);
-    if (parts.length && out.length) parts.push(`کالاهای فهمیده‌شده (تا اینجا درست است):\n${out.map((o, i) => `${fa(i + 1)}. ${o.name} × ${o.qty} @ ${o.price}${o.via === 'name' && o.typed ? ` («${o.typed}» را همین کالا گرفتم)` : ''}`).join('\n')}${warnings.length ? `\n${warnings.join('\n')}` : ''}`);
+    if (parts.length && out.length) parts.push(`کالاهای فهمیده‌شده (تا اینجا درست است):\n${out.map((l, i) => `${fa(i + 1)}. ${l.name} × ${l.qty} @ ${l.price}${l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : ''}`).join('\n')}${warnings.length ? `\n${warnings.join('\n')}` : ''}`);
     if (parts.length || (taxReal && requester !== 'owner')) {
       const message = `فاکتور ساخته نمی‌شود؛ این‌ها را درست کنید:\n${parts.join('\n\n')}`;
       if (taxReal && requester !== 'owner') {
