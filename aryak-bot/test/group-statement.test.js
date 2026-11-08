@@ -128,7 +128,7 @@ test('wiring: the group statement turn runs for the owner and the authorized onl
   assert.match(turn, /pending\.by === by/); // a numbered choice belongs to the person who asked
   assert.doesNotMatch(turn, /toEnglish/); // never turned into English
   assert.match(src, /groupStatementTurn\(\{ raw, chatId, text, ctx: \(content\.extendedTextMessage \|\| \{\}\)\.contextInfo \|\| \{\}, owner: ownerPerson, authorized: authorizedPerson/);
-  assert.match(src, /qboAuth\.has\(who, 'statement', info\.lidToPhone\)\) \{\s*const gctx/); // an authorized person who is not staff is taken before the staff check
+  assert.match(src, /qboAuth\.isAuthorized\(who, info\.lidToPhone\)\) \{\s*const gctx/); // an authorized person who is not staff is taken before the staff check
 });
 
 test('wiring: in a customer group only the owner\'s request counts; it asks in his own chat first and nothing goes to the group', () => {
@@ -234,4 +234,15 @@ test('wiring: each request needs its own permission, with one Persian line when 
   assert.match(src, /authorizedPerson = !!\(group && qboAuth\.has\(who, 'statement', info\.lidToPhone\)\)/); // an invoice-only person gets no statement in a group
   assert.match(src, /statementFor\(nl\.customer, \{ privateJid: chatId, period: nl\.period \}\)/);
   assert.match(src, /p\.grants\.map\(\(g\) => PERMISSIONS\[g\]\?\.label \|\| g\)/);
+});
+
+// ------------------------------------------------------------------------------------------------ the invoice in an internal group
+test('wiring: an invoice request in an internal group needs the owner or the invoice permission; the preview is posted there; the yes with an id works there for the owner only', () => {
+  const turn = src.slice(src.indexOf('async function groupStatementTurn'), src.indexOf('async function prepareGroupStatement'));
+  assert.match(turn, /if \(owner\) \{\s*const dec = parseInvoiceCommand\(text\);/); // the owner's «بله #Q5» typed here
+  assert.ok(turn.includes('[QS]') && turn.includes('.test(dec.id')); // only a named preview, never a bare yes
+  assert.match(turn, /if \(!\(owner \|\| canInvoice\)\) \{[^}]*'برای درخواست فاکتور مجوز ندارید\.'/);
+  assert.match(turn, /qboInvoices\.request\(\{ text: eff, requester: owner \? 'owner' : by, quotedText: quoted \}\)/);
+  assert.match(turn, /await sayIn\(raw, chatId, where, r\.owner \|\| r\.requester\)/); // posted in the group, Persian
+  assert.match(src, /canInvoice: invoicePerson, where, role/); assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', info\.lidToPhone\), where, role: 'authorized'/);
 });

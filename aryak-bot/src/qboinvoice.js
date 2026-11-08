@@ -114,7 +114,40 @@ export function looksLikeInvoiceRequest(text) {
   // flow is for an invoice that already exists (a replied PDF, or «فاکتور <number> را به گروه … بفرست»).
   const MAKE = /(?:بساز|بسازید|بزن|بزنید|صادر\s*کن|صادر\s*کنید|درست\s*کن|ایجاد\s*کن|بنویس|فاکتور\s*(?:کن|کنید)(?=\s|$)|فاکتورش\s*کن|فاکتور\s*(?:می\s*خوا(?:ه?م|هیم)|میخوا(?:ه?م|هیم)|لازم\s*دارم|نیاز\s*دارم|بده|بدید|بدهید|بگیر)|(?:می\s*خوا(?:ه?م|هیم)|میخوا(?:ه?م|هیم))\s*(?:یک\s*)?فاکتور)/u;
   if (/ارسال|بفرست|\bsend\b|\bforward\b/iu.test(s) && !MAKE.test(s) && !/صادر/u.test(s)) return false;
-  return (/فاکتور/u.test(s) && MAKE.test(s)) || /(?:create|make|issue)\s+(?:an?\s+)?invoice/iu.test(s);
+  return (/فاکتور/u.test(s) && MAKE.test(s)) || /(?:create|make|issue|prepare)\s+(?:an?\s+)?invoice/iu.test(s) || !!parseEnglishInvoice(text);
+}
+
+const QTY_LINE = /^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?\s*$/iu;
+const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?invoice\s+(?:for\s+|to\s+)?(.+?)\s*$/iu;
+
+/**
+ * An invoice asked for in plain English: «Atossa invoice for burtomani» then one line per item («603 = 30 mtr», «A603 30 m»). A one-letter prefix before a code
+ * (A603) is the sender's own mark: the code is 603. Lines the format does not fit (rolls, prices, words) are not read here (the model reads them).
+ * Returns { customer, lines: ['603 30', …] } or null.
+ */
+export function parseEnglishInvoice(text) {
+  const rows = latin(String(text || '')).replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean);
+  if (rows.length < 2 || /[?؟]\s*$/u.test(rows[0])) return null;
+  const head = EN_HEAD.exec(rows[0]);
+  if (!head || /\b(?:send|forward|check|delete|number|no\.?|inv-?\d+|#)\b/i.test(head[1]) || /^\d/.test(head[1])) return null;
+  const customer = head[1].replace(/\b(?:please|pls|thanks)\b/gi, '').replace(/\s+/g, ' ').trim();
+  if (!customer || customer.split(/\s+/).length > 6) return null;
+  const lines = [];
+  for (const row of rows.slice(1)) {
+    const m = QTY_LINE.exec(row);
+    if (!m) { if (extractPo(row)) continue; return null; } // a line that is not an item (other than the PO line): not this format
+    lines.push(`${m[1].replace(/^[A-Za-z](?=\d)/, '')} ${m[2]}`);
+  }
+  return lines.length ? { customer, lines } : null;
+}
+
+/** The customer's PO number written with the request or in the message it quotes («PN 1029», «PO: 1029», «شماره سفارش ۱۰۲۹»): the request's own text first. */
+export function extractPo(...texts) {
+  for (const t of texts) {
+    const m = /(?:\bP\.?\s?N\b\.?|\bP\.?\s?O\b\.?(?:\s*(?:number|no\.?))?|شماره\s*سفارش)\s*[:#=-]?\s*([A-Za-z0-9][A-Za-z0-9\-/]{0,24})/iu.exec(latin(String(t || '')));
+    if (m) return m[1];
+  }
+  return '';
 }
 
 /** The ways one item line can be read: [{ item, qty, price|null }]. Separators (, | ; tab) make it exact; without them the numbers at the end are read. */
@@ -586,15 +619,20 @@ export class QboInvoiceDesk {
    * requests are first read by the model into { customer, lines } (it only extracts); when it is unsure the request stops and says what was
    * understood. Returns { requester, owner }: the note for the person who asked, and the preview for the owner (null when it stopped). Never creates.
    */
-  async request({ text, requester }) {
+  async request({ text, requester, quotedText = '' }) {
     const cmd = parseInvoiceCommand(text);
     if (cmd?.type !== 'request') return { requester: 'Write: فاکتور بساز <customer> and then one item per line: item, quantity, price (price optional).', owner: null };
     const stop = (msg) => ({ requester: msg, owner: null });
     const blocked = this.guard();
     if (blocked) return stop(blocked);
     const strict = !cmd.free && cmd.customer && cmd.lines.length && cmd.lines.every((l) => lineCandidates(l).length);
+    const po = extractPo(text, quotedText);
+    const en = strict ? null : parseEnglishInvoice(text);
     let customerText = cmd.customer; let entries;
-    if (strict) {
+    if (en) {
+      customerText = en.customer;
+      entries = en.lines.map((raw) => ({ raw, cands: lineCandidates(raw) }));
+    } else if (strict) {
       if (cmd.lines.length > MAX_LINES) return stop(`حداکثر ${fa(MAX_LINES)} سطر در یک فاکتور.`);
       entries = cmd.lines.map((raw) => ({ raw, cands: lineCandidates(raw) }));
     } else {
@@ -612,7 +650,7 @@ export class QboInvoiceDesk {
       customerText = x.customer;
       entries = x.lines.map((l) => ({ raw: `${l.item} ${l.qty}${l.price !== null ? ` @ ${l.price}` : ''}`, cands: [{ item: l.item, qty: l.qty, price: l.price }] }));
     }
-    return this.makePreview({ customerText, entries, requester, stop });
+    return this.makePreview({ customerText, entries, requester, stop, po });
   }
 
   /**
@@ -644,7 +682,7 @@ export class QboInvoiceDesk {
     return out;
   }
 
-  async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '', batch = '' }) {
+  async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '', batch = '', po = '' }) {
     let cust = overrides.customer ? { ours: customerText, id: overrides.customer.id, name: overrides.customer.name, loose: true, typed: customerText, chosen: true } : await this.desk.resolveLoose(customerText);
     const problems = { customer: '', items: [], tax: '' };
     const guesses = { customer: null, lines: [], tax: null }; // what was GUESSED (shown with alternatives; applied only by the owner's yes)
@@ -753,7 +791,8 @@ export class QboInvoiceDesk {
       guesses: (guesses.customer || guesses.lines.length || guesses.tax) ? guesses : null,
       // what the owner's yes will remember, so that the next time it is exact and not a guess
       aliases: { customer: (cust.guessed || cust.chosen) ? { text: customerText, id: cust.id, name: cust.name } : null, items: out.filter((l) => (l.via === 'guess' || l.chosen) && l.typed).map((l) => ({ typed: l.typed, itemId: l.itemId, name: l.name })) },
-      req: { customerText, entries, overrides },
+      req: { customerText, entries, overrides, po },
+      ...(po ? { po } : {}),
       ...(batch ? { batch } : {}),
     };
     this.store.add(preview);
@@ -787,6 +826,7 @@ export class QboInvoiceDesk {
       p.guesses?.customer ? `مشتری: ${p.customer.name} (حدس از «${p.guesses.customer.text}»: ${p.guesses.customer.reason})` : `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
       ...(p.guesses?.customer?.alts?.length ? [...p.guesses.customer.alts.map((a, i) => `   ${fa(i + 1)}) ${a.label || a.name}`), '   (برای تغییر: «مشتری ۱» و …)'] : []),
       ...(p.docNumber ? [`شمارهٔ فاکتور: ${p.docNumber}`] : []),
+      ...(p.po ? [`شمارهٔ سفارش مشتری: ${fa(p.po)}`] : []),
       ...p.lines.flatMap((l, i) => [`${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty}${l.qtyGuess ? ' (حدس از برش)' : ''} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : l.via === 'guess' && l.typed ? ` («${l.typed}» ← ${l.name} (حدس: ${(p.guesses?.lines || []).find((g) => g.n === l.n)?.reason || 'نزدیک‌ترین'}))` : l.via === 'chosen' ? ' (انتخاب شما)' : ''}`,
         ...(l.cut ? [`   ${cutLine(l.cut, { label: this.cutLabel })}`] : []),
         ...((p.guesses?.lines || []).find((g) => g.n === l.n)?.alts || []).map((a, k) => `   ${fa(k + 1)}) ${a.name} — قیمت ${a.price || 'ندارد'}${k === 0 ? `   (برای تغییر: «سطر ${fa(l.n)} = ${fa(k + 1)}»)` : ''}`)]),
@@ -826,7 +866,7 @@ export class QboInvoiceDesk {
       ov.tax = alt.id;
     }
     const stop = (msg) => ({ requester: msg, owner: null });
-    const r = await this.makePreview({ customerText: p.req.customerText, entries: p.req.entries, requester: p.requester, stop, overrides: ov, reuseId: p.id });
+    const r = await this.makePreview({ customerText: p.req.customerText, entries: p.req.entries, requester: p.requester, stop, overrides: ov, reuseId: p.id, po: p.req.po || p.po || "" });
     return [r.owner || r.requester];
   }
 
@@ -918,6 +958,7 @@ export class QboInvoiceDesk {
       TxnDate: this.today(),
       GlobalTaxCalculation: 'TaxExcluded',
       PrivateNote: `Atossa ${p.id}`,
+      ...(p.po ? { CustomerMemo: { value: `PO ${p.po}` } } : {}),
       ...(p.termId ? { SalesTermRef: { value: p.termId } } : {}),
       ...(p.billEmail ? { BillEmail: { Address: p.billEmail } } : {}),
       Line: p.lines.map((l) => ({

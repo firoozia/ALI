@@ -13,6 +13,7 @@ Rules:
 - Packaging words («گالن ۲۵ کیلویی», «کارتن», «رول», «بسته», "25 kg gallon", "carton") say how the product is packed; they are NOT the product and not a multiplier of the quantity. "item" is the product name or code WITHOUT them (for «دو تا گالن ۲۵ کیلویی GLUE JOWAT» the item is "GLUE JOWAT" and qty is 2).
 - A product may be given by NAME (not a code): copy the name as written, without the packaging words.
 - A price can be in words: «به قیمت هر عدد ۱۵۰۰ درهم», «هر کدام ۱۵۰۰», «هر گالن ۱۵۰۰», "1500 each": price 1500 (the price of ONE piece); ignore the currency word. A total («جمعاً ۳۰۰۰») is not a unit price: leave price null and add a note to "unsure".
+- A code may carry a one-letter prefix from the sender's own sheet ("A603"): the item is "603". Units "mtr", "mtrs", "m", "meter", «متر» are only units.
 - The words «فاکتور کن», «فاکتور بزن», «برای من بفرست» only say what to do; they are not part of the customer or the product.
 - The layout can be anything: all values on one line, or one value per line, in Persian, English or mixed. Group the values of one product together in the order written.
 - Never invent, convert, compute or correct anything. If a value is not written, use null. If something is unclear (a quantity with no product, a product with no quantity, an odd count of values), add a short note to "unsure" and do not guess.`;

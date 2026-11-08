@@ -9,7 +9,7 @@ import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
 import { STAFF_RULES } from '../src/staff.js';
 import { extractInvoiceRequest, validateExtraction } from '../src/qboextract.js';
-import { ItemCodes, itemsContaining, looksLikeInvoiceRequest, parseInvoiceBlocks } from '../src/qboinvoice.js';
+import { ItemCodes, extractPo, itemsContaining, looksLikeInvoiceRequest, parseEnglishInvoice, parseInvoiceBlocks } from '../src/qboinvoice.js';
 import { Audit, AuthStore, CAP_DAY, CAP_HOUR, EXPIRY_MS, InvoiceStore, QboInvoiceDesk, TaxChoices, codeFromInvoices, itemsNamed, lineCandidates, parseInvoiceCommand, resolveLines, taxCodeMap, totals } from '../src/qboinvoice.js';
 
 // Invented names, items, numbers and amounts only: nothing real is ever in the repository.
@@ -889,4 +889,37 @@ test('the cut of «ART NO 220 NUQOOSH 12M» is found: the caption\'s name, the g
   assert.equal(cutRecords(tr, 'NUQOOSH IND . LLC', '999', opts).length, 0); // another code
   assert.ok(logs.some((l) => /cut lookup: customer "NUQOOSH IND \. LLC", codes 220\/PVC-220: 2 cut event\(s\).*1 line\(s\) matched/.test(l)), logs.join(' | '));
   assert.equal(cutTotal(found).qty, 12);
+});
+
+// ------------------------------------------------------------------------------------------------ an invoice asked for in English, in an internal group
+const BURT = 'Atossa invoice for burtomani\n603 = 30 mtr';
+test('English invoice words: «Atossa invoice for <customer>» and its lines; «A603» is code 603; units mtr/m/meter; no send, no question', () => {
+  assert.equal(looksLikeInvoiceRequest(BURT), true);
+  assert.equal(parseInvoiceCommand(BURT).type, 'request');
+  assert.deepEqual(parseEnglishInvoice(BURT), { customer: 'burtomani', lines: ['603 30'] });
+  assert.deepEqual(parseEnglishInvoice('Atosa invoice burtomani\nA603 -- 30 m\n215 x 4.5 meter'), null); // an odd dash line is not this format: the model reads it
+  assert.deepEqual(parseEnglishInvoice('Atosa make invoice for burtomani\nA603 30 m\n215 = 4.5 meters'), { customer: 'burtomani', lines: ['603 30', '215 4.5'] });
+  assert.equal(looksLikeInvoiceRequest('Atossa create invoice for burtomani\n603 = 30 mtr'), true);
+  assert.equal(looksLikeInvoiceRequest('please send invoice 9910 to the group'), false);
+  assert.equal(looksLikeInvoiceRequest('invoice inv-9910 delete this one'), false);
+  assert.equal(looksLikeInvoiceRequest('what is the status of invoice for burtomani?'), false);
+  assert.equal(extractPo('A603 -- 30 mtr / PN 1029'), '1029'); assert.equal(extractPo('x', 'po: AB-77'), 'AB-77'); assert.equal(extractPo('شماره سفارش ۱۰۲۹'), '1029'); assert.equal(extractPo('603 = 30 mtr'), '');
+});
+
+test('the exact English request builds a preview (guessed customer, code 603 with the sheet stock, the cut, the PO number) and creates nothing; the memo carries the PO', async () => {
+  const items = [{ Id: '9', Name: 'PVC 603', Sku: 'PVC-603', UnitPrice: 4.5, Type: 'Inventory', Active: true }];
+  const t = mk({ customers: [{ Id: '91', DisplayName: 'AL BURTOMANI NATIONAL', CompanyName: 'AL BURTOMANI NATIONAL LLC', Balance: 0 }], items });
+  const tr = new Tracker({ dir: '' });
+  tr.add({ type: 'cut', at: Date.parse('2026-11-08T05:00:00Z'), customer: 'AL BURTOMANI NATIONAL', customerTyped: 'BURTOMANI', lines: [{ code: 'ART NO 603', quantity: 30, unit: 'm' }], ref: 'c1' });
+  t.inv.cutsOf = (customer, codes) => cutRecords(tr, customer, codes, { now: Date.parse('2026-11-08T08:00:00Z') });
+  t.inv.stockOf = async (code) => ({ free: code === '603' ? 12 : 500, unit: 'm' });
+  const r = await t.inv.request({ text: BURT, requester: 'owner', quotedText: 'A603 -- 30 mtr / PN 1029' });
+  assert.ok(r.owner, r.requester);
+  assert.match(r.owner, /AL BURTOMANI NATIONAL/); assert.match(r.owner, /× 30/); assert.match(r.owner, /شمارهٔ سفارش مشتری: ۱۰۲۹/);
+  assert.match(r.owner, /برش: ۳۰ متر/); // the cutting group's line
+  assert.match(r.owner, /موجودی از شیت زیناکس/); // 12 m free for 30 m: a warning, not a stop
+  assert.equal(t.m.posts.length, 0); // nothing created
+  const p = t.store.get(/#(Q\d+)/.exec(r.owner)[1]);
+  assert.equal(p.po, '1029');
+  assert.deepEqual(t.inv.invoiceBody(p).CustomerMemo, { value: 'PO 1029' });
 });

@@ -872,9 +872,18 @@ const addressedIn = (text, ctx) => isAddressed({
  * A statement in an INTERNAL group. The owner or an authorized person (۱) asks for it by her name or by quoting her; the PDF comes back in that group.
  * A numbered choice is kept for the person who asked. A colleague who is neither gets one Persian line. true = the message was taken.
  */
-async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, where, role }) {
+async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, canInvoice = false, where, role }) {
   const may = owner || authorized;
   const by = personOf(raw);
+  // The owner's «بله #Q5» / «نه #Q5» (or the number of a statement waiting for a customer's group) typed in this internal group: the same decision as in his own chat.
+  if (owner) {
+    const dec = parseInvoiceCommand(text);
+    if (dec && (dec.type === 'yes' || dec.type === 'no') && /^[QS]\d+$/.test(dec.id || '')) {
+      trace(where, role, `the owner's ${dec.type} for #${dec.id} typed in an internal group`);
+      for (const part of (await qboInvoiceCommand(dec, text)) || []) await sayIn(raw, chatId, where, part);
+      return true;
+    }
+  }
   const pending = choiceDesk.get(`pc:${chatId}`);
   if (pending && pending.kind === 'statement' && pending.by) {
     if (may && pending.by === by) {
@@ -891,7 +900,25 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, w
     }
   }
   if (!addressedIn(text, ctx)) return false;
-  const ask = statementAsk(effectiveRequest(text, quotedTextOf(ctx), config.botNames));
+  const quoted = quotedTextOf(ctx);
+  const eff = effectiveRequest(text, quoted, config.botNames);
+  { // an invoice request: the preview is built and shown HERE (an internal group); only the owner's yes creates it
+    const ic = parseInvoiceCommand(eff);
+    if (ic?.type === 'request') {
+      if (!(owner || canInvoice)) { trace(where, role, 'an invoice request from a colleague without the invoice permission'); await sayIn(raw, chatId, where, 'برای درخواست فاکتور مجوز ندارید.'); return true; }
+      trace(where, role, 'invoice request in an internal group');
+      try {
+        const r = await qboInvoices.request({ text: eff, requester: owner ? 'owner' : by, quotedText: quoted });
+        await sayIn(raw, chatId, where, r.owner || r.requester);
+        if (r.owner && !owner) await sock.sendMessage(ownIds()[0], { text: `🤖 ${r.owner}` });
+      } catch (e) {
+        logger.warn(`group invoice request failed: ${e.name} ${e.status || ''}`);
+        await sayIn(raw, chatId, where, e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : e.reconnect ? 'کوییک‌بوکس باید دوباره وصل شود؛ به مالک بگویید.' : 'پیش‌نمایش فاکتور ساخته نشد؛ کمی بعد دوباره بنویسید.');
+      }
+      return true;
+    }
+  }
+  const ask = statementAsk(eff);
   if (!ask) return false;
   if (!may) { trace(where, role, 'a statement request from a colleague who is not authorized'); await sayIn(raw, chatId, where, 'صورت‌حساب را فقط مالک یا کسی که مالک مجاز کرده می‌تواند بخواهد.'); return true; }
   trace(where, role, 'statement request in an internal group');
@@ -1432,6 +1459,7 @@ async function handleStaffChat(raw, chatId, group) {
   let admin = !!raw.key.fromMe;
   let ownerPerson = !!raw.key.fromMe; // typed on the account's own phone counts as the owner
   let authorizedPerson = false; // a person the owner authorized for statements (in a group)
+  let invoicePerson = false; // a person the owner authorized for invoice requests (in a group)
   if (!raw.key.fromMe) {
     let info = group ? await groupInfo(chatId) : { lidToPhone: new Map() };
     const who = group ? { sender: raw.key.participant, senderAlt: raw.key.participantAlt } : { sender: chatId, senderAlt: raw.key.remoteJidAlt };
@@ -1440,11 +1468,12 @@ async function handleStaffChat(raw, chatId, group) {
     // a person the owner authorized for invoices and statements: only those commands are taken, in a private chat (the rest is ignored as before)
     if (!group && text && qboAuth.isAuthorized(who, info.lidToPhone) && (await authorizedFlow({ chatId, text, canInvoice: qboAuth.has(who, 'invoice', info.lidToPhone), canStatement: qboAuth.has(who, 'statement', info.lidToPhone) }))) { trace(where, 'authorized', 'QuickBooks request'); return true; }
     // an authorized person (not staff) may ask for a statement by her name in an internal group; nothing else of theirs is taken
-    if (group && !staff && text && !audio && !image && qboAuth.has(who, 'statement', info.lidToPhone)) {
+    if (group && !staff && text && !audio && !image && qboAuth.isAuthorized(who, info.lidToPhone)) {
       const gctx = (content.extendedTextMessage || {}).contextInfo || {};
-      if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: true, where, role: 'authorized' })) return true;
+      if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: qboAuth.has(who, 'statement', info.lidToPhone), canInvoice: qboAuth.has(who, 'invoice', info.lidToPhone), where, role: 'authorized' })) return true;
     }
     authorizedPerson = !!(group && qboAuth.has(who, 'statement', info.lidToPhone));
+    invoicePerson = !!(group && qboAuth.has(who, 'invoice', info.lidToPhone));
     if (!staff) { trace(where, 'not-staff', group ? 'left to the customer flow' : 'ignored: private chat from a number that is not staff'); return false; }
     admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
     ownerPerson = staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;
@@ -1476,7 +1505,7 @@ async function handleStaffChat(raw, chatId, group) {
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
   // A statement asked for in an internal group (the owner or an authorized person): answered in that group.
-  if (group && text && !audio && !image && (await groupStatementTurn({ raw, chatId, text, ctx: (content.extendedTextMessage || {}).contextInfo || {}, owner: ownerPerson, authorized: authorizedPerson, where, role }))) return true;
+  if (group && text && !audio && !image && (await groupStatementTurn({ raw, chatId, text, ctx: (content.extendedTextMessage || {}).contextInfo || {}, owner: ownerPerson, authorized: authorizedPerson, canInvoice: invoicePerson, where, role }))) return true;
   // A numbered question just asked waits for its answer: «1», «۱», «یک», «اولی», «شماره یک درست است» or the name itself. Nothing else may take this message.
   const pending = text && !audio && !image ? choiceDesk.get(`pc:${chatId}`) : null;
   if (pending && (!pending.by || (!group && pending.by === personOf(raw)))) {
