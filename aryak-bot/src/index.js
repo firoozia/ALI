@@ -689,6 +689,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
     case 'details': return [qboInvoices.previewDetails(ic.id)];
+    case 'compare': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await qboInvoices.compareInvoices(ic.a, ic.b)]; }
     case 'persian_list': {
       const blocked = qboInvoices.guard(); if (blocked) return [blocked];
       if (!persianNames.seeded) await qboDesk.seedPersian();

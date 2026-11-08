@@ -125,6 +125,7 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], perm };
     if ((m = new RegExp(String.raw`^مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], perm };
   }
+  if ((m = /^(?:compare invoices?|مقایسه فاکتور(?:ها)?)\s+(\S+)\s+(\S+)$/iu.exec(s))) return { type: 'compare', a: m[1], b: m[2] };
   if ((m = /^(?:details|جزئیات)\s*#?\s*(Q\s*\d+)$/iu.exec(s))) return { type: 'details', id: m[1].replace(/\s+/g, '').toUpperCase() };
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
   if (/^نام\s*(?:‌?های|ها)\s+فارسی(?:\s+مشتری(?:\s*ها)?)?$/u.test(s)) return { type: 'persian_list' };
@@ -560,8 +561,9 @@ export class QboInvoiceDesk {
    * bank charges and bank details block). Read LIVE at the create, never typed here: the default message of the company's sales-form preferences, else the
    * message of the newest invoice the OFFICE made (not one of ours). Nothing is invented; a field that cannot be read stays empty. { terms, memo, source }.
    */
-  async salesDefaults() {
-    let terms = ''; let memo = ''; let source = '';
+  async salesDefaults(customerId = '') {
+    let terms = ''; let memo = ''; let source = ''; let customer = null;
+    if (customerId) { try { customer = await this.customerRecord(customerId); } catch (e) { this.log(`sales defaults: the customer could not be read (${e.name})`); } } // addresses, terms, e-mail, currency: as the screen takes them
     try {
       const forms = (await this.qbo.get('preferences'))?.Preferences?.SalesFormsPrefs || {};
       if (/^\d+$/.test(String(forms.DefaultTerms || ''))) terms = String(forms.DefaultTerms);
@@ -584,7 +586,7 @@ export class QboInvoiceDesk {
       if (hit) template = String(hit.Id); else if (want) this.log(`sales defaults: the form style "${this.config.qboInvoiceTemplate}" was not found; the company default is used`);
     } catch (e) { this.log(`sales defaults: the form styles could not be read (${e.name})`); }
     this.log(`sales defaults: terms ${terms || 'none'}, message ${memo ? `${memo.length} characters from ${source}` : 'none'}`);
-    return { terms, memo, source, template };
+    return { terms, memo, source, template, customer };
   }
 
   async customerRecord(id) { return (await this.qbo.query(`select * from Customer where Id = '${qboEscape(id)}'`))[0] || null; }
@@ -931,6 +933,28 @@ export class QboInvoiceDesk {
     ].join('\n');
   }
 
+  /**
+   * «compare invoices inv-9982 inv-9983»: what differs between two invoices field by field (the office's own, made on the screen, against ours). Read only, shown only
+   * to the owner, never stored. Lines are compared by the fields they carry. The only intended difference is our private note.
+   */
+  async compareInvoices(a, b) {
+    const get = async (n) => (await this.qbo.query(`select * from Invoice where DocNumber = '${qboEscape(n)}'`))[0] || null;
+    const [x, y] = [await get(a), await get(b)];
+    if (!x || !y) return `Not found in QuickBooks: ${[!x && a, !y && b].filter(Boolean).join(', ')}`;
+    const skip = new Set(['Id', 'SyncToken', 'MetaData', 'DocNumber', 'TxnDate', 'CustomerRef', 'TotalAmt', 'Balance', 'Deposit', 'Line', 'TxnTaxDetail', 'LinkedTxn', 'domain', 'sparse', 'DueDate']);
+    const show = (v) => { const t = typeof v === 'string' ? v : JSON.stringify(v); return t === undefined ? '(missing)' : t.length > 90 ? `${t.slice(0, 90)}…` : t; };
+    const out = [`Comparing ${a} (first) with ${b} (second):`];
+    for (const k of [...new Set([...Object.keys(x), ...Object.keys(y)])].sort()) {
+      if (skip.has(k)) continue;
+      if (JSON.stringify(x[k]) !== JSON.stringify(y[k])) out.push(`${k}: ${show(x[k])} | ${show(y[k])}${k === 'PrivateNote' ? '   (intended: ours is "Atossa Qn")' : ''}`);
+    }
+    if (JSON.stringify(x.TxnTaxDetail?.TxnTaxCodeRef) !== JSON.stringify(y.TxnTaxDetail?.TxnTaxCodeRef)) out.push(`TxnTaxDetail.TxnTaxCodeRef: ${show(x.TxnTaxDetail?.TxnTaxCodeRef)} | ${show(y.TxnTaxDetail?.TxnTaxCodeRef)}`);
+    const lineKeys = (inv) => new Set((inv.Line || []).filter((l) => l.DetailType === 'SalesItemLineDetail').flatMap((l) => [...Object.keys(l), ...Object.keys(l.SalesItemLineDetail || {}).map((k) => `SalesItemLineDetail.${k}`)]));
+    const lx = lineKeys(x); const ly = lineKeys(y);
+    for (const k of [...new Set([...lx, ...ly])].sort()) if (lx.has(k) !== ly.has(k)) out.push(`line field ${k}: ${lx.has(k) ? 'present' : 'missing'} | ${ly.has(k) ? 'present' : 'missing'}`);
+    return out.length === 1 ? `${out[0]} no difference in the compared fields.` : out.join('\n');
+  }
+
   /** «details #Q14»: the full old preview. */
   previewDetails(id) { const p = this.store.get(id); return p ? this.previewFull(p) : `Preview ${id} was not found.`; }
 
@@ -1026,7 +1050,7 @@ export class QboInvoiceDesk {
     // the attempt is counted and remembered BEFORE the call; the request id belongs to the preview, so a retry returns the same invoice
     p.status = 'creating'; this.store.recordCreate(this.now()); this.store.save();
     this.inflight.add(p.id);
-    const body = this.invoiceBody(p, await this.salesDefaults());
+    const body = this.invoiceBody(p, await this.salesDefaults(p.customer.id));
     let created;
     try {
       const j = await this.qbo.write('POST', 'invoice', body, { requestId: `atossa-${p.id}-${p.nonce}` });
@@ -1069,7 +1093,11 @@ export class QboInvoiceDesk {
 
   invoiceBody(p, defaults = {}) {
     const memo = [p.po ? `PO ${p.po}` : '', defaults.memo || ''].filter(Boolean).join('\n\n'); // the customer's PO number first, then the company's message
-    const terms = p.termId || defaults.terms || ''; // the customer's own terms, else the company default
+    const cu = defaults.customer || null; // the customer's record, read now
+    const terms = cu?.SalesTermRef?.value ? String(cu.SalesTermRef.value) : (p.termId || defaults.terms || ''); // the customer's own terms, else the company default
+    const addr = (a) => { if (!a || typeof a !== 'object') return null; const { Id, ...rest } = a; return Object.values(rest).some((v) => String(v || '').trim()) ? rest : null; }; // the address without its record id
+    const billAddr = addr(cu?.BillAddr); const shipAddr = addr(cu?.ShipAddr);
+    const email = cu?.PrimaryEmailAddr?.Address || p.billEmail || '';
     return {
       CustomerRef: { value: p.customer.id },
       ...(p.docNumber ? { DocNumber: p.docNumber } : {}),
@@ -1079,7 +1107,10 @@ export class QboInvoiceDesk {
       ...(memo ? { CustomerMemo: { value: memo } } : {}),
       ...(terms ? { SalesTermRef: { value: terms } } : {}),
       ...(defaults.template ? { TemplateRef: { value: defaults.template } } : {}),
-      ...(p.billEmail ? { BillEmail: { Address: p.billEmail } } : {}),
+      ...(email ? { BillEmail: { Address: email } } : {}),
+      ...(billAddr ? { BillAddr: billAddr } : {}),
+      ...(shipAddr ? { ShipAddr: shipAddr } : {}),
+      ...(cu?.CurrencyRef?.value ? { CurrencyRef: cu.CurrencyRef } : {}),
       Line: p.lines.map((l) => ({
         DetailType: 'SalesItemLineDetail',
         Amount: l.amount / 100,

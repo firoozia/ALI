@@ -64,6 +64,7 @@ function mockQbo(opts = {}) {
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
     if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.officeInvoices) return res(200, { QueryResponse: { Invoice: opts.officeInvoices } });
+    if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.byNumber && /DocNumber = '([^']*)'/.test(sql)) return res(200, { QueryResponse: { Invoice: [opts.byNumber[/DocNumber = '([^']*)'/.exec(sql)[1]]].filter(Boolean) } });
     if (ent === 'Template') return res(200, { QueryResponse: { Template: opts.templates || [] } });
     const used = opts.docNumbers || (opts.docNumbers = []);
     if (ent === 'Invoice' && sql.includes('MetaData.LastUpdatedTime') && opts.changed) return res(200, { QueryResponse: { Invoice: opts.changed().map((n, i) => ({ Id: String(500 + i), DocNumber: n })) } });
@@ -1145,4 +1146,42 @@ test('the form style: listed in the log; a style named in QBO_INVOICE_TEMPLATE i
   // the short preview shows nothing of this
   const r = await mk({ templates }).inv.request({ text: REQ, requester: 'owner' });
   assert.ok(!/terms|message|template/i.test(r.owner));
+});
+
+// ------------------------------------------------------------------------------------------------ the same fields the QuickBooks screen fills (invented data only)
+test('the invoice takes the customer\'s addresses, e-mail, terms and currency from his record read at the create (as the screen does); the private note is the only text of ours', async () => {
+  const customer = {
+    Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0, SalesTermRef: { value: '7' },
+    PrimaryEmailAddr: { Address: 'accounts@orion.example' }, CurrencyRef: { value: 'AED', name: 'United Arab Emirates Dirham' },
+    BillAddr: { Id: '501', Line1: '1 Sample Street', City: 'Sample City', Country: 'Sample Land' }, ShipAddr: { Id: '502', Line1: '2 Sample Yard', City: 'Sample City' },
+  };
+  const t = mk({ customers: [customer] });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  customer.PrimaryEmailAddr.Address = 'changed@orion.example'; // changed after the preview: the create reads it again
+  await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  const body = t.m.posts[0].body;
+  assert.deepEqual(body.BillAddr, { Line1: '1 Sample Street', City: 'Sample City', Country: 'Sample Land' }); // without the record id
+  assert.deepEqual(body.ShipAddr, { Line1: '2 Sample Yard', City: 'Sample City' });
+  assert.deepEqual(body.BillEmail, { Address: 'changed@orion.example' }); assert.deepEqual(body.SalesTermRef, { value: '7' });
+  assert.deepEqual(body.CurrencyRef, { value: 'AED', name: 'United Arab Emirates Dirham' });
+  assert.equal(body.PrivateNote, 'Atossa Q1');
+  // a customer with no address: none is made up
+  const bare = mk({ customers: [{ Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0, BillAddr: { Id: '9' } }] });
+  await bare.inv.request({ text: REQ, requester: 'owner' }); await bare.inv.decide({ verb: 'yes', id: 'Q1' });
+  for (const k of ['BillAddr', 'ShipAddr', 'CurrencyRef']) assert.equal(k in bare.m.posts[0].body, false, k);
+});
+
+test('compare invoices: the owner sees field by field what the office\'s screen made and ours did not (read only); not found is said; the Persian words work', async () => {
+  assert.deepEqual(parseInvoiceCommand('compare invoices inv-1 inv-2'), { type: 'compare', a: 'inv-1', b: 'inv-2' });
+  assert.deepEqual(parseInvoiceCommand('مقایسه فاکتورها inv-1 inv-2'), { type: 'compare', a: 'inv-1', b: 'inv-2' });
+  const office = { Id: '1', DocNumber: 'inv-1', SyncToken: '0', CustomerMemo: { value: 'Sample thank-you text' }, SalesTermRef: { value: '3' }, BillAddr: { Line1: 'A' }, ShipAddr: { Line1: 'B' }, PrintStatus: 'NeedToPrint', TxnTaxDetail: { TxnTaxCodeRef: { value: '11' } }, Line: [{ DetailType: 'SalesItemLineDetail', Description: 'd', Amount: 1, SalesItemLineDetail: { ItemRef: { value: '1' }, TaxCodeRef: { value: '11' }, ServiceDate: '2026-11-01' } }] };
+  const ours = { Id: '2', DocNumber: 'inv-2', SyncToken: '0', PrivateNote: 'Atossa Q1', Line: [{ DetailType: 'SalesItemLineDetail', Amount: 1, SalesItemLineDetail: { ItemRef: { value: '1' }, TaxCodeRef: { value: '11' } } }] };
+  const t = mk({ byNumber: { 'inv-1': office, 'inv-2': ours } });
+  const text = await t.inv.compareInvoices('inv-1', 'inv-2');
+  for (const want of ['CustomerMemo: {"value":"Sample thank-you text"} | (missing)', 'SalesTermRef: {"value":"3"} | (missing)', 'BillAddr:', 'ShipAddr:', 'PrintStatus: NeedToPrint | (missing)', 'PrivateNote: (missing) | Atossa Q1', '(intended: ours is "Atossa Qn")',
+    'TxnTaxDetail.TxnTaxCodeRef: {"value":"11"} | (missing)', 'line field Description: present | missing', 'line field SalesItemLineDetail.ServiceDate: present | missing']) assert.ok(text.includes(want), `${want}\n${text}`);
+  assert.ok(!text.includes('SyncToken') && !text.includes('DocNumber:')); // ids and numbers are not differences
+  assert.match(await t.inv.compareInvoices('inv-1', 'nope'), /^Not found in QuickBooks: nope$/);
+  const same = await mk({ byNumber: { a: office, b: { ...office, Id: '9' } } }).inv.compareInvoices('a', 'b');
+  assert.match(same, /no difference in the compared fields/);
 });
