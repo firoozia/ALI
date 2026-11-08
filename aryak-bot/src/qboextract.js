@@ -9,6 +9,11 @@ const SYSTEM = `You extract an invoice request from a message written by a colle
 Rules:
 - customer: the customer's name exactly as written (without words like "customer" or "for"). null if there is none.
 - lines: one entry per product. item: the product code or name exactly as written, without the word "code". qty: the quantity as a number; ignore units such as m, meter, pcs, roll. price: the UNIT price as a number if one is written for that product; ignore currency words (aed, dirham). If a price is not written, price is null.
+- A quantity can be in words: «یک» 1, «دو تا» 2, «سه عدد» 3, «چهار» 4, «پنج» 5, «ده» 10, "two", "three" (also Arabic and Urdu words). «تا» and «عدد» only count the pieces.
+- Packaging words («گالن ۲۵ کیلویی», «کارتن», «رول», «بسته», "25 kg gallon", "carton") say how the product is packed; they are NOT the product and not a multiplier of the quantity. "item" is the product name or code WITHOUT them (for «دو تا گالن ۲۵ کیلویی GLUE JOWAT» the item is "GLUE JOWAT" and qty is 2).
+- A product may be given by NAME (not a code): copy the name as written, without the packaging words.
+- A price can be in words: «به قیمت هر عدد ۱۵۰۰ درهم», «هر کدام ۱۵۰۰», «هر گالن ۱۵۰۰», "1500 each": price 1500 (the price of ONE piece); ignore the currency word. A total («جمعاً ۳۰۰۰») is not a unit price: leave price null and add a note to "unsure".
+- The words «فاکتور کن», «فاکتور بزن», «برای من بفرست» only say what to do; they are not part of the customer or the product.
 - The layout can be anything: all values on one line, or one value per line, in Persian, English or mixed. Group the values of one product together in the order written.
 - Never invent, convert, compute or correct anything. If a value is not written, use null. If something is unclear (a quantity with no product, a product with no quantity, an odd count of values), add a short note to "unsure" and do not guess.`;
 

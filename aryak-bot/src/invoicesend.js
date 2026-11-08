@@ -91,7 +91,8 @@ export function resolveGroups(customer, groups, config, row = null, alts = []) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------- the confirmation
-export function confirmText({ read, fileName, group, alreadySent, unconfirmed = false }) {
+export function confirmText({ read, fileName, group, alreadySent, unconfirmed = false, lang = 'en' }) {
+  if (lang === 'fa') return confirmTextFa({ read, fileName, group, alreadySent, unconfirmed });
   const lines = [];
   if (unconfirmed) lines.push('⚠️ This group was not confirmed in the list.');
   if (read.checked === false) lines.push('⚠️ This invoice was not checked.');
@@ -108,7 +109,24 @@ export function confirmText({ read, fileName, group, alreadySent, unconfirmed = 
   return lines.join('\n');
 }
 
-export const chooseText = (groups) => `Which group? Reply with the number:\n${groups.map((g, i) => `${i + 1}) ${g.subject}`).join('\n')}`;
+/** The same question for the owner, in Persian (names and numbers stay as printed). */
+export function confirmTextFa({ read, fileName, group, alreadySent, unconfirmed = false }) {
+  const lines = [];
+  if (unconfirmed) lines.push('⚠️ این گروه در فهرست تأیید نشده است.');
+  if (read.checked === false) lines.push('⚠️ این فاکتور بررسی نشده است.');
+  if (read.urgent > 0) lines.push(`⚠️ این فاکتور ${String(read.urgent).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[d])} ایراد فوری حل‌نشده دارد${(read.points || []).length ? `: ${read.points.slice(0, 4).join('؛ ')}` : ''}.`);
+  if (read.orderState === 'text') lines.push((read.orderPoints || []).length ? `⚠️ با سفارش متنی مقایسه شد (اطمینان کم) و فرق دارد: ${read.orderPoints.slice(0, 4).join('؛ ')}.` : 'با سفارش متنی مقایسه شد (اطمینان کم): یکی است.');
+  else if (read.orderState === 'none' || (!read.orderState && read.noOrder)) lines.push('سفارشی در حافظه نیست؛ فقط حساب و شماره بررسی شد.');
+  if (alreadySent) lines.push(`⚠️ این فاکتور پیش‌تر به این گروه فرستاده شده است (${alreadySent}).`);
+  lines.push(`فاکتور ${read.number} — ${read.customer}`);
+  lines.push(`جمع با مالیات: ${read.total != null ? `AED ${Number(read.total).toFixed(2)}` : 'خوانده نشد'}`);
+  lines.push(`فایل: ${fileName}`);
+  lines.push(`گروه: ${group}`);
+  lines.push('فرستاده شود؟ بله / نه (۱۰ دقیقه اعتبار، فقط برای همین فاکتور و همین گروه)');
+  return lines.join('\n');
+}
+
+export const chooseText = (groups, lang = 'en') => `${lang === 'fa' ? 'کدام گروه؟ شماره را بنویسید:' : 'Which group? Reply with the number:'}\n${groups.map((g, i) => `${i + 1}) ${g.subject}`).join('\n')}`;
 
 /** The readable file name of the invoice, from what is printed on it. */
 export const sendFileName = (read) => readableFileName(read.number, read.customer);

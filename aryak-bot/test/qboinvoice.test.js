@@ -599,3 +599,63 @@ test('hand numbering: a number taken before the yes is renumbered and nothing is
   assert.ok((await odd.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('شماره ندارد'));
   assert.equal(odd.m.posts.length, 0);
 });
+
+// ------------------------------------------------------------------------------------------------ "فاکتور کن … برای من بفرست" is an invoice to CREATE, not a send
+const GLUE_MESSAGE = 'آتوسا برای شرکت Mice Interiors Decoration LLC\nدو تا گالن ۲۵ کیلویی GLUE JOWAT به قیمت هر عدد ۱۵۰۰ درهم فاکتور کن برای من بفرست';
+
+test('the owner\'s exact message is an invoice to create; «برای من بفرست» only means show me the preview; sending is for an invoice that exists', () => {
+  const ic = parseInvoiceCommand(GLUE_MESSAGE);
+  assert.equal(ic.type, 'request'); assert.equal(ic.free, true);
+  for (const t of ['فاکتور کن برای Cedar، دو تا Hinge 35mm، برای من بفرست', 'برای Cedar ده عدد 108 فاکتور بزن بفرست برام', 'آتوسا صادر کن فاکتور Cedar 108 سه تا بفرست برای من', 'فاکتورش کن و برای من بفرست: Cedar، H35 4']) assert.equal(looksLikeInvoiceRequest(t), true, t);
+  // an existing invoice sent to a group is the other flow
+  for (const t of ['فاکتور 8996 را به گروه Cedar بفرست', 'فاکتور Cedar را بفرست', 'send the invoice of Cedar to the group', 'فاکتور بساز؟']) assert.equal(looksLikeInvoiceRequest(t), false, t);
+  assert.notEqual(parseInvoiceCommand('فاکتور 8996 را به گروه Cedar بفرست')?.type, 'request');
+});
+
+test('in the program the invoice commands are read before the send-to-customer flow', () => {
+  const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  const make = src.indexOf('parseInvoiceCommand(text)');
+  const send = src.indexOf('parseSendCommand(text)');
+  assert.ok(make > 0 && send > 0 && make < send, 'the invoice request is taken before the send flow can grab the message');
+});
+
+test('the extraction is told about words for quantity, packaging, an item by name and a price in words', async () => {
+  const prompts = [];
+  const client = { beta: { messages: { create: async (p) => { prompts.push(p.system); return { content: [{ type: 'text', text: JSON.stringify({ customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] }) }] }; } } } };
+  const got = await extractInvoiceRequest({ client, config: { model: 'm' }, text: GLUE_MESSAGE });
+  assert.deepEqual(got, { customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] });
+  for (const needle of ['دو تا', 'گالن ۲۵ کیلویی', 'NOT the product', 'by NAME', 'به قیمت هر عدد', 'فاکتور کن']) assert.ok(prompts[0].includes(needle), needle);
+});
+
+test('item by name in any word order, price per piece, the customer checked in QuickBooks: nothing is created, the nearest names are asked', async () => {
+  const items = [{ Id: '41', Name: 'JOWAT PVC GLUE', Sku: 'JOWAT-25', UnitPrice: 1400, Type: 'Inventory', Active: true, Description: 'Jowat glue 25 kg' }, { Id: '42', Name: 'Hinge 35mm', Sku: 'H35', UnitPrice: 2.5, Type: 'Inventory', Active: true }];
+  const extracted = { customer: 'Mice Interiors Decoration LLC', lines: [{ item: 'GLUE JOWAT', qty: 2, price: 1500 }], unsure: [] };
+  // the customer is not in QuickBooks under that name: the nearest are listed; no customer is made, no invoice
+  const t = mk({ customers: [{ Id: '80', DisplayName: 'MICE INTERIORS', Balance: 0 }, { Id: '81', DisplayName: 'MICE DECOR LLC', Balance: 0 }, ...CUSTOMERS], items, extract: async () => extracted, invoices: [] });
+  const r = await t.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  assert.ok(r.requester.includes('JOWAT PVC GLUE')); // the QuickBooks name of the item, found from "GLUE JOWAT"
+  assert.ok(/MICE/.test(r.requester)); // the nearest customers are shown
+  assert.equal(t.store.d.n, 0); assert.equal(t.m.posts.length, 0);
+  assert.ok(!t.m.calls.some((c) => c.method === 'POST' && /customer/.test(c.url)));
+  // the customer exists (any case): the preview is made with 2 x 1500 on the QuickBooks item
+  const ok = mk({ customers: [{ Id: '80', DisplayName: 'MICE INTERIORS DECORATION LLC', Balance: 0 }, ...CUSTOMERS], items, extract: async () => extracted, invoices: [{ Id: '801', CustomerRef: { value: '80' }, Line: [{ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { ItemRef: { value: '41' }, TaxCodeRef: { value: '11' } } }] }] });
+  const r2 = await ok.inv.request({ text: GLUE_MESSAGE, requester: 'owner' });
+  assert.ok(r2.owner || r2.requester);
+  const text = r2.owner || r2.requester;
+  assert.ok(text.includes('JOWAT PVC GLUE')); assert.ok(/2\s*×\s*1500|1500/.test(text));
+  assert.equal(ok.m.posts.length, 0); // a preview only: the owner's yes makes the invoice
+});
+
+test('the invoice-send questions speak Persian to the owner and English by default; names and amounts stay as printed', async () => {
+  const { confirmText, chooseText, confirmTextFa } = await import('../src/invoicesend.js');
+  const read = { number: 'INV-8996', customer: 'ACME LLC', total: 157.5, checked: true, urgent: 0, orderState: 'none' };
+  const fa = confirmText({ read, fileName: 'INV-8996 ACME.pdf', group: 'ACME - ARYAK', alreadySent: '', lang: 'fa' });
+  assert.equal(fa, confirmTextFa({ read, fileName: 'INV-8996 ACME.pdf', group: 'ACME - ARYAK', alreadySent: '' }));
+  assert.match(fa, /فرستاده شود\؟ بله \/ نه/); assert.match(fa, /جمع با مالیات: AED 157\.50/); assert.match(fa, /گروه: ACME - ARYAK/);
+  assert.doesNotMatch(fa, /Send\?|Group:|Total with VAT/);
+  assert.match(confirmText({ read, fileName: 'f', group: 'g', alreadySent: '' }), /Send\? yes \/ no/); // the default is unchanged
+  assert.match(chooseText([{ subject: 'A' }, { subject: 'B' }], 'fa'), /^کدام گروه؟ شماره را بنویسید:\n1\) A\n2\) B/);
+  assert.match(chooseText([{ subject: 'A' }]), /^Which group\? Reply with the number:/);
+  const warn = confirmText({ read: { ...read, urgent: 2, points: ['x', 'y'], checked: false }, fileName: 'f', group: 'g', alreadySent: 'پیش‌تر', unconfirmed: true, lang: 'fa' });
+  assert.match(warn, /این گروه در فهرست تأیید نشده/); assert.match(warn, /بررسی نشده/); assert.match(warn, /۲ ایراد فوری/);
+});

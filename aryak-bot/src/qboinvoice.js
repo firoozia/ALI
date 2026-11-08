@@ -95,8 +95,11 @@ export function parseInvoiceCommand(text) {
 export function looksLikeInvoiceRequest(text) {
   const s = plain(text);
   if (!s || s.length > 3000 || /[?؟]\s*$/u.test(s)) return false;
-  if (/ارسال|بفرست|\bsend\b|\bforward\b/iu.test(s) && !/بساز|بزن|صادر/u.test(s)) return false;
-  return (/فاکتور/u.test(s) && /(?:بساز|بزن|صادر\s*کن|درست\s*کن|ایجاد\s*کن|بنویس)/u.test(s)) || /(?:create|make|issue)\s+(?:an?\s+)?invoice/iu.test(s);
+  // a verb that MAKES an invoice (also «فاکتور کن», «فاکتور کنید»). With one, «برای من بفرست» only means "show me the preview in my chat"; the send-to-customer
+  // flow is for an invoice that already exists (a replied PDF, or «فاکتور <number> را به گروه … بفرست»).
+  const MAKE = /(?:بساز|بسازید|بزن|بزنید|صادر\s*کن|صادر\s*کنید|درست\s*کن|ایجاد\s*کن|بنویس|فاکتور\s*(?:کن|کنید)(?=\s|$)|فاکتورش\s*کن)/u;
+  if (/ارسال|بفرست|\bsend\b|\bforward\b/iu.test(s) && !MAKE.test(s) && !/صادر/u.test(s)) return false;
+  return (/فاکتور/u.test(s) && MAKE.test(s)) || /(?:create|make|issue)\s+(?:an?\s+)?invoice/iu.test(s);
 }
 
 /** The ways one item line can be read: [{ item, qty, price|null }]. Separators (, | ; tab) make it exact; without them the numbers at the end are read. */

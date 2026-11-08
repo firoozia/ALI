@@ -751,7 +751,8 @@ const oneShot = new OneShot();
 const sendDesk = new SendDesk();
 
 /** The owner's order "send the invoice of X into the customer's group": find the invoice and the group, then ask him. Nothing is sent here. */
-async function startOwnerSend({ chatId, parsed, ctx, reply }) {
+async function startOwnerSend({ chatId, parsed, ctx, reply, lang = 'en' }) {
+  const fa = lang === 'fa'; // the owner reads Persian, colleagues in company groups read English
   let found = null;
   const qdoc = ctx.quotedMessage ? normalizeMessageContent(ctx.quotedMessage)?.documentMessage : null;
   if (qdoc && /pdf/i.test(String(qdoc.mimetype || ''))) {
@@ -780,19 +781,19 @@ async function startOwnerSend({ chatId, parsed, ctx, reply }) {
       if (c) { nameStore.setCheck(found.read.number, { total: c.total, urgent: c.urgent, noOrder: c.noOrder, orderState: c.orderState, orderPoints: c.orderPoints, points: c.points }); found.read = nameStore.fullRead(found.entry.id) || { ...found.read, ...c, checked: true }; }
     } catch (e) { logger.warn(`owner send: the check could not be made (${e.message})`); }
   }
-  if (!found) { await reply(qdoc ? 'I could not read this invoice, so I send nothing.' : 'I do not have that invoice among the files I kept. Please reply to the PDF with the command. Nothing was sent.'); return; }
+  if (!found) { await reply(fa ? (qdoc ? 'این فاکتور را نتوانستم بخوانم، پس چیزی نمی‌فرستم.' : 'آن فاکتور میان فایل‌هایی که نگه داشته‌ام نیست. روی فایل فاکتور پاسخ دهید و دستور را بنویسید. چیزی فرستاده نشد.\nاگر می‌خواستید فاکتور تازه بسازم: «فاکتور بساز <مشتری>» و کالاها را بنویسید.') : (qdoc ? 'I could not read this invoice, so I send nothing.' : 'I do not have that invoice among the files I kept. Please reply to the PDF with the command. Nothing was sent.')); return; }
   const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
   const row = customerGroups.find(found.read.customer, altNames(aliases.map, found.read.customer));
   const { groups, stale, unconfirmed } = resolveGroups(found.read.customer, all, config, row, altNames(aliases.map, found.read.customer));
-  if (stale) { await reply(`The group saved in the list for ${found.read.customer} ("${row.subject}") is not there any more, or is no longer a customer group. Nothing was sent. Fix the list first.`); return; }
-  if (!groups.length) { await reply(`I found no customer group for ${found.read.customer}. Nothing was sent.`); return; }
-  if (groups.length > 1) { sendDesk.start(chatId, { step: 'choose', invoice: found, groups, unconfirmed }); await reply(chooseText(groups)); return; }
+  if (stale) { await reply(fa ? `گروه ثبت‌شده در فهرست برای ${found.read.customer} («${row.subject}») دیگر پیدا نمی‌شود یا گروه مشتری نیست. چیزی فرستاده نشد. اول فهرست را درست کنید.` : `The group saved in the list for ${found.read.customer} ("${row.subject}") is not there any more, or is no longer a customer group. Nothing was sent. Fix the list first.`); return; }
+  if (!groups.length) { await reply(fa ? `برای ${found.read.customer} گروه مشتری پیدا نکردم. چیزی فرستاده نشد.` : `I found no customer group for ${found.read.customer}. Nothing was sent.`); return; }
+  if (groups.length > 1) { sendDesk.start(chatId, { step: 'choose', invoice: found, groups, unconfirmed }); await reply(chooseText(groups, lang)); return; }
   sendDesk.start(chatId, { step: 'confirm', invoice: found, group: groups[0], unconfirmed });
-  await reply(confirmText({ read: found.read, fileName: sendFileName(found.read), group: groups[0].subject, alreadySent: nameStore.sentTo(found.read.number, groups[0].id) ? 'before' : '', unconfirmed }));
+  await reply(confirmText({ read: found.read, fileName: sendFileName(found.read), group: groups[0].subject, alreadySent: nameStore.sentTo(found.read.number, groups[0].id) ? (fa ? 'پیش‌تر' : 'before') : '', unconfirmed, lang }));
 }
 
 /** The owner's yes: send the same PDF bytes under the readable name to the one group, once, through the guard's one-shot token. */
-async function finishOwnerSend({ chatId, pending, reply }) {
+async function finishOwnerSend({ chatId, pending, reply, lang = 'en' }) {
   const { invoice: { entry, read }, group } = pending;
   const file = sendFileName(read);
   try {
@@ -806,10 +807,10 @@ async function finishOwnerSend({ chatId, pending, reply }) {
     const when = `${p.day} ${String(Math.floor(p.minutes / 60)).padStart(2, '0')}:${String(p.minutes % 60).padStart(2, '0')}`;
     nameStore.markSentTo(read.number, group.id, when, file);
     logger.info(`invoice ${read.number} sent to group "${group.subject}" by the owner's order`);
-    await reply(`Sent ${read.number} to "${group.subject}" at ${when} (Dubai time).`);
+    await reply(lang === 'fa' ? `فاکتور ${read.number} به «${group.subject}» فرستاده شد (${when}، وقت دبی).` : `Sent ${read.number} to "${group.subject}" at ${when} (Dubai time).`);
   } catch (e) {
     logger.warn(`owner send of ${read.number} failed: ${e.message}`);
-    await reply(`Sending ${read.number} failed (${e.message}). Nothing was retried.`);
+    await reply(lang === 'fa' ? `فرستادن فاکتور ${read.number} نشد (${e.message}). دوباره تلاش نشد.` : `Sending ${read.number} failed (${e.message}). Nothing was retried.`);
   }
 }
 
@@ -1435,17 +1436,17 @@ async function handleStaffChat(raw, chatId, group) {
       if (a?.type === 'choose') {
         const g = waiting.groups[a.index];
         sendDesk.start(chatId, { step: 'confirm', invoice: waiting.invoice, group: g, unconfirmed: !!waiting.unconfirmed });
-        await reply(confirmText({ read: waiting.invoice.read, fileName: sendFileName(waiting.invoice.read), group: g.subject, alreadySent: nameStore.sentTo(waiting.invoice.read.number, g.id) ? 'before' : '', unconfirmed: !!waiting.unconfirmed }));
+        await reply(confirmText({ read: waiting.invoice.read, fileName: sendFileName(waiting.invoice.read), group: g.subject, alreadySent: nameStore.sentTo(waiting.invoice.read.number, g.id) ? (staffLang === 'fa' ? 'پیش‌تر' : 'before') : '', unconfirmed: !!waiting.unconfirmed, lang: staffLang }));
         return true;
       }
-      if (a?.type === 'yes') { sendDesk.clear(chatId); await finishOwnerSend({ chatId, pending: waiting, reply }); return true; }
-      if (a?.type === 'cancel') { await reply('Cancelled. Nothing was sent.'); return true; }
+      if (a?.type === 'yes') { sendDesk.clear(chatId); await finishOwnerSend({ chatId, pending: waiting, reply, lang: staffLang }); return true; }
+      if (a?.type === 'cancel') { await reply(staffLang === 'fa' ? 'لغو شد. چیزی فرستاده نشد.' : 'Cancelled. Nothing was sent.'); return true; }
     }
     if (addressed && !wantsRename(text)) {
       const parsed = parseSendCommand(text);
       if (parsed) {
         if (!owner) { await reply('Only the owner can order an invoice to be sent to a customer. I cannot send invoices to customers.'); return true; }
-        await startOwnerSend({ chatId, parsed, ctx, reply });
+        await startOwnerSend({ chatId, parsed, ctx, reply, lang: staffLang });
         return true;
       }
     }
