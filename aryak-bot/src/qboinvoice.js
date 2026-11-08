@@ -125,6 +125,7 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], perm };
     if ((m = new RegExp(String.raw`^مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], perm };
   }
+  if ((m = /^(?:invoice dry run|dry run|آزمایش فاکتور)\s+#?\s*(Q\s*\d+)\s+(\S+)$/iu.exec(s))) return { type: 'dry_run', id: m[1].replace(/\s+/g, '').toUpperCase(), against: m[2] };
   if ((m = /^(?:compare invoices?|مقایسه فاکتور(?:ها)?)\s+(\S+)\s+(\S+)$/iu.exec(s))) return { type: 'compare', a: m[1], b: m[2] };
   if ((m = /^(?:details|جزئیات)\s*#?\s*(Q\s*\d+)$/iu.exec(s))) return { type: 'details', id: m[1].replace(/\s+/g, '').toUpperCase() };
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
@@ -569,13 +570,19 @@ export class QboInvoiceDesk {
       if (/^\d+$/.test(String(forms.DefaultTerms || ''))) terms = String(forms.DefaultTerms);
       memo = String(forms.DefaultCustomerMessage || '').trim(); if (memo) source = 'preference';
     } catch (e) { this.log(`sales defaults: the preferences could not be read (${e.name})`); }
-    if (!memo) {
-      try {
-        const rows = (await this.qbo.get('query', { query: 'select * from Invoice ORDERBY MetaData.CreateTime DESC STARTPOSITION 1 MAXRESULTS 25' }))?.QueryResponse?.Invoice || [];
-        const office = rows.find((r) => !/^Atossa/i.test(String(r.PrivateNote || '')) && String(r.CustomerMemo?.value || '').trim());
-        if (office) { memo = String(office.CustomerMemo.value).trim(); source = `invoice ${office.DocNumber || office.Id}`; }
-      } catch (e) { this.log(`sales defaults: the latest invoices could not be read (${e.name})`); }
-    }
+    let office = null;
+    try { // the newest invoices the OFFICE made on the screen: the message (when the preference is empty) and the switches the screen sets (online payment, print status)
+      const rows = (await this.qbo.get('query', { query: 'select * from Invoice ORDERBY MetaData.CreateTime DESC STARTPOSITION 1 MAXRESULTS 25' }))?.QueryResponse?.Invoice || [];
+      const offices = rows.filter((r) => !/^Atossa/i.test(String(r.PrivateNote || '')));
+      office = offices[0] || null;
+      if (!memo) {
+        const lender = offices.find((r) => String(r.CustomerMemo?.value || '').trim());
+        if (lender) { memo = String(lender.CustomerMemo.value).trim(); source = `invoice ${lender.DocNumber || lender.Id}`; }
+      }
+    } catch (e) { this.log(`sales defaults: the latest invoices could not be read (${e.name})`); }
+    const flags = {};
+    for (const k of ['AllowOnlineACHPayment', 'AllowOnlineCreditCardPayment', 'AllowOnlinePayment']) if (typeof office?.[k] === 'boolean') flags[k] = office[k];
+    if (office?.PrintStatus === 'NotSet') flags.PrintStatus = 'NotSet'; // the API would otherwise set NeedToPrint
     let template = '';
     try { // the form styles QuickBooks lists (the default one cannot be read through the API; a style is named in QBO_INVOICE_TEMPLATE to force it)
       const styles = await this.qbo.query('select * from Template');
@@ -586,7 +593,7 @@ export class QboInvoiceDesk {
       if (hit) template = String(hit.Id); else if (want) this.log(`sales defaults: the form style "${this.config.qboInvoiceTemplate}" was not found; the company default is used`);
     } catch (e) { this.log(`sales defaults: the form styles could not be read (${e.name})`); }
     this.log(`sales defaults: terms ${terms || 'none'}, message ${memo ? `${memo.length} characters from ${source}` : 'none'}`);
-    return { terms, memo, source, template, customer };
+    return { terms, memo, source, template, customer, flags };
   }
 
   async customerRecord(id) { return (await this.qbo.query(`select * from Customer where Id = '${qboEscape(id)}'`))[0] || null; }
@@ -933,26 +940,65 @@ export class QboInvoiceDesk {
     ].join('\n');
   }
 
-  /**
-   * «compare invoices inv-9982 inv-9983»: what differs between two invoices field by field (the office's own, made on the screen, against ours). Read only, shown only
-   * to the owner, never stored. Lines are compared by the fields they carry. The only intended difference is our private note.
-   */
-  async compareInvoices(a, b) {
-    const get = async (n) => (await this.qbo.query(`select * from Invoice where DocNumber = '${qboEscape(n)}'`))[0] || null;
-    const [x, y] = [await get(a), await get(b)];
-    if (!x || !y) return `Not found in QuickBooks: ${[!x && a, !y && b].filter(Boolean).join(', ')}`;
-    const skip = new Set(['Id', 'SyncToken', 'MetaData', 'DocNumber', 'TxnDate', 'CustomerRef', 'TotalAmt', 'Balance', 'Deposit', 'Line', 'TxnTaxDetail', 'LinkedTxn', 'domain', 'sparse', 'DueDate']);
-    const show = (v) => { const t = typeof v === 'string' ? v : JSON.stringify(v); return t === undefined ? '(missing)' : t.length > 90 ? `${t.slice(0, 90)}…` : t; };
-    const out = [`Comparing ${a} (first) with ${b} (second):`];
+  /** The differences between two invoice records (the office's, ours or the body we would send), one line each. Pure. */
+  static diffInvoices(x, y, { skipExtra = [] } = {}) {
+    const skip = new Set(['Id', 'SyncToken', 'MetaData', 'DocNumber', 'TxnDate', 'CustomerRef', 'TotalAmt', 'HomeTotalAmt', 'Balance', 'HomeBalance', 'Deposit', 'Line', 'TxnTaxDetail', 'LinkedTxn', 'domain', 'sparse', 'DueDate', 'TxnStatus', 'InvoiceLink', ...skipExtra]);
+    const show = (v) => { const t = typeof v === 'string' ? v : JSON.stringify(v); return t === undefined ? '(missing)' : t.length > 110 ? `${t.slice(0, 110)}…` : t; };
+    const out = [];
     for (const k of [...new Set([...Object.keys(x), ...Object.keys(y)])].sort()) {
       if (skip.has(k)) continue;
       if (JSON.stringify(x[k]) !== JSON.stringify(y[k])) out.push(`${k}: ${show(x[k])} | ${show(y[k])}${k === 'PrivateNote' ? '   (intended: ours is "Atossa Qn")' : ''}`);
     }
     if (JSON.stringify(x.TxnTaxDetail?.TxnTaxCodeRef) !== JSON.stringify(y.TxnTaxDetail?.TxnTaxCodeRef)) out.push(`TxnTaxDetail.TxnTaxCodeRef: ${show(x.TxnTaxDetail?.TxnTaxCodeRef)} | ${show(y.TxnTaxDetail?.TxnTaxCodeRef)}`);
-    const lineKeys = (inv) => new Set((inv.Line || []).filter((l) => l.DetailType === 'SalesItemLineDetail').flatMap((l) => [...Object.keys(l), ...Object.keys(l.SalesItemLineDetail || {}).map((k) => `SalesItemLineDetail.${k}`)]));
-    const lx = lineKeys(x); const ly = lineKeys(y);
-    for (const k of [...new Set([...lx, ...ly])].sort()) if (lx.has(k) !== ly.has(k)) out.push(`line field ${k}: ${lx.has(k) ? 'present' : 'missing'} | ${ly.has(k) ? 'present' : 'missing'}`);
-    return out.length === 1 ? `${out[0]} no difference in the compared fields.` : out.join('\n');
+    const items = (inv) => (inv.Line || []).filter((l) => l.DetailType === 'SalesItemLineDetail');
+    const lx = items(x); const ly = items(y);
+    if (lx.length !== ly.length) out.push(`item lines: ${lx.length} | ${ly.length}`);
+    for (let i = 0; i < Math.min(lx.length, ly.length); i++) {
+      const keys = (l) => new Set([...Object.keys(l), ...Object.keys(l.SalesItemLineDetail || {}).map((k) => `SalesItemLineDetail.${k}`)]);
+      const kx = keys(lx[i]); const ky = keys(ly[i]);
+      for (const k of [...new Set([...kx, ...ky])].sort()) if (kx.has(k) !== ky.has(k)) out.push(`line ${i + 1} field ${k}: ${kx.has(k) ? 'present' : 'missing'} | ${ky.has(k) ? 'present' : 'missing'}`);
+      for (const k of ['TaxCodeRef', 'ServiceDate', 'ClassRef']) {
+        const vx = lx[i].SalesItemLineDetail?.[k]; const vy = ly[i].SalesItemLineDetail?.[k];
+        if (kx.has(`SalesItemLineDetail.${k}`) && ky.has(`SalesItemLineDetail.${k}`) && JSON.stringify(vx) !== JSON.stringify(vy)) out.push(`line ${i + 1} ${k}: ${show(vx)} | ${show(vy)}`);
+      }
+    }
+    return out;
+  }
+
+  /** Lines cut into messages that WhatsApp does not cut (about a thousand characters each at most). */
+  static pages(lines, head) {
+    const pages = []; let cur = [head];
+    for (const line of lines) { if (cur.join('\n').length + line.length > 1200) { pages.push(cur.join('\n')); cur = []; } cur.push(line); }
+    pages.push(cur.join('\n'));
+    return pages;
+  }
+
+  /**
+   * «compare invoices inv-9982 inv-9983»: what differs between two invoices field by field (the office's own, made on the screen, against ours). Read only, shown only
+   * to the owner, never stored. Returns messages (several when long). The only intended difference is our private note.
+   */
+  async compareInvoices(a, b) {
+    const get = async (n) => (await this.qbo.query(`select * from Invoice where DocNumber = '${qboEscape(n)}'`))[0] || null;
+    const [x, y] = [await get(a), await get(b)];
+    if (!x || !y) return [`Not found in QuickBooks: ${[!x && a, !y && b].filter(Boolean).join(', ')}`];
+    const lines = QboInvoiceDesk.diffInvoices(x, y);
+    return lines.length ? QboInvoiceDesk.pages(lines, `Comparing ${a} (first) with ${b} (second): ${lines.length} difference(s)`) : [`Comparing ${a} with ${b}: no difference in the compared fields.`];
+  }
+
+  /**
+   * «invoice dry run Q16 inv-9982»: builds the EXACT body that «yes #Q16» would send (the same defaults, read now) and compares it field by field with a given office
+   * invoice. Nothing is created and no number is taken. Fields QuickBooks fills in itself (totals, due date, ids) are not compared.
+   */
+  async dryRun(id, againstNumber) {
+    const p = this.store.get(id);
+    if (!p) return [`Preview ${id} was not found.`];
+    const office = (await this.qbo.query(`select * from Invoice where DocNumber = '${qboEscape(againstNumber)}'`))[0] || null;
+    if (!office) return [`Not found in QuickBooks: ${againstNumber}`];
+    const defaults = await this.salesDefaults(p.customer.id);
+    const body = this.invoiceBody(p, defaults); // no DocNumber: the number is chosen only at a real create
+    const lines = QboInvoiceDesk.diffInvoices(office, body, { skipExtra: ['PrivateNote'] });
+    const head = `Dry run of ${id} against ${againstNumber} (nothing created, no number taken): ${lines.length} difference(s). Left = ${againstNumber}, right = what ${id} would send; "(missing)" on the right = not sent.`;
+    return lines.length ? QboInvoiceDesk.pages(lines, head) : [`Dry run of ${id} against ${againstNumber} (nothing created, no number taken): the body matches in every compared field.`];
   }
 
   /** «details #Q14»: the full old preview. */
@@ -1111,6 +1157,7 @@ export class QboInvoiceDesk {
       ...(billAddr ? { BillAddr: billAddr } : {}),
       ...(shipAddr ? { ShipAddr: shipAddr } : {}),
       ...(cu?.CurrencyRef?.value ? { CurrencyRef: cu.CurrencyRef } : {}),
+      ...(defaults.flags || {}),
       Line: p.lines.map((l) => ({
         DetailType: 'SalesItemLineDetail',
         Amount: l.amount / 100,

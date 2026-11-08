@@ -63,7 +63,7 @@ function mockQbo(opts = {}) {
     if (p.includes('/companyinfo/')) return res(200, { CompanyInfo: { CompanyName: 'The Test Workshop', Country: 'AE' } });
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
-    if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.officeInvoices) return res(200, { QueryResponse: { Invoice: opts.officeInvoices } });
+    if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.officeInvoices && !/DocNumber = /.test(sql)) return res(200, { QueryResponse: { Invoice: opts.officeInvoices } });
     if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.byNumber && /DocNumber = '([^']*)'/.test(sql)) return res(200, { QueryResponse: { Invoice: [opts.byNumber[/DocNumber = '([^']*)'/.exec(sql)[1]]].filter(Boolean) } });
     if (ent === 'Template') return res(200, { QueryResponse: { Template: opts.templates || [] } });
     const used = opts.docNumbers || (opts.docNumbers = []);
@@ -1177,11 +1177,57 @@ test('compare invoices: the owner sees field by field what the office\'s screen 
   const office = { Id: '1', DocNumber: 'inv-1', SyncToken: '0', CustomerMemo: { value: 'Sample thank-you text' }, SalesTermRef: { value: '3' }, BillAddr: { Line1: 'A' }, ShipAddr: { Line1: 'B' }, PrintStatus: 'NeedToPrint', TxnTaxDetail: { TxnTaxCodeRef: { value: '11' } }, Line: [{ DetailType: 'SalesItemLineDetail', Description: 'd', Amount: 1, SalesItemLineDetail: { ItemRef: { value: '1' }, TaxCodeRef: { value: '11' }, ServiceDate: '2026-11-01' } }] };
   const ours = { Id: '2', DocNumber: 'inv-2', SyncToken: '0', PrivateNote: 'Atossa Q1', Line: [{ DetailType: 'SalesItemLineDetail', Amount: 1, SalesItemLineDetail: { ItemRef: { value: '1' }, TaxCodeRef: { value: '11' } } }] };
   const t = mk({ byNumber: { 'inv-1': office, 'inv-2': ours } });
-  const text = await t.inv.compareInvoices('inv-1', 'inv-2');
+  const text = (await t.inv.compareInvoices('inv-1', 'inv-2')).join('\n');
   for (const want of ['CustomerMemo: {"value":"Sample thank-you text"} | (missing)', 'SalesTermRef: {"value":"3"} | (missing)', 'BillAddr:', 'ShipAddr:', 'PrintStatus: NeedToPrint | (missing)', 'PrivateNote: (missing) | Atossa Q1', '(intended: ours is "Atossa Qn")',
-    'TxnTaxDetail.TxnTaxCodeRef: {"value":"11"} | (missing)', 'line field Description: present | missing', 'line field SalesItemLineDetail.ServiceDate: present | missing']) assert.ok(text.includes(want), `${want}\n${text}`);
+    'TxnTaxDetail.TxnTaxCodeRef: {"value":"11"} | (missing)', 'line 1 field Description: present | missing', 'line 1 field SalesItemLineDetail.ServiceDate: present | missing']) assert.ok(text.includes(want), `${want}\n${text}`);
   assert.ok(!text.includes('SyncToken') && !text.includes('DocNumber:')); // ids and numbers are not differences
-  assert.match(await t.inv.compareInvoices('inv-1', 'nope'), /^Not found in QuickBooks: nope$/);
+  assert.deepEqual(await t.inv.compareInvoices('inv-1', 'nope'), ['Not found in QuickBooks: nope']);
   const same = await mk({ byNumber: { a: office, b: { ...office, Id: '9' } } }).inv.compareInvoices('a', 'b');
-  assert.match(same, /no difference in the compared fields/);
+  assert.match(same[0], /no difference in the compared fields/);
+});
+
+// ------------------------------------------------------------------------------------------------ parity with the screen: the switches, the dry run, the pages
+test('the create copies the switches the screen sets (online payment, print status) from the newest invoice the OFFICE made; ours are skipped; nothing when there is no such invoice', async () => {
+  const officeInvoices = [
+    { Id: '1', DocNumber: 'inv-1', PrivateNote: 'Atossa Q9', AllowOnlinePayment: false, PrintStatus: 'NeedToPrint' },
+    { Id: '2', DocNumber: 'inv-2', AllowOnlineACHPayment: true, AllowOnlineCreditCardPayment: true, AllowOnlinePayment: true, PrintStatus: 'NotSet' },
+  ];
+  const t = mk({ officeInvoices });
+  await t.inv.request({ text: REQ, requester: 'owner' }); await t.inv.decide({ verb: 'yes', id: 'Q1' });
+  const body = t.m.posts[0].body;
+  assert.equal(body.AllowOnlineACHPayment, true); assert.equal(body.AllowOnlineCreditCardPayment, true); assert.equal(body.AllowOnlinePayment, true); assert.equal(body.PrintStatus, 'NotSet');
+  const none = mk();
+  await none.inv.request({ text: REQ, requester: 'owner' }); await none.inv.decide({ verb: 'yes', id: 'Q1' });
+  for (const k of ['AllowOnlinePayment', 'AllowOnlineACHPayment', 'AllowOnlineCreditCardPayment', 'PrintStatus']) assert.equal(k in none.m.posts[0].body, false, k);
+});
+
+test('invoice dry run: the exact body a yes would send is compared with an office invoice, field by field, and nothing is created or numbered', async () => {
+  assert.deepEqual(parseInvoiceCommand('invoice dry run Q16 inv-9982'), { type: 'dry_run', id: 'Q16', against: 'inv-9982' });
+  assert.deepEqual(parseInvoiceCommand('آزمایش فاکتور #q3 inv-1'), { type: 'dry_run', id: 'Q3', against: 'inv-1' });
+  const office = {
+    Id: '7', DocNumber: 'inv-1', SyncToken: '0', CustomerMemo: { value: 'Sample office message' }, SalesTermRef: { value: '3' }, PrintStatus: 'NotSet', AllowOnlinePayment: true, EmailStatus: 'NotSet',
+    BillAddr: { Line1: 'Sample Co', FreeFormAddress: true }, DueDate: '2026-12-01', TotalAmt: 1,
+    Line: [{ DetailType: 'SalesItemLineDetail', Description: 'd', Amount: 1, SalesItemLineDetail: { ItemRef: { value: '1' }, TaxCodeRef: { value: '11' }, ServiceDate: '2026-11-01' } }],
+  };
+  const t = mk({ byNumber: { 'inv-1': office }, salesForms: { DefaultTerms: '3', DefaultCustomerMessage: 'Sample office message' }, officeInvoices: [office] });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  const out = await t.inv.dryRun('Q1', 'inv-1');
+  const text = out.join('\n');
+  assert.match(out[0], /^Dry run of Q1 against inv-1 \(nothing created, no number taken\): \d+ difference\(s\)\. Left = inv-1, right = what Q1 would send/);
+  assert.ok(!text.includes('CustomerMemo:') && !text.includes('PrintStatus:') && !text.includes('AllowOnlinePayment:')); // these match now
+  assert.ok(text.includes('EmailStatus: NotSet | (missing)') && text.includes('BillAddr:')); // what is still different is listed
+  assert.ok(text.includes('line 1 field Description: present | missing') || text.includes('line 1 field SalesItemLineDetail.ServiceDate: present | missing'));
+  assert.ok(!text.includes('DueDate') && !text.includes('TotalAmt')); // QuickBooks computes these
+  assert.equal(t.m.posts.length, 0); // nothing created
+  assert.equal(t.store.get('Q1').status, 'pending'); assert.equal(t.store.get('Q1').docNumber, ''); // no number taken
+  assert.deepEqual(await t.inv.dryRun('Q9', 'inv-1'), ['Preview Q9 was not found.']);
+  assert.deepEqual(await t.inv.dryRun('Q1', 'nope'), ['Not found in QuickBooks: nope']);
+});
+
+test('a long comparison is cut into several messages so WhatsApp cuts nothing', () => {
+  const lines = Array.from({ length: 60 }, (_, i) => `Field${i}: ${'x'.repeat(100)} | (missing)`);
+  const pages = QboInvoiceDesk.pages(lines, 'Comparing a with b: 60 difference(s)');
+  assert.ok(pages.length > 3); assert.ok(pages.every((p) => p.length <= 1400));
+  assert.equal(pages.join('\n').split('\n').length, 61); // nothing lost
+  assert.ok(pages[0].startsWith('Comparing a with b'));
 });
