@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseStatementRequest } from './period.js';
 import { looseKey } from './namekey.js';
+import { cutTotal, cutLine, faDigits } from './cuts.js';
 import { rankNames, scoreName } from './translit.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { staffChecker } from './gate.js';
@@ -276,9 +277,10 @@ export function resolveEntriesGuess(entries, ctx) {
       if (!g) { stops.push(tried[0].r.stop(n)); return; }
       r = { item: g.item, via: 'guess' }; guess = { alts: g.alts, reason: g.reason };
     }
+    if (c.qty === null || c.qty === undefined) { stops.push(`سطر ${fa(n)}: تعداد «${c.item}» نوشته نشده و برشی هم برایش ثبت نشده که از آن حدس بزنم`); return; }
     if (!(c.qty > 0 && c.qty <= 100000)) { stops.push(`سطر ${fa(n)}: تعداد درست نیست`); return; }
     if (c.price !== null && c.price !== undefined && !(c.price >= 0 && c.price <= 10000000)) { stops.push(`سطر ${fa(n)}: قیمت درست نیست`); return; }
-    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via, typed: c.item, guess, unit: c.unit || '' });
+    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via, typed: c.item, guess, unit: c.unit || '', qtyGuess: c.qtyGuess || null });
   });
   return { lines, stops };
 }
@@ -295,10 +297,11 @@ export function parseInvoiceBlocks(text) {
   const UNITS = { 'متر': 'm', m: 'm', mtr: 'm', meter: 'm', 'رول': 'roll', roll: 'roll', 'عدد': 'pcs', pcs: 'pcs', 'کارتن': 'carton', carton: 'carton' };
   const blocks = [];
   for (const row of rows.slice(1)) {
-    const m = ITEM.exec(row);
+    const codeOnly = /^([A-Za-z]{0,4}[\s-]?\d{2,5})$/u.exec(row); // a code with no quantity: the cut quantity is proposed
+    const m = ITEM.exec(row) || (codeOnly ? [row, codeOnly[1], null, ''] : null);
     if (m) {
       if (!blocks.length) return null; // a line before any customer
-      blocks.at(-1).lines.push({ code: m[1].trim(), qty: Number(m[2].replace(',', '.')), unit: UNITS[String(m[3] || '').toLowerCase()] || String(m[3] || '') });
+      blocks.at(-1).lines.push({ code: m[1].trim(), qty: m[2] === null ? null : Number(m[2].replace(',', '.')), unit: UNITS[String(m[3] || '').toLowerCase()] || String(m[3] || '') });
     } else if (row.length <= 60 && !/[=:]/.test(row)) blocks.push({ customer: row.replace(/[,،:;]+$/u, '').trim(), lines: [] });
     else return null;
   }
@@ -414,8 +417,8 @@ export class QboInvoiceDesk {
    * list (PriceBook) or null; [config]; [today]: () => yyyy-mm-dd; [now]; [post]: async (jid, buffer, fileName, caption); [ownerJid]: () => jid;
    * [groups]: async () => [{ id, subject }]; [testGroup]: (groups) => group|null.
    */
-  constructor({ stockOf = null, qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
-    Object.assign(this, { stockOf, qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
+  constructor({ cutsOf = null, markCuts = null, cutLabel = 'گروه سفارش آریاک', stockOf = null, qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
+    Object.assign(this, { cutsOf, markCuts, cutLabel, stockOf, qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
     this.cache = { at: 0, items: [], codes: new Map(), currency: '', customTxn: false };
     this.inflight = new Set(); // previews being created right now: a yes that arrives meanwhile does not start a second attempt
   }
@@ -620,6 +623,13 @@ export class QboInvoiceDesk {
     const history = new Set();
     for (const inv of recent) for (const l of inv.Line || []) { const id = l.SalesItemLineDetail?.ItemRef?.value; if (id !== undefined && id !== null) history.add(String(id)); }
     const taught = (code) => { if (!cust.id) return null; const t = this.itemCodes.get(cust.id, code); return t ? cat.items.find((i) => String(i.Id) === String(t.itemId)) || null : null; };
+    const cutName = cust.name || customerText;
+    if (this.cutsOf) { // no quantity written: the cut quantity of this customer and code is proposed (a guess)
+      for (const e of entries) {
+        const c0 = e.cands?.[0];
+        if (c0 && (c0.qty === null || c0.qty === undefined) && !c0.qtyGuess) { const t = cutTotal(this.cutsOf(cutName, [c0.item])); if (t) { c0.qty = t.qty; c0.qtyGuess = { unit: t.unit, at: t.at }; } }
+      }
+    }
     const { lines, stops } = resolveEntriesGuess(entries, { items: cat.items, history, taught });
     for (const l of lines) { // the owner's choice of another item for a line
       const pick = overrides.items?.[l.n];
@@ -642,11 +652,19 @@ export class QboInvoiceDesk {
           if (st && Number.isFinite(st.free) && st.free < l.qty) w.push(`موجودی از شیت زیناکس — کد ${fa(l.typed)}: آزاد ${fa(st.free).replace(".", "٫")} ${st.unit === 'm' || !st.unit ? 'متر' : st.unit}، کمتر از ${fa(l.qty)}`);
         } catch { /* the stock sheet did not answer: no warning */ }
       }
+      let cutInfo = null;
+      if (this.cutsOf) { // the final cut of this customer and code, read from what the cutting group posted (read only)
+        const codes = [l.typed, String(l.item.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(l.item.Name || '').replace(/^.*?(\d{3,5})$/, '$1')];
+        cutInfo = cutTotal(this.cutsOf(cutName, codes));
+        const u = cutInfo ? (cutInfo.unit === 'm' ? 'متر' : cutInfo.unit === 'roll' ? 'رول' : cutInfo.unit) : '';
+        if (cutInfo && !l.qtyGuess && Math.abs(cutInfo.qty - l.qty) > 0.001) w.push(`درخواست ${faDigits(l.qty)} ${u}، برش ثبت‌شده ${faDigits(cutInfo.qty)} ${u}`);
+        if (!cutInfo) w.push('برشی ثبت نشده');
+      }
       const code = l.item.Sku || l.item.Name;
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
       if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`);
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
-      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '', n: l.n, chosen: !!l.chosen });
+      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '', n: l.n, chosen: !!l.chosen, cut: cutInfo, qtyGuess: !!l.qtyGuess });
       if (l.guess) guesses.lines.push({ n: l.n, typed: l.typed, reason: l.guess.reason, alts: l.guess.alts.map((a) => ({ itemId: String(a.Id), name: a.Name, price: Number(a.UnitPrice) || 0 })) });
     }
     let tax = null;
@@ -727,7 +745,8 @@ export class QboInvoiceDesk {
       p.guesses?.customer ? `مشتری: ${p.customer.name} (حدس از «${p.guesses.customer.text}»: ${p.guesses.customer.reason})` : `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
       ...(p.guesses?.customer?.alts?.length ? [...p.guesses.customer.alts.map((a, i) => `   ${fa(i + 1)}) ${a.label || a.name}`), '   (برای تغییر: «مشتری ۱» و …)'] : []),
       ...(p.docNumber ? [`شمارهٔ فاکتور: ${p.docNumber}`] : []),
-      ...p.lines.flatMap((l, i) => [`${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : l.via === 'guess' && l.typed ? ` («${l.typed}» ← ${l.name} (حدس: ${(p.guesses?.lines || []).find((g) => g.n === l.n)?.reason || 'نزدیک‌ترین'}))` : l.via === 'chosen' ? ' (انتخاب شما)' : ''}`,
+      ...p.lines.flatMap((l, i) => [`${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty}${l.qtyGuess ? ' (حدس از برش)' : ''} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : l.via === 'guess' && l.typed ? ` («${l.typed}» ← ${l.name} (حدس: ${(p.guesses?.lines || []).find((g) => g.n === l.n)?.reason || 'نزدیک‌ترین'}))` : l.via === 'chosen' ? ' (انتخاب شما)' : ''}`,
+        ...(l.cut ? [`   ${cutLine(l.cut, { label: this.cutLabel })}`] : []),
         ...((p.guesses?.lines || []).find((g) => g.n === l.n)?.alts || []).map((a, k) => `   ${fa(k + 1)}) ${a.name} — قیمت ${a.price || 'ندارد'}${k === 0 ? `   (برای تغییر: «سطر ${fa(l.n)} = ${fa(k + 1)}»)` : ''}`)]),
       `جمع قبل از مالیات: ${money(p.subtotal)}`,
       p.tax.source === 'invoices' ? `مالیات: ${p.tax.name} ${p.tax.rate}٪ (از ${fa(p.tax.n)} سطر از ${fa(p.tax.total)} سطر فاکتورهای قبلی): ${money(p.vat)}` : `مالیات ${p.tax.rate}٪ (${p.tax.name}${p.tax.source === 'owner' ? '، انتخاب مالک' : p.tax.source === 'item' ? '، کد خود کالا' : p.tax.source === 'override' ? '، تنظیم مالک' : ''}): ${money(p.vat)}`,
@@ -828,6 +847,7 @@ export class QboInvoiceDesk {
     this.inflight.delete(p.id);
     p.status = 'created';
     this.rememberGuesses(p);
+    try { const refs = p.lines.flatMap((l) => l.cut?.refs || []); if (refs.length && this.markCuts) this.markCuts(refs, created.DocNumber || p.docNumber || ''); } catch (e) { this.log(`cuts could not be marked: ${e.message}`); }
     p.qbo = { id: String(created.Id), docNumber: created.DocNumber || '', total: fils(created.TotalAmt) };
     this.store.save();
     this.audit.add({ event: 'create', requester: p.requester, approver: 'owner', previewId: p.id, qboId: p.qbo.id, docNumber: p.qbo.docNumber, total: p.qbo.total });

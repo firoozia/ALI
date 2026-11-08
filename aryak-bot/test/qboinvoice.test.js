@@ -796,3 +796,67 @@ test('two similar names are two customers and two previews, never merged; «نه
   assert.deepEqual(await mixed.inv.decideAll({ verb: 'yes' }), ['پیش‌نمایش بازی از یک پیام چندمشتری نیست.']);
   assert.ok(none.length > 0);
 });
+
+// ------------------------------------------------------------------------------------------------ the final cut beside each line
+import { Tracker } from '../src/tracker.js';
+import { cutRecords, cutTotal, markCutsInvoiced, unInvoicedCuts, persianDay, cutLine } from '../src/cuts.js';
+
+const CUT_AT = Date.parse('2026-10-30T09:00:00Z'); // 8 Aban 1405 in the books' time zone
+function cutDesk() {
+  const t = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: [...histFor('81'), ...histFor('82')] });
+  const tr = new Tracker({ dir: '' });
+  tr.add({ type: 'cut', at: CUT_AT, customer: 'NUQOOSH', lines: [{ code: '220', quantity: 12, unit: 'm' }], ref: 'c1' }); // «ART NO 220 NUQOOSH 12M»
+  tr.add({ type: 'cut', at: CUT_AT + 3600000, customer: 'AL EBDA', lines: [{ code: '215', quantity: 90, unit: 'm' }, { code: '999', quantity: 5, unit: 'm' }], ref: 'c2' });
+  tr.add({ type: 'cut', at: CUT_AT, customer: 'NUQOOSH', internal: true, kind: 'open-roll', lines: [{ code: '220', quantity: 50, unit: 'm' }], ref: 'c3' }); // an opened roll is not a sale
+  t.inv.cutsOf = (customer, codes) => cutRecords(tr, customer, codes, { now: CUT_AT + 86400000 });
+  t.inv.markCuts = (refs, number) => markCutsInvoiced(tr, refs, number);
+  return { t, tr };
+}
+
+test('the cut beside the line: a matching cut is shown with the day and the group; a different quantity and a missing cut are warnings; the persian day is right', async () => {
+  assert.equal(persianDay(CUT_AT), '۸ آبان');
+  assert.equal(persianDay(Date.parse('2026-03-21T10:00:00Z')), '۱ فروردین'); // Nowruz 1405
+  assert.equal(cutLine({ qty: 12, unit: 'm', at: CUT_AT }), 'برش: ۱۲ متر، ۸ آبان، گروه سفارش آریاک');
+  const { t } = cutDesk();
+  const r = await t.inv.request({ text: MULTI, requester: 'owner' }); // AL EBDA 215 = 97 m, NUQOOSH 220 = 12 m
+  const [ebda, nuq] = r.owner.split('— — —');
+  assert.ok(nuq.includes('برش: ۱۲ متر، ۸ آبان، گروه سفارش آریاک'), nuq); // matches: no warning
+  assert.ok(!nuq.includes('برش ثبت‌شده') && !nuq.includes('برشی ثبت نشده'));
+  assert.ok(ebda.includes('برش: ۹۰ متر، ۸ آبان') && ebda.includes('درخواست ۹۷ متر، برش ثبت‌شده ۹۰ متر'), ebda); // the quantity differs
+  // no cut recorded for the code of a line
+  const none = cutDesk();
+  const r2 = await none.t.inv.request({ text: 'فاکتور بده\nNUQOOSH\n۲۱۵ =۴ متر', requester: 'owner' });
+  assert.ok(r2.owner.includes('برشی ثبت نشده') && !r2.owner.includes('برش: '), r2.owner);
+  assert.equal(none.t.m.posts.length, 0); // read only: nothing posted, nothing written
+});
+
+test('no quantity: the cut quantity is proposed as a guess; with no cut it says why it cannot', async () => {
+  const { t } = cutDesk();
+  const r = await t.inv.request({ text: 'اتوسا فاکتور میخوام برای مشتری های زیر\nNUQOOSH\n۲۲۰', requester: 'owner' });
+  assert.ok(r.owner, r.requester);
+  assert.ok(r.owner.includes('× 12 (حدس از برش)') && r.owner.includes('برش: ۱۲ متر'), r.owner);
+  assert.equal(t.store.get('Q1').lines[0].qty, 12);
+  const none = cutDesk();
+  const r2 = await none.t.inv.request({ text: 'اتوسا فاکتور میخوام برای مشتری های زیر\nNUQOOSH\n۲۱۵', requester: 'owner' });
+  assert.equal(none.t.store.d.n, 0); // the line stops: AL EBDA has the 215 cut, NUQOOSH has none
+  assert.ok(String(r2.owner || r2.requester).includes('برشی هم برایش ثبت نشده'));
+});
+
+test('after the invoice is created its cut lines carry the invoice number: offered once, and the report of cuts with no invoice keeps the rest', async () => {
+  const { t, tr } = cutDesk();
+  await t.inv.request({ text: MULTI, requester: 'owner' });
+  assert.equal(unInvoicedCuts(tr).length, 3); // 220 (NUQOOSH), 215 and 999 (AL EBDA); the opened roll is not a sale
+  await t.inv.decide({ verb: 'yes', id: 'Q2' }); // the NUQOOSH invoice
+  const number = t.store.get('Q2').qbo.docNumber;
+  assert.ok(number);
+  assert.equal(tr.events.find((e) => e.ref === 'c1').lines[0].invoiced.number, number);
+  assert.equal(tr.events.find((e) => e.ref === 'c2').lines[0].invoiced, undefined); // the other customer's cut is untouched
+  assert.deepEqual(unInvoicedCuts(tr).map((c) => [c.customer, c.code]).sort(), [['AL EBDA', '215'], ['AL EBDA', '999']]);
+  // offered once: a new request for the same customer and code finds no cut left
+  const again = await t.inv.request({ text: 'فاکتور بده\nNUQOOSH\n۲۲۰ =۱۲ متر', requester: 'owner' });
+  assert.ok(again.owner.includes('برشی ثبت نشده'));
+  // the records: customer and code, not yet invoiced, newest first; the unit of the newest
+  const recs = cutRecords(tr, 'AL EBDA AL MALKI KITCHEN', ['215', 'PVC-215'], { now: CUT_AT + 86400000 });
+  assert.equal(recs.length, 1); assert.deepEqual([cutTotal(recs).qty, cutTotal(recs).unit], [90, 'm']);
+  assert.equal(cutRecords(tr, 'AL EBDA', '215', { now: CUT_AT + 90 * 86400000 }).length, 0); // too old to be this order's cut
+});
