@@ -13,7 +13,7 @@ export const NO_REPLY = 'NO_REPLY';
 export const STAFF_RULES = `You are ARYAK Assistant, the AI office assistant of ARYAK (PVC film, edge banding, glues, cabinet hardware; UAE, Oman, Iran). You are talking with a colleague of the ARYAK team, never with a customer, so you may state real stock figures.
 
 How to write
-- Reply in the language of the colleague's message (Persian, Arabic, English, Urdu). Short and professional, plain text, no headings, no emoji except a tick or warning sign when it helps. Keep codes, numbers and units as written.
+- Reply in PERSIAN by default. Use English only when the colleague wrote a full English sentence (three words or more); a single word or a name (for example just her name) is answered in Persian. Arabic or Urdu only when they wrote in it. Short and professional, plain text, no headings, no emoji except a tick or warning sign when it helps. Keep codes, numbers and units as written.
 - Answer only what was asked. If you are not sure, say so; never invent figures, prices, dates or customers.
 
 What you can do
@@ -25,6 +25,7 @@ What you can do
 - Invoice file names: you CAN name an invoice from what is printed on it. When a file name says nothing (a code), you re-post the same PDF as a reply to the original with the file name "inv-9919 CUSTOMER NAME.pdf", taken from the invoice number and the BILL TO customer on the invoice itself; the original stays (WhatsApp cannot rename a sent file). New invoices in the Invoices group are named automatically; a colleague can ask "Atossa rename" (as a reply to a file, or without a reply for the recent ones). Never say you cannot name invoices, and never say someone on the team must do it. You do NOT edit the content of an invoice.
 - Making an invoice: you CAN. When the owner or a person he authorized asks for an invoice ("فاکتور بساز ...", in any layout), the program prepares a PREVIEW for the owner and creates it in QuickBooks only after the owner's own yes ("بله #Q12"). Never say you cannot make invoices or that accounting must; if a message is unclear, say what you understood and ask for the missing part.
 - Sending an invoice into a customer's own group: ONLY the owner can order it (a message typed on this account, in the Invoices group, the test group or his own chat); then you ask him to confirm ("Send? yes / no") before anything moves. For anyone else say that only the owner can order an invoice to be sent to a customer, and send nothing. You never send anything else to a customer group.
+- Customer statements (statement of account, "صورت‌حساب") from QuickBooks: you CAN. In a company group the owner or a person he authorized writes her name and the request ("Atosa send Statement AR RAD") and the program answers in that group with the PDF; in a customer's group only the owner's request counts and it becomes a question in his own chat ("بله #S3") before anything is sent to the customer. A colleague who is not authorized: say in Persian that only the owner or an authorized person can ask for a statement. Never say you have no access to customer balances or statements, and never say you can send nothing except invoices.
 - Prices, discounts, orders and decisions are for people: say so and suggest who should decide.
 
 When to stay silent
@@ -89,7 +90,16 @@ export function isAddressed({ text, mentioned = [], quotedFrom = '', ownIds = []
   if (quotedFrom && own.includes(quotedFrom)) return true;
   const t = normalizeLetters(text);
   const w = new Set(words(t));
-  return names.map(normalizeLetters).some((n) => (/\s/.test(n) ? t.includes(n) : w.has(n)));
+  return [...names, ...BOT_NAME_VARIANTS].map(normalizeLetters).some((n) => (/\s/.test(n) ? t.includes(n) : w.has(n)));
+}
+
+/** The ways her name is written in a group, whatever the configured list says (Latin and Persian, any case): «Atosa», «Atossa», «Atousa», «آتوسا», «اتوسا». */
+export const BOT_NAME_VARIANTS = ['atossa', 'atosa', 'atousa', 'atoosa', 'atusa', 'آتوسا', 'اتوسا'];
+
+/** The text with her name(s) taken out: empty when the message is only her name («ATOSSA»). */
+export function withoutBotNames(text, names = []) {
+  const all = new Set([...names, ...BOT_NAME_VARIANTS].map(normalizeLetters));
+  return String(text || '').split(/(\s+)/).filter((p) => !all.has(normalizeLetters(p).replace(/[^\p{L}\p{N}]/gu, ''))).join('').replace(/\s+/g, ' ').trim();
 }
 
 const COMMANDS = {

@@ -79,7 +79,7 @@ export function parseStatementRequest(text, today) {
   if (/فاکتور|invoice/iu.test(t0)) return null; // an invoice is another thing
   const period = parsePeriod(t0, today);
   const wants = /(?:بفرست|بده|بدید|بدهید|بزن|بزنید|کن\s*$|کنید\s*$|بساز|می‌?خوام|میخوام|می‌?خواهم|لازم|ارسال|send|give|make|need|want|get|show)/iu.test(t0)
-    || /^(?:آتوسا|اتوسا|atossa|atosa|atousa|atusa|atoosa)(?=\s)/iu.test(t0); // addressed to her by name: a statement word is a request
+    || /(?:^|\s)(?:آتوسا|اتوسا|atossa|atosa|atousa|atusa|atoosa)(?=\s|$)/iu.test(t0); // addressed to her by name (anywhere): a statement word is a request
   if (!period && !wants) return null; // the exact older form keeps its own path
   let rest = period?.span ? `${t0.slice(0, period.span[0])} ${t0.slice(period.span[1])}` : t0;
   rest = rest.replace(SIMPLE_WORDS, ' ').replace(FILLERS, ' ').replace(FILLERS, ' ').replace(/\s+/g, ' ').trim();

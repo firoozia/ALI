@@ -18,7 +18,7 @@ import { deletedInvoice } from './captions.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup, shadowGroup } from './guard.js';
 import { ShadowDesk, ShadowStore, dayLine, parseCardCorrection, parseShadowCommand, postingProblems, weekSummary } from './shadow.js';
-import { placeLanguage, toEnglish } from './english.js';
+import { isEnglishSentence, placeLanguage, toEnglish } from './english.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { UsageMeter, hasVisual } from './usage.js';
 import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
@@ -59,6 +59,7 @@ import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
+import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
 import { normalizeDigits } from './text.js';
@@ -683,12 +684,12 @@ async function qboInvoiceCommand(ic, text) {
     case 'yes': case 'no': {
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
-        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds()];
+        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds()];
         if (!open.length) return null;
         if (open.length > 1) return [`چند پیش‌نمایش باز است: ${open.map((x) => `#${x}`).join('، ')}. چیزی انجام نشد؛ شمارهٔ پیش‌نمایش را بنویسید، مثل: ${ic.type === 'yes' ? 'بله' : 'نه'} #${open[0]}`];
         id = open[0]; said = `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRF]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
+      const out = await (id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRF]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
       return said ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -821,6 +822,140 @@ async function finishOwnerSend({ chatId, pending, reply, lang = 'en' }) {
     logger.warn(`owner send of ${read.number} failed: ${e.message}`);
     await reply(lang === 'fa' ? `فرستادن فاکتور ${read.number} نشد (${e.message}). دوباره تلاش نشد.` : `Sending ${read.number} failed (${e.message}). Nothing was retried.`);
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------- statements asked for in a group
+const groupStatements = new GroupStatements(); // built for a customer group, waiting for the owner's «بله #S1»
+const sayIn = async (raw, chatId, where, body) => { // always Persian here (the owner and the authorized people read it), quoted first then plain
+  const d = await deliver({ send: (...args) => sock.sendMessage(...args), chatId, content: { text: body }, quoted: raw, where, log: (s) => logger.info(s) });
+  return d.result;
+};
+const personOf = (raw) => (raw.key.fromMe ? 'owner' : jidDigits(raw.key.participant || ''));
+const quotedTextOf = (ctx) => {
+  if (!ctx?.quotedMessage) return '';
+  if (ctx.participant && ownIds().some((o) => jidDigits(o) === jidDigits(ctx.participant))) return ''; // her own message is never a request
+  const quoted = textOf(normalizeMessageContent(ctx.quotedMessage)) || '';
+  return quoted.startsWith('🤖') ? '' : quoted;
+};
+const addressedIn = (text, ctx) => isAddressed({
+  text, mentioned: (ctx?.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx?.participant ? jidNormalizedUser(ctx.participant) : '',
+  ownIds: ownIds(), names: config.botNames,
+});
+
+/**
+ * A statement in an INTERNAL group. The owner or an authorized person (۱) asks for it by her name or by quoting her; the PDF comes back in that group.
+ * A numbered choice is kept for the person who asked. A colleague who is neither gets one Persian line. true = the message was taken.
+ */
+async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, where, role }) {
+  const may = owner || authorized;
+  const by = personOf(raw);
+  const pending = choiceDesk.get(`pc:${chatId}`);
+  if (pending && pending.kind === 'statement' && pending.by) {
+    if (may && pending.by === by) {
+      const at = parseChoice(text, pending.options);
+      if (at >= 0) {
+        choiceDesk.clear(`pc:${chatId}`);
+        trace(where, role, 'a numbered statement question was answered in the group');
+        try {
+          const x = await qboDesk.statementFor(pending.options[at], { privateJid: chatId, period: pending.period });
+          await sayIn(raw, chatId, where, x.text);
+        } catch (e) { await sayIn(raw, chatId, where, e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.'); }
+        return true;
+      }
+    }
+  }
+  if (!addressedIn(text, ctx)) return false;
+  const ask = statementAsk(effectiveRequest(text, quotedTextOf(ctx), config.botNames));
+  if (!ask) return false;
+  if (!may) { trace(where, role, 'a statement request from a colleague who is not authorized'); await sayIn(raw, chatId, where, 'صورت‌حساب را فقط مالک یا کسی که مالک مجاز کرده می‌تواند بخواهد.'); return true; }
+  trace(where, role, 'statement request in an internal group');
+  if (ask.unsupported) { await sayIn(raw, chatId, where, 'ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'); return true; }
+  if (!ask.customer) { await sayIn(raw, chatId, where, 'صورت‌حساب کدام مشتری؟ نام را بنویسید.'); return true; }
+  const blocked = qboInvoices.guard();
+  if (blocked) { await sayIn(raw, chatId, where, blocked); return true; }
+  try {
+    const x = await qboDesk.statementFor(ask.customer, { privateJid: chatId, period: ask.period });
+    await sayIn(raw, chatId, where, x.text);
+    if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: ask.period, by });
+  } catch (e) {
+    logger.warn(`group statement failed: ${e.name} ${e.status || ''}`);
+    await sayIn(raw, chatId, where, e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : e.reconnect ? 'کوییک‌بوکس باید دوباره وصل شود؛ به مالک بگویید.' : 'صورت‌حساب ساخته نشد؛ کمی بعد دوباره بنویسید.');
+  }
+  return true;
+}
+
+/** The statement is built but NOT sent: kept as «#S3» and shown to the owner in his own chat; nothing reaches the customer's group before his yes. */
+async function prepareGroupStatement({ customer, period, groupId, subject }) {
+  const own = ownIds();
+  const tell = (body) => sock.sendMessage(own[0], { text: `🤖 ${body}` });
+  const blocked = qboInvoices.guard();
+  if (blocked) { await tell(blocked); return; }
+  try {
+    const x = await qboDesk.statementFor(customer, { hold: true, period });
+    if (x.ask) {
+      if (x.options?.length) for (const o of own) choiceDesk.set(`pc:${o}`, { kind: 'statement_group', options: x.options, period, groupId, subject });
+      await tell(`برای گروه «${subject}»: ${x.text}`);
+      return;
+    }
+    if (!x.ok) { await tell(x.text); return; }
+    const id = groupStatements.add({ groupId, subject, held: x.held, name: x.name, period });
+    await postDocument(own[0], x.held.pdf, x.held.fileName, x.held.caption); // he sees the very file first
+    await tell(`${askLine({ name: x.name, subject, id, period })}${x.guessed ? `\n(نام را حدس زدم: «${x.typed}»؛ اگر درست نیست «نه #${id}» بنویسید.)` : ''}`);
+  } catch (e) {
+    logger.warn(`customer-group statement failed: ${e.name} ${e.status || ''}`);
+    await tell(e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.');
+  }
+}
+
+/** The owner's «بله #S3» or «نه #S3»: only now the PDF goes to the customer's group (one-shot token for this group and this exact file). */
+async function decideGroupStatement(verb, id) {
+  const p = groupStatements.get(id);
+  if (!p) return ['این صورت‌حساب پیدا نشد یا مهلتش (نیم ساعت) تمام شده؛ دوباره درخواست بدهید.'];
+  groupStatements.clear(id);
+  if (verb !== 'yes') return ['لغو شد؛ چیزی فرستاده نشد.'];
+  const blocked = qboInvoices.guard();
+  if (blocked) return [blocked];
+  try {
+    const content = { document: p.held.pdf, mimetype: 'application/pdf', fileName: p.held.fileName, caption: p.held.caption };
+    oneShot.grant(p.groupId, content);
+    quietContents.add(content);
+    const r = await sock.sendMessage(p.groupId, content);
+    if (!r) throw new Error('the message was not sent');
+    logger.info(`statement sent to group "${p.subject}" by the owner's yes (${id})`);
+    return [`صورت‌حساب «${p.name}» به گروه «${p.subject}» فرستاده شد.`];
+  } catch (e) {
+    logger.warn(`statement send to a customer group failed: ${e.message}`);
+    return [`فرستادن صورت‌حساب به گروه «${p.subject}» نشد؛ دوباره تلاش نشد.`];
+  }
+}
+
+/**
+ * A customer group (not internal): the OWNER's request means «send this to the customer». true = the message was taken (never answered in the group).
+ * A colleague's request is ignored there. Anyone else (a customer) is left to the normal flow.
+ */
+async function customerGroupStatement({ raw, groupId, info }) {
+  const content = normalizeMessageContent(raw.message);
+  const text = textOf(content) || '';
+  if (!text || content?.audioMessage || content?.imageMessage || content?.documentMessage) return false;
+  const ctx = content.extendedTextMessage?.contextInfo || {};
+  if (!addressedIn(text, ctx)) return false;
+  const ask = statementAsk(effectiveRequest(text, quotedTextOf(ctx), config.botNames));
+  if (!ask) return false;
+  const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+  const owner = !!raw.key.fromMe || staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;
+  const where = `group "${info.subject}"`;
+  if (!owner) {
+    const colleague = staffChecker([...config.staffNumbers, ...config.adminNumbers], info.lidToPhone)(who) === true || qboAuth.isAuthorized(who, info.lidToPhone);
+    if (colleague) { trace(where, 'staff', 'ignored: a colleague asked for a statement in a customer group (only the owner may)'); return true; }
+    return false;
+  }
+  trace(where, 'owner', 'statement request in a customer group: asked in his own chat first');
+  if (ask.unsupported || !ask.customer) {
+    await sock.sendMessage(ownIds()[0], { text: `🤖 ${ask.unsupported ? 'ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی یا بازهٔ تاریخ بگویید.' : `برای گروه «${info.subject}»: صورت‌حساب کدام مشتری؟ نام را همین‌جا بنویسید.`}` });
+    return true;
+  }
+  await prepareGroupStatement({ customer: ask.customer, period: ask.period, groupId, subject: info.subject });
+  return true;
 }
 
 
@@ -1241,6 +1376,7 @@ async function handleStaffChat(raw, chatId, group) {
   if (!group && raw.key.fromMe && !isSelf) { trace(where, 'owner', 'ignored: the owner talking to someone else'); return false; } // from the bot's phone
   let admin = !!raw.key.fromMe;
   let ownerPerson = !!raw.key.fromMe; // typed on the account's own phone counts as the owner
+  let authorizedPerson = false; // a person the owner authorized for statements (in a group)
   if (!raw.key.fromMe) {
     let info = group ? await groupInfo(chatId) : { lidToPhone: new Map() };
     const who = group ? { sender: raw.key.participant, senderAlt: raw.key.participantAlt } : { sender: chatId, senderAlt: raw.key.remoteJidAlt };
@@ -1248,6 +1384,12 @@ async function handleStaffChat(raw, chatId, group) {
     if (staff === null && group) { info = await groupInfo(chatId, true); staff = staffChecker(config.staffNumbers, info.lidToPhone)(who); }
     // a person the owner authorized for invoices and statements: only those commands are taken, in a private chat (the rest is ignored as before)
     if (!group && text && qboAuth.isAuthorized(who, info.lidToPhone) && (await authorizedFlow({ chatId, text }))) { trace(where, 'authorized', 'QuickBooks request'); return true; }
+    // an authorized person (not staff) may ask for a statement by her name in an internal group; nothing else of theirs is taken
+    if (group && !staff && text && !audio && !image && qboAuth.isAuthorized(who, info.lidToPhone)) {
+      const gctx = (content.extendedTextMessage || {}).contextInfo || {};
+      if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: true, where, role: 'authorized' })) return true;
+    }
+    authorizedPerson = !!(group && qboAuth.isAuthorized(who, info.lidToPhone));
     if (!staff) { trace(where, 'not-staff', group ? 'left to the customer flow' : 'ignored: private chat from a number that is not staff'); return false; }
     admin = staffChecker(config.adminNumbers, info.lidToPhone)(who) === true;
     ownerPerson = staffChecker(config.ownerNumbers, info.lidToPhone)(who) === true;
@@ -1262,7 +1404,7 @@ async function handleStaffChat(raw, chatId, group) {
     const pm = /^\s*as\s+(customer|staff|owner)\s*:\s*/i.exec(text);
     if (pm) { text = text.slice(pm[0].length); persona = pm[1].toLowerCase(); }
   }
-  const staffLang = placeLanguage({ kind: group ? 'company-group' : 'private', owner: ownerPerson, persona, written: detectLang(text, 'en') });
+  const staffLang = placeLanguage({ kind: group ? 'company-group' : 'private', owner: ownerPerson, persona, written: detectLang(text, 'en'), sentence: isEnglishSentence(text) });
   const keepLanguage = persona === 'customer' || persona === 'owner'; // a played person keeps its own language, nothing is translated
   const reply = async (body) => {
     const said = staffLang === 'en' ? toEnglish(body) : body;
@@ -1278,14 +1420,19 @@ async function handleStaffChat(raw, chatId, group) {
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  // A statement asked for in an internal group (the owner or an authorized person): answered in that group.
+  if (group && text && !audio && !image && (await groupStatementTurn({ raw, chatId, text, ctx: (content.extendedTextMessage || {}).contextInfo || {}, owner: ownerPerson, authorized: authorizedPerson, where, role }))) return true;
   // A numbered question just asked waits for its answer: «1», «۱», «یک», «اولی», «شماره یک درست است» or the name itself. Nothing else may take this message.
   const pending = text && !audio && !image ? choiceDesk.get(`pc:${chatId}`) : null;
-  if (pending) {
+  if (pending && !pending.by) {
     const at = parseChoice(text, pending.options);
     if (at >= 0) {
       choiceDesk.clear(`pc:${chatId}`);
       trace(where, role, 'a numbered question was answered');
-      if (pending.kind === 'statement') {
+      if (pending.kind === 'statement_group') {
+        for (const o of ownIds()) choiceDesk.clear(`pc:${o}`);
+        await prepareGroupStatement({ customer: pending.options[at], period: pending.period, groupId: pending.groupId, subject: pending.subject });
+      } else if (pending.kind === 'statement') {
         try {
           const x = await qboDesk.statementFor(pending.options[at], { privateJid: isSelf ? ownIds()[0] : chatId, period: pending.period });
           await reply(x.text);
@@ -1886,6 +2033,8 @@ async function onMessage(raw) {
   observe(raw, groupId).catch((e) => logger.warn(`experience: ${e.message}`));
   // A watched customer group (read only): recorded and learned from, never answered.
   const watchedInfo = await groupInfo(groupId);
+  // The owner's statement request in a CUSTOMER group (not an internal one): asked in his own chat, sent to the group only after his yes.
+  if (!groupAllowed(watchedInfo.subject, config).ok && await customerGroupStatement({ raw, groupId, info: watchedInfo }).catch((e) => { logger.warn(`customer-group statement: ${e.message}`); return false; })) return;
   // A SHADOW group: the real customer flow runs on it and its answers become cards in the test group; nothing is ever sent to it.
   const inShadow = shadowGroup(watchedInfo.subject, config);
   if (inShadow) shadowIntake(raw, groupId, watchedInfo).catch((e) => logger.warn(`shadow failed: ${e.message}`));

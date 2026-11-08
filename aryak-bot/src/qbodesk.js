@@ -371,19 +371,21 @@ export class QboDesk {
    * A statement for a PERIOD of a customer named in any words, sent to [privateJid] (the asker's own chat). Returns { ok, text }; { ok: false, ask: true } when the
    * customer must be chosen first (a numbered list) or was not found (the three nearest).
    */
-  async statementFor(typed, { privateJid, period = null } = {}) {
+  async statementFor(typed, { privateJid, period = null, hold = false } = {}) {
     const found = await this.resolveSpoken(typed);
     if (!found.id) {
       if (found.many) return { ok: false, ask: true, text: `چند مشتری به «${typed}» می‌خورد؛ شمارهٔ درست را بنویسید:\n${found.many.map((n, i) => `${fa(i + 1)}. ${n}`).join('\n')}`, options: found.many };
       return { ok: false, ask: true, text: `مشتری‌ای به نام «${typed}» پیدا نشد. نزدیک‌ترین‌ها:\n${(found.nearest || []).map((n, i) => `${fa(i + 1)}. ${n}`).join('\n') || '—'}\nنام درست را بنویسید یا بگویید.`, options: found.nearest || [] };
     }
-    if (!privateJid) return { ok: false, text: 'مقصد صورت‌حساب مشخص نیست؛ چیزی فرستاده نشد.' };
+    if (!privateJid && !hold) return { ok: false, text: 'مقصد صورت‌حساب مشخص نیست؛ چیزی فرستاده نشد.' };
     const data = buildStatementData({ ...(await loadCustomerData(this.qbo, found.id)), today: this.today(), ...(period ? { from: period.from, to: period.to } : {}) });
     const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox' });
     const safe = (data.customer.name || found.name).replace(/[^\w.-]+/g, '_').slice(0, 40) || 'customer';
     const cur = data.currency ? `${data.currency} ` : '';
     const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${period.from} to ${period.to}` : 'current'} - balance ${cur}${money(data.closing)}`;
-    await this.post(privateJid, pdf, `statement-${safe}${period ? `-${period.label}` : ''}.pdf`, caption);
+    const fileName = `statement-${safe}${period ? `-${period.label}` : ''}.pdf`;
+    if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
+    await this.post(privateJid, pdf, fileName, caption);
     // a read-only action with ONE clearly best candidate is done and said, not asked: «(حدس از …)»
     const guessed = found.via === 'sound' ? ` (حدس از «${typed}» — اگر مشتری دیگری بود بنویسید)` : '';
     return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(period.from)} تا ${fa(period.to)}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };

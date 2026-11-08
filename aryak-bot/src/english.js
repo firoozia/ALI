@@ -175,14 +175,17 @@ function line(raw) {
  *  - a private chat: Persian only with the owner, English with every other colleague.
  * [persona] ('customer' | 'staff' | 'owner') is the test-only prefix that plays another person in the test group.
  */
-export function placeLanguage({ kind, owner = false, persona = '', written = 'en' }) {
+export function placeLanguage({ kind, owner = false, persona = '', written = 'en', sentence = true }) {
   if (persona === 'customer') return written;
   if (persona === 'owner') return 'fa';
   if (persona === 'staff') return 'en';
   if (kind === 'customer-group') return written;
   if (kind === 'private') return owner ? 'fa' : 'en';
-  return 'en';
+  return sentence ? 'en' : 'fa'; // a company group: Persian unless the asker wrote a full English sentence ([sentence] false)
 }
+
+/** A full English sentence (three Latin words or more, no Persian or Arabic letter): the one thing that gets an English answer in a company group. */
+export const isEnglishSentence = (text) => !/[؀-ۿ]/.test(String(text || '')) && (String(text || '').match(/[A-Za-z]{2,}/g) || []).length >= 3;
 
 /** English for a report text: every line it knows; lines without Persian are left as they are. */
 export function toEnglish(text) {

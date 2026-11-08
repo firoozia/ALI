@@ -132,8 +132,10 @@ test('the wiring: owner only, only in the Invoices group / test group / his own 
   assert.match(route, /if \(!owner\) \{ await reply\('Only the owner can order an invoice to be sent to a customer\./); // anyone else: the plain answer, nothing moves
   assert.match(route, /!wantsRename\(text\)/); // the rename sentence is not a send order
   // the send: asks first, the token is made only in the approved flow
-  assert.equal((src.match(/oneShot\.grant\(/g) || []).length, 1);
+  // two places only: the owner's invoice send and the owner's statement send (his «بله #S3»); each after his own yes
+  assert.equal((src.match(/oneShot\.grant\(/g) || []).length, 2);
   assert.ok(src.indexOf('oneShot.grant(') > src.indexOf('async function finishOwnerSend'));
+  assert.ok(src.lastIndexOf('oneShot.grant(') > src.indexOf('async function decideGroupStatement'));
   assert.match(src, /if \(a\?\.type === 'yes'\) \{ sendDesk\.clear\(chatId\); await finishOwnerSend/);
   assert.match(src, /Nothing was retried\./); // a failed send is said, never retried
   // her own PDF coming back: skipped before every flow (the sent ids), and shadow intake ignores it too
