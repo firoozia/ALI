@@ -659,13 +659,28 @@ const qboInvoices = new QboInvoiceDesk({
   stockOf: async (code) => { try { const r = await fetchStock(config, { code }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } },
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
 });
+// Where the QuickBooks PDF of a created invoice goes: the chat the request came from, the chat of the yes, and the owner's own chat when somebody else asked
+// (his self chat is the origin when he asked there). The test group only when the request was made there. Never a customer group.
+qboInvoices.targets = async (p, decidedIn) => {
+  const wanted = [];
+  const own = ownIds()[0];
+  if (p.origin?.jid) wanted.push(p.origin.jid); else { wanted.push(own); const tg = pickTestGroup(await allGroups(), config); if (tg) wanted.push(tg.id); } // an old preview with no origin: as before
+  if (decidedIn) wanted.push(decidedIn);
+  if (p.requester !== 'owner') wanted.push(own);
+  const out = [];
+  for (const jid of [...new Set(wanted)]) {
+    if (isJidGroup(jid)) { let subject = ''; try { subject = (await groupInfo(jid)).subject; } catch { /* unknown */ } if (!subject || !groupAllowed(subject, config).ok) { logger.info(`invoice PDF: not posted to a group that is not internal ("${subject || 'unknown'}")`); continue; } }
+    out.push(jid);
+  }
+  return out;
+};
 // The one-off upper-casing of the QuickBooks customer names: a preview (#N1) and the owner's yes; a sparse update of the two name fields only.
 const qboNames = new QboNameDesk({ qbo, desk: qboDesk, audit: qboInvoices.audit, store: new NamePreviews(path.join(config.authDir, 'qbo')), log: (s) => logger.info(s) });
 // The owner's other bulk jobs (e-mail #E, mobile #M, item tax code #T, base prices #P): same pattern, each changes only its own fields.
 const qboBulk = new QboBulkDesk({ qbo, desk: qboDesk, audit: qboInvoices.audit, store: new BulkPreviews(path.join(config.authDir, 'qbo')), draft: new PriceDraft(path.join(config.authDir, 'qbo')), itemCodes: qboInvoices.itemCodes, config, log: (s) => logger.info(s) });
 qboBulk.afterRun = () => { qboInvoices.cache.at = 0; }; // a changed item (inactive, moved, priced) is read again for the next invoice
 /** The owner's invoice commands (his own chat): request, yes, no, pause, resume, audit, and the list of people allowed to ask. */
-async function qboInvoiceCommand(ic, text) {
+async function qboInvoiceCommand(ic, text, here = {}) {
   switch (ic.type) {
     case 'names_plan': return qboNames.plan();
     case 'bulk_email': return qboBulk.planEmails(ic.email);
@@ -713,7 +728,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'price_list': return qboBulk.showDraft() || null;
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
-    case 'request': { const r = await qboInvoices.request({ text, requester: 'owner' }); return [r.owner || r.requester]; }
+    case 'request': { const r = await qboInvoices.request({ text, requester: 'owner', origin: here.chatId ? { jid: here.chatId } : null }); return [r.owner || r.requester]; }
     case 'yes': case 'no': {
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
@@ -725,7 +740,7 @@ async function qboInvoiceCommand(ic, text) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRF]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id }));
+      const out = await (id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRF]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -800,7 +815,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
       return true;
     }
     if (isRequest) {
-      const r = await qboInvoices.request({ text, requester: jidDigits(chatId) });
+      const r = await qboInvoices.request({ text, requester: jidDigits(chatId), origin: { jid: chatId } });
       await say(r.requester);
       if (r.owner) await sock.sendMessage(ownIds()[0], { text: `🤖 ${r.owner}` });
     } else {
@@ -938,12 +953,12 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
     // a bare yes or no counts here too (one waiting preview of any kind), unless a photo or voice question was asked last in this chat
     const bareOk = dec && (dec.type === 'yes' || dec.type === 'no') && !dec.id && !bareAnswerYieldsToPending(dec, !!(voiceDesk.get(`s:${chatId}:${person}`) || followDesk.get(`s:${chatId}:${person}`) || voiceGate.get(`vg:${chatId}:${person}`)));
     if (bareOk) {
-      const parts = await qboInvoiceCommand(dec, text);
+      const parts = await qboInvoiceCommand(dec, text, { chatId });
       if (parts) { trace(where, role, `the owner's bare ${dec.type} typed in an internal group`); for (const part of parts) await sayIn(raw, chatId, where, part); return true; }
     }
     if (dec && (dec.type === 'yes' || dec.type === 'no') && /^[QS]\d+$/.test(dec.id || '')) {
       trace(where, role, `the owner's ${dec.type} for #${dec.id} typed in an internal group`);
-      for (const part of (await qboInvoiceCommand(dec, text)) || []) await sayIn(raw, chatId, where, part);
+      for (const part of (await qboInvoiceCommand(dec, text, { chatId })) || []) await sayIn(raw, chatId, where, part);
       return true;
     }
   }
@@ -971,7 +986,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
       if (!(owner || canInvoice)) { logger.info(`not authorized: ${raw.key.participant || raw.key.remoteJid} (invoice)`); trace(where, role, 'an invoice request from a colleague without the invoice permission'); await sayIn(raw, chatId, where, 'برای درخواست فاکتور مجوز ندارید.'); return true; }
       trace(where, role, 'invoice request in an internal group');
       try {
-        const r = await qboInvoices.request({ text: eff, requester: owner ? 'owner' : by, quotedText: quoted });
+        const r = await qboInvoices.request({ text: eff, requester: owner ? 'owner' : by, quotedText: quoted, origin: { jid: chatId } });
         await sayIn(raw, chatId, where, r.owner || r.requester);
         if (r.owner && !owner) await sock.sendMessage(ownIds()[0], { text: `🤖 ${r.owner}` });
       } catch (e) {
@@ -1781,7 +1796,7 @@ async function handleStaffChat(raw, chatId, group) {
     if (ic && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
       qboNames.finish = async (parts) => { for (const part of parts) await reply(part); }; // the report at the end of a long update
       qboBulk.finish = qboNames.finish;
-      const parts = await qboInvoiceCommand(ic, text);
+      const parts = await qboInvoiceCommand(ic, text, { chatId });
       if (parts) {
         for (const part of parts) await reply(part);
         if (parts.choice) choiceDesk.set(`pc:${chatId}`, parts.choice); else if (parts.clarify) voiceGate.set(gateKey, text, 'clarify'); // "which customer?": a short answer, typed or spoken, is merged into this request

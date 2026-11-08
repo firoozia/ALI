@@ -243,7 +243,7 @@ test('wiring: an invoice request in an internal group needs the owner or the inv
   assert.match(turn, /if \(owner\) \{\s*const dec = parseInvoiceCommand\(text\);/); // the owner's «بله #Q5» typed here
   assert.ok(turn.includes('[QS]') && turn.includes('.test(dec.id')); // only a named preview, never a bare yes
   assert.match(turn, /if \(!\(owner \|\| canInvoice\)\) \{[\s\S]*?'برای درخواست فاکتور مجوز ندارید\.'/);
-  assert.match(turn, /qboInvoices\.request\(\{ text: eff, requester: owner \? 'owner' : by, quotedText: quoted \}\)/);
+  assert.match(turn, /qboInvoices\.request\(\{ text: eff, requester: owner \? 'owner' : by, quotedText: quoted, origin: \{ jid: chatId \} \}\)/);
   assert.match(turn, /await sayIn\(raw, chatId, where, r\.owner \|\| r\.requester\)/); // posted in the group, Persian
   assert.match(src, /canInvoice: invoicePerson, where, role/); assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', lids\(info\.lidToPhone\)\), where, role: 'authorized'/);
 });

@@ -993,3 +993,40 @@ test('the next number is read from QuickBooks at that moment: a renumbered invoi
   const u = mk({ customTxn: true, docNumbers: ['inv-9975', 'inv-9974'], changed: () => ['inv-9990'] });
   assert.equal((await u.inv.nextDocNumber()).docNumber, 'inv-9991');
 });
+
+// ------------------------------------------------------------------------------------------------ where the PDF of a created invoice goes
+test('the PDF goes to the targets the program names (the chat of the request, the chat of the yes), each once; an old preview with no origin keeps the owner chat and the test group', async () => {
+  const t = mk();
+  const seen = [];
+  t.inv.targets = async (p, decidedIn) => { seen.push([p.origin?.jid || '', decidedIn]); return [...new Set([p.origin?.jid, decidedIn].filter(Boolean))]; };
+  const r = await t.inv.request({ text: REQ, requester: 'owner', origin: { jid: 'invoices@g.us' } });
+  assert.ok(r.owner); assert.equal(t.store.get('Q1').origin.jid, 'invoices@g.us');
+  assert.equal(new InvoiceStore(path.join(t.dir, 'qbo')).get('Q1').origin.jid, 'invoices@g.us'); // kept on disk
+  await t.inv.decide({ verb: 'yes', id: 'Q1', decidedIn: 'invoices@g.us' });
+  assert.deepEqual(seen, [['invoices@g.us', 'invoices@g.us']]);
+  assert.deepEqual(t.sent.map((x) => x.jid), ['invoices@g.us']); // once, where it was asked and answered
+  assert.match(t.sent[0].caption, /^Invoice /);
+  const u = mk(); // asked in one place, answered in another: both
+  u.inv.targets = async (p, decidedIn) => [...new Set([p.origin?.jid, decidedIn].filter(Boolean))];
+  await u.inv.request({ text: REQ, requester: '971528493119', origin: { jid: '971528493119@s.whatsapp.net' } });
+  await u.inv.decide({ verb: 'yes', id: 'Q1', decidedIn: OWNER_JID });
+  assert.deepEqual(u.sent.map((x) => x.jid).sort(), ['971528493119@s.whatsapp.net', OWNER_JID].sort());
+  const old = mk(); // an old preview with no origin and no targets function: the owner chat and the test group, as before
+  await old.inv.request({ text: REQ, requester: 'owner' });
+  await old.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(old.sent.map((x) => x.jid), [OWNER_JID, 'test@g.us']);
+});
+
+test('wiring: the targets are the request chat, the yes chat and the owner copy for somebody else\'s request; never a group that is not internal', () => {
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  const at = index.indexOf('qboInvoices.targets = async');
+  const block = index.slice(at, at + 1500);
+  assert.ok(at > index.indexOf('const qboInvoices = new QboInvoiceDesk(')); // the desk exists first
+  assert.match(block, /if \(p\.origin\?\.jid\) wanted\.push\(p\.origin\.jid\); else \{ wanted\.push\(own\);/);
+  assert.match(block, /if \(decidedIn\) wanted\.push\(decidedIn\);/);
+  assert.match(block, /if \(p\.requester !== 'owner'\) wanted\.push\(own\);/);
+  assert.match(block, /!groupAllowed\(subject, config\)\.ok\) \{ logger\.info\(`invoice PDF: not posted to a group that is not internal/);
+  assert.match(index, /qboInvoices\.request\(\{ text, requester: 'owner', origin: here\.chatId \? \{ jid: here\.chatId \} : null \}\)/);
+  assert.match(index, /qboInvoices\.decide\(\{ verb: ic\.type, id, decidedIn: here\.chatId \|\| '' \}\)/);
+  assert.match(index, /requester: jidDigits\(chatId\), origin: \{ jid: chatId \}/);
+});
