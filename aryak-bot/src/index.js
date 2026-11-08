@@ -27,7 +27,7 @@ import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
 import { Qbo, looksLikeConnectLine, parseConnectLine } from './qbo.js';
 import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
-import { Audit, AuthStore, InvoiceStore, ItemCodes, PERMISSIONS, QboInvoiceDesk, TaxChoices, parseInvoiceCommand } from './qboinvoice.js';
+import { Audit, AuthStore, InvoiceStore, ItemCodes, PERMISSIONS, QboInvoiceDesk, TaxChoices, looksLikeInvoiceRequest, parseInvoiceCommand } from './qboinvoice.js';
 import { extractInvoiceRequest } from './qboextract.js';
 import { NamePreviews, QboNameDesk } from './qbonames.js';
 import { BulkPreviews, PriceDraft, QboBulkDesk } from './qbobulk.js';
@@ -1947,6 +1947,12 @@ async function handleStaffChat(raw, chatId, group) {
     if (await teachFlow({ text, reply })) return true;
   }
   if (!addressed && !confirmed && !engaged) { trace(where, role, 'ignored: not addressed to the assistant'); return false; }
+  // An invoice request that could not be read never becomes a stock question: no sales-manager report, no «low stock» card.
+  if (looksLikeInvoiceRequest(asked)) {
+    trace(where, role, 'invoice intent that was not taken by the invoice flow: told how to write it, never sent to the stock flow');
+    await reply(ownerPerson ? 'I could not read that invoice request. Write: invoice for <customer> and then one item per line or on the same line, for example 215=97m 220=12m.' : 'Invoice requests need the permission of the owner. Ask him to grant it.');
+    return true;
+  }
   const answerText = await staffAnswer({
     client, config, text: normalizeDigits(asked), log: (s) => logger.warn(s), quoted: textOf(normalizeMessageContent(ctx.quotedMessage)), handlers: staffHandlersFor(key, lang, !!group && lang === 'fa'), lang, today: todayLine(new Date(), config.timezone), abilities: abilitiesText({ owner: ownerPerson, grants: requesterGrants }),
   });

@@ -556,58 +556,42 @@ test('every unsure field is GUESSED in ONE preview (customer, item, tax) with al
   assert.ok(ar.requester.includes('#Q1') && ar.owner.includes('971501112222') && ar.owner.includes('مالیات حدس است'));
 });
 
-test('when the company numbers invoices by hand: the next number of the office\'s own pattern is in the preview, checked again before the create, and an invoice is never made without one', async () => {
+test('the invoice number is QuickBooks\': the preview reserves none; with hand numbering on, the next number is read at the create (the latest invoice + 1); a cancelled preview leaves no gap', async () => {
   const t = mk({ customTxn: true, docNumbers: ['inv-8996', 'inv-8973', 'inv-8956'] });
   const r = await t.inv.request({ text: REQ, requester: 'owner' });
-  assert.ok(r.owner.includes('شمارهٔ فاکتور: inv-8997'), r.requester);
-  assert.equal(t.store.get('Q1').docNumber, 'inv-8997');
-  // a second preview waiting takes the next one, not the same
+  assert.ok(r.owner.includes('شمارهٔ فاکتور: هنگام ساخت را کوییک‌بوکس می‌دهد'), r.requester); // nothing reserved
+  assert.equal(t.store.get('Q1').docNumber, '');
   const r2 = await t.inv.request({ text: REQ, requester: 'owner' });
-  assert.ok(r2.owner.includes('شمارهٔ فاکتور: inv-8998'));
-  // the create carries it
-  const out = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
-  assert.equal(t.m.posts[0].body.DocNumber, 'inv-8997');
+  assert.ok(r2.owner.includes('هنگام ساخت') && t.store.get('Q2').docNumber === '');
+  await t.inv.decide({ verb: 'no', id: 'Q1' }); // a cancelled preview takes no number
+  const out = (await t.inv.decide({ verb: 'yes', id: 'Q2' })).join('\n');
+  assert.equal(t.m.posts[0].body.DocNumber, 'inv-8997'); // the next after the latest invoice, read now
   assert.ok(out.includes('inv-8997') && !out.includes('بی‌شماره'));
-  // the line description, the terms and the e-mail of the customer
   assert.deepEqual(t.m.posts[0].body.Line.map((l) => l.Description), ['35 mm soft-close hinge', undefined]); // only where QuickBooks has one
   assert.deepEqual([t.m.posts[0].body.SalesTermRef, t.m.posts[0].body.BillEmail], [{ value: '3' }, { Address: 'office@orion.test' }]);
 });
 
-test('hand numbering: a number taken before the yes is renumbered and nothing is created; an unreadable pattern stops; auto-numbering companies get no DocNumber', async () => {
+test('hand numbering at the create: leading zeros keep their width, another prefix is not mixed in, a number the office took in the meantime is skipped, an unreadable pattern stops before anything is made; automatic numbering sends no DocNumber', async () => {
   const docNumbers = ['inv-8996'];
   const t = mk({ customTxn: true, docNumbers });
   await t.inv.request({ text: REQ, requester: 'owner' });
-  assert.equal(t.store.get('Q1').docNumber, 'inv-8997');
-  docNumbers.unshift('inv-8997'); // the office typed that number by hand in the meantime
-  const again = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
-  assert.ok(again.includes('inv-8997') && again.includes('inv-8998') && again.includes('دوباره «بله #Q1»'));
-  assert.equal(t.m.posts.length, 0);
-  assert.equal(t.store.get('Q1').docNumber, 'inv-8998');
-  assert.equal(t.store.get('Q1').status, 'pending');
-  assert.ok(t.audit.last(3).some((x) => x.event === 'renumber'));
+  docNumbers.unshift('inv-8997'); // the office typed that number by hand after the preview
   assert.ok((await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('ساخته شد'));
-  assert.equal(t.m.posts[0].body.DocNumber, 'inv-8998');
-  // leading zeros keep their width; another prefix of the office is not mixed in
+  assert.equal(t.m.posts[0].body.DocNumber, 'inv-8998'); // the number is read at the yes, after what the office did
   const z = mk({ customTxn: true, docNumbers: ['INV-0099', 'CN-500', 'INV-0098'] });
-  assert.ok((await z.inv.request({ text: REQ, requester: 'owner' })).owner.includes('شمارهٔ فاکتور: INV-0100'));
-  // the pattern cannot be read: no preview, the stop says so (together with the other stops)
-  const none = mk({ customTxn: true, docNumbers: [] });
-  const stop = await none.inv.request({ text: REQ, requester: 'owner' });
-  assert.equal(stop.owner, null);
-  assert.ok(stop.requester.includes('شمارهٔ فاکتور:') && stop.requester.includes('الگوی شمارهٔ فاکتورهای دفتر'));
-  assert.equal(none.store.d.n, 0);
-  // a company that numbers by itself: no DocNumber is sent
-  const auto = mk({ customTxn: false });
+  await z.inv.request({ text: REQ, requester: 'owner' });
+  await z.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal(z.m.posts[0].body.DocNumber, 'INV-0100');
+  const none = mk({ customTxn: true, docNumbers: [] }); // the pattern cannot be read: nothing is created
+  await none.inv.request({ text: REQ, requester: 'owner' });
+  const stop = (await none.inv.decide({ verb: 'yes', id: 'Q1' })).join('');
+  assert.ok(stop.includes('شمارهٔ بعدی فاکتور را از کوییک‌بوکس نتوانستم بخوانم')); assert.equal(none.m.posts.length, 0);
+  assert.equal(none.store.get('Q1').status, 'pending');
+  const auto = mk({ customTxn: false }); // a company that numbers by itself: QuickBooks assigns it, none is sent
   const ar = await auto.inv.request({ text: REQ, requester: 'owner' });
-  assert.ok(!ar.owner.includes('شمارهٔ فاکتور:'));
+  assert.ok(ar.owner.includes('هنگام ساخت'));
   await auto.inv.decide({ verb: 'yes', id: 'Q1' });
   assert.equal('DocNumber' in auto.m.posts[0].body, false);
-  // a preview made while hand numbering was on but without a number is refused at the yes
-  const odd = mk({ customTxn: false });
-  await odd.inv.request({ text: REQ, requester: 'owner' });
-  odd.store.get('Q1').customTxn = true;
-  assert.ok((await odd.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('شماره ندارد'));
-  assert.equal(odd.m.posts.length, 0);
 });
 
 // ------------------------------------------------------------------------------------------------ "فاکتور کن … برای من بفرست" is an invoice to CREATE, not a send
@@ -924,4 +908,36 @@ test('the exact English request builds a preview (guessed customer, code 603 wit
   const p = t.store.get(/#(Q\d+)/.exec(r.owner)[1]);
   assert.equal(p.po, '1029');
   assert.deepEqual(t.inv.invoiceBody(p).CustomerMemo, { value: 'PO 1029' });
+});
+
+// ------------------------------------------------------------------------------------------------ one line, capitals: «ATOSSA INVOICE FOR AL EBDA 215=97M»
+const ONE_LINE = 'ATOSSA INVOICE FOR AL EBDA 215=97M';
+test('one capital line: the customer is the text between FOR and the first code=quantity; several items on the line; it is an invoice, never a stock question', async () => {
+  assert.deepEqual(parseEnglishInvoice(ONE_LINE), { customer: 'AL EBDA', lines: ['215 97'] });
+  assert.deepEqual(parseEnglishInvoice('Atossa invoice for AL EBDA 215=97M, 220=12M'), { customer: 'AL EBDA', lines: ['215 97', '220 12'] });
+  assert.deepEqual(parseEnglishInvoice('invoice for Al Ebda 215 = 97 mtr and 220=12m'), { customer: 'Al Ebda', lines: ['215 97', '220 12'] });
+  assert.equal(parseInvoiceCommand(ONE_LINE).type, 'request'); assert.equal(looksLikeInvoiceRequest(ONE_LINE), true);
+  assert.equal(parseEnglishInvoice('invoice for'), null); assert.equal(looksLikeInvoiceRequest('how much is 215=97M'), false);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  const guard = index.indexOf('if (looksLikeInvoiceRequest(asked))');
+  assert.ok(guard > 0 && guard < index.indexOf('const answerText = await staffAnswer(')); // before the stock model
+  assert.match(index.slice(guard, guard + 700), /never sent to the stock flow/);
+});
+
+test('the exact line builds a preview for AL EBDA AL MALKI KITCHEN (QuickBooks\' own name; NUQOOSH is another customer) with 215 = 97 m, no number reserved, and creates nothing', async () => {
+  setOutLang('en');
+  try {
+    const customers = [{ Id: '91', DisplayName: 'AL EBDA AL MALKI KITCHEN', CompanyName: 'AL EBDA AL MALKI KITCHEN', Balance: 0 }, { Id: '92', DisplayName: 'NUQOOSH IND . LLC', CompanyName: 'NUQOOSH IND . LLC', Balance: 0 }];
+    const items = [{ Id: '15', Name: 'PVC 215', Sku: 'PVC-215', UnitPrice: 16, Type: 'Inventory', Active: true }, { Id: '20', Name: 'PVC 220', Sku: 'PVC-220', UnitPrice: 14, Type: 'Inventory', Active: true }];
+    const t = mk({ customers, items, customTxn: true, docNumbers: ['inv-9983'] });
+    t.desk.aliases.add('NUQOOSH IND . LLC', 'NUQOOSH & AL EBDA'); // the group name taught long ago: it never decides which customer is meant
+    const r = await t.inv.request({ text: ONE_LINE, requester: 'owner' });
+    assert.ok(r.owner, r.requester);
+    assert.match(r.owner, /AL EBDA AL MALKI KITCHEN/); assert.doesNotMatch(r.owner, /NUQOOSH/);
+    assert.match(r.owner, /× 97/); assert.match(r.owner, /هنگام ساخت را کوییک‌بوکس می‌دهد/);
+    assert.equal(t.m.posts.length, 0);
+    assert.equal(t.store.get('Q1').docNumber, '');
+    await t.inv.decide({ verb: 'yes', id: 'Q1' });
+    assert.equal(t.m.posts[0].body.DocNumber, 'inv-9984'); // QuickBooks' next number, read at the yes
+  } finally { setOutLang('fa'); }
 });

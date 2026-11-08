@@ -52,6 +52,7 @@ const RULES = [
   [/^⚠️ فاکتور ایراد دارد$/, '⚠️ The invoice has problems'],
   [/^گروه: (.*)$/, 'Group: $1'],
   [/^مشتری: (.*)$/, 'Customer: $1'],
+  [/^شمارهٔ فاکتور: هنگام ساخت را کوییک‌بوکس می‌دهد$/, 'Invoice no.: assigned by QuickBooks when created'],
   [/^شمارهٔ فاکتور: (.*)$/, 'Invoice number: $1'],
   [/^فاکتور را فرستاد: (.*)$/, 'Sent by: $1'],
   [/^⚠️ فاکتور (.*) را اصلاح کنید \((\d+) مورد\) و پیش از اصلاح برای مشتری نفرستید:$/, 'Please correct invoice $1 ($2 point(s)) and do not send it to the customer before it is corrected:'],

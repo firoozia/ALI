@@ -150,6 +150,7 @@ export function looksLikeInvoiceRequest(text) {
 }
 
 const QTY_LINE = /^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?\s*$/iu;
+const INLINE_ITEM = /(?:^|[\s,;])([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|x|×)\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?(?=$|[\s,;])/giu;
 const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?invoice\s+(?:for\s+|to\s+)?(.+?)\s*$/iu;
 
 /**
@@ -159,12 +160,17 @@ const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa
  */
 export function parseEnglishInvoice(text) {
   const rows = latin(String(text || '')).replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean);
-  if (rows.length < 2 || /[?؟]\s*$/u.test(rows[0])) return null;
+  if (!rows.length || /[?؟]\s*$/u.test(rows[0])) return null;
   const head = EN_HEAD.exec(rows[0]);
-  if (!head || /\b(?:send|forward|check|delete|number|no\.?|inv-?\d+|#)\b/i.test(head[1]) || /^\d/.test(head[1])) return null;
-  const customer = head[1].replace(/\b(?:please|pls|thanks)\b/gi, '').replace(/\s+/g, ' ').trim();
+  if (!head) return null;
+  // items written on the same line, after the customer: «INVOICE FOR AL EBDA 215=97M 220=12M» (a code, = or : or x, a quantity, an optional unit)
+  const inline = [...head[1].matchAll(INLINE_ITEM)];
+  const cut = inline.length ? inline[0].index + inline[0][0].indexOf(inline[0][1]) : head[1].length;
+  const named = head[1].slice(0, cut).replace(/[\s,;]+$/u, '').replace(/\s+(?:and|with)$/iu, '');
+  if (/\b(?:send|forward|check|delete|number|no\.?|inv-?\d+|#)\b/i.test(named) || /^\d/.test(named)) return null;
+  const customer = named.replace(/\b(?:please|pls|thanks)\b/gi, '').replace(/\s+/g, ' ').trim();
   if (!customer || customer.split(/\s+/).length > 6) return null;
-  const lines = [];
+  const lines = inline.map((m) => `${m[1].replace(/^[A-Za-z](?=\d)/, '')} ${m[2]}`);
   for (const row of rows.slice(1)) {
     const m = QTY_LINE.exec(row);
     if (!m) { if (extractPo(row)) continue; return null; } // a line that is not an item (other than the PO line): not this format
@@ -791,11 +797,7 @@ export class QboInvoiceDesk {
       }
     } else problems.tax = 'کد مالیات بعد از مشخص شدن مشتری بررسی می‌شود.';
     // the company numbers invoices by hand: the next number of the office's own pattern (an invoice is never made without one)
-    let docNumber = '';
-    if (cat.customTxn && !problems.customer && !problems.items.length && !(problems.tax && cust.id)) {
-      const n = await this.nextDocNumber();
-      if (n.error) problems.number = `${n.error}. شمارهٔ فاکتور را نمی‌توانم حدس بزنم؛ آخرین شماره‌ها را در کوییک‌بوکس ببینید و به مالک خبر بدهید.`; else docNumber = n.docNumber;
-    }
+    const docNumber = ''; // the preview reserves NO number: QuickBooks gives it when the invoice is created (a cancelled preview leaves no gap)
     const rec = cust.id ? await this.customerRecord(cust.id) : null;
     // every stop in ONE reply: customer, items, tax
     const parts = [];
@@ -859,7 +861,7 @@ export class QboInvoiceDesk {
       `پیش‌نمایش فاکتور #${p.id} (درخواست از ${who}) — هنوز چیزی در کوییک‌بوکس ساخته نشده`,
       p.guesses?.customer ? `مشتری: ${p.customer.name} (حدس از «${p.guesses.customer.text}»: ${p.guesses.customer.reason})` : `مشتری: ${p.customer.name}${p.customer.from ? ` (از «${p.customer.from}»)` : ''}`,
       ...(p.guesses?.customer?.alts?.length ? [...p.guesses.customer.alts.map((a, i) => `   ${fa(i + 1)}) ${a.label || a.name}`), '   (برای تغییر: «مشتری ۱» و …)'] : []),
-      ...(p.docNumber ? [`شمارهٔ فاکتور: ${p.docNumber}`] : []),
+      'شمارهٔ فاکتور: هنگام ساخت را کوییک‌بوکس می‌دهد',
       ...(p.po ? [`شمارهٔ سفارش مشتری: ${fa(p.po)}`] : []),
       ...p.lines.flatMap((l, i) => [`${fa(i + 1)}. ${l.name}${l.sku && norm(l.sku) !== norm(l.name) ? ` [${l.sku}]` : ''} × ${l.qty}${l.qtyGuess ? ' (حدس از برش)' : ''} @ ${l.price} = ${money(l.amount)}${l.via === 'history' ? ' (از خریدهای قبلی مشتری)' : l.via === 'taught' ? ' (کد آموخته‌شدهٔ مالک)' : l.via === 'name' && l.typed ? ` («${l.typed}» را همین کالا گرفتم)` : l.via === 'guess' && l.typed ? ` («${l.typed}» ← ${l.name} (حدس: ${(p.guesses?.lines || []).find((g) => g.n === l.n)?.reason || 'نزدیک‌ترین'}))` : l.via === 'chosen' ? ' (انتخاب شما)' : ''}`,
         ...(l.cut ? [`   ${cutLine(l.cut, { label: this.cutLabel })}`] : []),
@@ -935,15 +937,12 @@ export class QboInvoiceDesk {
     const c = this.store.counts(this.now());
     if (c.hour >= CAP_HOUR || c.day >= CAP_DAY) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'cap' }); return [`سقف ساخت فاکتور پر است (${fa(CAP_HOUR)} در ساعت، ${fa(CAP_DAY)} در روز). بعداً دوباره «بله #${p.id}» بنویسید.`]; }
     if (this.inflight.has(p.id)) return [`فاکتور ${p.id} همین حالا در حال ساخته شدن است؛ چند لحظه صبر کنید.`];
-    if (p.customTxn && !p.docNumber) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'no-number' }); return ['شرکت فاکتورها را دستی شماره می‌زند و این پیش‌نمایش شماره ندارد؛ ساخته نشد. دوباره درخواست کنید.']; }
-    if (p.docNumber) {
-      let taken = true;
-      try { taken = await this.docNumberTaken(p.docNumber); } catch (e) { this.log(`invoice number check failed: ${e.name}`); return ['بررسی آزاد بودن شمارهٔ فاکتور نشد؛ ساخته نشد. دوباره «بله» بنویسید.']; }
-      if (taken) {
-        const n = await this.nextDocNumber(p.id).catch(() => ({ error: 'x' }));
-        if (n.docNumber) { const old = p.docNumber; p.docNumber = n.docNumber; this.store.save(); this.audit.add({ event: 'renumber', previewId: p.id, reason: `${old}->${n.docNumber}` }); return [`شمارهٔ ${old} در این فاصله مصرف شد. شمارهٔ تازه ${n.docNumber} شد و چیزی ساخته نشد؛ اگر با آن موافقید دوباره «بله #${p.id}» بنویسید.`]; }
-        return ['شمارهٔ فاکتور مصرف شده و شمارهٔ تازه پیدا نشد؛ ساخته نشد. دوباره درخواست کنید.'];
-      }
+    // The number is QuickBooks' own: with custom numbers OFF it is simply left out (QuickBooks assigns it); with them ON (the API cannot ask for the next one) the next
+    // number after the latest invoice is read at this moment, exactly what the QuickBooks screen proposes. A retry of the same preview keeps the number it chose.
+    if (p.customTxn && !p.docNumber) {
+      const n = await this.nextDocNumber(p.id).catch(() => ({ error: 'x' }));
+      if (!n.docNumber) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'no-number' }); return [`شمارهٔ بعدی فاکتور را از کوییک‌بوکس نتوانستم بخوانم؛ ساخته نشد. کمی بعد دوباره «بله #${p.id}» بنویسید.`]; }
+      p.docNumber = n.docNumber; this.store.save();
     }
     // the attempt is counted and remembered BEFORE the call; the request id belongs to the preview, so a retry returns the same invoice
     p.status = 'creating'; this.store.recordCreate(this.now()); this.store.save();
@@ -955,7 +954,7 @@ export class QboInvoiceDesk {
       created = j?.Invoice;
       if (!created?.Id) throw new Error('no invoice in the answer');
     } catch (e) {
-      p.status = 'pending'; this.inflight.delete(p.id); this.store.save();
+      p.status = 'pending'; this.inflight.delete(p.id); if (e.status >= 400 && e.status < 500) p.docNumber = ''; this.store.save(); // a refusal of the number is not repeated; a lost answer keeps it (same request, same invoice)
       this.audit.add({ event: 'failed', previewId: p.id, approver: 'owner', status: e.status || 0 });
       this.log(`QuickBooks invoice create failed: ${e.name} ${e.status || ''}`);
       return [`ساخت فاکتور نشد: ${e.message}. پیش‌نمایش می‌ماند؛ همان «بله #${p.id}» دوباره امن است (دو فاکتور ساخته نمی‌شود).`];
