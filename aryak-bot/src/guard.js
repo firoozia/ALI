@@ -65,6 +65,8 @@ export function guardedSend({ rawSend, config, subjectOf, isGroup, known, ownIds
       if (!v.ok && subject && oneShot?.consume(jid, args[1])) { log(`owner invoice send: one-shot token used for group "${subject}"`); return rawSend(...args); }
       if (!v.ok) { log(`blocked: no message to group "${subject || 'unknown'}" (${v.why})`); return undefined; }
     } else if (!privateAllowed(jid, config, known, ownIds())) {
+      // the same one-shot token (the owner's yes on a statement for a person who is not staff): this chat, this exact PDF
+      if (oneShot?.consume(jid, args[1])) { log('owner statement send: one-shot token used for a private chat'); return rawSend(...args); }
       log('blocked: no message to a private chat that is not staff');
       return undefined;
     }

@@ -144,7 +144,7 @@ test('the wiring: owner only, only in the Invoices group / test group / his own 
   assert.ok(intake.includes('sent.has(raw.key.id)'));
   // ALLOW_CUSTOMER_GROUP_SENDS stays off: the guard itself has no other exception
   const guard = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'guard.js'), 'utf8');
-  assert.equal((guard.match(/oneShot\?\.consume/g) || []).length, 1);
+  assert.equal((guard.match(/oneShot\?\.consume/g) || []).length, 2); // a group and a private chat, both only with the owner's one-shot token
   // the model is told what she can and cannot do
   assert.ok(fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'staff.js'), 'utf8').includes('ONLY the owner can order it'));
 });

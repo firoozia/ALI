@@ -34,10 +34,10 @@ export class GroupStatements {
   constructor({ now = () => Date.now(), ttlMs = TTL_MS } = {}) { Object.assign(this, { now, ttlMs }); this.map = new Map(); this.n = 0; }
 
   /** Keep a built statement for a group; returns its id. */
-  add({ groupId, subject, held, name, period = null }) {
+  add({ groupId, subject, held, name, period = null, kind = 'group' }) {
     this.n += 1;
     const id = `S${this.n}`;
-    this.map.set(id, { id, groupId, subject, held, name, period, at: this.now() });
+    this.map.set(id, { id, groupId, subject, held, name, period, kind, at: this.now() });
     return id;
   }
 
@@ -53,4 +53,4 @@ export class GroupStatements {
 }
 
 /** The line the owner reads in his own chat. */
-export const askLine = ({ name, subject, id, period }) => `صورت‌حساب «${name}»${period ? ` از ${period.from} تا ${period.to}` : ''} برای گروه «${subject}» آماده است؛ بفرستم؟ بله #${id}`;
+export const askLine = ({ name, subject, id, period, kind = 'group' }) => `صورت‌حساب «${name}»${period ? ` از ${period.from} تا ${period.to}` : ''} برای ${kind === 'private' ? subject : `گروه «${subject}»`} آماده است؛ بفرستم؟ بله #${id}`;

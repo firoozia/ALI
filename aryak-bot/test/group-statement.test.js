@@ -151,3 +151,43 @@ test('wiring: the group send happens only in the owner\'s yes, with a one-shot t
   assert.match(src, /id\.startsWith\('S'\) \? decideGroupStatement\(ic\.type, id\)/);
   assert.match(src, /\.\.\.groupStatements\.openIds\(\)/); // a bare yes counts the open statement
 });
+
+// ------------------------------------------------------------------------------------------------ the owner's private chat with another person
+import { guardedSend } from '../src/guard.js';
+import { OneShot } from '../src/invoicesend.js';
+
+test('wiring: the owner writing to another person is ignored unless her name (or a reply to her) is there', () => {
+  const gate = src.slice(src.indexOf('// from the bot\'s phone, in the owner\'s chat with another person'), src.indexOf('const role = admin'));
+  assert.match(gate, /!addressedIn\(text, octx\)\) \{ trace\(where, 'owner', 'ignored: the owner talking to someone else'\); return false; \}/);
+  assert.match(gate, /ignored: addressed to her in a chat with someone who is not staff/); // not staff, not a statement: still nothing
+});
+
+test('wiring: a colleague gets the statement in that chat; anyone else is asked in the owner\'s own chat first', () => {
+  const gate = src.slice(src.indexOf('// from the bot\'s phone, in the owner\'s chat with another person'), src.indexOf('const role = admin'));
+  assert.match(gate, /if \(otherStaff\) \{[\s\S]*?privateJid: chatId[\s\S]*?return true;\s*\}/);
+  const notStaff = gate.slice(gate.indexOf('not a colleague'));
+  assert.match(notStaff, /kind: 'private'/);
+  assert.doesNotMatch(notStaff, /sock\.sendMessage\(chatId|privateJid: chatId|oneShot/); // no word to that person before his yes
+  assert.match(gate, /\.\.\.config\.staffNumbers, \.\.\.config\.adminNumbers, \.\.\.qboAuth\.numbers\(\)/);
+});
+
+test('the guard: a private chat that is not staff gets one PDF with the token, and nothing else', async () => {
+  const config = { staffNumbers: ['971500000001'], adminNumbers: [], ownerNumbers: [], testGroupNames: [] };
+  const sent = [];
+  const oneShot = new OneShot();
+  const send = guardedSend({ rawSend: async (...args) => { sent.push(args); return { key: { id: 'x' } }; }, config, oneShot, subjectOf: async () => '', isGroup: (j) => j.endsWith('@g.us'), known: new Set(), ownIds: () => [] });
+  const customer = '971599999999@s.whatsapp.net';
+  assert.equal(await send(customer, { text: 'hello' }), undefined); // plain text: blocked
+  const doc = { document: Buffer.from('%PDF'), mimetype: 'application/pdf', fileName: 's.pdf' };
+  assert.equal(await send(customer, doc), undefined); // a PDF with no token: blocked
+  oneShot.grant(customer, doc);
+  assert.ok(await send(customer, doc)); // with the token: sent once
+  assert.equal(await send(customer, doc), undefined); // a second try: blocked
+  oneShot.grant('971588888888@s.whatsapp.net', doc);
+  assert.equal(await send(customer, doc), undefined); // a token for another chat does not work here
+  assert.equal(sent.length, 1);
+});
+
+test('the ask line for a private chat names the chat, not a group', () => {
+  assert.equal(askLine({ name: 'AR RAD', subject: 'شمارهٔ 971599999999', id: 'S4', period: null, kind: 'private' }), 'صورت‌حساب «AR RAD» برای شمارهٔ 971599999999 آماده است؛ بفرستم؟ بله #S4');
+});

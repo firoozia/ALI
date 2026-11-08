@@ -885,7 +885,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, w
 }
 
 /** The statement is built but NOT sent: kept as «#S3» and shown to the owner in his own chat; nothing reaches the customer's group before his yes. */
-async function prepareGroupStatement({ customer, period, groupId, subject }) {
+async function prepareGroupStatement({ customer, period, groupId, subject, kind = 'group' }) {
   const own = ownIds();
   const tell = (body) => sock.sendMessage(own[0], { text: `🤖 ${body}` });
   const blocked = qboInvoices.guard();
@@ -893,14 +893,14 @@ async function prepareGroupStatement({ customer, period, groupId, subject }) {
   try {
     const x = await qboDesk.statementFor(customer, { hold: true, period });
     if (x.ask) {
-      if (x.options?.length) for (const o of own) choiceDesk.set(`pc:${o}`, { kind: 'statement_group', options: x.options, period, groupId, subject });
-      await tell(`برای گروه «${subject}»: ${x.text}`);
+      if (x.options?.length) for (const o of own) choiceDesk.set(`pc:${o}`, { kind: 'statement_group', options: x.options, period, groupId, subject, target: kind });
+      await tell(`برای ${kind === 'private' ? subject : `گروه «${subject}»`}: ${x.text}`);
       return;
     }
     if (!x.ok) { await tell(x.text); return; }
-    const id = groupStatements.add({ groupId, subject, held: x.held, name: x.name, period });
+    const id = groupStatements.add({ groupId, subject, held: x.held, name: x.name, period, kind });
     await postDocument(own[0], x.held.pdf, x.held.fileName, x.held.caption); // he sees the very file first
-    await tell(`${askLine({ name: x.name, subject, id, period })}${x.guessed ? `\n(نام را حدس زدم: «${x.typed}»؛ اگر درست نیست «نه #${id}» بنویسید.)` : ''}`);
+    await tell(`${askLine({ name: x.name, subject, id, period, kind })}${x.guessed ? `\n(نام را حدس زدم: «${x.typed}»؛ اگر درست نیست «نه #${id}» بنویسید.)` : ''}`);
   } catch (e) {
     logger.warn(`customer-group statement failed: ${e.name} ${e.status || ''}`);
     await tell(e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.');
@@ -922,10 +922,10 @@ async function decideGroupStatement(verb, id) {
     const r = await sock.sendMessage(p.groupId, content);
     if (!r) throw new Error('the message was not sent');
     logger.info(`statement sent to group "${p.subject}" by the owner's yes (${id})`);
-    return [`صورت‌حساب «${p.name}» به گروه «${p.subject}» فرستاده شد.`];
+    return [`صورت‌حساب «${p.name}» به ${p.kind === 'private' ? p.subject : `گروه «${p.subject}»`} فرستاده شد.`];
   } catch (e) {
     logger.warn(`statement send to a customer group failed: ${e.message}`);
-    return [`فرستادن صورت‌حساب به گروه «${p.subject}» نشد؛ دوباره تلاش نشد.`];
+    return [`فرستادن صورت‌حساب به ${p.kind === 'private' ? p.subject : `گروه «${p.subject}»`} نشد؛ دوباره تلاش نشد.`];
   }
 }
 
@@ -1373,7 +1373,36 @@ async function handleStaffChat(raw, chatId, group) {
     trace(where, 'owner', 'ignored: a QuickBooks connect line that is not from the owner\'s own chat');
     return true;
   }
-  if (!group && raw.key.fromMe && !isSelf) { trace(where, 'owner', 'ignored: the owner talking to someone else'); return false; } // from the bot's phone
+  if (!group && raw.key.fromMe && !isSelf) { // from the bot's phone, in the owner's chat with another person
+    const octx = (content.extendedTextMessage || {}).contextInfo || {};
+    const waitingChoice = choiceDesk.get(`pc:${chatId}`);
+    if (waitingChoice?.by === 'owner' && text && !audio && !image && parseChoice(text, waitingChoice.options) >= 0) { staffChats.add(chatId); } // his number for the question she just asked there
+    else if (!text || audio || image || !addressedIn(text, octx)) { trace(where, 'owner', 'ignored: the owner talking to someone else'); return false; } // only her name (or a reply to her) wakes her
+    if (!(waitingChoice?.by === 'owner' && !addressedIn(text, octx))) {
+    const other = { sender: chatId, senderAlt: raw.key.remoteJidAlt };
+    const otherInfo = { lidToPhone: new Map() };
+    const otherStaff = staffChecker([...config.staffNumbers, ...config.adminNumbers, ...qboAuth.numbers()], otherInfo.lidToPhone)(other) === true;
+    const octxAsk = statementAsk(effectiveRequest(text, quotedTextOf(octx), config.botNames));
+    if (octxAsk) {
+      if (octxAsk.unsupported || !octxAsk.customer) { await sayIn(raw, chatId, where, octxAsk.unsupported ? 'ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی یا بازهٔ تاریخ بگویید.' : 'صورت‌حساب کدام مشتری؟ نام را بنویسید.'); return true; }
+      if (otherStaff) { // a colleague: the answer is in that chat
+        staffChats.add(chatId);
+        trace(where, 'owner', 'statement asked by the owner in a private chat with a colleague: answered there');
+        const blockedNow = qboInvoices.guard();
+        if (blockedNow) { await sayIn(raw, chatId, where, blockedNow); return true; }
+        try { const x = await qboDesk.statementFor(octxAsk.customer, { privateJid: chatId, period: octxAsk.period }); await sayIn(raw, chatId, where, x.text); if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: octxAsk.period, by: 'owner' }); }
+        catch (e) { await sayIn(raw, chatId, where, e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.'); }
+        return true;
+      }
+      // not a colleague (a customer or unknown): nothing is said there; the owner decides in his own chat
+      trace(where, 'owner', 'statement asked by the owner in a private chat with someone who is not staff: asked in his own chat first');
+      await prepareGroupStatement({ customer: octxAsk.customer, period: octxAsk.period, groupId: chatId, subject: `شمارهٔ ${jidDigits(chatId)}`, kind: 'private' });
+      return true;
+    }
+    if (!otherStaff) { trace(where, 'owner', 'ignored: addressed to her in a chat with someone who is not staff'); return false; }
+    staffChats.add(chatId); // a colleague: the rest of the flow answers in that chat
+    }
+  }
   let admin = !!raw.key.fromMe;
   let ownerPerson = !!raw.key.fromMe; // typed on the account's own phone counts as the owner
   let authorizedPerson = false; // a person the owner authorized for statements (in a group)
@@ -1424,14 +1453,14 @@ async function handleStaffChat(raw, chatId, group) {
   if (group && text && !audio && !image && (await groupStatementTurn({ raw, chatId, text, ctx: (content.extendedTextMessage || {}).contextInfo || {}, owner: ownerPerson, authorized: authorizedPerson, where, role }))) return true;
   // A numbered question just asked waits for its answer: «1», «۱», «یک», «اولی», «شماره یک درست است» or the name itself. Nothing else may take this message.
   const pending = text && !audio && !image ? choiceDesk.get(`pc:${chatId}`) : null;
-  if (pending && !pending.by) {
+  if (pending && (!pending.by || (!group && pending.by === personOf(raw)))) {
     const at = parseChoice(text, pending.options);
     if (at >= 0) {
       choiceDesk.clear(`pc:${chatId}`);
       trace(where, role, 'a numbered question was answered');
       if (pending.kind === 'statement_group') {
         for (const o of ownIds()) choiceDesk.clear(`pc:${o}`);
-        await prepareGroupStatement({ customer: pending.options[at], period: pending.period, groupId: pending.groupId, subject: pending.subject });
+        await prepareGroupStatement({ customer: pending.options[at], period: pending.period, groupId: pending.groupId, subject: pending.subject, kind: pending.target || 'group' });
       } else if (pending.kind === 'statement') {
         try {
           const x = await qboDesk.statementFor(pending.options[at], { privateJid: isSelf ? ownIds()[0] : chatId, period: pending.period });
