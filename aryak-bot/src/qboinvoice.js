@@ -571,25 +571,19 @@ export class QboInvoiceDesk {
   }
 
   /**
-   * Several customers in one message: one PREVIEW per customer, each with its own yes; two names that are one customer (a certain match, or the owner's teaching) become
-   * one preview. The reply lists them all; «بله همه» approves every preview of this message.
+   * Several customers in one message: one PREVIEW per customer, each with its own yes, never merged (separate customers keep separate balances).
+   * The reply lists them all; «بله همه» approves every preview of this message.
    */
   async requestBlocks({ blocks, requester }) {
-    const groups = [];
-    for (const b of blocks) {
-      let id = '';
-      try { const r = await this.desk.resolveLoose(b.customer); if (r.id) id = String(r.id); } catch { /* the preview will say */ }
-      const g = id ? groups.find((x) => x.id === id) : null;
-      if (g) { g.names.push(b.customer); g.lines.push(...b.lines); } else groups.push({ id, names: [b.customer], lines: [...b.lines] });
-    }
+    // one preview per block, never merged: two names that look alike in the WhatsApp groups can be two customers with separate balances in QuickBooks
+    const groups = blocks.map((b) => ({ names: [b.customer], lines: [...b.lines] }));
     const batch = `B${this.now()}`;
     const parts = []; let made = 0;
     for (const g of groups) {
       const entries = g.lines.map((l) => ({ raw: `${l.code} ${l.qty}`, cands: [{ item: l.code, qty: l.qty, price: null, unit: l.unit }] }));
       const stop = (msg) => ({ requester: msg, owner: null });
       const r = await this.makePreview({ customerText: g.names[0], entries, requester, stop, batch });
-      const merged = g.names.length > 1 ? `«${g.names.join('» و «')}» یک مشتری هستند؛ یک پیش‌نمایش برایشان ساخته شد.\n` : '';
-      if (r.owner) { made += 1; parts.push(`${merged}${r.owner}`); } else parts.push(`مشتری «${g.names[0]}»: ${r.requester}`);
+      if (r.owner) { made += 1; parts.push(r.owner); } else parts.push(`مشتری «${g.names[0]}»: ${r.requester}`);
     }
     const foot = made > 1 ? '\n\nبرای پذیرفتن همهٔ این پیش‌نمایش‌ها: «بله همه» — برای لغو همه: «نه همه» (هر کدام را جدا هم می‌توانید با شماره‌اش بپذیرید).' : '';
     return { requester: `Your invoice requests (${made}) were sent to the owner for approval.`, owner: `${parts.join('\n\n— — —\n\n')}${foot}` };
@@ -645,7 +639,7 @@ export class QboInvoiceDesk {
       if (this.stockOf && l.typed && /^[\w\-./ ]{1,30}$/.test(l.typed)) { // the free stock beside the line: a warning, never a stop, and nothing is reported to anyone
         try {
           const st = await this.stockOf(l.typed);
-          if (st && Number.isFinite(st.free) && st.free < l.qty) w.push(`موجودی آزاد کد ${fa(l.typed)}: ${fa(st.free).replace(".", "٫")} ${st.unit === 'm' || !st.unit ? 'متر' : st.unit}، کمتر از ${fa(l.qty)}`);
+          if (st && Number.isFinite(st.free) && st.free < l.qty) w.push(`موجودی از شیت زیناکس — کد ${fa(l.typed)}: آزاد ${fa(st.free).replace(".", "٫")} ${st.unit === 'm' || !st.unit ? 'متر' : st.unit}، کمتر از ${fa(l.qty)}`);
         } catch { /* the stock sheet did not answer: no warning */ }
       }
       const code = l.item.Sku || l.item.Name;

@@ -1011,7 +1011,7 @@ test('R run: the preview shows stock and value and the promise; the yes switches
   const [pv] = await t.bulk.planOldEdge();
   assert.match(pv, /#R1/);
   assert.match(pv, /در کوییک‌بوکس کالا پاک نمی‌شود؛ غیرفعال می‌شود و موجودی‌اش با سند تعدیل انبار صفر می‌شود؛ فاکتورهای قبلی تغییر نمی‌کنند/);
-  assert.match(pv, /EDGE BAND 1MM\*22\(3019\) \(شناسه 134\): موجودی 4,000، بها 0.36، ارزش 1,440/);
+  assert.match(pv, /EDGE BAND 1MM\*22\(3019\) \(شناسه 134\): مقدار ثبت‌شده در کوییک‌بوکس 4,000 \(موجودی واقعی نیست\)، بها 0.36، ارزش 1,440/);
   assert.match(pv, /جمع ارزش موجودی/);
   assert.equal(t.m.posts.length, 0);
   const done = t.finished();
@@ -1077,7 +1077,7 @@ test('F plan: the new names and descriptions from the category and the colour; c
   assert.deepEqual(r.skipped.map((s) => s.label).sort(), ['B 1804', 'B 1899']);
   assert.match(r.skipped.find((s) => s.label === 'B 1804').why, /کالای دیگری دارد/);
   assert.ok(r.warnings.some((x) => /B 1810|0.8x50 - 1810/.test(x) && /بهای خرید/.test(x)));
-  assert.ok(r.warnings.some((x) => /موجودی منفی/.test(x)));
+  assert.ok(r.warnings.some((x) => /مقدار ثبت‌شده در کوییک‌بوکس منفی/.test(x)));
   assert.ok(r.warnings.some((x) => /1810.*220/.test(x)));
   assert.equal(r.changes.some((c) => c.label === 'Hinge' || /9999/.test(c.label)), false);
 });

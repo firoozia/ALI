@@ -329,7 +329,7 @@ export function planEdgeNames(active, all, cats) {
   // data warnings: they change nothing
   for (const r of rows) {
     if (!(Number(r.item.PurchaseCost) > 0)) out.warnings.push(`${r.name}: بهای خرید صفر یا خالی است`);
-    if (Number(r.item.QtyOnHand) < 0) out.warnings.push(`${r.name}: موجودی منفی است (${r.item.QtyOnHand})`);
+    if (Number(r.item.QtyOnHand) < 0) out.warnings.push(`${r.name}: مقدار ثبت‌شده در کوییک‌بوکس منفی است (${r.item.QtyOnHand}؛ موجودی واقعی را شیت زیناکس می‌گوید)`);
   }
   for (const size of [22, 50]) {
     const g = rows.filter((r) => r.size === size); const med = median(g.map((r) => Number(r.item.UnitPrice) || 0));
@@ -651,7 +651,7 @@ export class QboBulkDesk {
     return this.make('R', { changes: r.found, skipped: [...r.missing.map((x) => ({ label: x, why: 'missing' })), ...r.ambiguous.map((x) => ({ label: x, why: 'ambiguous' }))], unchanged: r.already.length }, {
       header: 'غیرفعال کردن نوار لبه‌های قدیمی',
       summary: `${fa(r.found.length)} کالا با نام دقیق. در کوییک‌بوکس کالا پاک نمی‌شود؛ غیرفعال می‌شود و موجودی‌اش با سند تعدیل انبار صفر می‌شود؛ فاکتورهای قبلی تغییر نمی‌کنند. ربات خودش هیچ سند تعدیل نمی‌سازد؛ اگر کوییک‌بوکس به‌خاطر موجودی نپذیرد، کالا رد و پیام آن گفته می‌شود تا خودتان در کوییک‌بوکس «غیرفعال» را بزنید.\nجمع ارزش موجودی (تعداد × بهای خرید): ${num(r.total)}.`,
-      lines: r.found.map((c, i) => `${fa(i + 1)}. ${c.label} (شناسه ${c.id}${c.hint ? `، در فهرست ${c.hint}` : ''}): موجودی ${num(c.qty)}، بها ${c.cost}، ارزش ${num(c.value)}`),
+      lines: r.found.map((c, i) => `${fa(i + 1)}. ${c.label} (شناسه ${c.id}${c.hint ? `، در فهرست ${c.hint}` : ''}): مقدار ثبت‌شده در کوییک‌بوکس ${num(c.qty)} (موجودی واقعی نیست)، بها ${c.cost}، ارزش ${num(c.value)}`),
       extra: [
         ...(r.missing.length ? [`پیدا نشد: ${r.missing.join('، ')}`] : []),
         ...(r.ambiguous.length ? [`چند کالا با این نام هست و رد شد: ${r.ambiguous.join('، ')}`] : []),

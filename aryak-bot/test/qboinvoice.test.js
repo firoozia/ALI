@@ -767,8 +767,8 @@ test('the owner\'s exact message: two customers, two previews, the codes and qua
   assert.ok(r.owner);
   assert.equal(t.extractCalls.length, 0);
   assert.equal(t.store.d.n, 2);
-  for (const s of ['پیش‌نمایش فاکتور #Q1', 'پیش‌نمایش فاکتور #Q2', 'مشتری: AL EBDA AL MALKI KITCHEN (از «AL EBDA»)', 'مشتری: NUQOOSH IND . LLC (از «NUQOOSH»)', 'PVC FILM215', '× 97 @ 14', 'PVC FILM220', '× 12 @ 16', 'موجودی آزاد کد ۲۱۵: ۲۷٫۸ متر، کمتر از ۹۷', 'بله #Q1', 'بله #Q2', '«بله همه»']) assert.ok(r.owner.includes(s), s);
-  assert.ok(!r.owner.includes('موجودی آزاد کد ۲۲۰')); // 400 is enough: no warning
+  for (const s of ['پیش‌نمایش فاکتور #Q1', 'پیش‌نمایش فاکتور #Q2', 'مشتری: AL EBDA AL MALKI KITCHEN (از «AL EBDA»)', 'مشتری: NUQOOSH IND . LLC (از «NUQOOSH»)', 'PVC FILM215', '× 97 @ 14', 'PVC FILM220', '× 12 @ 16', 'موجودی از شیت زیناکس — کد ۲۱۵: آزاد ۲۷٫۸ متر، کمتر از ۹۷', 'بله #Q1', 'بله #Q2', '«بله همه»']) assert.ok(r.owner.includes(s), s);
+  assert.ok(!r.owner.includes('موجودی از شیت زیناکس — کد ۲۲۰')); // 400 is enough: no warning
   assert.deepEqual(stockAsked.sort(), ['215', '220']);
   assert.equal(t.m.posts.length, 0); // two previews, no invoice
   assert.equal(t.store.get('Q1').batch, t.store.get('Q2').batch);
@@ -780,12 +780,13 @@ test('the owner\'s exact message: two customers, two previews, the codes and qua
   assert.equal(t.store.get('Q1').status, 'created'); assert.equal(t.store.get('Q2').status, 'created');
 });
 
-test('two names of one customer become ONE preview; «نه همه» cancels all; an unsure block does not stop the others', async () => {
-  const t = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: histFor('81') });
-  const r = await t.inv.request({ text: 'اتوسا فاکتور میخوام برای مشتری های زیر\nAL EBDA AL MALKI KITCHEN\n۲۱۵ =۹۷ متر\nAl Ebda Al Malki Kitchen\n۲۲۰ =۱۲ متر', requester: 'owner' });
-  assert.equal(t.store.d.n, 1);
-  assert.ok(r.owner.includes('یک مشتری هستند') && r.owner.includes('PVC FILM215') && r.owner.includes('PVC FILM220'));
-  assert.ok(!r.owner.includes('«بله همه»')); // one preview: the plain yes is enough
+test('two similar names are two customers and two previews, never merged; «نه همه» cancels all; an unsure block does not stop the others', async () => {
+  const t = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: [...histFor('81'), ...histFor('82')] });
+  const r = await t.inv.request({ text: MULTI, requester: 'owner' });
+  assert.equal(t.store.d.n, 2);
+  assert.deepEqual([t.store.get('Q1').customer.id, t.store.get('Q2').customer.id], ['81', '82']); // AL EBDA and NUQOOSH: separate balances, separate invoices
+  assert.ok(!r.owner.includes('یک مشتری هستند'));
+  assert.ok(r.owner.includes('«بله همه»'));
   // a block with nothing near stops alone; the other one is made
   const mixed = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: histFor('81') });
   const m = await mixed.inv.request({ text: 'اتوسا فاکتور میخوام برای مشتری های زیر\nAL EBDA AL MALKI KITCHEN\n۲۱۵ =۹۷ متر\nQqqqq Wwwww\n۲۲۰ =۱۲ متر', requester: 'owner' });
