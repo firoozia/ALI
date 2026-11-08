@@ -15,7 +15,7 @@ export const DEFAULT_ESCALATE_MODEL = 'claude-sonnet-5-5';
  * [cost]: a CostMeter (or null). Returns { value, res, model, escalated, reason, checked } where [checked] is the verdict of the answer returned.
  * Never throws for an API error of the strong step (the first answer is kept); an error of the first step throws.
  */
-export async function visionRead({ config, call, parse, check, cost = meter, visual = true, log = () => {} }) {
+export async function visionRead({ config, call, parse, check, retry = null, cost = meter, visual = true, log = () => {} }) {
   const first = config.visionModel || DEFAULT_VISION_MODEL;
   const strong = config.visionEscalateModel || DEFAULT_ESCALATE_MODEL;
   const res1 = await call(first);
@@ -24,6 +24,18 @@ export async function visionRead({ config, call, parse, check, cost = meter, vis
   try { v1 = parse(res1); } catch { v1 = null; }
   const c1 = v1 === null || v1 === undefined ? { ok: false, reason: 'parse' } : await check(v1);
   if (c1.ok) return { value: v1, res: res1, model: first, escalated: false, reason: '', checked: c1 };
+  // [retry]: the SAME cheap model once more with a changed input (a rotated picture) when the picture was unclear or unreadable, before the strong model is paid for
+  if (retry && ['unclear', 'unreadable'].includes(c1.reason)) {
+    try {
+      const res1b = await retry(first);
+      if (res1b) {
+        let v1b = null; try { v1b = parse(res1b); } catch { v1b = null; }
+        const c1b = v1b === null || v1b === undefined ? { ok: false, reason: 'parse' } : await check(v1b);
+        if (c1b.ok) return { value: v1b, res: res1b, model: first, escalated: false, reason: '', checked: c1b, retried: true };
+        log(`vision: the rotated read by ${first} also failed (${c1b.reason}${c1b.detail ? `: ${c1b.detail}` : ''})`);
+      }
+    } catch (e) { log(`vision: the rotated read failed: ${e.message}`); }
+  }
   if (!strong || strong === first) return { value: v1, res: res1, model: first, escalated: false, reason: c1.reason, checked: c1 };
   log(`vision: ${first} failed a check (${c1.reason}${c1.detail ? `: ${c1.detail}` : ''}); reading the same input again with ${strong}`);
   let res2;

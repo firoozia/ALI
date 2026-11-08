@@ -350,3 +350,115 @@ test('voice: Persian, Arabic and Urdu transcripts are echoed in their language; 
   assert.equal(planVoice({ transcript: 'كم المخزون من الكود 408', lang: 'ar', priv: false }).mode, 'old'); // a group note not for her
   assert.equal(planVoice({ transcript: 'كم المخزون من الكود 408', lang: 'ar', priv: false, explicit: true }).mode, 'run');
 });
+
+// ------------------------------------------------------------------------------------------------ forwarded photos, prefixes, rotated chips, captions
+import { deliver, captionCustomerName } from '../src/photoflow.js';
+import { stripPrefixes } from '../src/image.js';
+import { looksLikeCorrection } from '../src/voicegate.js';
+
+const reading = (o) => text(JSON.stringify({ readable: true, intent: 'order', language: 'en', items: [], unclear: 0, ...o }));
+const forwardedPhoto = { key: { remoteJid: '97150@s.whatsapp.net', fromMe: true, id: 'FWD1' }, message: { imageMessage: { mimetype: 'image/jpeg', caption: 'Nuqoosh', contextInfo: { isForwarded: true, forwardingScore: 1 } } } };
+
+test('a reply to a forwarded photo is delivered: quoted first, plain when the quote does not go through, and the log tells the truth', async () => {
+  const logs = [];
+  // 1. the quoted send works
+  let calls = [];
+  let r = await deliver({ send: async (...a) => { calls.push(a); return { key: { id: 'OK1' } }; }, chatId: forwardedPhoto.key.remoteJid, content: { text: 'q' }, quoted: forwardedPhoto, where: 'private', log: (l) => logs.push(l) });
+  assert.deepEqual([r.ok, calls.length, r.quotedFailed], [true, 1, false]);
+  assert.deepEqual(calls[0][2], { quoted: forwardedPhoto });
+  // 2. the quoted send throws (a forwarded picture as the quote): the plain one is sent and arrives
+  calls = [];
+  r = await deliver({ send: async (...a) => { calls.push(a); if (a[2]?.quoted) throw new Error('cannot quote this message'); return { key: { id: 'OK2' } }; }, chatId: 'c', content: { text: 'q' }, quoted: forwardedPhoto, where: 'private', log: (l) => logs.push(l) });
+  assert.deepEqual([r.ok, calls.length, r.quotedFailed, r.result.key.id], [true, 2, true, 'OK2']);
+  assert.equal(calls[1][2], undefined);
+  // 3. the quoted send returns nothing (no error): the plain one follows
+  calls = [];
+  r = await deliver({ send: async (...a) => { calls.push(a); return a[2]?.quoted ? undefined : { key: { id: 'OK3' } }; }, chatId: 'c', content: { text: 'q' }, quoted: forwardedPhoto, where: 'private', log: (l) => logs.push(l) });
+  assert.deepEqual([r.ok, calls.length], [true, 2]);
+  // 4. nothing goes out: not ok, and the log says NOT delivered (never "told")
+  logs.length = 0;
+  r = await deliver({ send: async () => undefined, chatId: 'c', content: { text: 'q' }, quoted: forwardedPhoto, where: 'private', log: (l) => logs.push(l) });
+  assert.equal(r.ok, false); assert.ok(logs.some((l) => /NOT delivered/.test(l)));
+  // 5. both fail by error: it throws
+  await assert.rejects(() => deliver({ send: async () => { throw new Error('closed'); }, chatId: 'c', content: { text: 'q' }, quoted: forwardedPhoto, where: 'private' }), /closed/);
+});
+
+test('customer prefixes: AR508 is code 508, ART108 is code 108, a real SKU keeps its letters, an unknown whole code with an unknown number stays unknown', async () => {
+  const known = async (c) => ['508', '105', '108', 'EDGE22-1810', 'PVC-108', 'KG10-300'].includes(c);
+  const s = await stripPrefixes([{ code: 'AR508', quantity: 50, unit: 'm' }, { code: 'ART 108' }, { code: 'AR-105' }, { code: 'EDGE22-1810' }, { code: 'KG10-300' }, { code: 'XY999' }], known);
+  assert.deepEqual(s.items.map((i) => i.code), ['508', '108', '105', 'EDGE22-1810', 'KG10-300', 'XY999']);
+  assert.deepEqual(s.notes.map((n) => [n.from, n.to]), [['AR508', '508'], ['ART 108', '108'], ['AR-105', '105']]);
+  assert.equal(s.unknown, 'XY999');
+  assert.equal((await stripPrefixes([{ code: 'PVC-108' }], known)).notes.length, 0); // known as it is: not touched
+  const models = [];
+  const client = { beta: { messages: { create: async (p) => { models.push(p.model); return reading({ items: [{ code: 'AR508', quantity: 50, unit: 'm' }] }); } } } };
+  const u = await understandImages({ images: [png], caption: 'Nuqoosh', config: { visionModel: 'haiku-x', visionEscalateModel: 'sonnet-x' }, client, knownCode: known });
+  assert.deepEqual(models, ['haiku-x']); // not an unknown code: the strong model is not paid for
+  assert.equal(u.ok, true);
+  assert.equal(u.items[0].code, '508');
+  assert.match(u.requestText, /508/); assert.doesNotMatch(u.requestText, /AR508/);
+  assert.match(u.confirmText, /«AR508» را کد 508 خواندم|AR508.*508/);
+  const art = await understandImages({ images: [png], config: { visionModel: 'h', visionEscalateModel: 's' }, client: { beta: { messages: { create: async () => reading({ items: [{ code: 'ART108' }] }) } } }, knownCode: known, forceLang: 'en' });
+  assert.deepEqual([art.items[0].code, /I read "ART108" as code 108/.test(art.confirmText)], ['108', true]);
+});
+
+test('a rotated chip: unclear first, the same model once more with the picture turned 90 and 270; the strong model only if that fails too', async () => {
+  const turned = [];
+  const turn = async (b64, deg) => { turned.push(deg); return { base64: Buffer.from(`${deg}`).toString('base64'), mimeType: 'image/jpeg' }; };
+  const calls = [];
+  const mk = (answers) => ({ beta: { messages: { create: async (p) => { calls.push({ model: p.model, images: p.messages[0].content.filter((b) => b.type === 'image').length, note: JSON.stringify(p.messages[0].content).includes('turned by 90') }); return answers[calls.length - 1] ?? answers.at(-1); } } } });
+  const cfg = { visionModel: 'haiku-x', visionEscalateModel: 'sonnet-x' };
+  const unclear = reading({ intent: 'other', items: [], unclear: 1 });
+  const found = reading({ intent: 'stock', items: [{ code: '109' }] });
+  // the turned picture is enough
+  let u = await understandImages({ images: [png], config: cfg, client: mk([unclear, found]), knownCode: async () => true, turnImage: turn });
+  assert.equal(u.ok, true); assert.equal(u.items[0].code, '109');
+  assert.deepEqual(calls.map((c) => [c.model, c.images, c.note]), [['haiku-x', 1, false], ['haiku-x', 3, true]]); // the same model, three pictures: as sent, +90, +270
+  assert.deepEqual(turned, [90, 270]);
+  // not enough: the strong model, with the turned pictures too
+  calls.length = 0; turned.length = 0;
+  u = await understandImages({ images: [png], config: cfg, client: mk([unclear, unclear, found]), knownCode: async () => true, turnImage: turn });
+  assert.equal(u.ok, true);
+  assert.deepEqual(calls.map((c) => [c.model, c.images]), [['haiku-x', 1], ['haiku-x', 3], ['sonnet-x', 3]]);
+  // without an image library the step is skipped and the strong model reads at once
+  calls.length = 0;
+  u = await understandImages({ images: [png], config: cfg, client: mk([unclear, found]), knownCode: async () => true, turnImage: async () => null });
+  assert.deepEqual(calls.map((c) => c.model), ['haiku-x', 'sonnet-x']);
+  // a clean first read is never read again
+  calls.length = 0;
+  u = await understandImages({ images: [png], config: cfg, client: mk([found]), knownCode: async () => true, turnImage: turn });
+  assert.equal(calls.length, 1);
+  // the rules tell the reader about rotated codes and colour samples
+  const { IMAGE_RULES } = await import('../src/image.js');
+  assert.match(IMAGE_RULES, /ROTATED/); assert.match(IMAGE_RULES, /colour or decor sample/);
+});
+
+test('the real image library turns a picture when it is installed', async () => {
+  const { rotateImage } = await import('../src/image.js');
+  let sharp; try { sharp = (await import('sharp')).default; } catch { return; }
+  const png1 = await sharp({ create: { width: 40, height: 20, channels: 3, background: '#a0522d' } }).png().toBuffer();
+  const r = await rotateImage(png1.toString('base64'), 90);
+  const meta = await sharp(Buffer.from(r.base64, 'base64')).metadata();
+  assert.deepEqual([meta.width, meta.height, r.mimeType], [20, 40, 'image/jpeg']);
+});
+
+test('a caption that is a customer name gives the customer; a sentence or a code does not', async () => {
+  const rows = { Nuqoosh: { customer: 'NUQOOSH IND LLC' } };
+  const look = { canon: (t) => (rows[t] ? rows[t].customer : t), rowOfName: (t) => Object.values(rows).find((r) => r.customer === t) || rows[t] || null, resolveLoose: async (t) => (t === 'Hakim' ? { id: '7', name: 'HAKIM CARPENTRY' } : { ours: t }) };
+  assert.equal(await captionCustomerName('Nuqoosh', look), 'NUQOOSH IND LLC');
+  assert.equal(await captionCustomerName('Hakim', look), 'HAKIM CARPENTRY'); // QuickBooks, short name
+  assert.equal(await captionCustomerName('please check 108', look), ''); // digits: not a name
+  assert.equal(await captionCustomerName('what is the stock of this one please', look), ''); // a sentence
+  assert.equal(await captionCustomerName('', look), '');
+  assert.equal(await captionCustomerName('Unknown Co', { ...look, resolveLoose: async () => { throw new Error('offline'); } }), ''); // never throws
+});
+
+test('a correction typed after the photo question: "508 = 50m" goes to that question, not to another flow; yes and no are not corrections', () => {
+  for (const t of ['508 = 50m', '508=50', 'AR508 = 50 m', 'ART 108: 20 rolls', '108 30', '508 = 50m' + String.fromCharCode(10) + '105 = 20m']) assert.equal(looksLikeCorrection(t), true, t);
+  for (const t of ['بله', 'نه', 'yes', 'no', 'send the invoice please', 'قیمت 108 = 12', 'کد 108 = x', '']) assert.equal(looksLikeCorrection(t), false, t);
+});
+
+test('the customer-group list names itself in a refusal, so the owner knows which flow answered', async () => {
+  const src = fs.readFileSync(new URL('../src/customergroups.js', import.meta.url), 'utf8');
+  assert.match(src, /فهرست مشتری‌ها و گروه‌ها: ردیف/);
+});

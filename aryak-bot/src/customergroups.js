@@ -640,7 +640,7 @@ export class CustomerGroupDesk {
     }
   }
 
-  wrong(n) { return `ردیف ${persianDigits(n)} در این پیشنهاد نیست. چیزی ذخیره نشد.`; }
+  wrong(n) { return `فهرست مشتری‌ها و گروه‌ها: ردیف ${persianDigits(n)} در این پیشنهاد نیست. چیزی ذخیره نشد.`; }
 
   badGroup(r) {
     if (r.group) return '';

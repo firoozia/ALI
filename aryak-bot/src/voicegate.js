@@ -60,6 +60,16 @@ export function planVoice({ transcript, lang, explicit = false, named = false, p
   return { mode: changes ? 'ask' : 'run', echo: heardText(lang, t), prompt: changes ? gatePrompt(lang) : '' };
 }
 
+/**
+ * A text that corrects a request read from a photo or a voice note: lines like "508 = 50m", "AR105 20 m", "108: 30" (a code, then a quantity with an
+ * optional unit). It answers the photo question; no other pending flow may take it.
+ */
+export function looksLikeCorrection(text) {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length || lines.length > 12) return false;
+  return lines.every((l) => /^[A-Za-z]{0,4}[\s-]*\d{2,5}\s*(?:=|:|-|,|\s)\s*\d+(?:[.,]\d+)?\s*(?:m|mtr|mtrs|meters?|metres?|rolls?|pcs?|pieces?|ctn|cartons?|متر|رول|عدد|کارتن)?\s*$/iu.test(l));
+}
+
 /** What is waiting for the speaker's «بله»: one transcript per person and chat. */
 export class VoiceGate {
   constructor({ ttlMs = 10 * 60 * 1000, now = () => Date.now() } = {}) { this.ttlMs = ttlMs; this.now = now; this.map = new Map(); }

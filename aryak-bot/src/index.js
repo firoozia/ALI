@@ -67,7 +67,8 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, setDocMeter } from './pdftext.js';
 import { setVisionMeter } from './vision.js';
 import { CostMeter } from './cost.js';
-import { planVoice, VoiceGate, bareAnswerYieldsToPending } from './voicegate.js';
+import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
+import { deliver, captionCustomerName } from './photoflow.js';
 import { codeKnownInItems } from './qboinvoice.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
@@ -936,6 +937,8 @@ async function watchGroup(raw, groupId, role) {
 }
 
 /** Reads the photos of a message with Claude's vision. Never throws. */
+const captionCustomer = (text) => captionCustomerName(text, { canon, rowOfName, resolveLoose: (t) => qboDesk.resolveLoose(t) }); // a caption that is a customer's name is the customer of the order
+
 async function understandPhotos(messagesWithImages, caption, fallbackLang, forceLang = '') {
   const images = [];
   for (const m of messagesWithImages.slice(-3)) {
@@ -1244,8 +1247,12 @@ async function handleStaffChat(raw, chatId, group) {
     const said = staffLang === 'en' ? toEnglish(body) : body;
     const content = { text: isSelf ? `🤖 ${said}` : said };
     if (keepLanguage) keepLang.add(content);
-    return sock.sendMessage(chatId, content, { quoted: raw });
+    // every reply is accounted for: quoted first (a forwarded picture as the quote may not go through), then plain; the log says what really happened
+    const d = await deliver({ send: (...a) => sock.sendMessage(...a), chatId, content, quoted: raw, where, log: (s) => logger.info(s) });
+    lastReplyOk = d.ok;
+    return d.result;
   };
+  let lastReplyOk = false;
   // A voice note that would change something waits for its «بله»: the same person's yes runs the transcript as if typed, a no drops it,
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
@@ -1382,7 +1389,8 @@ async function handleStaffChat(raw, chatId, group) {
   // THE OWNER'S FIXED LIST "customer on the invoice -> group": proposal, answers and later changes. Only the owner, only in his own chat; free code.
   // Approving a row sends nothing (it only says which group an ordered invoice goes to; the order, the check and his yes stay as they are).
   if (config.ownerInvoiceSend && text && !audio && !image && !group && isSelf) {
-    const wanted = customerDesk.wants(text);
+    const photoWaiting = voiceDesk.get(`s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`);
+    const wanted = photoWaiting && looksLikeCorrection(text) ? null : customerDesk.wants(text); // a line like "508 = 50m" belongs to the photo question
     if (wanted) {
       if (!isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) { trace(where, 'owner', 'ignored: the customer-group list answers only the owner'); return true; }
       const all = Object.values(await sock.groupFetchAllParticipating()).map((g) => ({ id: g.id, subject: g.subject || '' }));
@@ -1544,13 +1552,15 @@ async function handleStaffChat(raw, chatId, group) {
     }
     const action = imageAction({ u, explicit });
     if (action === 'confirm') {
-      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang, intent: u.intent, items: u.items, customer: customerFromMessages([{ text, hasImage: true }], orderLinesOf), test: !!group?.test });
-      trace(where, role, `photo understood (${u.intent}, ${u.items.length} code(s)), reply language ${u.lang}: asking for confirmation`);
-      await reply(u.confirmText);
+      // a caption that is a customer's name ("Nuqoosh") is the customer of this order
+      const capCustomer = await captionCustomer(text);
+      voiceDesk.set(key, { requestText: u.requestText, lang: u.lang, intent: u.intent, items: u.items, customer: capCustomer || customerFromMessages([{ text, hasImage: true }], orderLinesOf), test: !!group?.test });
+      await reply(`${u.confirmText}${capCustomer ? `\n${u.lang === 'en' ? 'Customer' : 'مشتری'}: ${capCustomer}` : ''}`);
+      trace(where, role, `photo understood (${u.intent}, ${u.items.length} code(s)${u.notes?.length ? `, prefix removed: ${u.notes.map((n) => `${n.from}->${n.to}`).join(' ')}` : ''}), reply language ${u.lang}: ${lastReplyOk ? 'the question was delivered' : 'the question was NOT delivered'}`);
     } else if (action === 'tell') {
       voiceDesk.clear(key);
-      trace(where, role, `photo not usable (${u.reason}): told so`);
       await reply(u.reason === 'other' ? photoNotRequest(written) : photoUnclear(written));
+      trace(where, role, `photo not usable (${u.reason}): ${lastReplyOk ? 'told so' : 'could NOT tell (not delivered)'}`);
     } else {
       trace(where, role, `ignored: photo is not a stock or order request (${u.reason}) and not addressed to the assistant`);
     }
@@ -1566,7 +1576,10 @@ async function handleStaffChat(raw, chatId, group) {
     const lead = kind === 'other' ? answerLead(text) : '';
     voiceDesk.clear(key);
     if (kind === 'no') { await reply(retryText(pend.lang)); return true; }
-    if (kind === 'yes' || lead === 'yes') {
+    if (kind !== 'yes' && lead !== 'yes' && kind !== 'no' && pend.requestText && looksLikeCorrection(text)) {
+      asked = text; confirmed = true; lang = pend.lang || lang; // "508 = 50m": the corrected line replaces the request read from the picture
+      trace(where, role, 'a correction of the photo question: the typed line replaces what was read');
+    } else if (kind === 'yes' || lead === 'yes') {
       asked = pend.requestText; confirmed = true; lang = pend.lang || lang;
       // a confirmed photo or voice order enters the order memory (with its quantities)
       if (pend.intent === 'order' && (pend.items || []).length && config.trackerEnabled) {
