@@ -246,3 +246,10 @@ test('wiring: an invoice request in an internal group needs the owner or the inv
   assert.match(turn, /await sayIn\(raw, chatId, where, r\.owner \|\| r\.requester\)/); // posted in the group, Persian
   assert.match(src, /canInvoice: invoicePerson, where, role/); assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', info\.lidToPhone\), where, role: 'authorized'/);
 });
+
+test('wiring: what she says in a group or to a colleague about statements and invoices stays in Persian (the outgoing hook would turn Persian into English)', () => {
+  assert.match(src, /const persianText = \(body\) => \{ const content = \{ text: body \}; keepLang\.add\(content\); return content; \}/);
+  assert.match(src, /content: persianText\(body\), quoted: raw/); // sayIn
+  assert.match(src, /const say = \(t\) => sock\.sendMessage\(chatId, persianText\(t\)\)/); // the authorized person's private chat
+  assert.match(src, /if \(typeof a\[1\]\?\.text === 'string' && \/\[\u0600-\u06FF\]\/\.test\(a\[1\]\.text\) && !keepLang\.has\(a\[1\]\)\)|!keepLang\.has\(a\[1\]\)/); // the hook skips what is kept
+});

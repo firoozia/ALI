@@ -720,7 +720,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
     if (at >= 0) {
       choiceDesk.clear(`pc:${chatId}`);
       qboChats.add(chatId);
-      try { const x = await qboDesk.statementFor(pend.options[at], { privateJid: chatId, period: pend.period }); await sock.sendMessage(chatId, { text: x.text }); } catch (e) { await sock.sendMessage(chatId, { text: 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.' }); }
+      try { const x = await qboDesk.statementFor(pend.options[at], { privateJid: chatId, period: pend.period }); await sock.sendMessage(chatId, persianText(x.text)); } catch (e) { await sock.sendMessage(chatId, persianText('صورت‌حساب ساخته نشد؛ دوباره بنویسید.')); }
       return true;
     }
   }
@@ -731,7 +731,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
   const nl = ic?.type === 'statement_nl' ? ic : null; // «صورت‌حساب شرکت … ماه ۱۰»: the same flow as the owner's, the PDF to this private chat
   if (!isRequest && !isStatement && !nl) return false;
   qboChats.add(chatId);
-  const say = (t) => sock.sendMessage(chatId, { text: t });
+  const say = (t) => sock.sendMessage(chatId, persianText(t));
   if (isRequest && !canInvoice) { await say('برای درخواست فاکتور مجوز ندارید.'); return true; }
   if ((isStatement || nl) && !canStatement) { await say('برای درخواست صورت‌حساب مجوز ندارید.'); return true; }
   try {
@@ -852,8 +852,9 @@ async function finishOwnerSend({ chatId, pending, reply, lang = 'en' }) {
 
 // ---------------------------------------------------------------------------------------------------------------- statements asked for in a group
 const groupStatements = new GroupStatements(); // built for a customer group, waiting for the owner's «بله #S1»
+const persianText = (body) => { const content = { text: body }; keepLang.add(content); return content; }; // kept in Persian: the outgoing hook turns Persian into English in company groups and for colleagues
 const sayIn = async (raw, chatId, where, body) => { // always Persian here (the owner and the authorized people read it), quoted first then plain
-  const d = await deliver({ send: (...args) => sock.sendMessage(...args), chatId, content: { text: body }, quoted: raw, where, log: (s) => logger.info(s) });
+  const d = await deliver({ send: (...args) => sock.sendMessage(...args), chatId, content: persianText(body), quoted: raw, where, log: (s) => logger.info(s) });
   return d.result;
 };
 const personOf = (raw) => (raw.key.fromMe ? 'owner' : jidDigits(raw.key.participant || ''));
