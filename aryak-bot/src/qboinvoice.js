@@ -153,8 +153,9 @@ export function looksLikeInvoiceRequest(text) {
   return (/فاکتور/u.test(s) && MAKE.test(s)) || /(?:create|make|issue|prepare)\s+(?:an?\s+)?invoice/iu.test(s) || !!parseEnglishInvoice(text);
 }
 
-const QTY_LINE = /^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?\s*$/iu;
-const INLINE_ITEM = /(?:^|[\s,;])([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|x|×)\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?(?=$|[\s,;])/giu;
+const PRICE_PART = String.raw`(?:\s*[/@]\s*(\d+(?:\.\d+)?)\s*(?:aed|dhs?|dirhams?)?)?`; // «/10aed», «/10 aed», «@10»: the unit price asked for this line
+const QTY_LINE = new RegExp(String.raw`^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?${PRICE_PART}\s*$`, 'iu');
+const INLINE_ITEM = new RegExp(String.raw`(?:^|[\s,;])([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|x|×)\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?${PRICE_PART}(?=$|[\s,;])`, 'giu');
 const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?invoice\s+(?:for\s+|to\s+)?(.+?)\s*$/iu;
 
 /**
@@ -174,11 +175,12 @@ export function parseEnglishInvoice(text) {
   if (/\b(?:send|forward|check|delete|number|no\.?|inv-?\d+|#)\b/i.test(named) || /^\d/.test(named)) return null;
   const customer = named.replace(/\b(?:please|pls|thanks)\b/gi, '').replace(/\s+/g, ' ').trim();
   if (!customer || customer.split(/\s+/).length > 6) return null;
-  const lines = inline.map((m) => `${m[1].replace(/^[A-Za-z](?=\d)/, '')} ${m[2]}`);
+  const lineOf = (m) => `${m[1].replace(/^[A-Za-z](?=\d)/, '')}${m[3] ? `, ${m[2]}, ${m[3]}` : ` ${m[2]}`}`; // a price given for the line makes it exact: code, quantity, price
+  const lines = inline.map(lineOf);
   for (const row of rows.slice(1)) {
     const m = QTY_LINE.exec(row);
     if (!m) { if (extractPo(row)) continue; return null; } // a line that is not an item (other than the PO line): not this format
-    lines.push(`${m[1].replace(/^[A-Za-z](?=\d)/, '')} ${m[2]}`);
+    lines.push(lineOf(m));
   }
   return lines.length ? { customer, lines } : null;
 }
@@ -543,8 +545,8 @@ export class QboInvoiceDesk {
    * list (PriceBook) or null; [config]; [today]: () => yyyy-mm-dd; [now]; [post]: async (jid, buffer, fileName, caption); [ownerJid]: () => jid;
    * [groups]: async () => [{ id, subject }]; [testGroup]: (groups) => group|null.
    */
-  constructor({ cutsOf = null, markCuts = null, cutLabel = 'گروه سفارش آریاک', stockOf = null, qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
-    Object.assign(this, { targets: null, cutsOf, markCuts, cutLabel, stockOf, qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
+  constructor({ cutsOf = null, markCuts = null, crossOf = null, cutLabel = 'گروه سفارش آریاک', stockOf = null, qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
+    Object.assign(this, { targets: null, crossOf, cutsOf, markCuts, cutLabel, stockOf, qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
     this.cache = { at: 0, items: [], codes: new Map(), currency: '', customTxn: false };
     this.inflight = new Set(); // previews being created right now: a yes that arrives meanwhile does not start a second attempt
   }
@@ -832,8 +834,8 @@ export class QboInvoiceDesk {
       if (price === null || Number.isNaN(price)) { problems.items.push(`سطر ${fa(l.n)}: برای کالای «${l.item.Name}» در کوییک‌بوکس قیمتی نیست؛ قیمت را در همان سطر بنویسید.`); continue; }
       const amount = fils(l.qty * price);
       const w = []; const fl = []; // [fl]: the same warnings, one short English line each (the short preview)
-      if (listed !== null && l.price !== null && l.price < listed - 0.005) { w.push(`قیمت کمتر از قیمت کوییک‌بوکس (${listed})`); fl.push(`price ${l.price} is below the QuickBooks price ${listed}`); }
-      if (listed !== null && l.price !== null && l.price > listed + 0.005) { w.push(`قیمت شما ${l.price} است و قیمت کوییک‌بوکس ${listed}؛ قیمت شما می‌ماند`); fl.push(`price ${l.price} is above the QuickBooks price ${listed}`); } // a note, not a stop
+      if (listed !== null && l.price !== null && l.price < listed - 0.005) w.push(`قیمت کمتر از قیمت کوییک‌بوکس (${listed})`);
+      if (listed !== null && l.price !== null && l.price > listed + 0.005) w.push(`قیمت شما ${l.price} است و قیمت کوییک‌بوکس ${listed}؛ قیمت شما می‌ماند`); // a note, not a stop
       if (this.stockOf && l.typed && /^[\w\-./ ]{1,30}$/.test(l.typed)) { // the free stock beside the line: a warning, never a stop, and nothing is reported to anyone
         try {
           const st = await this.stockOf(l.typed);
@@ -845,14 +847,14 @@ export class QboInvoiceDesk {
         const codes = [l.typed, String(l.item.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(l.item.Name || '').replace(/^.*?(\d{3,5})$/, '$1')];
         cutInfo = cutTotal(this.cutsOf(cutName, codes));
         const u = cutInfo ? (cutInfo.unit === 'm' ? 'متر' : cutInfo.unit === 'roll' ? 'رول' : cutInfo.unit) : '';
-        if (cutInfo && !l.qtyGuess && Math.abs(cutInfo.qty - l.qty) > 0.001) { w.push(`درخواست ${faDigits(l.qty)} ${u}، برش ثبت‌شده ${faDigits(cutInfo.qty)} ${u}`); fl.push(`cut recorded ${cutInfo.qty} ${cutInfo.unit === 'roll' ? 'roll' : cutInfo.unit}, requested ${l.qty}`); }
-        if (!cutInfo) { w.push('برشی ثبت نشده'); fl.push('no cut recorded'); }
+        if (cutInfo && !l.qtyGuess && Math.abs(cutInfo.qty - l.qty) > 0.001) w.push(`درخواست ${faDigits(l.qty)} ${u}، برش ثبت‌شده ${faDigits(cutInfo.qty)} ${u}`);
+        if (!cutInfo) w.push('برشی ثبت نشده');
       }
       const code = l.item.Sku || l.item.Name;
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
       if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) { w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`); fl.push(`price is below the owner's price list (${pb.price})`); }
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
-      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '', n: l.n, chosen: !!l.chosen, cut: cutInfo, qtyGuess: !!l.qtyGuess, flags: fl });
+      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '', n: l.n, chosen: !!l.chosen, cut: cutInfo, qtyGuess: !!l.qtyGuess, flags: fl, override: (l.price !== null && listed !== null && Math.abs(l.price - listed) > 0.005) ? { system: listed } : null });
       if (l.guess) guesses.lines.push({ n: l.n, typed: l.typed, reason: l.guess.reason, alts: l.guess.alts.map((a) => ({ itemId: String(a.Id), name: a.Name, price: Number(a.UnitPrice) || 0 })) });
     }
     let tax = null;
@@ -895,6 +897,7 @@ export class QboInvoiceDesk {
       guesses: (guesses.customer || guesses.lines.length || guesses.tax) ? guesses : null,
       // what the owner's yes will remember, so that the next time it is exact and not a guess
       aliases: { customer: (cust.guessed || cust.chosen) ? { text: customerText, id: cust.id, name: cust.name } : null, items: out.filter((l) => (l.via === 'guess' || l.chosen) && l.typed).map((l) => ({ typed: l.typed, itemId: l.itemId, name: l.name })) },
+      cross: this.crossOf ? this.crossOf(cutName, out.map((l) => ({ code: l.typed, sku: l.sku, name: l.name, qty: l.qty }))) : null, // against the cutting group: warnings only
       req: { customerText, entries, overrides, po },
       ...(po ? { po } : {}),
       ...(origin ? { origin } : {}), // the chat the request came from: the PDF goes back there
@@ -948,8 +951,9 @@ export class QboInvoiceDesk {
       `*Invoice* #${p.id}`,
       `Customer: *${p.customer.name}*`,
       ...(p.po ? [`PO: *${p.po}*`] : []),
-      ...p.lines.map((l, i) => `${i + 1}. ${named(l)} (${l.qty} ×${l.price} = ${money(l.amount)})`),
+      ...p.lines.map((l, i) => `${i + 1}. ${named(l)} (${l.qty} ×${l.price} = ${money(l.amount)})${l.override ? ` ✎ your price (system ${Number(l.override.system).toFixed(2)})` : ''}`),
       `Total: *${money(p.total)}${p.currency ? ` ${p.currency}` : ''}*`,
+      ...(p.cross ? (p.cross.problems.length ? ['Cross-check (Aryak Orders):', ...p.cross.problems.map((x) => `⚠ ${x}`)] : ['Cross-check (Aryak Orders): ✔ all match']) : []),
       ...flags,
       answer,
     ].join('\n');

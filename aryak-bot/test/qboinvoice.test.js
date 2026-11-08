@@ -1045,9 +1045,8 @@ test('the short preview: *Invoice* #Q1, the customer in bold, one line per item 
       '*Invoice* #Q1',
       'Customer: *Orion Furniture*',
       '1. *Hinge 35mm* (10 ×2.5 = 25.00)',
-      '2. *Edge Tape White* (3 ×1.1 = 3.30)',
+      '2. *Edge Tape White* (3 ×1.1 = 3.30) ✎ your price (system 1.20)',
       'Total: *29.72 AED*',
-      '⚠ Edge Tape White: price 1.1 is below the QuickBooks price 1.2',
       'Yes/No',
     ].join('\n'));
     // gone from the default: the "nothing created" sentence, the number line, subtotal, VAT, tax text, validity
@@ -1072,6 +1071,7 @@ test('the short preview: the code is bold inside the item name; flags are one li
     const t = mk({ customers: [{ Id: '91', DisplayName: 'HIGH POINT', CompanyName: 'HIGH POINT LLC', Balance: 0 }], items });
     t.inv.stockOf = async () => ({ free: 27.8, unit: 'm' });
     t.inv.cutsOf = () => [];
+    t.inv.crossOf = () => ({ problems: ['509: no order found'] });
     const r = await t.inv.request({ text: 'Atossa invoice for high pnt\n509 = 97 mtr\nPN 77', requester: 'owner' });
     assert.ok(r.owner, r.requester);
     const lines = r.owner.split('\n');
@@ -1079,7 +1079,8 @@ test('the short preview: the code is bold inside the item name; flags are one li
     assert.equal(lines[3], '1. PVC FILM *509* (97 ×11 = 1,067.00)');
     assert.match(lines[4], /^Total: \*1,120\.35 AED\*$/);
     const flags = lines.filter((l) => l.startsWith('⚠'));
-    assert.ok(flags.includes('⚠ stock 27.8 m < 97') && flags.includes('⚠ no cut recorded'), flags.join(' | '));
+    assert.ok(flags.includes('⚠ stock 27.8 m < 97') && flags.includes('⚠ 509: no order found'), flags.join(' | '));
+    assert.ok(lines.includes('Cross-check (Aryak Orders):'));
     assert.equal(lines.at(-1), 'Yes/No');
     assert.ok(flags.length <= 4 && lines.length <= 11); // short
   } finally { setOutLang('fa'); }
@@ -1274,4 +1275,42 @@ test('the dry run lists only real gaps: what QuickBooks fills in by itself is no
   const text = (await t.inv.dryRun('Q1', 'inv-1')).join('\n');
   for (const harmless of ['AllowIPN', 'AllowOnlinePayPalPayment', 'CustomField', 'EmailStatus', 'ExchangeRate', 'PrivateNote', 'field Id', 'LineNum', 'CustomExtensions', 'ItemAccountRef']) assert.ok(!text.includes(harmless), `${harmless}\n${text}`);
   assert.ok(text.includes('BillEmail') || text.includes('GlobalTaxCalculation')); // a real gap is still there
+});
+
+// ------------------------------------------------------------------------------------------------ the owner's sample: price in the request + the cross-check section
+test('the owner\'s sample: the price asked for wins on its line (marked, item price untouched), the cross-check lists only problems, the total and 5% VAT as before', async () => {
+  setOutLang('en');
+  try {
+    const items = [{ Id: '5', Name: 'PVC FILM505', Sku: 'PVC-505', UnitPrice: 11, Type: 'Inventory', Active: true }, { Id: '2', Name: 'PVC FILM211', Sku: 'PVC-211', UnitPrice: 12, Type: 'Inventory', Active: true }];
+    const t = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0 }], items });
+    t.inv.crossOf = () => ({ problems: ['211: no order found', '503: cut 8m on 07/11, not invoiced'] });
+    const r = await t.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m 211=20 /10aed', requester: 'owner' });
+    assert.equal(r.owner, [
+      '*Invoice* #Q1',
+      'Customer: *MASTER WOOD*',
+      '1. PVC FILM *505* (10 ×11 = 110.00)',
+      '2. PVC FILM *211* (20 ×10 = 200.00) ✎ your price (system 12.00)',
+      'Total: *325.50 AED*',
+      'Cross-check (Aryak Orders):',
+      '⚠ 211: no order found',
+      '⚠ 503: cut 8m on 07/11, not invoiced',
+      'Yes/No',
+    ].join('\n'));
+    // the line carries the price asked for; no item price is written anywhere in QuickBooks
+    const dry = (await t.inv.dryRun('Q1', 'inv-x').catch(() => [])).join('');
+    assert.equal(t.store.get('Q1').lines[1].price, 10);
+    assert.equal(t.inv.invoiceBody(t.store.get('Q1'), {}).Line[1].SalesItemLineDetail.UnitPrice, 10); // the dry run builds the same body
+    assert.ok(dry === '' || dry.includes('Not found'));
+    await t.inv.decide({ verb: 'yes', id: 'Q1' });
+    assert.deepEqual(t.m.posts.map((x) => x.body.Line.map((l) => l.SalesItemLineDetail.UnitPrice)), [[11, 10]]);
+    assert.ok(t.m.calls.every((x) => x.method === 'GET' || /\/invoice/.test(x.url) || /oauth|developer/.test(x.url))); // the only writes: the invoice
+    // everything matches: one line
+    const u = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0 }], items });
+    u.inv.crossOf = () => ({ problems: [] });
+    const ok = await u.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m', requester: 'owner' });
+    assert.ok(ok.owner.split('\n').includes('Cross-check (Aryak Orders): ✔ all match'));
+    // no cutting data wired (the group is not watched): the section is left out, nothing is claimed
+    const n = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0 }], items });
+    assert.ok(!(await n.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m', requester: 'owner' })).owner.includes('Cross-check'));
+  } finally { setOutLang('fa'); }
 });

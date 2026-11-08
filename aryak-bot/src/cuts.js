@@ -106,3 +106,42 @@ export function cutLine(total, { label = 'گروه سفارش آریاک', timeZ
   const unit = total.unit === 'm' ? 'متر' : total.unit === 'roll' ? 'رول' : total.unit;
   return `برش: ${faDigits(total.qty)} ${unit}، ${persianDay(total.at, timeZone)}، ${label}`;
 }
+
+// ---- the cross-check of an invoice with the cutting group («Aryak Orders»): read only, a warning and never a stop
+const dm = (ms, timeZone = 'Asia/Dubai') => { const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)).split('-'); return `${d}/${m}`; };
+const amount = (qty, unit) => `${Math.round(qty * 1000) / 1000}${unit === 'm' ? 'm' : unit === 'roll' ? ' roll' : ` ${unit}`}`;
+
+/**
+ * [lines]: [{ code, sku, name, qty }] of the invoice. Returns { problems: ['211: no order found', '505: already invoiced (inv-9981) on 07/11',
+ * '503: cut 8m on 07/11, not invoiced', '505: cut 8m on 07/11, invoice has 10'] }. «Orders cut for this customer and missing from the invoice» are
+ * the cuts of the last [windowDays] days that no invoice took and that no line of this invoice carries.
+ */
+export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai' } = {}) {
+  const rows = [];
+  for (const e of tracker.events) {
+    if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
+    if (!(sameCutCustomer(e.customer, customer) || sameCutCustomer(e.customerTyped, customer))) continue;
+    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, invoiced: l.invoiced || null }); });
+  }
+  const problems = [];
+  const taken = new Set();
+  for (const ln of lines) {
+    const shown = ln.code || (/\d{2,}/.exec(ln.sku || ln.name || '') || [''])[0];
+    const wanted = new Set([ln.code, String(ln.sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(ln.name || '').replace(/^.*?(\d{3,5})$/, '$1')].filter(Boolean).map(code));
+    const wantedDigits = new Set([...wanted].map(digitsOf).filter((d) => d.length >= 2));
+    const mine = rows.filter((r) => wanted.has(r.code) || (r.digits && wantedDigits.has(r.digits)));
+    mine.forEach((r) => taken.add(r));
+    const open = mine.filter((r) => !r.invoiced);
+    const done = mine.filter((r) => r.invoiced);
+    if (!mine.length) problems.push(`${shown}: no order found`);
+    else if (!open.length) problems.push(`${shown}: already invoiced${done[0].invoiced.number ? ` (${done[0].invoiced.number})` : ''} on ${dm(done[0].at, timeZone)}`);
+    else {
+      const total = open.reduce((x, r) => x + r.qty, 0);
+      if (Math.abs(total - Number(ln.qty)) > 0.001) problems.push(`${shown}: cut ${amount(total, open[0].unit)} on ${dm(open[0].at, timeZone)}, invoice has ${ln.qty}`);
+    }
+  }
+  const missing = new Map();
+  for (const r of rows) if (!r.invoiced && !taken.has(r)) missing.set(r.code, [...(missing.get(r.code) || []), r]);
+  for (const [k, list] of missing) problems.push(`${k}: cut ${amount(list.reduce((x, r) => x + r.qty, 0), list[0].unit)} on ${dm(list[0].at, timeZone)}, not invoiced`);
+  return { problems };
+}
