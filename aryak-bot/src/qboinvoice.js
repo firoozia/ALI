@@ -14,6 +14,7 @@ import { cutTotal, cutLine, faDigits } from './cuts.js';
 import { rankNames, scoreName } from './translit.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { staffChecker } from './gate.js';
+import { isEnglishOut } from './outlang.js';
 import { nameKey } from './customergroups.js';
 import { qboEscape } from './qbo.js';
 
@@ -124,6 +125,7 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], perm };
     if ((m = new RegExp(String.raw`^مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], perm };
   }
+  if ((m = /^(?:details|جزئیات)\s*#?\s*(Q\s*\d+)$/iu.exec(s))) return { type: 'details', id: m[1].replace(/\s+/g, '').toUpperCase() };
   if (/^مجوزها$/u.test(s)) return { type: 'auth_list' };
   if (/^نام\s*(?:‌?های|ها)\s+فارسی(?:\s+مشتری(?:\s*ها)?)?$/u.test(s)) return { type: 'persian_list' };
   if ((m = /^نام\s+فارسی\s+(.+?)\s*=\s*(.+)$/u.exec(s)) && /[؀-ۿ]/.test(m[2])) return { type: 'persian_set', customer: m[1].trim(), persian: m[2].trim() };
@@ -773,13 +775,13 @@ export class QboInvoiceDesk {
       const price = l.price ?? listed;
       if (price === null || Number.isNaN(price)) { problems.items.push(`سطر ${fa(l.n)}: برای کالای «${l.item.Name}» در کوییک‌بوکس قیمتی نیست؛ قیمت را در همان سطر بنویسید.`); continue; }
       const amount = fils(l.qty * price);
-      const w = [];
-      if (listed !== null && l.price !== null && l.price < listed - 0.005) w.push(`قیمت کمتر از قیمت کوییک‌بوکس (${listed})`);
-      if (listed !== null && l.price !== null && l.price > listed + 0.005) w.push(`قیمت شما ${l.price} است و قیمت کوییک‌بوکس ${listed}؛ قیمت شما می‌ماند`); // a note, not a stop
+      const w = []; const fl = []; // [fl]: the same warnings, one short English line each (the short preview)
+      if (listed !== null && l.price !== null && l.price < listed - 0.005) { w.push(`قیمت کمتر از قیمت کوییک‌بوکس (${listed})`); fl.push(`price ${l.price} is below the QuickBooks price ${listed}`); }
+      if (listed !== null && l.price !== null && l.price > listed + 0.005) { w.push(`قیمت شما ${l.price} است و قیمت کوییک‌بوکس ${listed}؛ قیمت شما می‌ماند`); fl.push(`price ${l.price} is above the QuickBooks price ${listed}`); } // a note, not a stop
       if (this.stockOf && l.typed && /^[\w\-./ ]{1,30}$/.test(l.typed)) { // the free stock beside the line: a warning, never a stop, and nothing is reported to anyone
         try {
           const st = await this.stockOf(l.typed);
-          if (st && Number.isFinite(st.free) && st.free < l.qty) w.push(`موجودی از شیت زیناکس — کد ${fa(l.typed)}: آزاد ${fa(st.free).replace(".", "٫")} ${st.unit === 'm' || !st.unit ? 'متر' : st.unit}، کمتر از ${fa(l.qty)}`);
+          if (st && Number.isFinite(st.free) && st.free < l.qty) { w.push(`موجودی از شیت زیناکس — کد ${fa(l.typed)}: آزاد ${fa(st.free).replace(".", "٫")} ${st.unit === 'm' || !st.unit ? 'متر' : st.unit}، کمتر از ${fa(l.qty)}`); fl.push(`stock ${st.free} ${st.unit === 'm' || !st.unit ? 'm' : st.unit} < ${l.qty}`); }
         } catch { /* the stock sheet did not answer: no warning */ }
       }
       let cutInfo = null;
@@ -787,14 +789,14 @@ export class QboInvoiceDesk {
         const codes = [l.typed, String(l.item.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(l.item.Name || '').replace(/^.*?(\d{3,5})$/, '$1')];
         cutInfo = cutTotal(this.cutsOf(cutName, codes));
         const u = cutInfo ? (cutInfo.unit === 'm' ? 'متر' : cutInfo.unit === 'roll' ? 'رول' : cutInfo.unit) : '';
-        if (cutInfo && !l.qtyGuess && Math.abs(cutInfo.qty - l.qty) > 0.001) w.push(`درخواست ${faDigits(l.qty)} ${u}، برش ثبت‌شده ${faDigits(cutInfo.qty)} ${u}`);
-        if (!cutInfo) w.push('برشی ثبت نشده');
+        if (cutInfo && !l.qtyGuess && Math.abs(cutInfo.qty - l.qty) > 0.001) { w.push(`درخواست ${faDigits(l.qty)} ${u}، برش ثبت‌شده ${faDigits(cutInfo.qty)} ${u}`); fl.push(`cut recorded ${cutInfo.qty} ${cutInfo.unit === 'roll' ? 'roll' : cutInfo.unit}, requested ${l.qty}`); }
+        if (!cutInfo) { w.push('برشی ثبت نشده'); fl.push('no cut recorded'); }
       }
       const code = l.item.Sku || l.item.Name;
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
-      if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`);
+      if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) { w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`); fl.push(`price is below the owner's price list (${pb.price})`); }
       if (w.length) warnings.push(`سطر ${fa(l.n)} (${l.item.Name}): ${w.join('، ')}`);
-      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '', n: l.n, chosen: !!l.chosen, cut: cutInfo, qtyGuess: !!l.qtyGuess });
+      out.push({ itemId: String(l.item.Id), name: l.item.Name, sku: l.item.Sku || '', description: String(l.item.Description || '').slice(0, 4000), qty: l.qty, price, amount, via: l.via, typed: l.typed || '', n: l.n, chosen: !!l.chosen, cut: cutInfo, qtyGuess: !!l.qtyGuess, flags: fl });
       if (l.guess) guesses.lines.push({ n: l.n, typed: l.typed, reason: l.guess.reason, alts: l.guess.alts.map((a) => ({ itemId: String(a.Id), name: a.Name, price: Number(a.UnitPrice) || 0 })) });
     }
     let tax = null;
@@ -866,7 +868,38 @@ export class QboInvoiceDesk {
     return [`ثبت شد: کد «${code}» = ${itemLabel(found[0])}${custName ? ` برای مشتری ${custName}` : ' برای همهٔ مشتری‌ها'}. در پیش‌نمایش‌های بعدی نشان داده می‌شود.`];
   }
 
-  previewText(p) {
+  /** The preview the owner reads: SHORT in English (a few lines, the problems that matter one line each); the full old text on «details #Q14». */
+  previewText(p) { return isEnglishOut() ? this.previewShort(p) : this.previewFull(p); }
+
+  previewShort(p) {
+    const code = (l) => String(l.typed || '').trim() || (/\d{2,}/.exec(l.sku || l.name) || [''])[0];
+    const named = (l) => { const k = code(l); if (!k) return l.name; const i = l.name.toLowerCase().indexOf(k.toLowerCase()); return i >= 0 ? `${l.name.slice(0, i)}*${l.name.slice(i, i + k.length)}*${l.name.slice(i + k.length)}` : `${l.name} *${k}*`; };
+    const many = p.lines.length > 1;
+    const flags = [];
+    if (p.guesses?.customer) flags.push(`⚠ guess: ${p.guesses.customer.text} → ${p.customer.name}`);
+    for (const l of p.lines) {
+      if (l.via === 'guess' && l.typed) flags.push(`⚠ guess: ${l.typed} → ${l.name}`);
+      if (l.qtyGuess) flags.push(`⚠ ${many ? `${code(l)}: ` : ''}quantity guessed from the cut`);
+      for (const f of l.flags || []) flags.push(`⚠ ${many ? `${code(l)}: ` : ''}${f}`);
+    }
+    if (p.guesses?.tax) flags.push(`⚠ guess: tax code ${p.tax.name}`);
+    const open = this.openIds();
+    const answer = open.length > 1 ? `Yes #${p.id} / No #${p.id}` : 'Yes/No';
+    return [
+      `*Invoice* #${p.id}`,
+      `Customer: *${p.customer.name}*`,
+      ...(p.po ? [`PO: *${p.po}*`] : []),
+      ...p.lines.map((l, i) => `${i + 1}. ${named(l)} (${l.qty} ×${l.price} = ${money(l.amount)})`),
+      `Total: *${money(p.total)}${p.currency ? ` ${p.currency}` : ''}*`,
+      ...flags,
+      answer,
+    ].join('\n');
+  }
+
+  /** «details #Q14»: the full old preview. */
+  previewDetails(id) { const p = this.store.get(id); return p ? this.previewFull(p) : `Preview ${id} was not found.`; }
+
+  previewFull(p) {
     const who = p.requester === 'owner' ? 'خودتان' : `شمارهٔ ${p.requester}`;
     return [
       `پیش‌نمایش فاکتور #${p.id} (درخواست از ${who}) — هنوز چیزی در کوییک‌بوکس ساخته نشده`,
@@ -977,7 +1010,7 @@ export class QboInvoiceDesk {
     p.qbo = { id: String(created.Id), docNumber: created.DocNumber || '', total: fils(created.TotalAmt) };
     this.store.save();
     this.audit.add({ event: 'create', requester: p.requester, approver: 'owner', previewId: p.id, qboId: p.qbo.id, docNumber: p.qbo.docNumber, total: p.qbo.total });
-    const out = [`فاکتور ${p.id} در کوییک‌بوکس ساخته شد: شمارهٔ ${p.qbo.docNumber || '(بی‌شماره)'}، جمع ${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}.`];
+    const out = isEnglishOut() ? [`*Invoice* ${p.qbo.docNumber || '(no number)'} — *${p.customer.name}* — *${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}*`] : [`فاکتور ${p.id} در کوییک‌بوکس ساخته شد: شمارهٔ ${p.qbo.docNumber || '(بی‌شماره)'}، جمع ${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}.`];
     // read it back and compare the total with the preview
     try {
       const back = (await this.qbo.get(`invoice/${encodeURIComponent(p.qbo.id)}`))?.Invoice;

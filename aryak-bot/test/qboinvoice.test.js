@@ -935,7 +935,7 @@ test('the exact line builds a preview for AL EBDA AL MALKI KITCHEN (QuickBooks\'
     const r = await t.inv.request({ text: ONE_LINE, requester: 'owner' });
     assert.ok(r.owner, r.requester);
     assert.match(r.owner, /AL EBDA AL MALKI KITCHEN/); assert.doesNotMatch(r.owner, /NUQOOSH/);
-    assert.match(r.owner, /× 97/); assert.match(r.owner, /هنگام ساخت را کوییک‌بوکس می‌دهد/);
+    assert.match(r.owner, /\(97 ×16 = 1,552\.00\)/); assert.doesNotMatch(r.owner, /Invoice no|assigned by/); // the short preview: no number line
     assert.equal(t.m.posts.length, 0);
     assert.equal(t.store.get('Q1').docNumber, '');
     await t.inv.decide({ verb: 'yes', id: 'Q1' });
@@ -1029,4 +1029,62 @@ test('wiring: the targets are the request chat, the yes chat and the owner copy 
   assert.match(index, /qboInvoices\.request\(\{ text, requester: 'owner', origin: here\.chatId \? \{ jid: here\.chatId \} : null \}\)/);
   assert.match(index, /qboInvoices\.decide\(\{ verb: ic\.type, id, decidedIn: here\.chatId \|\| '' \}\)/);
   assert.match(index, /requester: jidDigits\(chatId\), origin: \{ jid: chatId \}/);
+});
+
+// ------------------------------------------------------------------------------------------------ the short preview (English): a snapshot
+test('the short preview: *Invoice* #Q1, the customer in bold, one line per item with the code in bold, the total in bold, a one-line flag only when it matters, Yes/No', async () => {
+  setOutLang('en');
+  try {
+    const t = mk();
+    const r = await t.inv.request({ text: REQ, requester: 'owner' });
+    assert.equal(r.owner, [
+      '*Invoice* #Q1',
+      'Customer: *Orion Furniture*',
+      '1. *Hinge 35mm* (10 ×2.5 = 25.00)',
+      '2. *Edge Tape White* (3 ×1.1 = 3.30)',
+      'Total: *29.72 AED*',
+      '⚠ Edge Tape White: price 1.1 is below the QuickBooks price 1.2',
+      'Yes/No',
+    ].join('\n'));
+    // gone from the default: the "nothing created" sentence, the number line, subtotal, VAT, tax text, validity
+    for (const gone of ['nothing', 'Invoice no', 'Subtotal', 'VAT', '24 hours', 'tax']) assert.ok(!r.owner.toLowerCase().includes(gone.toLowerCase()), gone);
+    // a second waiting preview: the answers carry the full code
+    const r2 = await t.inv.request({ text: REQ, requester: 'owner' });
+    assert.ok(r2.owner.startsWith('*Invoice* #Q2') && r2.owner.endsWith('Yes #Q2 / No #Q2'));
+    // the full old preview on request, in either language
+    assert.deepEqual(parseInvoiceCommand('details #Q2'), { type: 'details', id: 'Q2' }); assert.deepEqual(parseInvoiceCommand('جزئیات #q2'), { type: 'details', id: 'Q2' });
+    const full = t.inv.previewDetails('Q2');
+    assert.ok(full.includes('پیش‌نمایش فاکتور #Q2') && full.includes('جمع کل'));
+    // the created message
+    const done = await t.inv.decide({ verb: 'yes', id: 'Q1' });
+    assert.match(done[0], /^\*Invoice\* \S+ — \*Orion Furniture\* — \*29\.72 AED\*$/);
+  } finally { setOutLang('fa'); }
+});
+
+test('the short preview: the code is bold inside the item name; flags are one line each (guess, no cut, low stock, cut differs); the PO shows', async () => {
+  setOutLang('en');
+  try {
+    const items = [{ Id: '9', Name: 'PVC FILM 509', Sku: 'PVC-509', UnitPrice: 11, Type: 'Inventory', Active: true }];
+    const t = mk({ customers: [{ Id: '91', DisplayName: 'HIGH POINT', CompanyName: 'HIGH POINT LLC', Balance: 0 }], items });
+    t.inv.stockOf = async () => ({ free: 27.8, unit: 'm' });
+    t.inv.cutsOf = () => [];
+    const r = await t.inv.request({ text: 'Atossa invoice for high pnt\n509 = 97 mtr\nPN 77', requester: 'owner' });
+    assert.ok(r.owner, r.requester);
+    const lines = r.owner.split('\n');
+    assert.equal(lines[0], '*Invoice* #Q1'); assert.equal(lines[1], 'Customer: *HIGH POINT*'); assert.equal(lines[2], 'PO: *77*');
+    assert.equal(lines[3], '1. PVC FILM *509* (97 ×11 = 1,067.00)');
+    assert.match(lines[4], /^Total: \*1,120\.35 AED\*$/);
+    const flags = lines.filter((l) => l.startsWith('⚠'));
+    assert.ok(flags.includes('⚠ stock 27.8 m < 97') && flags.includes('⚠ no cut recorded'), flags.join(' | '));
+    assert.equal(lines.at(-1), 'Yes/No');
+    assert.ok(flags.length <= 4 && lines.length <= 11); // short
+  } finally { setOutLang('fa'); }
+});
+
+test('the statement confirmation is short too, and the Persian mode keeps the old texts', () => {
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes('*Statement* — *${x.name}* — *${x.balance}*. Send to ${where2}? ${answer}'));
+  assert.match(index, /const answer = groupStatements\.openIds\(\)\.length > 1 \? 'Yes #' \+ id \+ ' \/ No #' \+ id : 'Yes\/No';/);
+  const t = mk(); // Persian mode: the full old preview as before
+  return t.inv.request({ text: REQ, requester: 'owner' }).then((r) => { assert.ok(r.owner.startsWith('پیش‌نمایش فاکتور #Q1')); });
 });

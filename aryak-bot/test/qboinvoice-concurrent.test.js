@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { QboInvoiceDesk, InvoiceStore, Audit } from '../src/qboinvoice.js';
+import { setOutLang } from '../src/outlang.js';
+setOutLang('fa'); // this test reads the Persian sentences
 
 // Two "yes" at the same moment can never make two invoices. Invented data only.
 test('a second yes that arrives while the first is still creating does not start another attempt', async () => {

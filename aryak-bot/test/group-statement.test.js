@@ -308,7 +308,7 @@ test('wiring: no name in a customer group -> the group\'s own customer; one cust
   assert.match(part, /has several customers; write the number:/); assert.match(part, /choiceKeys\(requester\)/);
   assert.doesNotMatch(part.slice(part.indexOf('async function customerGroupStatement')), /sock\.sendMessage\(groupId/); // never a word in the customer's group
   const prep = src.slice(src.indexOf('async function prepareGroupStatement'), src.indexOf('async function decideGroupStatement'));
-  assert.match(prep, /Statement for \$\{x\.name\} \(balance \$\{x\.balance\}\) — send to /); assert.match(prep, /Reply YES or NO \(full code: yes #\$\{id\}\)/);
+  assert.ok(prep.includes('*Statement* — *${x.name}* — *${x.balance}*. Send to ') && prep.includes("'Yes/No'") && prep.includes('Yes #'));
   assert.match(prep, /await postDocument\(who\.notify,/); // the requester sees the file in private
   const decide = src.slice(src.indexOf('async function decideGroupStatement'), src.indexOf('async function customersForGroup'));
   assert.match(decide, /caption: `Statement of account — \$\{p\.name\}`/); // one English line in the group

@@ -688,6 +688,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'bulk_edge': return qboBulk.planEdgeList();
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
+    case 'details': return [qboInvoices.previewDetails(ic.id)];
     case 'persian_list': {
       const blocked = qboInvoices.guard(); if (blocked) return [blocked];
       if (!persianNames.seeded) await qboDesk.seedPersian();
@@ -1038,8 +1039,10 @@ async function prepareGroupStatement({ customer, period, groupId, subject, kind 
     const id = groupStatements.add({ groupId, subject, held: x.held, name: x.name, period, kind, by: who.by, notify: who.notify });
     logger.info(`statement ${id} waits for ${who.by}'s yes (${x.name}, balance ${x.balance})`);
     await postDocument(who.notify, x.held.pdf, x.held.fileName, x.held.caption); // the requester sees the very file first, in private
+    const answer = groupStatements.openIds().length > 1 ? 'Yes #' + id + ' / No #' + id : 'Yes/No';
+    const where2 = kind === 'private' ? subject : 'this group (' + subject + ')';
     const ask = isEnglishOut()
-      ? `Statement for ${x.name} (balance ${x.balance}) — send to ${kind === 'private' ? subject : `the group "${subject}"`}? Reply YES or NO (full code: yes #${id}).`
+      ? `*Statement* — *${x.name}* — *${x.balance}*. Send to ${where2}? ${answer}`
       : askLine({ name: x.name, subject, id, period, kind });
     await tell(`${ask}${x.guessed ? bi(`\n(I guessed the name from "${x.typed}"; if it is wrong reply no #${id}.)`, `\n(نام را حدس زدم: «${x.typed}»؛ اگر درست نیست «نه #${id}» بنویسید.)`) : ''}`);
   } catch (e) {
