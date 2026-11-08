@@ -5,25 +5,42 @@
 
 import { productCode } from './codes.js';
 import { sameCustomer } from './tracker.js';
+import { looseWords } from './namekey.js';
 
 const DAY = 24 * 3600 * 1000;
 const FA = '۰۱۲۳۴۵۶۷۸۹';
 export const faDigits = (s) => String(s).replace(/\d/g, (d) => FA[d]);
 const code = (c) => productCode(c) || String(c || '').trim().toUpperCase();
+const digitsOf = (c) => (String(c || '').match(/\d{2,5}/g) || []).join('-'); // «ART NO 220» and «220» share the number
+const GENERIC = new Set(['llc', 'l', 'c', 'ltd', 'co', 'company', 'trading', 'ind', 'industries', 'industrial', 'est', 'fze', 'fzco', 'general', 'the', 'and', 'of', 'international', 'for', 'trade', 'investment', 'kitchen', 'kitchens', 'doors', 'furniture', 'decoration', 'interiors', 'carpentry', 'al']);
+/** The same customer: one name holds the other, or they share a distinctive word (the caption says «NUQOOSH», the books say «NUQOOSH IND . LLC»). */
+export function sameCutCustomer(a, b) {
+  if (!a || !b) return false;
+  if (sameCustomer(a, b)) return true;
+  const wa = new Set(looseWords(a).filter((w) => w.length >= 4 && !GENERIC.has(w)));
+  return looseWords(b).some((w) => w.length >= 4 && !GENERIC.has(w) && wa.has(w));
+}
 const unitOf = (u) => ({ m: 'm', mtr: 'm', meter: 'm', متر: 'm', roll: 'roll', رول: 'roll' }[String(u || '').trim().toLowerCase()] || String(u || '').trim().toLowerCase());
 
 /** The cut lines of [customer] for [codes] that no invoice has taken yet, newest first: [{ ref, index, qty, unit, at }]. */
-export function cutRecords(tracker, customer, codes, { now = Date.now(), windowDays = 30 } = {}) {
-  const wanted = new Set([].concat(codes).filter(Boolean).map(code));
+export function cutRecords(tracker, customer, codes, { now = Date.now(), windowDays = 30, log = null } = {}) {
+  const list = [].concat(codes).filter(Boolean);
+  const wanted = new Set(list.map(code));
+  const wantedDigits = new Set(list.map(digitsOf).filter((d) => d.length >= 2));
   if (!wanted.size || !customer) return [];
-  const out = [];
+  const out = []; let cuts = 0; let ofCustomer = 0;
   for (const e of tracker.events) {
-    if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY || !sameCustomer(e.customer, customer)) continue;
+    if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
+    cuts += 1;
+    if (!(sameCutCustomer(e.customer, customer) || sameCutCustomer(e.customerTyped, customer))) continue;
+    ofCustomer += 1;
     (e.lines || []).forEach((l, index) => {
-      if (l.invoiced || !wanted.has(code(l.code)) || !(Number(l.quantity) > 0)) return;
+      if (l.invoiced || !(Number(l.quantity) > 0)) return;
+      if (!(wanted.has(code(l.code)) || (digitsOf(l.code) && wantedDigits.has(digitsOf(l.code))))) return;
       out.push({ ref: e.ref, index, qty: Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at });
     });
   }
+  if (log) log(`cut lookup: customer "${customer}", codes ${list.join('/')}: ${cuts} cut event(s) in ${windowDays} days, ${ofCustomer} of this customer, ${out.length} line(s) matched`);
   return out.sort((a, b) => b.at - a.at);
 }
 

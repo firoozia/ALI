@@ -214,6 +214,13 @@ export class QboDesk {
    * Never a guess: an unsure one returns the candidates to ask about.
    */
   async resolveStrict(typed) {
+    { // a customer whose own QuickBooks name equals the typed one (case, dots and L.L.C do not matter) is the answer before any alias or group name is looked at
+      const all0 = await this.customers();
+      const k0 = nameKey(typed); const lk0 = looseKey(typed);
+      const direct = all0.filter((c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName].some((n) => n && (nameKey(n) === k0 || (lk0 && looseKey(n) === lk0))));
+      if (direct.length === 1) { const name = direct[0].DisplayName || direct[0].CompanyName; return { ours: typed, id: String(direct[0].Id), name }; }
+      if (direct.length > 1) return { ours: typed, ambiguous: direct };
+    }
     const row = customerRowFor(typed, { list: this.list, aliases: this.aliases });
     const ours = row?.customer || typed;
     const saved = this.map.get(ours);
@@ -238,10 +245,25 @@ export class QboDesk {
    * confirmation); several -> { candidates } and the request stops. Never a choice between two.
    */
   async resolveLoose(typed) {
-    const strict = await this.resolveStrict(typed);
-    if (strict.id) return { ...strict, loose: false };
     const tk = looseWords(typed);
     const whole = (name, words = tk) => { const t = new Set(looseWords(name)); return words.length > 0 && words.every((x) => t.has(x)); };
+    // QuickBooks' own names first: ONE customer whose name holds all the typed words is that customer, whatever an alias or a WhatsApp group name says
+    // (the group teaching «A & B» only chooses the group an invoice goes to; it never decides which customer is meant).
+    {
+      const cached = await this.customers();
+      const names0 = (c) => [c.DisplayName, c.CompanyName, c.FullyQualifiedName];
+      let first = cached.filter((c) => names0(c).some((n) => n && whole(n)));
+      if (!first.length) { const live = await this.liveFind(typed); first = live.filter((c) => names0(c).some((n) => n && whole(n))); }
+      const seen0 = new Set();
+      first = first.filter((c) => !seen0.has(String(c.Id)) && seen0.add(String(c.Id)));
+      if (first.length === 1) {
+        const name = first[0].DisplayName || first[0].CompanyName;
+        const sameKey = looseKey(name) === looseKey(typed);
+        return { ours: typed, id: String(first[0].Id), name, loose: !sameKey, typed };
+      }
+    }
+    const strict = await this.resolveStrict(typed);
+    if (strict.id) return { ...strict, loose: false };
     const rows = this.list.rows().filter((r) => whole(r.customer) || rowGroups(r).some((g) => whole(String(g.subject).replace(/aryak/gi, ' '))));
     if (rows.length > 1) return { ours: typed, candidates: rows.map((r) => r.customer).slice(0, 8) };
     if (rows.length === 1) {

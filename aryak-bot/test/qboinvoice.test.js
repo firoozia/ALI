@@ -860,3 +860,33 @@ test('after the invoice is created its cut lines carry the invoice number: offer
   assert.equal(recs.length, 1); assert.deepEqual([cutTotal(recs).qty, cutTotal(recs).unit], [90, 'm']);
   assert.equal(cutRecords(tr, 'AL EBDA', '215', { now: CUT_AT + 90 * 86400000 }).length, 0); // too old to be this order's cut
 });
+
+// ------------------------------------------------------------------------------------------------ NUQOOSH is NUQOOSH IND . LLC; the cut of «ART NO 220 NUQOOSH 12M» is found
+test('QuickBooks\' own names beat a group alias: NUQOOSH is the customer NUQOOSH IND . LLC, never the one the WhatsApp group name pairs it with', async () => {
+  const t = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: [...histFor('81'), ...histFor('82')] });
+  // the owner's teaching: the group «NUQOOSH & AL EBDA» holds both names; the alias store pairs them
+  t.list.approve('AL EBDA AL MALKI KITCHEN', 'g1@g.us', 'NUQOOSH & AL EBDA - ARYAK');
+  t.desk.aliases.add('AL EBDA AL MALKI KITCHEN', 'NUQOOSH');
+  const r = await t.desk.resolveLoose('NUQOOSH');
+  assert.deepEqual([r.id, r.name], ['82', 'NUQOOSH IND . LLC']);
+  assert.equal((await t.desk.resolveLoose('AL EBDA')).id, '81');
+  assert.equal((await t.desk.resolveStrict('NUQOOSH IND . LLC')).id, '82');
+  const pv = await t.inv.request({ text: MULTI, requester: 'owner' });
+  assert.deepEqual([t.store.get('Q1').customer.id, t.store.get('Q2').customer.id], ['81', '82']);
+  assert.ok(!pv.owner.includes('حدس از «NUQOOSH»'));
+});
+
+test('the cut of «ART NO 220 NUQOOSH 12M» is found: the caption\'s name, the group name the tracker kept, the code with words around it, the unit M', () => {
+  const tr = new Tracker({ dir: '' });
+  tr.add({ type: 'cut', at: CUT_AT, customer: 'NUQOOSH & AL EBDA', customerTyped: 'NUQOOSH', lines: [{ code: 'ART NO 220', quantity: 12, unit: 'M' }], ref: 'k1' });
+  tr.add({ type: 'cut', at: CUT_AT, customer: 'NUQOOSH & AL EBDA', lines: [{ code: '221', quantity: 3, unit: 'm' }], ref: 'k2' }); // an event recorded before the typed name was kept
+  const logs = [];
+  const opts = { now: CUT_AT + 3600000, log: (l) => logs.push(l) };
+  const found = cutRecords(tr, 'NUQOOSH IND . LLC', ['220', 'PVC-220'], opts);
+  assert.equal(found.length, 1); assert.deepEqual([found[0].qty, found[0].unit], [12, 'm']);
+  assert.equal(cutRecords(tr, 'NUQOOSH IND . LLC', '221', opts).length, 1); // the old event, by the shared word
+  assert.equal(cutRecords(tr, 'ZED TRADING', '220', opts).length, 0); // another customer
+  assert.equal(cutRecords(tr, 'NUQOOSH IND . LLC', '999', opts).length, 0); // another code
+  assert.ok(logs.some((l) => /cut lookup: customer "NUQOOSH IND \. LLC", codes 220\/PVC-220: 2 cut event\(s\).*1 line\(s\) matched/.test(l)), logs.join(' | '));
+  assert.equal(cutTotal(found).qty, 12);
+});
