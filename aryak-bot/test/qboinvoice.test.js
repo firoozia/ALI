@@ -63,6 +63,7 @@ function mockQbo(opts = {}) {
     if (p.includes('/companyinfo/')) return res(200, { CompanyInfo: { CompanyName: 'The Test Workshop', Country: 'AE' } });
     const sql = u.searchParams.get('query') || '';
     const ent = /from\s+(\w+)/i.exec(sql)[1];
+    if (ent === 'Invoice' && /where CustomerRef/i.test(sql) && opts.customerInvoices) return res(200, { QueryResponse: { Invoice: opts.customerInvoices } });
     if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.officeInvoices && !/DocNumber = /.test(sql)) return res(200, { QueryResponse: { Invoice: opts.officeInvoices } });
     if (ent === 'Invoice' && /^select \*/i.test(sql) && opts.byNumber && /DocNumber = '([^']*)'/.test(sql)) return res(200, { QueryResponse: { Invoice: [opts.byNumber[/DocNumber = '([^']*)'/.exec(sql)[1]]].filter(Boolean) } });
     if (ent === 'Template') return res(200, { QueryResponse: { Template: opts.templates || [] } });
@@ -1160,7 +1161,7 @@ test('the invoice takes the customer\'s addresses, e-mail, terms and currency fr
   customer.PrimaryEmailAddr.Address = 'changed@orion.example'; // changed after the preview: the create reads it again
   await t.inv.decide({ verb: 'yes', id: 'Q1' });
   const body = t.m.posts[0].body;
-  assert.deepEqual(body.BillAddr, { Line1: '1 Sample Street', City: 'Sample City', Country: 'Sample Land' }); // without the record id
+  assert.deepEqual(body.BillAddr, { Line1: 'Orion Furniture', Line2: '1 Sample Street', Line3: 'Sample City', FreeFormAddress: true }); // the screen's block: the name, the phone, the address lines, the city (no record id)
   assert.deepEqual(body.ShipAddr, { Line1: '2 Sample Yard', City: 'Sample City' });
   assert.deepEqual(body.BillEmail, { Address: 'changed@orion.example' }); assert.deepEqual(body.SalesTermRef, { value: '7' });
   assert.deepEqual(body.CurrencyRef, { value: 'AED', name: 'United Arab Emirates Dirham' });
@@ -1168,7 +1169,8 @@ test('the invoice takes the customer\'s addresses, e-mail, terms and currency fr
   // a customer with no address: none is made up
   const bare = mk({ customers: [{ Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0, BillAddr: { Id: '9' } }] });
   await bare.inv.request({ text: REQ, requester: 'owner' }); await bare.inv.decide({ verb: 'yes', id: 'Q1' });
-  for (const k of ['BillAddr', 'ShipAddr', 'CurrencyRef']) assert.equal(k in bare.m.posts[0].body, false, k);
+  assert.deepEqual(bare.m.posts[0].body.BillAddr, { Line1: 'Orion Furniture', FreeFormAddress: true }); // only the name: nothing is made up
+  for (const k of ['ShipAddr', 'CurrencyRef']) assert.equal(k in bare.m.posts[0].body, false, k);
 });
 
 test('compare invoices: the owner sees field by field what the office\'s screen made and ours did not (read only); not found is said; the Persian words work', async () => {
@@ -1215,7 +1217,8 @@ test('invoice dry run: the exact body a yes would send is compared with an offic
   const text = out.join('\n');
   assert.match(out[0], /^Dry run of Q1 against inv-1 \(nothing created, no number taken\): \d+ difference\(s\)\. Left = inv-1, right = what Q1 would send/);
   assert.ok(!text.includes('CustomerMemo:') && !text.includes('PrintStatus:') && !text.includes('AllowOnlinePayment:')); // these match now
-  assert.ok(text.includes('EmailStatus: NotSet | (missing)') && text.includes('BillAddr:')); // what is still different is listed
+  assert.ok(!text.includes('EmailStatus')); // QuickBooks fills it by itself: not listed
+  assert.ok(text.includes('BillAddr:')); // what is still different is listed
   assert.ok(text.includes('line 1 field Description: present | missing') || text.includes('line 1 field SalesItemLineDetail.ServiceDate: present | missing'));
   assert.ok(!text.includes('DueDate') && !text.includes('TotalAmt')); // QuickBooks computes these
   assert.equal(t.m.posts.length, 0); // nothing created
@@ -1230,4 +1233,45 @@ test('a long comparison is cut into several messages so WhatsApp cuts nothing', 
   assert.ok(pages.length > 3); assert.ok(pages.every((p) => p.length <= 1400));
   assert.equal(pages.join('\n').split('\n').length, 61); // nothing lost
   assert.ok(pages[0].startsWith('Comparing a with b'));
+});
+
+// ------------------------------------------------------------------------------------------------ terms, place of supply and the bill-to block as the screen makes them
+test('terms and the place of supply: the customer\'s record, else the company default, else what the office last used for HIM, else for anybody; the bill-to block is name, phone, address lines, city', async () => {
+  const bare = { Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0 };
+  const hisInvoice = { Id: '5', DocNumber: 'inv-5', SalesTermRef: { value: '4' }, TransactionLocationType: 'AbuDhabi', AllowOnlinePayment: true };
+  const anyInvoice = { Id: '6', DocNumber: 'inv-6', SalesTermRef: { value: '9' }, TransactionLocationType: 'Dubai' };
+  // his own newest office invoice wins over the newest overall
+  const a = mk({ customers: [bare], officeInvoices: [anyInvoice], customerInvoices: [{ ...hisInvoice, PrivateNote: 'Atossa Q1', SalesTermRef: { value: '1' } }, hisInvoice] });
+  await a.inv.request({ text: REQ, requester: 'owner' }); await a.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(a.m.posts[0].body.SalesTermRef, { value: '4' }); assert.equal(a.m.posts[0].body.TransactionLocationType, 'AbuDhabi');
+  // none of his own: the newest office invoice overall
+  const b = mk({ customers: [bare], officeInvoices: [anyInvoice], customerInvoices: [] });
+  await b.inv.request({ text: REQ, requester: 'owner' }); await b.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(b.m.posts[0].body.SalesTermRef, { value: '9' }); assert.equal(b.m.posts[0].body.TransactionLocationType, 'Dubai');
+  // the company default before any invoice
+  const d = mk({ customers: [bare], salesForms: { DefaultTerms: '2' }, officeInvoices: [anyInvoice], customerInvoices: [hisInvoice] });
+  await d.inv.request({ text: REQ, requester: 'owner' }); await d.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(d.m.posts[0].body.SalesTermRef, { value: '2' });
+  // the customer's own terms before everything
+  const e = mk({ customers: [{ ...bare, SalesTermRef: { value: '7' } }], salesForms: { DefaultTerms: '2' }, officeInvoices: [anyInvoice], customerInvoices: [hisInvoice] });
+  await e.inv.request({ text: REQ, requester: 'owner' }); await e.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(e.m.posts[0].body.SalesTermRef, { value: '7' });
+  // nothing anywhere: none is sent
+  const none = mk({ customers: [bare] });
+  await none.inv.request({ text: REQ, requester: 'owner' }); await none.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.equal('SalesTermRef' in none.m.posts[0].body, false); assert.equal('TransactionLocationType' in none.m.posts[0].body, false);
+  // the bill-to block: name, phone, address lines, city, in that order, free-form
+  const f = mk({ customers: [{ ...bare, PrimaryPhone: { FreeFormNumber: '+000 0000 000' }, BillAddr: { Id: '3', Line1: 'Sample Tower', City: 'SAMPLE CITY' } }] });
+  await f.inv.request({ text: REQ, requester: 'owner' }); await f.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.deepEqual(f.m.posts[0].body.BillAddr, { Line1: 'Orion Furniture', Line2: '+000 0000 000', Line3: 'Sample Tower', Line4: 'SAMPLE CITY', FreeFormAddress: true });
+});
+
+test('the dry run lists only real gaps: what QuickBooks fills in by itself is not shown', async () => {
+  const office = { Id: '7', DocNumber: 'inv-1', AllowIPN: false, AllowOnlinePayPalPayment: false, CustomField: [], EmailStatus: 'NotSet', ExchangeRate: 1, PrivateNote: 'office note',
+    Line: [{ DetailType: 'SalesItemLineDetail', Id: '1', LineNum: 1, Amount: 1, CustomExtensions: [], SalesItemLineDetail: { ItemRef: { value: '1' }, TaxCodeRef: { value: '11' }, ItemAccountRef: { value: '79' } } }] };
+  const t = mk({ byNumber: { 'inv-1': office }, officeInvoices: [office] });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  const text = (await t.inv.dryRun('Q1', 'inv-1')).join('\n');
+  for (const harmless of ['AllowIPN', 'AllowOnlinePayPalPayment', 'CustomField', 'EmailStatus', 'ExchangeRate', 'PrivateNote', 'field Id', 'LineNum', 'CustomExtensions', 'ItemAccountRef']) assert.ok(!text.includes(harmless), `${harmless}\n${text}`);
+  assert.ok(text.includes('BillEmail') || text.includes('GlobalTaxCalculation')); // a real gap is still there
 });
