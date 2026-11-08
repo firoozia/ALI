@@ -391,7 +391,7 @@ export class QboDesk {
     const cur = data.currency ? `${data.currency} ` : '';
     const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${period.from} to ${period.to}` : 'current'} - balance ${cur}${money(data.closing)}`;
     const fileName = `statement-${safe}${period ? `-${period.label}` : ''}.pdf`;
-    if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
+    if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, balance: `${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}`, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
     await this.post(privateJid, pdf, fileName, caption);
     // a read-only action with ONE clearly best candidate is done and said, not asked: «(حدس از …)»
     const guessed = found.via === 'sound' ? ` (حدس از «${typed}» — اگر مشتری دیگری بود بنویسید)` : '';

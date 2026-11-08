@@ -34,10 +34,10 @@ export class GroupStatements {
   constructor({ now = () => Date.now(), ttlMs = TTL_MS } = {}) { Object.assign(this, { now, ttlMs }); this.map = new Map(); this.n = 0; }
 
   /** Keep a built statement for a group; returns its id. */
-  add({ groupId, subject, held, name, period = null, kind = 'group' }) {
+  add({ groupId, subject, held, name, period = null, kind = 'group', by = 'owner', notify = '' }) {
     this.n += 1;
     const id = `S${this.n}`;
-    this.map.set(id, { id, groupId, subject, held, name, period, kind, at: this.now() });
+    this.map.set(id, { id, groupId, subject, held, name, period, kind, by, notify, at: this.now() });
     return id;
   }
 
@@ -48,7 +48,8 @@ export class GroupStatements {
     return p;
   }
 
-  openIds() { return [...this.map.keys()].filter((id) => this.get(id)); }
+  /** The waiting ids; with [by] only those asked for by that person (the owner sees all). */
+  openIds(by = '') { return [...this.map.keys()].filter((id) => this.get(id) && (!by || this.get(id).by === by)); }
   clear(id) { this.map.delete(id); }
 }
 

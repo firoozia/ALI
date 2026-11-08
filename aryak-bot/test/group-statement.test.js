@@ -135,7 +135,8 @@ test('wiring: in a customer group only the owner\'s request counts; it asks in h
   const fn = slice('async function customerGroupStatement', 'async function prepareGroupStatement') || slice('async function customerGroupStatement', '\n// ----');
   const customerPart = src.slice(src.indexOf('async function customerGroupStatement'), src.indexOf('async function customerGroupStatement') + 3000);
   assert.match(customerPart, /const owner = !!raw\.key\.fromMe \|\| staffChecker\(config\.ownerNumbers/);
-  assert.match(customerPart, /a colleague asked for a statement in a customer group \(only the owner may\)/);
+  assert.match(customerPart, /const granted = !owner && qboAuth\.has\(who, 'statement'/); // the manager with the statement permission may ask too
+  assert.match(customerPart, /a colleague without the statement permission asked for a statement in a customer group/);
   assert.doesNotMatch(customerPart.slice(0, customerPart.indexOf('prepareGroupStatement({ customer')), /sock\.sendMessage\(groupId/); // no send to the group on the request
   assert.ok(fn !== undefined);
   const prep = slice('async function prepareGroupStatement', 'async function decideGroupStatement');
@@ -287,4 +288,39 @@ test('wiring: the model is told what THIS person may do, never a personal name; 
   assert.match(src, /logger\.info\(`authorized: \$\{found\.number\} via lid`\)/);
   assert.match(src, /logger\.info\(`not authorized: \$\{raw\.key\.participant \|\| raw\.key\.remoteJid\} \(statement\)`\)/);
   assert.match(src, /logger\.info\(`not authorized: \$\{chatId\} \(\$\{isRequest \? 'invoice' : 'statement'\}\)`\)/);
+});
+
+// ------------------------------------------------------------------------------------------------ «Atossa statement» in a customer group, with no name
+test('the held statements know who asked: the owner sees all, a person sees only his own', () => {
+  const held = new GroupStatements();
+  const a = held.add({ groupId: 'g@g.us', subject: 'G', held: {}, name: 'A', by: '971528493119', notify: '971528493119@s.whatsapp.net' });
+  const b = held.add({ groupId: 'h@g.us', subject: 'H', held: {}, name: 'B' });
+  assert.deepEqual(held.openIds(), [a, b]); assert.deepEqual(held.openIds('971528493119'), [a]); assert.deepEqual(held.openIds('971500000009'), []);
+  assert.equal(held.get(b).by, 'owner'); assert.equal(held.get(a).notify, '971528493119@s.whatsapp.net');
+});
+
+test('wiring: no name in a customer group -> the group\'s own customer; one customer is confirmed privately, several are asked by number, none says so with the nearest names; nothing is said in the group', () => {
+  const part = src.slice(src.indexOf('async function customersForGroup'), src.indexOf('async function customerGroupStatement') + 4200);
+  assert.match(part, /const row = rowOfGroup\(customerGroups, groupId\);[\s\S]*?names: \[row\.customer\]/); // the owner's approved list first
+  assert.ok(part.includes("split(/") && part.includes('&|') && part.includes('and'), 'the group name is split on & and and'); // «A & B» names two customers
+  assert.match(part, /qboDesk\.resolveSpoken\(part\)/); // then the group's name against QuickBooks
+  assert.match(part, /Customer not found for this group/); assert.match(part, /Nearest QuickBooks names: /);
+  assert.match(part, /has several customers; write the number:/); assert.match(part, /choiceKeys\(requester\)/);
+  assert.doesNotMatch(part.slice(part.indexOf('async function customerGroupStatement')), /sock\.sendMessage\(groupId/); // never a word in the customer's group
+  const prep = src.slice(src.indexOf('async function prepareGroupStatement'), src.indexOf('async function decideGroupStatement'));
+  assert.match(prep, /Statement for \$\{x\.name\} \(balance \$\{x\.balance\}\) — send to /); assert.match(prep, /Reply YES or NO \(full code: yes #\$\{id\}\)/);
+  assert.match(prep, /await postDocument\(who\.notify,/); // the requester sees the file in private
+  const decide = src.slice(src.indexOf('async function decideGroupStatement'), src.indexOf('async function customersForGroup'));
+  assert.match(decide, /caption: `Statement of account — \$\{p\.name\}`/); // one English line in the group
+  assert.match(decide, /if \(by && p\.by !== by\)/); // another person's statement is not his to decide
+  assert.ok(decide.indexOf("verb !== 'yes'") < decide.indexOf('oneShot.grant('));
+});
+
+test('wiring: the manager decides his own statements in his private chat (a bare yes only when one of his waits; the full code always); his number for a customer is taken there too', () => {
+  const flow = src.slice(src.indexOf('async function authorizedFlow'), src.indexOf('const ic = parseInvoiceCommand(text);', src.indexOf('async function authorizedFlow')));
+  assert.match(flow, /pcp:\$\{person\}/);
+  assert.match(flow, /const mine = groupStatements\.openIds\(person\);/);
+  assert.match(flow, /mine\.length === 1 \? mine\[0\] : ''/);
+  assert.match(flow, /decideGroupStatement\(yn\.type, pick, person\)/);
+  assert.match(src, /person: qboAuth\.whoIs\(who, lids\(info\.lidToPhone\)\)\.number/);
 });
