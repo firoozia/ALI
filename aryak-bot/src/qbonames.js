@@ -62,7 +62,7 @@ export class QboNameDesk {
   }
 
   /** The ids of the previews the owner can still say yes or no to. */
-  openIds() { return Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && this.now() - p.at <= DAY).map((p) => p.id); }
+  openIds() { return Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && !p.result && !p.ran && this.now() - p.at <= DAY).map((p) => p.id); }
 
   /** The preview: reads everything, writes nothing. */
   async plan() {

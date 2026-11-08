@@ -47,7 +47,7 @@ export async function understandImages({ images, caption = '', config, client, f
         if (x.readable === false) return { ok: false, reason: 'unreadable' };
         if (Math.max(0, Number(x.unclear) || 0) > 0) return { ok: false, reason: 'unclear' };
         if (knownCode && ['stock', 'order'].includes(x.intent)) {
-          for (const it of (Array.isArray(x.items) ? x.items : []).slice(0, 12)) { const code = String(it?.code || '').trim(); if (code && !(await knownCode(code))) return { ok: false, reason: 'unknown-code' }; }
+          for (const it of (Array.isArray(x.items) ? x.items : []).slice(0, 12)) { const code = String(it?.code || '').trim(); if (code && !(await knownCode(code))) return { ok: false, reason: 'unknown-code', detail: code }; }
         }
         return { ok: true };
       },

@@ -114,6 +114,28 @@ export function lineCandidates(line) {
 // ---------------------------------------------------------------------------------------------------------------- exact matching
 const norm = (s) => String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
+/** Every way an item can be named by a code: its name, SKU and full name, and the colour or product number inside them (PVC-108, EDGE22-1810, "... - 1810", "1801 edge banding"). */
+export function itemCodeKeys(i) {
+  const keys = new Set();
+  for (const x of [i?.Name, i?.Sku, i?.FullyQualifiedName]) { const k = norm(x); if (k) keys.add(k); }
+  const add = (v) => { if (v !== null && v !== undefined && v !== '') keys.add(String(v).toLowerCase()); };
+  add(pvcCode(i));
+  const sku = String(i?.Sku || '').trim(); const name = String(i?.Name || '').trim();
+  let m = /^(?:PVC|EDGE(?:22|50)?)[-\s]*(\d{3,5})$/i.exec(sku); if (m) add(m[1]);
+  m = /\s-\s(\d{3,5})\s*$/.exec(name); if (m) add(m[1]); // "EDGE BAND 0.8x22 - 1810"
+  m = /^(\d{3,5})\b/.exec(name); if (m) add(m[1]);
+  m = /^B\s*(\d{3,5})$/i.exec(name); if (m) add(m[1]);
+  m = /^\d{3,5}$/.exec(sku); if (m) add(sku);
+  return keys;
+}
+/** Is [code] a code of some active item? A code that fits SEVERAL items is known (which one is asked later). */
+export function codeKnownInItems(items, code) {
+  const c = String(code || '').trim();
+  if (!c) return false;
+  const k = /^\d+$/.test(c) ? c : norm(c);
+  return (items || []).some((i) => i && i.Type !== 'Category' && i.Active !== false && itemCodeKeys(i).has(k));
+}
+
 /** The code (three or four digits) of a PVC item (PVC FILM108 -> 108, PVC 1810 -> 1810), or null (edge banding, boards and the like have none). */
 export function pvcCode(i) {
   const name = String(i?.Name || '');

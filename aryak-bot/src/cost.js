@@ -20,6 +20,8 @@ export const familyOf = (model) => { const m = String(model || '').toLowerCase()
 
 const FA_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
 const fa = (s) => String(s).replace(/\d/g, (d) => FA_DIGITS[d]).replace(/\./g, '٫');
+/** Dollars: two decimals, but four below a cent so that a small amount never shows as zero. */
+export const fmtUsd = (x) => fa((x > 0 && x < 0.01 ? x.toFixed(4) : x.toFixed(2)));
 const REASON = { unreadable: 'ناخوانا', unclear: 'کد نامطمئن', 'unknown-code': 'کد ناشناس', totals: 'جمع نمی‌خورد', missing: 'فیلد ناقص', parse: 'پاسخ ناقص', other: 'دیگر' };
 export const reasonLabel = (r) => REASON[r] || REASON.other;
 const FAMILY_FA = { opus: 'اوپوس', sonnet: 'سونِت', haiku: 'هایکو', other: 'دیگر' };
@@ -128,12 +130,12 @@ export class CostMeter {
 
   /** "عکس: ۱۲ (هایکو ۱۰، سونِت ۲)، ویس: ۷ (۴ دقیقه)، پی‌دی‌اف: ۵ (۴ رایگان)، هزینه: ۰٫۴۲ دلار"; empty when nothing was spent. */
   static summary(t) {
-    const photos = (t.photo?.haiku || 0) + (t.photo?.sonnet || 0);
+    const photos = t.photo?.haiku || 0; // every photo is read once by the first model; the strong model's second reads are counted apart
     const pdfs = (t.pdf?.free || 0) + (t.pdf?.vision || 0);
     const calls = Object.values(t.models || {}).reduce((s, m) => s + m.n, 0);
     if (!photos && !t.voice?.n && !pdfs && !calls) return '';
     const minutes = Math.round(((t.voice?.sec || 0) / 60) * 10) / 10;
-    return `عکس: ${fa(photos)} (هایکو ${fa(t.photo?.haiku || 0)}، سونِت ${fa(t.photo?.sonnet || 0)})، ویس: ${fa(t.voice?.n || 0)} (${fa(minutes)} دقیقه)، پی‌دی‌اف: ${fa(pdfs)} (${fa(t.pdf?.free || 0)} رایگان)، هزینه: ${fa(t.usd.toFixed(2))} دلار`;
+    return `عکس: ${fa(photos)} (خواندن دوباره با سونِت ${fa(t.photo?.sonnet || 0)})، ویس: ${fa(t.voice?.n || 0)} (${fa(minutes)} دقیقه)، پی‌دی‌اف: ${fa(pdfs)} (${fa(t.pdf?.free || 0)} رایگان)، هزینه: ${fmtUsd(t.usd)} دلار`;
   }
 
   /** The one line for the daily digest. */
@@ -148,11 +150,13 @@ export class CostMeter {
     const lines = [head, sum];
     for (const f of ['opus', 'sonnet', 'haiku', 'other']) {
       const m = t.models[f];
-      if (m) lines.push(`${f === 'opus' ? 'گفت‌وگو و کارهای اوپوس' : FAMILY_FA[f]}: ${fa(m.n)} تماس، ${fa(m.in)} واحد ورودی، ${fa(m.out)} واحد خروجی، ${fa(m.usd.toFixed(2))} دلار`);
+      const label = f === 'opus' ? 'گفت‌وگوی اصلی و کارهای اوپوس' : f === 'other' ? 'مدل دیگر' : FAMILY_FA[f];
+      if (m) lines.push(`${label}: ${fa(m.n)} تماس، ${fa(m.in)} واحد ورودی، ${fa(m.out)} واحد خروجی، ${fmtUsd(m.usd)} دلار`);
+      else if (f === 'opus') lines.push(`${label}: بدون تماس`); // the main chat model always has its line, so the whole day is in view
     }
     const reasons = Object.entries(t.photo.reasons || {});
     if (reasons.length) lines.push(`خواندن دوباره با سونِت: ${reasons.map(([r, c]) => `${reasonLabel(r)} ${fa(c)}`).join('، ')}`);
-    if (t.voice.n) lines.push(`ویس: ${fa(t.voice.n)} پیام، ${fa(Math.round((t.voice.sec / 60) * 10) / 10)} دقیقه، ${fa(t.voice.usd.toFixed(2))} دلار`);
+    if (t.voice.n) lines.push(`ویس: ${fa(t.voice.n)} پیام، ${fa(Math.round((t.voice.sec / 60) * 10) / 10)} دقیقه، ${fmtUsd(t.voice.usd)} دلار`);
     lines.push(`پی‌دی‌اف رایگان (لایهٔ متن): ${fa(t.pdf.free)}؛ با خواندن تصویری: ${fa(t.pdf.vision)}`);
     lines.push('قیمت‌ها برآورد است و از تنظیم قیمت مدل‌ها می‌آید.');
     return lines.join('\n');

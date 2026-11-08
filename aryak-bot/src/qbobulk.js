@@ -477,7 +477,7 @@ export class QboBulkDesk {
   }
 
   /** The ids of the previews the owner can still say yes or no to. */
-  openIds() { return Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && this.now() - p.at <= DAY).map((p) => p.id); }
+  openIds() { return Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && !p.result && !p.ran && this.now() - p.at <= DAY).map((p) => p.id); }
 
   /** Stores a preview and builds its text. */
   make(kind, r, { header, summary, lines, extra = [], params = {}, limit = SHOWN }) {
@@ -891,8 +891,8 @@ export class QboBulkDesk {
         if (this.gapMs) await this.sleep(this.gapMs);
       }
     } finally {
-      p.status = r.stoppedAt ? 'pending' : 'done'; // after a stop it can be run again: the done ones are skipped
-      p.result = r;
+      p.status = r.stoppedAt ? 'pending' : 'done'; // after a stop it can be run again by its id: the done ones are skipped
+      p.result = r; p.ran = true; // but it is no longer an "open" preview for a bare yes or no
       this.busy = false;
       if (p.kind === 'P') { this.draft.dropItems(done); if (!r.stoppedAt && !r.failed) this.draft.dropSeries(p.params.series || []); } // the prices that are in QuickBooks leave the draft
       this.store.save();

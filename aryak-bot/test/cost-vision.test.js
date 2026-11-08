@@ -41,7 +41,7 @@ test('cost: the daily line in Persian digits, voice minutes at the per-minute pr
   for (let i = 0; i < 4; i += 1) m.pdf(true); m.pdf(false);
   m.model('claude-opus-5-5', { input_tokens: 10000, output_tokens: 1000 });
   const line = m.line();
-  assert.match(line, /عکس: ۱۲ \(هایکو ۱۰، سونِت ۲\)/);
+  assert.match(line, /عکس: ۱۰ \(خواندن دوباره با سونِت ۲\)/); // ten photos, two of them read again
   assert.match(line, /ویس: ۷ \(۴ دقیقه\)/);
   assert.match(line, /پی‌دی‌اف: ۵ \(۴ رایگان\)/);
   assert.match(line, /هزینه: ۰٫[۰-۹]{2} دلار/);
@@ -268,4 +268,85 @@ test('voice: the echo in the speaker\'s language, the plan per case, and the pen
   clock.t = 1500;
   assert.equal(g.get('k'), null);
   g.set('k', 'x'); g.clear('k'); assert.equal(g.get('k'), null);
+});
+
+// ------------------------------------------------------------------------------------------------ the live fixes
+import { codeKnownInItems, itemCodeKeys } from '../src/qboinvoice.js';
+import { bareAnswerYieldsToPending, gatePrompt } from '../src/voicegate.js';
+import { fmtUsd } from '../src/cost.js';
+import { BulkPreviews, QboBulkDesk } from '../src/qbobulk.js';
+
+test('known codes: the current item names, SKUs and full names (PVC-108, EDGE22-1810, "... - 1810"); a code that fits several items is known; a category and an inactive item are not', () => {
+  const I = (Id, Name, extra = {}) => ({ Id: String(Id), Name, Type: 'Inventory', Active: true, ...extra });
+  const items = [
+    I(1, 'PVC FILM108', { Sku: 'PVC-108', FullyQualifiedName: 'PVC FILM:PVC FILM108' }), I(2, 'PVC FILM205', { Sku: 'PVC-205' }), I(3, 'PVC 1810', { Sku: 'PVC-1810' }),
+    I(4, 'EDGE BAND 0.8x22 - 1810', { Sku: 'EDGE22-1810' }), I(5, 'EDGE BAND 0.8x50 - 1810', { Sku: 'EDGE50-1810' }), I(6, 'Hinge KG10-300', { Sku: 'KG10-300' }),
+    I(7, 'PVC FILM300', { Active: false }), I(8, 'PVC FILM', { Type: 'Category' }),
+  ];
+  for (const c of ['108', '205', '1810', 'PVC-108', 'pvc-1810', 'EDGE22-1810', 'EDGE50-1810', 'KG10-300', 'PVC FILM108', 'PVC FILM:PVC FILM108']) assert.equal(codeKnownInItems(items, c), true, c);
+  for (const c of ['999999', '300', 'PVC FILM', '10', '']) assert.equal(codeKnownInItems(items, c), false, c);
+  assert.ok(itemCodeKeys(items[3]).has('1810'));
+});
+
+test('the unknown-code check names the code that failed', async () => {
+  const logs = [];
+  const client = { beta: { messages: { create: async () => text(JSON.stringify({ readable: true, intent: 'stock', language: 'fa', items: [{ code: '999999' }], unclear: 0 })) } } };
+  await understandImages({ images: [png], config: { visionModel: 'a', visionEscalateModel: 'b' }, client, knownCode: async () => false, log: (l) => logs.push(l) });
+  assert.ok(logs.some((l) => /unknown-code: 999999/.test(l)), logs.join(' | '));
+});
+
+test('a bare yes or no goes to the question asked last in the chat; with none it may look at the open previews', () => {
+  assert.equal(bareAnswerYieldsToPending({ type: 'no', id: '' }, true), true);
+  assert.equal(bareAnswerYieldsToPending({ type: 'yes', id: '' }, true), true);
+  assert.equal(bareAnswerYieldsToPending({ type: 'yes', id: '' }, false), false);
+  assert.equal(bareAnswerYieldsToPending({ type: 'yes', id: 'P1' }, true), false); // an id is always for the preview
+  assert.equal(bareAnswerYieldsToPending({ type: 'request' }, true), false);
+  assert.equal(bareAnswerYieldsToPending(null, true), false);
+});
+
+test('a preview that ran or was stopped is no longer open', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'op-'));
+  const store = new BulkPreviews(dir);
+  const bulk = new QboBulkDesk({ qbo: {}, desk: {}, audit: { add() {} }, store, draft: {}, itemCodes: null, config: {}, now: () => 1000 });
+  const a = store.add('P', { at: 1000, status: 'pending', changes: [], skipped: [], unchanged: 0, params: {} });
+  const b = store.add('C', { at: 1000, status: 'pending', changes: [], skipped: [], unchanged: 0, params: {} });
+  const c = store.add('E', { at: 1000, status: 'pending', changes: [], skipped: [], unchanged: 0, params: {} });
+  assert.deepEqual(bulk.openIds(), [a.id, b.id, c.id]);
+  b.result = { changed: 3 }; b.ran = true; // run, then stopped by the kill switch: it can still be run by its id, but it is not "open"
+  a.result = { changed: 10 }; // a stored one from before the flag: the result says it ran
+  assert.deepEqual(bulk.openIds(), [c.id]);
+});
+
+test('cost: a photo is counted once and its second reads apart; small amounts keep four decimals; the main chat model always has its line', () => {
+  assert.equal(fmtUsd(0.0013), '۰٫۰۰۱۳'); assert.equal(fmtUsd(0.0038), '۰٫۰۰۳۸'); assert.equal(fmtUsd(0.42), '۰٫۴۲'); assert.equal(fmtUsd(0), '۰٫۰۰'); assert.equal(fmtUsd(12.345), '۱۲٫۳۵');
+  const m = meter();
+  m.photo({}); m.photo({ escalated: true, reason: 'unknown-code' });
+  m.model('claude-haiku-5-5', { input_tokens: 1000, output_tokens: 100 }); m.model('claude-sonnet-5-5', { input_tokens: 1000, output_tokens: 100 });
+  const line = m.line();
+  assert.match(line, /عکس: ۱ \(خواندن دوباره با سونِت ۱\)/);
+  const rep = m.report('today');
+  assert.match(rep, /گفت‌وگوی اصلی و کارهای اوپوس: بدون تماس/); // no chat call yet: the line still shows
+  assert.match(rep, /هایکو: ۱ تماس.*۰٫۰[۰-۹]{3} دلار/); // under a cent: four decimals
+  m.model('claude-opus-5-5', { input_tokens: 5000, output_tokens: 500 });
+  assert.match(m.report('today'), /گفت‌وگوی اصلی و کارهای اوپوس: ۱ تماس/);
+});
+
+test('voice: Persian, Arabic and Urdu transcripts are echoed in their language; a plain question runs, a change waits for the yes in that language', () => {
+  const cases = [
+    ['fa', 'موجودی کد ۴۰۸ چقدر است', /^شنیدم: /, /بله/],
+    ['ar', 'كم المخزون من الكود 408', /^سمعت: /, /نعم/],
+    ['ur', 'کوڈ 408 کا اسٹاک کتنا ہے', /^میں نے سنا: /, /ہاں/],
+  ];
+  const change = 'فاکتور بساز برای آریاک';
+  for (const [lang, plain, echo, yes] of cases) {
+    let p = planVoice({ transcript: plain, lang, priv: true });
+    assert.equal(p.mode, 'run', lang); assert.match(p.echo, echo); assert.equal(p.prompt, '');
+    assert.ok(p.echo.endsWith(plain), lang);
+    p = planVoice({ transcript: change, lang, priv: true });
+    assert.equal(p.mode, 'ask', lang); assert.match(p.echo, echo); assert.match(p.prompt, yes); assert.ok(p.echo.endsWith(change));
+    assert.match(gatePrompt(lang), yes);
+  }
+  assert.match(heardText('hi', 'x'), /^मैंने सुना: /);
+  assert.equal(planVoice({ transcript: 'كم المخزون من الكود 408', lang: 'ar', priv: false }).mode, 'old'); // a group note not for her
+  assert.equal(planVoice({ transcript: 'كم المخزون من الكود 408', lang: 'ar', priv: false, explicit: true }).mode, 'run');
 });

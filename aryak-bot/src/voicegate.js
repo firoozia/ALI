@@ -34,13 +34,17 @@ export function voiceChangesSomething(text) {
 export function heardText(lang, transcript) {
   const t = String(transcript || '').trim();
   if (lang === 'ar') return `سمعت: ${t}`;
-  if (lang === 'en' || lang === 'hi') return `I heard: ${t}`;
+  if (lang === 'ur') return `میں نے سنا: ${t}`;
+  if (lang === 'hi') return `मैंने सुना: ${t}`;
+  if (lang === 'en') return `I heard: ${t}`;
   return `شنیدم: ${t}`;
 }
 
 export function gatePrompt(lang) {
   if (lang === 'ar') return 'للتنفيذ اكتب «نعم»، أو أرسل النص الصحيح ليحل محله.';
-  if (lang === 'en' || lang === 'hi') return 'To go ahead, reply "yes", or send the corrected text and it replaces this.';
+  if (lang === 'ur') return 'آگے بڑھنے کے لیے «ہاں» لکھیں، یا درست متن بھیجیں۔';
+  if (lang === 'hi') return 'आगे बढ़ने के लिए «हाँ» लिखें, या सही पाठ भेजें।';
+  if (lang === 'en') return 'To go ahead, reply "yes", or send the corrected text and it replaces this.';
   return 'برای اجرا بنویسید «بله»؛ یا متن درست را بفرستید تا جای این بنشیند.';
 }
 
@@ -63,3 +67,6 @@ export class VoiceGate {
   get(key) { const v = this.map.get(key); if (!v) return null; if (this.now() - v.at > this.ttlMs) { this.map.delete(key); return null; } return v; }
   clear(key) { this.map.delete(key); }
 }
+
+/** A bare «بله» or «نه» (no preview id) belongs to the question the assistant asked last in this chat, when there is one; only without one does it look at the open previews. */
+export const bareAnswerYieldsToPending = (ic, hasPending) => !!(ic && ['yes', 'no'].includes(ic.type) && !ic.id && hasPending);

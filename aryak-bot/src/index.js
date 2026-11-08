@@ -67,7 +67,8 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, setDocMeter } from './pdftext.js';
 import { setVisionMeter } from './vision.js';
 import { CostMeter } from './cost.js';
-import { planVoice, VoiceGate } from './voicegate.js';
+import { planVoice, VoiceGate, bareAnswerYieldsToPending } from './voicegate.js';
+import { codeKnownInItems } from './qboinvoice.js';
 import { buildSystemPrompt } from './prompt.js';
 import { applyTags } from './tags.js';
 
@@ -91,7 +92,7 @@ try {
     usage.count(group, 'model');
     if (hasVisual(params)) usage.count(group, 'vision');
     const res = await rawCreate(params, ...rest);
-    try { cost.model(params.model, res?.usage, group); } catch { /* the cost log never stops an answer */ }
+    try { cost.model(res?.model || params.model, res?.usage, group); } catch { /* the cost log never stops an answer */ }
     return res;
   };
 } catch (e) { console.warn(`paid calls are not counted: ${e.message}`); }
@@ -944,7 +945,13 @@ async function understandPhotos(messagesWithImages, caption, fallbackLang, force
   return understandImages({
     images, caption, config, client, fallbackLang, forceLang, log: (s) => logger.info(s),
     // a code the stock sheet has never heard of is a reason to look again (a sheet that does not answer is not)
-    knownCode: async (code) => { try { const r = await fetchStock(config, { code }); return !!(r.found || r.ambiguous); } catch { return true; } },
+    // known = the current QuickBooks item names and SKUs (PVC-108, EDGE22-1810, "... - 1810"), the owner's price list, or the stock sheet; unreachable sources are not a reason
+    knownCode: async (code) => {
+      let reached = false;
+      try { const cat = await qboInvoices.catalog(); reached = true; if (codeKnownInItems(cat.items, code)) return true; } catch { /* QuickBooks not reachable: the other sources decide */ }
+      try { if (book.priceOf(code, '', new Date().toISOString().slice(0, 10))) return true; reached = true; } catch { /* no price list */ }
+      try { const r = await fetchStock(config, { code }); reached = true; return !!(r.found || r.ambiguous); } catch { return true; }
+    },
   });
 }
 
@@ -1357,7 +1364,9 @@ async function handleStaffChat(raw, chatId, group) {
   }
   // The owner's invoice commands (his own chat, owner only): the request, his yes or no, the kill switch, the audit report, the authorized people.
   if (text && !audio && !image && !group && isSelf) {
-    const ic = parseInvoiceCommand(text);
+    let ic = parseInvoiceCommand(text);
+    // a bare yes or no answers the question the assistant asked last in this chat (a photo, a voice note, a follow-up); only without one does it look at open previews
+    if (bareAnswerYieldsToPending(ic, !!(voiceDesk.get(`s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) || followDesk.get(`s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`)))) ic = null;
     if (ic && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
       qboNames.finish = async (parts) => { for (const part of parts) await reply(part); }; // the report at the end of a long update
       qboBulk.finish = qboNames.finish;

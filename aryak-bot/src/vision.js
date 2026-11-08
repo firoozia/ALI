@@ -25,7 +25,7 @@ export async function visionRead({ config, call, parse, check, cost = meter, vis
   const c1 = v1 === null || v1 === undefined ? { ok: false, reason: 'parse' } : await check(v1);
   if (c1.ok) return { value: v1, res: res1, model: first, escalated: false, reason: '', checked: c1 };
   if (!strong || strong === first) return { value: v1, res: res1, model: first, escalated: false, reason: c1.reason, checked: c1 };
-  log(`vision: ${first} failed a check (${c1.reason}); reading the same input again with ${strong}`);
+  log(`vision: ${first} failed a check (${c1.reason}${c1.detail ? `: ${c1.detail}` : ''}); reading the same input again with ${strong}`);
   let res2;
   try { res2 = await call(strong); } catch (e) { log(`vision: the second read failed: ${e.message}`); return { value: v1, res: res1, model: first, escalated: false, reason: c1.reason, checked: c1 }; }
   if (visual) cost?.photo({ escalated: true, reason: c1.reason });
@@ -33,7 +33,7 @@ export async function visionRead({ config, call, parse, check, cost = meter, vis
   try { v2 = parse(res2); } catch { v2 = null; }
   const c2 = v2 === null || v2 === undefined ? { ok: false, reason: 'parse' } : await check(v2);
   if (c2.ok) return { value: v2, res: res2, model: strong, escalated: true, reason: c1.reason, checked: c2 };
-  log(`vision: ${strong} also failed (${c2.reason})`);
+  log(`vision: ${strong} also failed (${c2.reason}${c2.detail ? `: ${c2.detail}` : ''})`);
   return { value: v2 ?? v1, res: v2 ? res2 : res1, model: v2 ? strong : first, escalated: true, reason: c1.reason, checked: c2 };
 }
 
