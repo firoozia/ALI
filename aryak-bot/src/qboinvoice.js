@@ -59,6 +59,7 @@ export function parseInvoiceCommand(text) {
     if ((a = new RegExp(String.raw`^سطر\s*(\d+)\s*=\s*(\d+)${idPart}$`, 'iu').exec(s))) return { type: 'adjust', what: 'line', n: Number(a[1]), pick: Number(a[2]), id: a[3] ? `Q${a[3]}` : '' };
     if ((a = new RegExp(String.raw`^مالیات\s*(\d+)${idPart}$`, 'iu').exec(s))) return { type: 'adjust', what: 'tax', pick: Number(a[1]), id: a[2] ? `Q${a[2]}` : '' };
   }
+  if ((m = /^(بله|اره|آره|نه|خیر)\s+همه$/u.exec(s))) return { type: /^(?:بله|اره|آره)$/u.test(m[1]) ? 'yes_all' : 'no_all' }; // all the previews of the last message
   if (/^دسته\s+و\s+کد\s+کالا(?:\s*ها)?$/u.test(s)) return { type: 'bulk_catalog' };
   if (/^دسته\s+و\s+کد\s+پی\s*وی\s*سی$/u.test(s)) return { type: 'bulk_catalog', edge: false }; // the PVC film part only: no edge banding change at all
   if (/^مالیات\s+کالاها(?:\s+دبی)?$/u.test(s)) return { type: 'bulk_tax' };
@@ -106,7 +107,7 @@ export function looksLikeInvoiceRequest(text) {
   if (!s || s.length > 3000 || /[?؟]\s*$/u.test(s)) return false;
   // a verb that MAKES an invoice (also «فاکتور کن», «فاکتور کنید»). With one, «برای من بفرست» only means "show me the preview in my chat"; the send-to-customer
   // flow is for an invoice that already exists (a replied PDF, or «فاکتور <number> را به گروه … بفرست»).
-  const MAKE = /(?:بساز|بسازید|بزن|بزنید|صادر\s*کن|صادر\s*کنید|درست\s*کن|ایجاد\s*کن|بنویس|فاکتور\s*(?:کن|کنید)(?=\s|$)|فاکتورش\s*کن)/u;
+  const MAKE = /(?:بساز|بسازید|بزن|بزنید|صادر\s*کن|صادر\s*کنید|درست\s*کن|ایجاد\s*کن|بنویس|فاکتور\s*(?:کن|کنید)(?=\s|$)|فاکتورش\s*کن|فاکتور\s*(?:می\s*خوا(?:ه?م|هیم)|میخوا(?:ه?م|هیم)|لازم\s*دارم|نیاز\s*دارم|بده|بدید|بدهید|بگیر)|(?:می\s*خوا(?:ه?م|هیم)|میخوا(?:ه?م|هیم))\s*(?:یک\s*)?فاکتور)/u;
   if (/ارسال|بفرست|\bsend\b|\bforward\b/iu.test(s) && !MAKE.test(s) && !/صادر/u.test(s)) return false;
   return (/فاکتور/u.test(s) && MAKE.test(s)) || /(?:create|make|issue)\s+(?:an?\s+)?invoice/iu.test(s);
 }
@@ -277,9 +278,31 @@ export function resolveEntriesGuess(entries, ctx) {
     }
     if (!(c.qty > 0 && c.qty <= 100000)) { stops.push(`سطر ${fa(n)}: تعداد درست نیست`); return; }
     if (c.price !== null && c.price !== undefined && !(c.price >= 0 && c.price <= 10000000)) { stops.push(`سطر ${fa(n)}: قیمت درست نیست`); return; }
-    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via, typed: c.item, guess });
+    lines.push({ n, item: r.item, qty: c.qty, price: c.price ?? null, via: r.via, typed: c.item, guess, unit: c.unit || '' });
   });
   return { lines, stops };
+}
+
+/**
+ * A message that lists several customers, each followed by its lines in the form «۲۱۵ =۹۷ متر» (code, equals sign, quantity, unit):
+ *   «اتوسا فاکتور میخوام برای مشتری های زیر / AL EBDA / ۲۱۵ =۹۷ متر / NUQOOSH / ۲۲۰ =۱۲ متر». Returns [{ customer, lines: [{ code, qty, unit }] }] or null when the text
+ * is not of that shape (then the other readers take it). No model is needed.
+ */
+export function parseInvoiceBlocks(text) {
+  const rows = String(text || '').replace(/\r/g, '').split('\n').map((l) => plain(l)).filter(Boolean);
+  if (rows.length < 3 || !looksLikeInvoiceRequest(rows[0])) return null;
+  const ITEM = /^([A-Za-z0-9][A-Za-z0-9\-./]{0,30}(?:\s[A-Za-z0-9\-./]{1,12})?)\s*[=:]\s*(\d+(?:[.,]\d+)?)\s*([^\d\s=:]\S{0,12})?$/u;
+  const UNITS = { 'متر': 'm', m: 'm', mtr: 'm', meter: 'm', 'رول': 'roll', roll: 'roll', 'عدد': 'pcs', pcs: 'pcs', 'کارتن': 'carton', carton: 'carton' };
+  const blocks = [];
+  for (const row of rows.slice(1)) {
+    const m = ITEM.exec(row);
+    if (m) {
+      if (!blocks.length) return null; // a line before any customer
+      blocks.at(-1).lines.push({ code: m[1].trim(), qty: Number(m[2].replace(',', '.')), unit: UNITS[String(m[3] || '').toLowerCase()] || String(m[3] || '') });
+    } else if (row.length <= 60 && !/[=:]/.test(row)) blocks.push({ customer: row.replace(/[,،:;]+$/u, '').trim(), lines: [] });
+    else return null;
+  }
+  return blocks.length && blocks.every((b) => b.lines.length && b.customer) ? blocks : null;
 }
 
 /** The same for plain text lines (the strict format): [{ lines, stops }]. */
@@ -391,8 +414,8 @@ export class QboInvoiceDesk {
    * list (PriceBook) or null; [config]; [today]: () => yyyy-mm-dd; [now]; [post]: async (jid, buffer, fileName, caption); [ownerJid]: () => jid;
    * [groups]: async () => [{ id, subject }]; [testGroup]: (groups) => group|null.
    */
-  constructor({ qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
-    Object.assign(this, { qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
+  constructor({ stockOf = null, qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
+    Object.assign(this, { stockOf, qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
     this.cache = { at: 0, items: [], codes: new Map(), currency: '', customTxn: false };
     this.inflight = new Set(); // previews being created right now: a yes that arrives meanwhile does not start a second attempt
   }
@@ -530,6 +553,8 @@ export class QboInvoiceDesk {
       if (cmd.lines.length > MAX_LINES) return stop(`حداکثر ${fa(MAX_LINES)} سطر در یک فاکتور.`);
       entries = cmd.lines.map((raw) => ({ raw, cands: lineCandidates(raw) }));
     } else {
+      const blocks = parseInvoiceBlocks(text);
+      if (blocks) return this.requestBlocks({ blocks, requester });
       if (!this.extract) return stop('بعد از نام مشتری، هر کالا را در یک سطر بنویسید: نام کالا، تعداد، قیمت (قیمت اختیاری).');
       let x = null;
       try { x = await this.extract(text); } catch (e) { this.log(`invoice request could not be read: ${e.name}`); }
@@ -545,7 +570,42 @@ export class QboInvoiceDesk {
     return this.makePreview({ customerText, entries, requester, stop });
   }
 
-  async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '' }) {
+  /**
+   * Several customers in one message: one PREVIEW per customer, each with its own yes; two names that are one customer (a certain match, or the owner's teaching) become
+   * one preview. The reply lists them all; «بله همه» approves every preview of this message.
+   */
+  async requestBlocks({ blocks, requester }) {
+    const groups = [];
+    for (const b of blocks) {
+      let id = '';
+      try { const r = await this.desk.resolveLoose(b.customer); if (r.id) id = String(r.id); } catch { /* the preview will say */ }
+      const g = id ? groups.find((x) => x.id === id) : null;
+      if (g) { g.names.push(b.customer); g.lines.push(...b.lines); } else groups.push({ id, names: [b.customer], lines: [...b.lines] });
+    }
+    const batch = `B${this.now()}`;
+    const parts = []; let made = 0;
+    for (const g of groups) {
+      const entries = g.lines.map((l) => ({ raw: `${l.code} ${l.qty}`, cands: [{ item: l.code, qty: l.qty, price: null, unit: l.unit }] }));
+      const stop = (msg) => ({ requester: msg, owner: null });
+      const r = await this.makePreview({ customerText: g.names[0], entries, requester, stop, batch });
+      const merged = g.names.length > 1 ? `«${g.names.join('» و «')}» یک مشتری هستند؛ یک پیش‌نمایش برایشان ساخته شد.\n` : '';
+      if (r.owner) { made += 1; parts.push(`${merged}${r.owner}`); } else parts.push(`مشتری «${g.names[0]}»: ${r.requester}`);
+    }
+    const foot = made > 1 ? '\n\nبرای پذیرفتن همهٔ این پیش‌نمایش‌ها: «بله همه» — برای لغو همه: «نه همه» (هر کدام را جدا هم می‌توانید با شماره‌اش بپذیرید).' : '';
+    return { requester: `Your invoice requests (${made}) were sent to the owner for approval.`, owner: `${parts.join('\n\n— — —\n\n')}${foot}` };
+  }
+
+  /** «بله همه» / «نه همه»: every pending preview of the newest message that made several. */
+  async decideAll({ verb }) {
+    const open = Object.values(this.store.d.previews).filter((p) => p.status === 'pending' && p.batch && this.now() - p.at <= EXPIRY_MS);
+    if (!open.length) return ['پیش‌نمایش بازی از یک پیام چندمشتری نیست.'];
+    const newest = open.sort((a, b) => b.at - a.at)[0].batch;
+    const out = [];
+    for (const p of open.filter((x) => x.batch === newest).sort((a, b) => (a.id < b.id ? -1 : 1))) out.push(...(await this.decide({ verb, id: p.id })));
+    return out;
+  }
+
+  async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '', batch = '' }) {
     let cust = overrides.customer ? { ours: customerText, id: overrides.customer.id, name: overrides.customer.name, loose: true, typed: customerText, chosen: true } : await this.desk.resolveLoose(customerText);
     const problems = { customer: '', items: [], tax: '' };
     const guesses = { customer: null, lines: [], tax: null }; // what was GUESSED (shown with alternatives; applied only by the owner's yes)
@@ -582,6 +642,12 @@ export class QboInvoiceDesk {
       const w = [];
       if (listed !== null && l.price !== null && l.price < listed - 0.005) w.push(`قیمت کمتر از قیمت کوییک‌بوکس (${listed})`);
       if (listed !== null && l.price !== null && l.price > listed + 0.005) w.push(`قیمت شما ${l.price} است و قیمت کوییک‌بوکس ${listed}؛ قیمت شما می‌ماند`); // a note, not a stop
+      if (this.stockOf && l.typed && /^[\w\-./ ]{1,30}$/.test(l.typed)) { // the free stock beside the line: a warning, never a stop, and nothing is reported to anyone
+        try {
+          const st = await this.stockOf(l.typed);
+          if (st && Number.isFinite(st.free) && st.free < l.qty) w.push(`موجودی آزاد کد ${fa(l.typed)}: ${fa(st.free).replace(".", "٫")} ${st.unit === 'm' || !st.unit ? 'متر' : st.unit}، کمتر از ${fa(l.qty)}`);
+        } catch { /* the stock sheet did not answer: no warning */ }
+      }
       const code = l.item.Sku || l.item.Name;
       const pb = this.book?.priceOf?.(code, cust.ours, this.today());
       if (pb && pb.price !== undefined && price < Number(pb.price) - 0.005) w.push(`قیمت کمتر از فهرست قیمت مالک (${pb.price})`);
@@ -634,6 +700,7 @@ export class QboInvoiceDesk {
       // what the owner's yes will remember, so that the next time it is exact and not a guess
       aliases: { customer: (cust.guessed || cust.chosen) ? { text: customerText, id: cust.id, name: cust.name } : null, items: out.filter((l) => (l.via === 'guess' || l.chosen) && l.typed).map((l) => ({ typed: l.typed, itemId: l.itemId, name: l.name })) },
       req: { customerText, entries, overrides },
+      ...(batch ? { batch } : {}),
     };
     this.store.add(preview);
     this.audit.add({ event: 'preview', requester, previewId: id, total: t.total, ...(preview.guesses ? { guessed: true } : {}) });

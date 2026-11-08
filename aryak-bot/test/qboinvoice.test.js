@@ -9,7 +9,7 @@ import { Aliases } from '../src/aliases.js';
 import { CustomerGroups } from '../src/customergroups.js';
 import { STAFF_RULES } from '../src/staff.js';
 import { extractInvoiceRequest, validateExtraction } from '../src/qboextract.js';
-import { ItemCodes, itemsContaining, looksLikeInvoiceRequest } from '../src/qboinvoice.js';
+import { ItemCodes, itemsContaining, looksLikeInvoiceRequest, parseInvoiceBlocks } from '../src/qboinvoice.js';
 import { Audit, AuthStore, CAP_DAY, CAP_HOUR, EXPIRY_MS, InvoiceStore, QboInvoiceDesk, TaxChoices, codeFromInvoices, itemsNamed, lineCandidates, parseInvoiceCommand, resolveLines, taxCodeMap, totals } from '../src/qboinvoice.js';
 
 // Invented names, items, numbers and amounts only: nothing real is ever in the repository.
@@ -737,4 +737,61 @@ test('the owner\'s Mice Interiors message: a preview with the customer GUESSED a
   assert.deepEqual(parseInvoiceCommand('سطر ۱ = ۳'), { type: 'adjust', what: 'line', n: 1, pick: 3, id: '' });
   assert.deepEqual(parseInvoiceCommand('مالیات ۲ #Q4'), { type: 'adjust', what: 'tax', pick: 2, id: 'Q4' });
   assert.deepEqual((await t.inv.adjust({ what: 'tax', pick: 1, id: 'Q9' })), ['پیش‌نمایشی با حدس باز نیست که چیزی در آن عوض شود.']);
+});
+
+// ------------------------------------------------------------------------------------------------ several customers in one message
+const MULTI = 'اتوسا فاکتور میخوام برای مشتری های زیر\nAL EBDA\n۲۱۵ =۹۷ متر\nNUQOOSH\n۲۲۰ =۱۲ متر';
+const MULTI_ITEMS = [{ Id: '51', Name: 'PVC FILM215', Sku: 'PVC-215', UnitPrice: 14, Type: 'Inventory', Active: true }, { Id: '52', Name: 'PVC FILM220', Sku: 'PVC-220', UnitPrice: 16, Type: 'Inventory', Active: true }];
+const MULTI_CUSTOMERS = [{ Id: '81', DisplayName: 'AL EBDA AL MALKI KITCHEN', Balance: 0 }, { Id: '82', DisplayName: 'NUQOOSH IND . LLC', Balance: 0 }];
+const histFor = (customerId) => [{ Id: `h${customerId}`, CustomerRef: { value: customerId }, Line: [{ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { ItemRef: { value: '51' }, TaxCodeRef: { value: '11' } } }] }];
+
+test('«فاکتور میخوام …» in every spelling is an invoice to create, never the stock flow', () => {
+  assert.equal(parseInvoiceCommand(MULTI).type, 'request');
+  for (const t of ['فاکتور می‌خواهم برای Cedar', 'فاکتور میخوام برای Cedar', 'آتوسا فاکتور می‌خوام برای Cedar', 'اتوسا فاکتور لازم دارم برای Cedar', 'فاکتور بده برای Cedar', 'می‌خواهم یک فاکتور برای Cedar']) assert.equal(looksLikeInvoiceRequest(t), true, t);
+  for (const t of ['فاکتور 8996 را بفرست', 'فاکتور Cedar را بفرست', 'چند فاکتور داریم', 'موجودی 215']) assert.equal(looksLikeInvoiceRequest(t), false, t);
+});
+
+test('the lines «۲۱۵ =۹۷ متر» under a customer name are read without a model: code, quantity, unit; customers start blocks', () => {
+  assert.deepEqual(parseInvoiceBlocks(MULTI), [{ customer: 'AL EBDA', lines: [{ code: '215', qty: 97, unit: 'm' }] }, { customer: 'NUQOOSH', lines: [{ code: '220', qty: 12, unit: 'm' }] }]);
+  assert.deepEqual(parseInvoiceBlocks('فاکتور بده\nCedar\n108 = 3.5 رول\nH35: 4 عدد\nOrion\nET-W = 2')[0].lines, [{ code: '108', qty: 3.5, unit: 'roll' }, { code: 'H35', qty: 4, unit: 'pcs' }]);
+  assert.equal(parseInvoiceBlocks('سلام\nCedar\n108 = 3'), null); // not an invoice request
+  assert.equal(parseInvoiceBlocks('فاکتور بده\n108 = 3\nCedar'), null); // a line before any customer
+  assert.equal(parseInvoiceBlocks('فاکتور بده\nCedar\nOrion\n108 = 3'), null); // a customer without lines
+});
+
+test('the owner\'s exact message: two customers, two previews, the codes and quantities read, stock beside the line, no model, nobody told; «بله همه» approves both', async () => {
+  const stockAsked = [];
+  const t = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: [...histFor('81'), ...histFor('82')], extract: async () => { throw new Error('the model must not be needed'); } });
+  t.inv.stockOf = async (code) => { stockAsked.push(code); return code === '215' ? { free: 27.8, unit: 'm' } : { free: 400, unit: 'm' }; };
+  const r = await t.inv.request({ text: MULTI, requester: 'owner' });
+  assert.ok(r.owner);
+  assert.equal(t.extractCalls.length, 0);
+  assert.equal(t.store.d.n, 2);
+  for (const s of ['پیش‌نمایش فاکتور #Q1', 'پیش‌نمایش فاکتور #Q2', 'مشتری: AL EBDA AL MALKI KITCHEN (از «AL EBDA»)', 'مشتری: NUQOOSH IND . LLC (از «NUQOOSH»)', 'PVC FILM215', '× 97 @ 14', 'PVC FILM220', '× 12 @ 16', 'موجودی آزاد کد ۲۱۵: ۲۷٫۸ متر، کمتر از ۹۷', 'بله #Q1', 'بله #Q2', '«بله همه»']) assert.ok(r.owner.includes(s), s);
+  assert.ok(!r.owner.includes('موجودی آزاد کد ۲۲۰')); // 400 is enough: no warning
+  assert.deepEqual(stockAsked.sort(), ['215', '220']);
+  assert.equal(t.m.posts.length, 0); // two previews, no invoice
+  assert.equal(t.store.get('Q1').batch, t.store.get('Q2').batch);
+  assert.deepEqual(parseInvoiceCommand('بله همه'), { type: 'yes_all' }); assert.deepEqual(parseInvoiceCommand('نه همه'), { type: 'no_all' });
+  const done = (await t.inv.decideAll({ verb: 'yes' })).join('\n');
+  assert.equal(t.m.posts.length, 2);
+  assert.deepEqual(t.m.posts.map((p) => p.body.CustomerRef.value).sort(), ['81', '82']);
+  assert.ok(done.includes('Q1') || done.length > 0);
+  assert.equal(t.store.get('Q1').status, 'created'); assert.equal(t.store.get('Q2').status, 'created');
+});
+
+test('two names of one customer become ONE preview; «نه همه» cancels all; an unsure block does not stop the others', async () => {
+  const t = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: histFor('81') });
+  const r = await t.inv.request({ text: 'اتوسا فاکتور میخوام برای مشتری های زیر\nAL EBDA AL MALKI KITCHEN\n۲۱۵ =۹۷ متر\nAl Ebda Al Malki Kitchen\n۲۲۰ =۱۲ متر', requester: 'owner' });
+  assert.equal(t.store.d.n, 1);
+  assert.ok(r.owner.includes('یک مشتری هستند') && r.owner.includes('PVC FILM215') && r.owner.includes('PVC FILM220'));
+  assert.ok(!r.owner.includes('«بله همه»')); // one preview: the plain yes is enough
+  // a block with nothing near stops alone; the other one is made
+  const mixed = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: histFor('81') });
+  const m = await mixed.inv.request({ text: 'اتوسا فاکتور میخوام برای مشتری های زیر\nAL EBDA AL MALKI KITCHEN\n۲۱۵ =۹۷ متر\nQqqqq Wwwww\n۲۲۰ =۱۲ متر', requester: 'owner' });
+  assert.equal(mixed.store.d.n, 1); assert.ok(m.owner.includes('مشتری «Qqqqq Wwwww»'));
+  const none = (await mixed.inv.decideAll({ verb: 'no' })).join('\n');
+  assert.equal(mixed.store.get('Q1').status, 'cancelled'); assert.equal(mixed.m.posts.length, 0);
+  assert.deepEqual(await mixed.inv.decideAll({ verb: 'yes' }), ['پیش‌نمایش بازی از یک پیام چندمشتری نیست.']);
+  assert.ok(none.length > 0);
 });

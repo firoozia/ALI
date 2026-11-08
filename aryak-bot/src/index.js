@@ -632,6 +632,8 @@ const qboAuth = new AuthStore(path.join(config.authDir, 'qbo'));
 const qboInvoices = new QboInvoiceDesk({
   qbo, desk: qboDesk, store: new InvoiceStore(path.join(config.authDir, 'qbo')), audit: new Audit(path.join(config.authDir, 'qbo')), book, taxChoices: new TaxChoices(path.join(config.authDir, 'qbo')), itemCodes: new ItemCodes(path.join(config.authDir, 'qbo')),
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
+  // the free stock of a code, for a warning line in an invoice preview (the sheet is read, nobody is told)
+  stockOf: async (code) => { try { const r = await fetchStock(config, { code }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } },
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
 });
 // The one-off upper-casing of the QuickBooks customer names: a preview (#N1) and the owner's yes; a sparse update of the two name fields only.
@@ -649,6 +651,7 @@ async function qboInvoiceCommand(ic, text) {
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
     case 'adjust': return qboInvoices.adjust(ic);
+    case 'yes_all': case 'no_all': return qboInvoices.decideAll({ verb: ic.type === 'yes_all' ? 'yes' : 'no' });
     case 'statement_nl': {
       if (ic.unsupported) return ['ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'];
       if (!ic.customer) { const out = ['صورت‌حساب کدام مشتری؟ نام را بنویسید یا بگویید.']; out.clarify = true; return out; }
