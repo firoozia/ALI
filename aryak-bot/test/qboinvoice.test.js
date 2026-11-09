@@ -47,6 +47,11 @@ function mockQbo(opts = {}) {
       const requestId = u.searchParams.get('requestid');
       posts.push({ requestId, body: JSON.parse(init.body), minor: u.searchParams.get('minorversion') });
       if (failures > 0) { failures -= 1; return res(500, {}); }
+      { // the fake refuses what the real one refuses: an unknown property of an address, and any field named in opts.rejectField
+        const sent = JSON.parse(init.body); const okAddr = ['Id', 'Line1', 'Line2', 'Line3', 'Line4', 'Line5', 'City', 'Country', 'CountrySubDivisionCode', 'PostalCode'];
+        const bad = ['BillAddr', 'ShipAddr'].find((k) => sent[k] && Object.keys(sent[k]).some((x) => !okAddr.includes(x))) || (opts.rejectField && opts.rejectField in sent ? opts.rejectField : '');
+        if (bad) return res(400, { Fault: { Error: [{ Message: 'Request has invalid or unsupported property', Detail: 'Property Name: failed to parse json object; a property specified is unsupported or invalid', code: '2010', element: bad }] } });
+      }
       if (requestId && byRequest.has(requestId)) return res(200, { Invoice: byRequest.get(requestId) }); // Intuit returns the same invoice for the same request id
       const n = invoices.size + 1;
       const sum = Math.round(JSON.parse(init.body).Line.reduce((s, l) => s + l.Amount * 100, 0));
@@ -1162,7 +1167,7 @@ test('the invoice takes the customer\'s addresses, e-mail, terms and currency fr
   customer.PrimaryEmailAddr.Address = 'changed@orion.example'; // changed after the preview: the create reads it again
   await t.inv.decide({ verb: 'yes', id: 'Q1' });
   const body = t.m.posts[0].body;
-  assert.deepEqual(body.BillAddr, { Line1: 'Orion Furniture', Line2: '1 Sample Street', Line3: 'Sample City', FreeFormAddress: true }); // the screen's block: the name, the phone, the address lines, the city (no record id)
+  assert.deepEqual(body.BillAddr, { Line1: 'Orion Furniture', Line2: '1 Sample Street', Line3: 'Sample City' }); // the screen's block: the name, the phone, the address lines, the city (no record id)
   assert.deepEqual(body.ShipAddr, { Line1: '2 Sample Yard', City: 'Sample City' });
   assert.deepEqual(body.BillEmail, { Address: 'changed@orion.example' }); assert.deepEqual(body.SalesTermRef, { value: '7' });
   assert.deepEqual(body.CurrencyRef, { value: 'AED', name: 'United Arab Emirates Dirham' });
@@ -1170,7 +1175,7 @@ test('the invoice takes the customer\'s addresses, e-mail, terms and currency fr
   // a customer with no address: none is made up
   const bare = mk({ customers: [{ Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0, BillAddr: { Id: '9' } }] });
   await bare.inv.request({ text: REQ, requester: 'owner' }); await bare.inv.decide({ verb: 'yes', id: 'Q1' });
-  assert.deepEqual(bare.m.posts[0].body.BillAddr, { Line1: 'Orion Furniture', FreeFormAddress: true }); // only the name: nothing is made up
+  assert.deepEqual(bare.m.posts[0].body.BillAddr, { Line1: 'Orion Furniture' }); // only the name: nothing is made up
   for (const k of ['ShipAddr', 'CurrencyRef']) assert.equal(k in bare.m.posts[0].body, false, k);
 });
 
@@ -1264,7 +1269,7 @@ test('terms and the place of supply: the customer\'s record, else the company de
   // the bill-to block: name, phone, address lines, city, in that order, free-form
   const f = mk({ customers: [{ ...bare, PrimaryPhone: { FreeFormNumber: '+000 0000 000' }, BillAddr: { Id: '3', Line1: 'Sample Tower', City: 'SAMPLE CITY' } }] });
   await f.inv.request({ text: REQ, requester: 'owner' }); await f.inv.decide({ verb: 'yes', id: 'Q1' });
-  assert.deepEqual(f.m.posts[0].body.BillAddr, { Line1: 'Orion Furniture', Line2: '+000 0000 000', Line3: 'Sample Tower', Line4: 'SAMPLE CITY', FreeFormAddress: true });
+  assert.deepEqual(f.m.posts[0].body.BillAddr, { Line1: 'Orion Furniture', Line2: '+000 0000 000', Line3: 'Sample Tower', Line4: 'SAMPLE CITY' });
 });
 
 test('the dry run lists only real gaps: what QuickBooks fills in by itself is not shown', async () => {
@@ -1314,4 +1319,73 @@ test('the owner\'s sample: the price asked for wins on its line (marked, item pr
     const n = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0 }], items });
     assert.ok(!(await n.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m', requester: 'owner' })).owner.includes('Cross-check'));
   } finally { setOutLang('fa'); }
+});
+
+// ------------------------------------------------------------------------------------------------ real invoices must never fail on a parity field
+const CUSTOMER_WITH_ADDRESS = { Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0, PrimaryPhone: { FreeFormNumber: '+000 0000 000' },
+  BillAddr: { Id: '501', Line1: '1 Sample Street', City: 'Sample City', Lat: '25.1', Long: '55.2', FreeFormAddress: true }, ShipAddr: { Id: '502', Line1: '2 Sample Yard', City: 'Sample City', Lat: '1', Long: '2' } };
+
+test('no read-only or unknown property reaches an address: FreeFormAddress, coordinates and record ids are dropped; the fake QuickBooks refuses a bad address and accepts the body', async () => {
+  const t = mk({ customers: [CUSTOMER_WITH_ADDRESS] });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  const dry = t.inv.invoiceBody(t.store.get('Q1'), await t.inv.salesDefaults('58'));
+  for (const k of ['BillAddr', 'ShipAddr']) for (const bad of ['FreeFormAddress', 'Lat', 'Long', 'Id']) assert.ok(!(bad in (dry[k] || {})), `${k}.${bad}`);
+  assert.deepEqual(dry.BillAddr, { Line1: 'Orion Furniture', Line2: '+000 0000 000', Line3: '1 Sample Street', Line4: 'Sample City' });
+  assert.deepEqual(dry.ShipAddr, { Line1: '2 Sample Yard', City: 'Sample City' });
+  const out = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
+  assert.ok(out.includes('ساخته شد') || out.startsWith('*Invoice*'), out); assert.equal(t.m.posts.length, 1); // accepted at the first try
+  // the old body (with FreeFormAddress) is exactly what the fake refuses
+  const refused = mk({ customers: [CUSTOMER_WITH_ADDRESS] });
+  const r = await fetchLike(refused, { ...dry, BillAddr: { ...dry.BillAddr, FreeFormAddress: true } });
+  assert.equal(r.status, 400);
+});
+
+async function fetchLike(t, body) { // posts a body straight to the fake QuickBooks of a desk and returns the answer status
+  try { await t.qbo.write('POST', 'invoice', body, { requestId: 'probe' }); return { status: 200 }; } catch (e) { return { status: e.status }; }
+}
+
+test('a 400 on an optional parity field: ONE retry without the optional fields, the owner is told which were dropped, the fault is in the audit and the log; nothing else is retried', async () => {
+  const t = mk({ customers: [{ ...CUSTOMER_WITH_ADDRESS, BillAddr: { Id: '1', Line1: 'A' } }], rejectField: 'TransactionLocationType', officeInvoices: [{ Id: '9', DocNumber: 'inv-0', TransactionLocationType: 'AbuDhabi', PrintStatus: 'NotSet' }] });
+  const log = []; t.inv.log = (x) => log.push(x);
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  const out = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
+  assert.equal(t.m.posts.length, 2); // refused once, then created without the optional fields
+  assert.ok('TransactionLocationType' in t.m.posts[0].body && !('TransactionLocationType' in t.m.posts[1].body));
+  for (const keep of ['CustomerRef', 'Line', 'GlobalTaxCalculation']) assert.ok(keep in t.m.posts[1].body, keep); // customer, lines, tax stay
+  assert.ok(!('BillAddr' in t.m.posts[1].body) && !('PrintStatus' in t.m.posts[1].body));
+  assert.match(out, /Note: QuickBooks refused some optional fields \(.*TransactionLocationType.*\); the invoice was created without them\./);
+  assert.notEqual(t.m.posts[0].requestId, t.m.posts[1].requestId); // a 400 stored nothing: the retry is its own request
+  const events = t.audit.last(10);
+  const refusal = events.find((x) => x.event === 'refused-400');
+  assert.equal(refusal.fault.code, '2010'); assert.equal(refusal.fault.element, 'TransactionLocationType'); assert.match(refusal.fault.detail, /unsupported or invalid/);
+  assert.ok(events.some((x) => x.event === 'created-lean' && x.dropped.includes('TransactionLocationType')));
+  assert.ok(log.some((l) => l.includes('QuickBooks refused the invoice (400)') && l.includes('2010')));
+});
+
+test('a 400 that the lean retry does not cure ends there (one retry only), a 5xx and a network error are never retried by this path; the whole fault is kept and a short reason is shown', async () => {
+  const bare = { Id: '58', DisplayName: 'Orion Furniture', CompanyName: 'Orion Furniture LLC', Balance: 0 };
+  const noOptional = mk({ customers: [bare], rejectField: 'CustomerRef' }); // a refusal that no optional field explains
+  await noOptional.inv.request({ text: REQ, requester: 'owner' });
+  const out = (await noOptional.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
+  assert.equal(noOptional.m.posts.length, 2); // the one lean retry (the bill-to block was optional), refused again for the same real reason
+  assert.match(out, /ساخت فاکتور نشد: .*unsupported property/);
+  const failed = noOptional.audit.last(5).find((x) => x.event === 'failed');
+  assert.equal(failed.status, 400); assert.equal(failed.fault.element, 'CustomerRef'); assert.equal(failed.fault.code, '2010');
+  assert.equal(noOptional.store.get('Q1').status, 'pending'); // the preview stays; nothing was created
+  const server = mk({ customers: [CUSTOMER_WITH_ADDRESS], postFailures: 9 }); // 5xx all the way: the client's own retries only; no lean second attempt
+  await server.inv.request({ text: REQ, requester: 'owner' });
+  await server.inv.decide({ verb: 'yes', id: 'Q1' });
+  assert.ok(server.m.posts.every((x) => x.body.BillAddr), 'every try carried the same body (no lean retry after a 5xx)');
+  assert.ok(!server.audit.last(10).some((x) => x.event === 'refused-400'));
+});
+
+test('the dry run builds the very body the create sends (the same sanitising), so it would have shown a bad address', async () => {
+  const office = { Id: '7', DocNumber: 'inv-1', BillAddr: { Line1: 'x' } };
+  const t = mk({ customers: [CUSTOMER_WITH_ADDRESS], byNumber: { 'inv-1': office }, officeInvoices: [office] });
+  await t.inv.request({ text: REQ, requester: 'owner' });
+  const text = (await t.inv.dryRun('Q1', 'inv-1')).join('\n');
+  assert.ok(!text.includes('FreeFormAddress') && !text.includes('"Lat"'), text);
+  const built = t.inv.invoiceBody(t.store.get('Q1'), await t.inv.salesDefaults('58'));
+  const sent = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).length && t.m.posts[0].body;
+  assert.deepEqual(Object.keys(built).sort(), Object.keys(sent).filter((k) => k !== 'DocNumber').sort());
 });

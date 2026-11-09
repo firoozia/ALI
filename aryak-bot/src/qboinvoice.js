@@ -542,6 +542,11 @@ export class InvoiceStore {
 const HARMLESS = ['PrivateNote', 'AllowIPN', 'AllowOnlineAffirmPayment', 'AllowOnlinePayPalPayment', 'CustomField', 'EmailStatus', 'ExchangeRate'];
 const HARMLESS_LINE = ['Id', 'LineNum', 'CustomExtensions', 'SalesItemLineDetail.ItemAccountRef'];
 
+// What a PhysicalAddress may carry on a create; and the optional «as the screen does» fields: if QuickBooks refuses the invoice (400) they are the first suspects
+// and the create is tried once more without them (a 400 creates nothing, so this cannot make two invoices).
+const PHYSICAL_ADDRESS = ['Line1', 'Line2', 'Line3', 'Line4', 'Line5', 'City', 'Country', 'CountrySubDivisionCode', 'PostalCode'];
+export const OPTIONAL_PARITY = ['BillAddr', 'ShipAddr', 'CurrencyRef', 'TransactionLocationType', 'AllowOnlineACHPayment', 'AllowOnlineCreditCardPayment', 'AllowOnlinePayment', 'PrintStatus', 'TemplateRef'];
+
 export class QboInvoiceDesk {
   /**
    * [qbo]; [desk]: the QboDesk (customer matching and the cached customer list); [store]: InvoiceStore; [audit]: Audit; [book]: the owner's price
@@ -1138,15 +1143,25 @@ export class QboInvoiceDesk {
     p.status = 'creating'; this.store.recordCreate(this.now()); this.store.save();
     this.inflight.add(p.id);
     const body = this.invoiceBody(p, await this.salesDefaults(p.customer.id));
-    let created;
-    try {
-      const j = await this.qbo.write('POST', 'invoice', body, { requestId: `atossa-${p.id}-${p.nonce}` });
+    let created; let dropped = [];
+    const attempt = async (payload, suffix) => {
+      const j = await this.qbo.write('POST', 'invoice', payload, { requestId: `atossa-${p.id}-${p.nonce}${suffix}` });
       created = j?.Invoice;
       if (!created?.Id) throw new Error('no invoice in the answer');
+    };
+    try {
+      try { await attempt(body, ''); } catch (e1) {
+        const optional = OPTIONAL_PARITY.filter((k) => k in body);
+        if (e1.status !== 400 || !optional.length) throw e1; // only a refusal (400), which creates nothing; never a network error or a 5xx
+        this.log(`QuickBooks refused the invoice (400): ${JSON.stringify(e1.fault || {})}; trying once without ${optional.join(', ')}`);
+        this.audit.add({ event: 'refused-400', previewId: p.id, fault: e1.fault || null, dropping: optional });
+        const lean = { ...body }; for (const k of optional) delete lean[k];
+        await attempt(lean, '-lean'); dropped = optional;
+      }
     } catch (e) {
       p.status = 'pending'; this.inflight.delete(p.id); if (e.status >= 400 && e.status < 500) { p.docNumber = ''; p.attempted = false; } this.store.save(); // a refusal of the number is not repeated; a lost answer keeps it (same request, same invoice)
-      this.audit.add({ event: 'failed', previewId: p.id, approver: 'owner', status: e.status || 0 });
-      this.log(`QuickBooks invoice create failed: ${e.name} ${e.status || ''}`);
+      this.audit.add({ event: 'failed', previewId: p.id, approver: 'owner', status: e.status || 0, fault: e.fault || null });
+      this.log(`QuickBooks invoice create failed: ${e.name} ${e.status || ''} ${JSON.stringify(e.fault || {})}`);
       return [`ساخت فاکتور نشد: ${e.message}. پیش‌نمایش می‌ماند؛ همان «بله #${p.id}» دوباره امن است (دو فاکتور ساخته نمی‌شود).`];
     }
     this.inflight.delete(p.id);
@@ -1156,7 +1171,9 @@ export class QboInvoiceDesk {
     p.qbo = { id: String(created.Id), docNumber: created.DocNumber || '', total: fils(created.TotalAmt) };
     this.store.save();
     this.audit.add({ event: 'create', requester: p.requester, approver: 'owner', previewId: p.id, qboId: p.qbo.id, docNumber: p.qbo.docNumber, total: p.qbo.total });
+    if (dropped.length) this.audit.add({ event: 'created-lean', previewId: p.id, dropped });
     const out = isEnglishOut() ? [`*Invoice* ${p.qbo.docNumber || '(no number)'} — *${p.customer.name}* — *${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}*`] : [`فاکتور ${p.id} در کوییک‌بوکس ساخته شد: شمارهٔ ${p.qbo.docNumber || '(بی‌شماره)'}، جمع ${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}.`];
+    if (dropped.length) out.push(`Note: QuickBooks refused some optional fields (${dropped.join(', ')}); the invoice was created without them.`);
     // read it back and compare the total with the preview
     try {
       const back = (await this.qbo.get(`invoice/${encodeURIComponent(p.qbo.id)}`))?.Invoice;
@@ -1182,12 +1199,16 @@ export class QboInvoiceDesk {
     const memo = [p.po ? `PO ${p.po}` : '', defaults.memo || ''].filter(Boolean).join('\n\n'); // the customer's PO number first, then the company's message
     const cu = defaults.customer || null; // the customer's record, read now
     const terms = cu?.SalesTermRef?.value ? String(cu.SalesTermRef.value) : (p.termId || defaults.terms || ''); // the customer's own terms, else the company default
-    const addr = (a) => { if (!a || typeof a !== 'object') return null; const { Id, ...rest } = a; return Object.values(rest).some((v) => String(v || '').trim()) ? rest : null; }; // the address without its record id
+    const addr = (a) => { // a PhysicalAddress holds only these (no record id, no coordinates, no FreeFormAddress flag: that one is read-only)
+      if (!a || typeof a !== 'object') return null;
+      const keep = Object.fromEntries(PHYSICAL_ADDRESS.map((k) => [k, String(a[k] || '').trim()]).filter(([, v]) => v));
+      return Object.keys(keep).length ? keep : null;
+    };
     const phone = String(cu?.PrimaryPhone?.FreeFormNumber || cu?.Mobile?.FreeFormNumber || '').trim();
     const raw = cu?.BillAddr || {};
     const billLines = [cu?.DisplayName || cu?.CompanyName || '', phone, ...['Line1', 'Line2', 'Line3', 'Line4', 'Line5'].map((k) => String(raw[k] || '').trim()), String(raw.City || '').trim()]
       .map((x) => String(x || '').trim()).filter(Boolean).filter((x, i, all) => all.indexOf(x) === i).slice(0, 5); // the screen's block: the name, the phone, then the address lines and the city
-    const billAddr = billLines.length ? { ...Object.fromEntries(billLines.map((x, i) => [`Line${i + 1}`, x])), FreeFormAddress: true } : null;
+    const billAddr = billLines.length ? Object.fromEntries(billLines.map((x, i) => [`Line${i + 1}`, x])) : null;
     const shipAddr = addr(cu?.ShipAddr);
     const email = cu?.PrimaryEmailAddr?.Address || p.billEmail || '';
     return {
