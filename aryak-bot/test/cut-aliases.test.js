@@ -62,3 +62,12 @@ test('the words and the wiring: «cut aliases», «drop 2,3 #A1», «yes #A1»; 
   assert.match(index, /id\.startsWith\('A'\) \? decideAlias\(ic\.type, id\)/);
   assert.match(index, /\.\.\.cutAliases\.openIds\(\)/); // a bare yes counts the open proposal
 });
+
+test('two close names: the nearer spelling wins, an equal pair is left to the owner; a note after the customer in a cut post is not part of the name', async () => {
+  const qbo = ['NUQOOSH IND . LLC', 'NUQOOSH TRADING LLC', 'AL AHLIA KITCHEN', 'AL AHLIA KITCHENS TRADING'];
+  const by = Object.fromEntries(proposeAliases({ postNames: ['NUQOOSH kitchens ind . llc', 'AL AHALIA KITCHEN'], qboNames: qbo }).map((x) => [x.post, x.qbo]));
+  assert.ok(by['AL AHALIA KITCHEN'] === 'AL AHLIA KITCHEN');
+  const { parseCutCaption } = await import('../src/captions.js');
+  const r = parseCutCaption('ART NO 105 AL AHALIA KITCHEN BD REPAIRED 6M');
+  assert.equal((r.customer || '').toUpperCase(), 'AL AHALIA KITCHEN');
+});

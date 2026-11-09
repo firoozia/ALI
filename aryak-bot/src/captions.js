@@ -53,7 +53,8 @@ export function parseCutCaption(text) {
   }
   const internal = /\bFOR\s+CUT(?:TING)?\b/i.test(rest);
   const damaged = /\bDAMAG\w*/i.test(rest);
-  const customer = title(rest.replace(/\bFOR\s+CUT(?:TING)?\b/gi, ' ').replace(/\bDAMAG\w*(?:\s+PIECES?)?/gi, ' ').replace(/\bPIECES?\b/gi, ' ').replace(/\s+/g, ' '));
+  const note = /\s+(?:\bBD\b|\bB\.D\b|\bREPAIR\w*|\bRETURN\w*|\bREPLACE\w*|\bFREE\b|\bSAMPLE\w*|\bEXTRA\b|\bOK\b)\b.*$/i; // a note after the customer's name («BD REPAIRED») is not part of it
+  const customer = title(rest.replace(note, '').replace(/\bFOR\s+CUT(?:TING)?\b/gi, ' ').replace(/\bDAMAG\w*(?:\s+PIECES?)?/gi, ' ').replace(/\bPIECES?\b/gi, ' ').replace(/\s+/g, ' '));
   const base = { code, customer, quantity, unit, ...(pieces ? { pieces } : {}), ...(invoiceQuantity !== undefined ? { invoiceQuantity } : {}) };
   if (internal) return { ...base, kind: 'open-roll', customer: '' };
   if (damaged) return { ...base, kind: 'damage' };
@@ -131,7 +132,8 @@ export function parsePaymentCaption(text) {
   const amount = num(a[1]);
   let rest = (s.slice(0, a.index) + ' ' + s.slice(a.index + a[0].length))
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer
-    .replace(/\b(AED|DHS?|CASH|CHEQUE|CHECK|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT)\b/gi, ' ');
+    .replace(/\b(AED|DHS?|CASH|CHEQUE|CHECK|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
+    .replace(/[\/.]+/g, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
   return { kind: 'cash', amount, customers };
 }

@@ -61,3 +61,9 @@ test('the words and the wiring: «unbilled» on request; the evening hour and th
   assert.match(cfg, /eveningReportHour: env\.EVENING_REPORT_HOUR \? Number\(env\.EVENING_REPORT_HOUR\) : null/);
   assert.ok(fs.readFileSync(path.join(import.meta.dirname, '..', 'deploy', 'gcp-startup.sh'), 'utf8').includes('EVENING_REPORT_HOUR EVENING_REPORT_TO'));
 });
+
+test('an approved alias merges two spellings into one customer line', () => {
+  const events = [cut('AL AFFEFI KITCHEN', 'ART NO 215', 5, 2), cut('AL AFFEFI KITCHEN 6', 'ART NO 220', 4, 2)];
+  const r = unbilled({ events, invoices: [], itemCodes: codesOf, aliasOf: (n) => (n === 'AL AFFEFI KITCHEN 6' ? 'AL AFFEFI KITCHEN' : ''), now: NOW });
+  assert.equal(r.groups.length, 1); assert.equal(r.groups[0].customer, 'AL AFFEFI KITCHEN'); assert.equal(r.groups[0].parts.length, 2);
+});

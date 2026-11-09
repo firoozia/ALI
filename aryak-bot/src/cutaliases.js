@@ -22,8 +22,12 @@ export function proposeAliases({ postNames, qboNames, skip = () => false }) {
     seen.add(key);
     if (qboNames.some((q) => sameCutCustomer(post, q))) continue; // already the same customer by the plain rules: no alias needed
     const ranked = rankNames(post, qboNames);
-    const [best, second] = ranked;
-    if (best && best.score >= 0.8 && (!second || best.score - second.score >= 0.1)) out.push({ post, qbo: best.name, score: Math.round(best.score * 100) });
+    const close = ranked.filter((x) => x.score >= 0.8 && ranked[0].score - x.score < 0.1);
+    if (!close.length) continue;
+    const edit = (x) => { const a = nameKey(post); const b = nameKey(x.name); const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]); for (let j = 1; j <= b.length; j++) d[0][j] = j; for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; };
+    const byEdit = [...close].sort((x, y) => edit(x) - edit(y));
+    if (byEdit.length > 1 && edit(byEdit[0]) === edit(byEdit[1])) continue; // two names equally near: not guessed
+    out.push({ post, qbo: byEdit[0].name, score: Math.round(byEdit[0].score * 100) });
   }
   return out;
 }

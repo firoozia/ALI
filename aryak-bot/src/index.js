@@ -541,6 +541,7 @@ setInterval(async () => {
   } catch (e) { logger.warn(`cut reconcile failed: ${e.message}`); }
 }, 30 * 60 * 1000).unref();
 
+const lastPayName = new Map(); // group -> the last bare name posted in the Confirmation group
 async function trackGroup(raw, groupId, role) {
   if (sent.has(raw.key.id) || botState.paused) return;
   const content = normalizeMessageContent(raw.message);
@@ -556,8 +557,16 @@ async function trackGroup(raw, groupId, role) {
     if (det.cleared) { const done = markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', done ? 'a money item was cleared' : 'cleared, but no open money item'); return; }
     if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    if (det.name) { // a bare name: it belongs to the nameless payment just before it (ten minutes), or to the one that comes just after
+      lastPayName.set(groupId, { customer: det.name, at: Date.now() });
+      const before = [...tracker.events].reverse().find((e) => e.type === 'payment' && !e.customer && e.pendingName && Date.now() - e.at < 10 * 60 * 1000);
+      if (before) { tracker.update(before.ref, { customer: canon(det.name), customerTyped: det.name, pendingName: false }); trace(whereDet, 'tracker', 'a name was given to the payment just before it'); }
+      return;
+    }
     for (const [i, ev] of det.events.entries()) {
       const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: refOf(raw.key.id, i) };
+      const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
+      if (role === 'payment' && !event.customer && pn && Date.now() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
       if (isDuplicatePayment(tracker, event)) { trace(whereDet, 'tracker', 'the same payment was already recorded minutes ago: counted once'); continue; }
       if (!tracker.add(event)) continue;
       trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
@@ -660,20 +669,23 @@ const qbo = new Qbo({
 setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); // refresh before the access token expires, not only when a call finds it expired
 const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = await sock.sendMessage(jid, { document: buf, mimetype, fileName, caption }); if (!r) throw new Error('the document was not sent'); };
 /** The text of the report «cut or delivered, not invoiced»: the posts against ALL of the customers' QuickBooks invoices of the last 40 days. Read only. */
-async function unbilledReport() {
+async function unbilledReport(events = tracker.events) {
   const since = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const invoices = await qbo.query(`select * from Invoice where TxnDate >= '${since}'`);
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
-  return unbilledText(unbilled({ events: tracker.events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone }));
+  return unbilledText(unbilled({ events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone }));
 }
 
 /** Payments seen in the Confirmation group against the customers' OPEN invoices: a proposal only, read only; nothing is recorded in QuickBooks. */
 async function paymentsReport(events) {
   const invoices = await qbo.query("select * from Invoice where Balance > '0'");
-  return paymentsText({ events, invoices, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone });
+  const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const payments = await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => []); // what the office already recorded
+  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone });
 }
 
 const availDrafts = new AvailabilityDrafts();
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -1113,6 +1125,13 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
     if (bareOk) {
       const parts = await qboInvoiceCommand(dec, text, { chatId });
       if (parts) { trace(where, role, `the owner's bare ${dec.type} typed in an internal group`); for (const part of parts) await sayIn(raw, chatId, where, part); return true; }
+    }
+    if (dec && OWNER_CHAT_COMMANDS.has(dec.type)) { // never silent: the test group answers from its own data, the other groups send him to his own chat
+      if (test && (dec.type === 'unbilled' || dec.type === 'payments')) {
+        trace(where, role, `the owner's ${dec.type} in the test group: answered from the test data`);
+        try { await sayIn(raw, chatId, where, dec.type === 'unbilled' ? await unbilledReport(testTracker.events) : await paymentsReport(testTracker.events)); } catch (e) { await sayIn(raw, chatId, where, 'The report could not be made now; try again later.'); }
+      } else await sayIn(raw, chatId, where, 'Owner command: use your own chat.');
+      return true;
     }
     if (dec && (dec.type === 'yes' || dec.type === 'no') && /^[QSA]\d+$/.test(dec.id || '')) {
       trace(where, role, `the owner's ${dec.type} for #${dec.id} typed in an internal group`);

@@ -24,7 +24,7 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
   const same = (post, qboName) => sameCutCustomer(post, qboName) || (!!aliasOf(post) && sameCutCustomer(aliasOf(post), qboName));
   const invoicesOf = (post) => lines.filter((x) => same(post, x.customer));
   const byCustomer = new Map();
-  const add = (customer, text) => byCustomer.set(customer, [...(byCustomer.get(customer) || []), text]);
+  const add = (customer, text) => { const name = aliasOf(customer) || customer; byCustomer.set(name, [...(byCustomer.get(name) || []), text]); }; // an approved alias merges the two spellings into the QuickBooks name
   for (const e of events) {
     if (e.at < now - days * DAY || e.internal || e.simulated) continue;
     const post = e.customerTyped || e.customer;

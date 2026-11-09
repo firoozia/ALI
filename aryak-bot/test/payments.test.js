@@ -44,9 +44,26 @@ test('the shapes the group uses: a bank credit keeps the amount and no account n
   assert.deepEqual(parseInvoiceCommand('payments'), { type: 'payments' }); assert.deepEqual(parseInvoiceCommand('پرداخت ها'), { type: 'payments' });
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   const fn = index.slice(index.indexOf('async function paymentsReport'), index.indexOf('const availDrafts'));
-  assert.match(fn, /select \* from Invoice where Balance > '0'/); assert.doesNotMatch(fn, /\.write\(|sock\.sendMessage|postDocument|Payment/); // only reads
+  assert.match(fn, /select \* from Invoice where Balance > '0'/); assert.match(fn, /select \* from Payment where TxnDate >=/); assert.doesNotMatch(fn, /\.write\(|sock\.sendMessage|postDocument/); // only reads
   assert.match(index, /role === 'payment' && Number\(event\.amount\) > 0 && qbo\.connected && !qbo\.paused/);
   assert.match(index, /paymentsReport\(\[event\]\)\.then\(\(text\) => sock\.sendMessage\(ownIds\(\)\[0\]/); // to the owner's own chat only
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'payments.js'), 'utf8');
   assert.doesNotMatch(src, /\.write\(|POST|qbo\./); // the module cannot write
+});
+
+test('junk words are not a customer; a nameless cash payment waits for the name posted next to it; 1 AED rounding; a payment the office already recorded', () => {
+  for (const [text, customers] of [['cash from receipt + clear 115 aed', []], ['115 aed cash from Pay', []], ['cash from clear ZED CARPENTRY inv 250 aed', ['Zed Carpentry']]]) {
+    const r = eventsFromCaption('payment', text);
+    const got = (r.events || []).map((e) => e.customer).filter(Boolean);
+    assert.deepEqual(got.map((x) => x.toUpperCase()), customers.map((x) => x.toUpperCase()), text);
+  }
+  const nameless = eventsFromCaption('payment', 'receipt 115 aed and clear').events[0];
+  assert.equal(nameless.amount, 115); assert.equal(nameless.pendingName, true); assert.equal(nameless.customer, '');
+  assert.deepEqual(eventsFromCaption('payment', 'Alwan sham'), { name: 'Alwan sham' });
+  const near = proposePayment({ event: pay({ customer: 'ZED CARPENTRY', amount: 250.5 }), invoices: open });
+  assert.match(near[1], /^→ pays inv-9931 250\.00 \(rounded: 250\.00\)$/);
+  const paid = [{ TotalAmt: 115, TxnDate: '2026-11-08', CustomerRef: { name: 'ALWAN ALSHAM' } }];
+  const done = proposePayment({ event: pay({ customer: 'Alwan Al Sham', amount: 115 }), invoices: open, payments: paid, aliasOf: (n) => (n === 'Alwan Al Sham' ? 'ALWAN ALSHAM' : '') });
+  assert.match(done[1], /^→ already recorded in QuickBooks \(payment of 08\/11, ALWAN ALSHAM\)$/);
+  assert.doesNotMatch(proposePayment({ event: pay({ customer: 'OTHER CO', amount: 115 }), invoices: open, payments: paid })[1], /already recorded/);
 });
