@@ -4,7 +4,9 @@
 // of the customer. The opening balance is closing minus the activity of the period, so nothing outside the listed lines can break the arithmetic.
 // One A4 page (more pages when the lines need them): company header, customer, period, opening balance, lines, closing balance, ageing buckets.
 
-import { MiniPdf, textWidth } from './minipdf.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { MiniPdf, readImage, textWidth } from './minipdf.js';
 import { qboEscape } from './qbo.js';
 
 const fils = (x) => Math.round(Number(x || 0) * 100);
@@ -67,8 +69,11 @@ export function buildStatementData({ company, customer, preferences = null, invo
   const foreign = [...invoices, ...payments, ...credits].some((t) => t.CurrencyRef?.value && currency && t.CurrencyRef.value !== currency);
   const qbBalance = customer?.Balance === undefined ? null : fils(customer.Balance);
   return {
-    company: { name: company?.CompanyName || company?.LegalName || '', lines: addr(company?.CompanyAddr), email: company?.Email?.Address || '' },
-    customer: { name: customer?.DisplayName || customer?.CompanyName || '', lines: addr(customer?.BillAddr) },
+    company: { name: company?.CompanyName || company?.LegalName || '', lines: addr(company?.CompanyAddr), email: company?.Email?.Address || '', web: company?.WebAddr?.URI || '' },
+    customer: { name: customer?.DisplayName || customer?.CompanyName || '', lines: addr(customer?.BillAddr), phone: customer?.PrimaryPhone?.FreeFormNumber || customer?.Mobile?.FreeFormNumber || '' },
+    // the QuickBooks app's transaction statement: one row per invoice dated in the period, its total and what was received on it so far
+    txn: invoices.filter(inPeriod).map((t) => ({ date: t.TxnDate, ref: t.DocNumber || '', amount: fils(t.TotalAmt), received: fils(t.TotalAmt) - fils(t.Balance) }))
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0)),
     today, start: startIso, periodEnd: new Date(end * DAY).toISOString().slice(0, 10), historical, currency, opening, lines, closing, ageing, credit, openItems,
     ageingTotal: Object.values(ageing).reduce((s, v) => s + v, 0) + credit,
     balanceCheck: { qbo: qbBalance, matches: historical || qbBalance === null ? null : qbBalance === closing },
@@ -78,8 +83,128 @@ export function buildStatementData({ company, customer, preferences = null, invo
 
 const dmy = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${y}`; };
 
-/** The statement as a PDF (bytes). [sandbox]: the test footer is printed. */
-export function statementPdf(data, { sandbox = false } = {}) {
+/** The company logo from a file on the server (png or jpg beside the auth files): a picture for MiniPdf, or null (the space stays empty). Never part of the repository. */
+export function loadLogo(dir) {
+  for (const name of ['statement-logo.png', 'statement-logo.jpg', 'statement-logo.jpeg', 'logo.png', 'logo.jpg']) {
+    try { const img = readImage(fs.readFileSync(path.join(dir, name))); if (img) return img; } catch (e) { /* not there: try the next */ }
+  }
+  return null;
+}
+
+/** Words of [text] on lines no wider than [max] points; one word wider than that is cut. */
+export function wrapText(text, size, max, bold = false) {
+  const out = []; let cur = '';
+  for (let w of String(text || '').split(/\s+/).filter(Boolean)) {
+    while (textWidth(w, size, bold) > max && w.length > 1) {
+      let k = w.length - 1;
+      while (k > 1 && textWidth(w.slice(0, k), size, bold) > max) k -= 1;
+      if (cur) { out.push(cur); cur = ''; }
+      out.push(w.slice(0, k)); w = w.slice(k);
+    }
+    const next = cur ? `${cur} ${w}` : w;
+    if (textWidth(next, size, bold) <= max) cur = next; else { if (cur) out.push(cur); cur = w; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+const BLUE = [0.36, 0.62, 0.86]; const BAND = [0.86, 0.92, 0.98]; const BLUE_TEXT = [0.13, 0.38, 0.68];
+
+/** The lines of the first page's top block, measured once so the drawing and the page count agree. */
+function firstPageBlock(data) {
+  const top = [];
+  wrapText((data.company.name || '').toUpperCase(), 12, 270, true).slice(0, 3).forEach((t) => top.push({ t, size: 12, bold: true }));
+  data.company.lines.slice(0, 4).forEach((l) => wrapText(l.toUpperCase(), 9, 270).slice(0, 2).forEach((t) => top.push({ t, size: 9, gray: 0.3 })));
+  if (data.company.email) top.push({ t: data.company.email.toUpperCase().slice(0, 60), size: 9, gray: 0.3 });
+  if (data.company.web) top.push({ t: String(data.company.web).replace(/^https?:\/\//i, '').toUpperCase().slice(0, 60), size: 9, gray: 0.3 });
+  let y = 50;
+  for (const r of top) y += r.size + 4;
+  const titleY = Math.max(y + 30, 150);
+  const left = [{ t: 'TO', size: 8, bold: true, blue: true }];
+  wrapText(data.customer.name || '-', 11, 280, true).slice(0, 4).forEach((t) => left.push({ t, size: 11, bold: true }));
+  if (data.customer.phone) left.push({ t: data.customer.phone, size: 10 });
+  data.customer.lines.slice(0, 3).forEach((l) => wrapText(l, 10, 280).slice(0, 2).forEach((t) => left.push({ t, size: 10 })));
+  let ly = titleY + 34;
+  for (const r of left) ly += r.size + 5;
+  return { top, left, titleY, bandY: Math.max(ly, titleY + 70) + 14 };
+}
+
+/**
+ * The statement like the QuickBooks app's transaction statement (the default): company and logo, the big title, the customer and the date, then
+ * DATE | DESCRIPTION | AMOUNT | RECEIVED, one row per invoice of the period, and the two totals. The table header band repeats on every page.
+ * [logo]: a picture from loadLogo or null. The app's statement number is not printed: QuickBooks numbers its own and the API cannot make one.
+ */
+export function transactionPdf(data, { sandbox = false, logo = null } = {}) {
+  const pdf = new MiniPdf();
+  const L = 40; const R = 555; const W = pdf.width;
+  const currency = data.currency || 'AED';
+  const cx = { date: L + 6, desc: L + 100, amount: R - 120, received: R - 6 };
+  const blk = firstPageBlock(data);
+  const band = (y) => {
+    pdf.box(L, y - 12, R - L, 20, 0, BAND);
+    pdf.text(cx.date, y + 2, 'DATE', { size: 9, bold: true, rgb: BLUE_TEXT });
+    pdf.text(cx.desc, y + 2, 'DESCRIPTION', { size: 9, bold: true, rgb: BLUE_TEXT });
+    pdf.text(cx.amount, y + 2, 'AMOUNT', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
+    pdf.text(cx.received, y + 2, 'RECEIVED', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
+    return y + 24;
+  };
+  const head = () => {
+    let y = 50;
+    for (const r of blk.top) { pdf.text(L, y, r.t, { size: r.size, bold: r.bold, gray: r.gray || 0 }); y += r.size + 4; }
+    if (logo) pdf.image(logo, R - 150, 30, 150, 70);
+    pdf.text(L, blk.titleY, 'Statement', { size: 28, rgb: BLUE });
+    let ly = blk.titleY + 34;
+    for (const r of blk.left) { pdf.text(L, ly, r.t, { size: r.size, bold: r.bold, rgb: r.blue ? BLUE_TEXT : null }); ly += r.size + 5; }
+    pdf.text(R - 150, blk.titleY + 34, 'DATE', { size: 8, bold: true, rgb: BLUE_TEXT });
+    pdf.text(R, blk.titleY + 34, dmy(data.today), { size: 10, align: 'right' });
+    pdf.text(R - 150, blk.titleY + 52, 'PERIOD', { size: 8, bold: true, rgb: BLUE_TEXT });
+    pdf.text(R, blk.titleY + 52, `${dmy(data.start)} - ${dmy(data.periodEnd || data.today)}`, { size: 10, align: 'right' });
+  };
+  // pages: how many rows fit (the first page starts lower); the totals need room too, else they go on a page of their own
+  const rowH = 17; const bottom = 780; const totalsH = 62;
+  const rows = data.txn;
+  const pageRows = [];
+  let y = blk.bandY + 24; let i = 0;
+  do {
+    const cap = Math.max(1, Math.floor((bottom - y) / rowH));
+    pageRows.push(rows.slice(i, i + cap)); i += cap; y = 60 + 24;
+  } while (i < rows.length);
+  const lastStart = pageRows.length === 1 ? blk.bandY + 24 : 84;
+  if (lastStart + pageRows[pageRows.length - 1].length * rowH + totalsH > bottom + 10) pageRows.push([]);
+  const total = pageRows.length;
+  pageRows.forEach((chunk, idx) => {
+    pdf.addPage();
+    let yy;
+    if (idx === 0) { head(); yy = band(blk.bandY); } else yy = band(60);
+    for (const r of chunk) {
+      pdf.text(cx.date, yy, dmy(r.date), { size: 9 });
+      pdf.text(cx.desc, yy, `Invoice No.${r.ref}`.slice(0, 40), { size: 9 });
+      pdf.text(cx.amount, yy, money(r.amount), { size: 9, align: 'right' });
+      pdf.text(cx.received, yy, money(r.received), { size: 9, align: 'right' });
+      yy += rowH;
+    }
+    if (idx === total - 1) {
+      pdf.line(L, yy - 6, R, yy - 6, 0.8, 0.4, [1, 3]);
+      const amount = rows.reduce((n, r) => n + r.amount, 0); const received = rows.reduce((n, r) => n + r.received, 0);
+      pdf.text(R - 150, yy + 12, 'TOTAL AMOUNT', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
+      pdf.text(R, yy + 12, `${currency} ${money(amount)}`, { size: 10, bold: true, align: 'right' });
+      pdf.text(R - 150, yy + 30, 'TOTAL RECEIVED', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
+      pdf.text(R, yy + 30, `${currency} ${money(received)}`, { size: 10, bold: true, align: 'right' });
+      if (!rows.length) pdf.text(L + 6, yy + 12, 'No invoice dated in this period.', { size: 9, gray: 0.4 });
+    }
+    pdf.text(W / 2, 826, `Page ${idx + 1} of ${total}`, { size: 8, align: 'center', gray: 0.5 });
+    if (sandbox) pdf.text(W / 2, 812, 'test, built by Atossa', { size: 10, bold: true, align: 'center', gray: 0.3 });
+  });
+  return pdf.build();
+}
+
+/** The statement as a PDF (bytes): the QuickBooks app's transaction statement, or with { style: 'balance' } the older layout with a running balance. [sandbox]: the test footer is printed. */
+export function statementPdf(data, { sandbox = false, style = 'transaction', logo = null } = {}) {
+  return style === 'balance' ? balancePdf(data, { sandbox }) : transactionPdf(data, { sandbox, logo });
+}
+
+/** The balance-forward layout: opening balance, every invoice, payment and credit memo with a running balance, ageing. */
+function balancePdf(data, { sandbox = false } = {}) {
   const currency = data.currency || '';
   const cur = currency ? ` (${currency})` : '';
   const pdf = new MiniPdf();

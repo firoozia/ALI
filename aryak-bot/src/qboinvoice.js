@@ -143,7 +143,7 @@ export function parseInvoiceCommand(text) {
   if ((m = /^کد\s+(.+?)\s*=\s*(.+?)(?:\s+مشتری\s+(.+))?$/u.exec(s))) return { type: 'item_code', code: m[1].trim(), item: m[2].trim(), customer: m[3]?.trim() || '' };
   { // «صورت‌حساب شرکت … برای ماه ۱۰ میلادی» in any words: the statement of a customer for a period (read only; it goes to the asker's own chat)
     const sr = parseStatementRequest(raw, new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10));
-    if (sr) return { type: 'statement_nl', customer: sr.customer, period: sr.period, unsupported: sr.unsupported };
+    if (sr) return { type: 'statement_nl', customer: sr.customer, period: sr.period, unsupported: sr.unsupported, style: sr.style || '' };
   }
   if (looksLikeInvoiceRequest(raw)) return { type: 'request', customer: '', lines: [], free: true }; // any layout: the model only extracts, the matching stays exact
   return null;

@@ -6,7 +6,7 @@ import { isEnglishOut } from './outlang.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { clearWinner, customerRowFor, nameKey, rankCustomers, rowGroups } from './customergroups.js';
-import { buildStatementData, loadCustomerData, money, statementPdf } from './qbostatement.js';
+import { buildStatementData, loadCustomerData, loadLogo, money, statementPdf } from './qbostatement.js';
 import { groupAllowed, shadowGroup } from './guard.js';
 import { pickSpoken, rankNames } from './translit.js';
 import { hasPeriod } from './period.js';
@@ -374,7 +374,7 @@ export class QboDesk {
    * A statement for a PERIOD of a customer named in any words, sent to [privateJid] (the asker's own chat). Returns { ok, text }; { ok: false, ask: true } when the
    * customer must be chosen first (a numbered list) or was not found (the three nearest).
    */
-  async statementFor(typed, { privateJid, period = null, hold = false } = {}) {
+  async statementFor(typed, { privateJid, period = null, hold = false, style = '' } = {}) {
     const found = await this.resolveSpoken(typed);
     if (!found.id) {
       if (isEnglishOut()) { // written in English at once (not translated): a statement is a statement of account, never an invoice
@@ -386,10 +386,11 @@ export class QboDesk {
     }
     if (!privateJid && !hold) return { ok: false, text: 'مقصد صورت‌حساب مشخص نیست؛ چیزی فرستاده نشد.' };
     const data = buildStatementData({ ...(await loadCustomerData(this.qbo, found.id)), today: this.today(), ...(period ? { from: period.from, to: period.to } : {}) });
-    const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox' });
+    const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox', style: style || 'transaction', logo: this.config?.authDir ? loadLogo(this.config.authDir) : null });
     const safe = (data.customer.name || found.name).replace(/[^\w.-]+/g, '_').slice(0, 40) || 'customer';
     const cur = data.currency ? `${data.currency} ` : '';
-    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${period.from} to ${period.to}` : 'current'} - balance ${cur}${money(data.closing)}`;
+    const dm = (d) => d.split('-').reverse().join('/'); // the period is echoed day first, as the books are read here
+    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${dm(period.from)} to ${dm(period.to)}` : 'current'} - balance ${cur}${money(data.closing)}`;
     const fileName = `statement-${safe}${period ? `-${period.label}` : ''}.pdf`;
     if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, balance: `${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}`, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
     await this.post(privateJid, pdf, fileName, caption);
@@ -398,9 +399,9 @@ export class QboDesk {
     if (isEnglishOut()) {
       const shown = data.customer.name || found.name;
       const note = found.via === 'sound' ? ` (guessed from "${typed}"; tell me if it is another customer)` : '';
-      return { ok: true, name: shown, guessed: !!guessed, text: `Statement of account for "${shown}"${note}${period ? ` from ${period.from} to ${period.to}` : ''} sent (balance ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? ', closing balance of the period' : ''}).` };
+      return { ok: true, name: shown, guessed: !!guessed, text: `Statement of account for "${shown}"${note}${period ? ` from ${dm(period.from)} to ${dm(period.to)}` : ''} sent (balance ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? ', closing balance of the period' : ''}).` };
     }
-    return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(period.from)} تا ${fa(period.to)}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };
+    return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(dm(period.from))} تا ${fa(dm(period.to))}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };
   }
 
   async statementOne(typed, privateJid = null) {
@@ -422,7 +423,7 @@ export class QboDesk {
       targetId = target.id;
     }
     const data = buildStatementData({ ...(await loadCustomerData(this.qbo, r.id)), today: this.today() });
-    const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox' });
+    const pdf = statementPdf(data, { sandbox: this.qbo.env === 'sandbox', logo: this.config?.authDir ? loadLogo(this.config.authDir) : null });
     const safe = (data.customer.name || r.ours).replace(/[^\w.-]+/g, '_').slice(0, 40) || 'customer';
     const cur = data.currency ? `${data.currency} ` : '';
     const caption = `Statement - ${data.customer.name || r.ours} - balance ${cur}${money(data.closing)}${data.balanceCheck.matches === false ? ` (QuickBooks balance differs: ${cur}${money(data.balanceCheck.qbo)})` : ''}`;

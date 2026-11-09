@@ -11,7 +11,7 @@ import { withoutBotNames } from './staff.js';
 /** A statement request in a text: { customer, period, unsupported } or null. */
 export function statementAsk(text) {
   const ic = parseInvoiceCommand(text);
-  if (ic?.type === 'statement_nl') return { customer: ic.customer, period: ic.period || null, unsupported: ic.unsupported || '' };
+  if (ic?.type === 'statement_nl') return { customer: ic.customer, period: ic.period || null, unsupported: ic.unsupported || '', style: ic.style || '' };
   const qc = parseQboCommand(text);
   if (qc?.type === 'statement') return { customer: qc.name, period: null, unsupported: '' };
   return null;

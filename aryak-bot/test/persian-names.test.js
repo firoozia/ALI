@@ -116,7 +116,7 @@ test('English statement lines are written in English at once: a statement of acc
     assert.match(none.text, /^No customer named "اف" was found\. Closest:/);
     const one = await mkDesk([customers[0], customers[2]]).statementFor('الراد', { privateJid: 'x@s.whatsapp.net', period: { from: '2026-10-01', to: '2026-10-31', label: '2026-10' } });
     assert.equal(one.ok, true);
-    assert.match(one.text, /^Statement of account for "AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC" \(guessed from "الراد"; tell me if it is another customer\) from 2026-10-01 to 2026-10-31 sent \(balance /);
+    assert.match(one.text, /^Statement of account for "AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC" \(guessed from "الراد"; tell me if it is another customer\) from 01\/10\/2026 to 31\/10\/2026 sent \(balance /);
     assert.doesNotMatch(one.text, /invoice/i);
   } finally { setOutLang('fa'); }
   const { TRANSLATE_SYSTEM } = await import('../src/outlang.js');

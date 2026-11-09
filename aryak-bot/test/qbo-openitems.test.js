@@ -15,7 +15,7 @@ test('the statement lists the open invoices with their days overdue, so every ag
   });
   assert.deepEqual(d.openItems.map((i) => [i.ref, i.past, i.balance]), [['1002', 18, 10000], ['1001', -1, 23900]]);
   assert.deepEqual(d.ageing, { current: 23900, d1_30: 10000, d31_60: 0, d61_90: 0, d91: 0 });
-  const pdf = statementPdf(d, { sandbox: true }).toString('latin1');
+  const pdf = statementPdf(d, { sandbox: true, style: 'balance' }).toString('latin1');
   assert.ok(pdf.includes('Open invoices') && pdf.includes('not yet due') && pdf.includes('Days overdue'));
   const count = (t) => pdf.split(`(${t})`).length - 1;
   assert.deepEqual([count('1001'), count('1002'), count('1003')], [2, 2, 1]); // an open invoice is in the lines and in the open list; a paid one only in the lines

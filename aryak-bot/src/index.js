@@ -853,7 +853,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       if (!ic.customer) { const out = ['صورت‌حساب کدام مشتری؟ نام را بنویسید یا بگویید.']; out.clarify = true; return out; }
       const blocked = qboInvoices.guard();
       if (blocked) return [blocked];
-      const x = await qboDesk.statementFor(ic.customer, { privateJid: ownIds()[0], period: ic.period });
+      const x = await qboDesk.statementFor(ic.customer, { privateJid: ownIds()[0], period: ic.period, style: ic.style });
       const out = [x.text];
       if (x.ask) { out.clarify = true; if (x.options?.length) out.choice = { kind: 'statement', options: x.options, period: ic.period }; } // the next answer picks one
       return out;
@@ -951,7 +951,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
       if (nl.unsupported || !nl.customer) { await say(nl.unsupported ? 'ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی یا بازهٔ تاریخ بگویید.' : 'صورت‌حساب کدام مشتری؟ نام را بنویسید.'); return true; }
       const blockedNow = qboInvoices.guard();
       if (blockedNow) { await say(blockedNow); return true; }
-      const x = await qboDesk.statementFor(nl.customer, { privateJid: chatId, period: nl.period });
+      const x = await qboDesk.statementFor(nl.customer, { privateJid: chatId, period: nl.period, style: nl.style });
       await say(x.text);
       if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: nl.period });
       return true;
@@ -1182,7 +1182,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
   const blocked = qboInvoices.guard();
   if (blocked) { await sayIn(raw, chatId, where, blocked); return true; }
   try {
-    const x = await qboDesk.statementFor(ask.customer, { privateJid: chatId, period: ask.period });
+    const x = await qboDesk.statementFor(ask.customer, { privateJid: chatId, period: ask.period, style: ask.style });
     await sayIn(raw, chatId, where, x.text);
     if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: ask.period, by });
   } catch (e) {
@@ -1759,7 +1759,7 @@ async function handleStaffChat(raw, chatId, group) {
         trace(where, 'owner', 'statement asked by the owner in a private chat with a colleague: answered there');
         const blockedNow = qboInvoices.guard();
         if (blockedNow) { await sayIn(raw, chatId, where, blockedNow); return true; }
-        try { const x = await qboDesk.statementFor(octxAsk.customer, { privateJid: chatId, period: octxAsk.period }); await sayIn(raw, chatId, where, x.text); if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: octxAsk.period, by: 'owner' }); }
+        try { const x = await qboDesk.statementFor(octxAsk.customer, { privateJid: chatId, period: octxAsk.period, style: octxAsk.style }); await sayIn(raw, chatId, where, x.text); if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: octxAsk.period, by: 'owner' }); }
         catch (e) { await sayIn(raw, chatId, where, e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.'); }
         return true;
       }

@@ -118,7 +118,7 @@ test('a statement for a period: opening balance, the lines of the period, the cl
   // a period that ends today is the ordinary statement
   const now = buildStatementData({ company, customer, invoices, payments, credits: [], today: TODAY, from: '2026-10-01', to: TODAY });
   assert.equal(now.historical, false); assert.equal(now.closing, 70000);
-  const pdf = Buffer.from(statementPdf(d)).toString('latin1');
+  const pdf = Buffer.from(statementPdf(d, { style: 'balance' })).toString('latin1');
   assert.match(pdf, /Balance at end of period/); assert.match(pdf, /01\/10\/2026 to 31\/10\/2026/);
   assert.doesNotMatch(pdf, /Over 90 days/); // no ageing for a past period
 });
@@ -148,7 +148,7 @@ test('the desk: PALM BIRD is found from the spoken name and its statement goes t
   const found = await desk.resolveSpoken('پالم برد');
   assert.deepEqual([found.id, found.name], ['58', 'PALM BIRD TRADING LLC']);
   const r = await desk.statementFor('پالم برد', { privateJid: '9715000@s.whatsapp.net', period: { from: '2026-10-01', to: '2026-10-31', label: '2026-10' } });
-  assert.equal(r.ok, true); assert.match(r.text, /PALM BIRD TRADING LLC/); assert.match(r.text, /۲۰۲۶-۱۰-۰۱ تا ۲۰۲۶-۱۰-۳۱/);
+  assert.equal(r.ok, true); assert.match(r.text, /PALM BIRD TRADING LLC/); assert.match(r.text, /۰۱\/۱۰\/۲۰۲۶ تا ۳۱\/۱۰\/۲۰۲۶/);
   assert.equal(posted.length, 1); assert.equal(posted[0].jid, '9715000@s.whatsapp.net'); assert.match(posted[0].name, /statement-.*2026-10\.pdf/); assert.ok(posted[0].size > 500);
 });
 

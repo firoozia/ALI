@@ -188,14 +188,14 @@ test('the statement totals equal the data to the fil: closing, opening, running 
 
 test('the PDF is a valid one-page document with the company, customer, period, lines, balance and ageing; the footer only in the sandbox', () => {
   const d = buildStatementData({ company: COMPANY, customer: CUSTOMER(230), invoices: INV, payments: PAY, credits: CRD, today: '2026-11-07', days: 60 });
-  const sandbox = statementPdf(d, { sandbox: true }).toString('latin1');
+  const sandbox = statementPdf(d, { sandbox: true, style: 'balance' }).toString('latin1');
   assert.ok(sandbox.startsWith('%PDF-1.4') && sandbox.trimEnd().endsWith('%%EOF'));
   for (const s of ['The Test Workshop', 'STATEMENT', 'Orion Furniture', 'Balance brought forward', 'INV-2', 'CHQ-9', 'CM-1', '230.00', '150.15', 'Over 90 days', 'test, built by Atossa']) assert.ok(sandbox.includes(s), s);
   const off = Number(/startxref\n(\d+)\n/.exec(sandbox)[1]);
   assert.equal(sandbox.slice(off, off + 4), 'xref'); // the cross-reference offset is right
-  assert.ok(!statementPdf(d, { sandbox: false }).toString('latin1').includes('test, built by Atossa'));
+  assert.ok(!statementPdf(d, { sandbox: false, style: 'balance' }).toString('latin1').includes('test, built by Atossa'));
   const many = buildStatementData({ company: COMPANY, customer: CUSTOMER(0), invoices: Array.from({ length: 90 }, (_, i) => ({ DocNumber: `N${i}`, TxnDate: '2026-11-01', TotalAmt: 1, Balance: 0 })), today: '2026-11-07' });
-  const long = statementPdf(many, { sandbox: true }).toString('latin1');
+  const long = statementPdf(many, { sandbox: true, style: 'balance' }).toString('latin1');
   assert.ok(/Page 3 of 3/.test(long) && /\/Count 3/.test(long)); // 90 lines: 28 + 48 + 14
   const pdf = new MiniPdf().text(50, 50, 'a (b) \\ c Arabic: م');
   assert.ok(pdf.build().toString('latin1').includes('a \\(b\\) \\\\ c Arabic: ?')); // escaped; a letter outside Latin-1 becomes "?"
