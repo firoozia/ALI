@@ -233,7 +233,7 @@ test('wiring: each request needs its own permission, with one Persian line when 
   assert.match(src, /if \(\(isStatement \|\| nl\) && !canStatement\) \{ await say\('برای درخواست صورت‌حساب مجوز ندارید\.'\); return true; \}/);
   assert.match(src, /canInvoice: qboAuth\.has\(who, 'invoice', lids\(info\.lidToPhone\)\), canStatement: qboAuth\.has\(who, 'statement', lids\(info\.lidToPhone\)\)/);
   assert.match(src, /authorizedPerson = !!\(group && qboAuth\.has\(who, 'statement', lids\(info\.lidToPhone\)\)\)/); // an invoice-only person gets no statement in a group
-  assert.match(src, /statementFor\(nl\.customer, \{ privateJid: chatId, period: nl\.period, style: nl\.style \}\)/);
+  assert.match(src, /statementFor\(nl\.customer, \{ privateJid: chatId, period: nl\.period, style: nl\.style, preview: !nl\.style \}\)/);
   assert.match(src, /p\.grants\.map\(\(g\) => PERMISSIONS\[g\]\?\.label \|\| g\)/);
 });
 

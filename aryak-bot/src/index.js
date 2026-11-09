@@ -66,7 +66,7 @@ import { CutAliases, proposeAliases } from './cutaliases.js';
 import { unbilled, unbilledText } from './unbilled.js';
 import { paymentsText } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
-import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
+import { GroupStatements, StatementPreviews, askLine, effectiveRequest, parseStyleReply, previewText, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
 import { normalizeDigits } from './text.js';
@@ -853,8 +853,9 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       if (!ic.customer) { const out = ['صورت‌حساب کدام مشتری؟ نام را بنویسید یا بگویید.']; out.clarify = true; return out; }
       const blocked = qboInvoices.guard();
       if (blocked) return [blocked];
-      const x = await qboDesk.statementFor(ic.customer, { privateJid: ownIds()[0], period: ic.period, style: ic.style });
-      const out = [x.text];
+      const ownSay = (t) => sock.sendMessage(ownIds()[0], persianText(t));
+      const x = await qboDesk.statementFor(ic.customer, { privateJid: ownIds()[0], period: ic.period, style: ic.style, preview: !ic.style });
+      const out = [x.preview ? stylePreview(x, { by: 'owner', run: statementRun({ name: x.preview.name, period: ic.period, privateJid: ownIds()[0], say: ownSay }) }) : x.text];
       if (x.ask) { out.clarify = true; if (x.options?.length) out.choice = { kind: 'statement', options: x.options, period: ic.period }; } // the next answer picks one
       return out;
     }
@@ -907,13 +908,18 @@ async function qboInvoiceCommand(ic, text, here = {}) {
  * statement for one customer (returned to that private chat only). Anything else from them is ignored as before. Replies are short English.
  */
 async function authorizedFlow({ chatId, text, canInvoice = false, canStatement = false, person = '' }) {
+  if (person && canStatement && await styleReplyFlow({ text, by: person, say: (t) => sock.sendMessage(chatId, persianText(t)), choicePending: !!choiceDesk.get(`pc:${chatId}`) })) { qboChats.add(chatId); return true; }
   const pend = choiceDesk.get(`pc:${chatId}`); // the number for the customer question she just asked this person
   if (pend?.kind === 'statement' && !pend.by && canStatement) {
     const at = parseChoice(text, pend.options);
     if (at >= 0) {
       choiceDesk.clear(`pc:${chatId}`);
       qboChats.add(chatId);
-      try { const x = await qboDesk.statementFor(pend.options[at], { privateJid: chatId, period: pend.period }); await sock.sendMessage(chatId, persianText(x.text)); } catch (e) { await sock.sendMessage(chatId, persianText('صورت‌حساب ساخته نشد؛ دوباره بنویسید.')); }
+      try {
+        const sayPrivate = (t) => sock.sendMessage(chatId, persianText(t));
+        const x = await qboDesk.statementFor(pend.options[at], { privateJid: chatId, period: pend.period, preview: true });
+        await sayPrivate(x.preview ? stylePreview(x, { by: person, run: statementRun({ name: x.preview.name, period: pend.period, privateJid: chatId, say: sayPrivate }) }) : x.text);
+      } catch (e) { await sock.sendMessage(chatId, persianText('صورت‌حساب ساخته نشد؛ دوباره بنویسید.')); }
       return true;
     }
   }
@@ -951,8 +957,8 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
       if (nl.unsupported || !nl.customer) { await say(nl.unsupported ? 'ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی یا بازهٔ تاریخ بگویید.' : 'صورت‌حساب کدام مشتری؟ نام را بنویسید.'); return true; }
       const blockedNow = qboInvoices.guard();
       if (blockedNow) { await say(blockedNow); return true; }
-      const x = await qboDesk.statementFor(nl.customer, { privateJid: chatId, period: nl.period, style: nl.style });
-      await say(x.text);
+      const x = await qboDesk.statementFor(nl.customer, { privateJid: chatId, period: nl.period, style: nl.style, preview: !nl.style });
+      await say(x.preview ? stylePreview(x, { by: person, run: statementRun({ name: x.preview.name, period: nl.period, privateJid: chatId, say }) }) : x.text);
       if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: nl.period });
       return true;
     }
@@ -1064,6 +1070,39 @@ async function finishOwnerSend({ chatId, pending, reply, lang = 'en' }) {
 
 // ---------------------------------------------------------------------------------------------------------------- statements asked for in a group
 const groupStatements = new GroupStatements(); // built for a customer group, waiting for the owner's «بله #S1»
+const statementPreviews = new StatementPreviews({ nextId: () => groupStatements.nextId() }); // asked for, not built: waiting for «1» or «2»
+
+/** Remember a statement request as a preview and return the text to show (the customer, the exact period, the two layouts). [run(style)] builds it where the request came from. */
+function stylePreview(x, { by, run }) {
+  const pv = x.preview;
+  const id = statementPreviews.add({ by, name: pv.name, from: pv.from, to: pv.to, typed: pv.typed, guessed: pv.guessed, run });
+  return previewText({ id, name: pv.name, from: pv.from, to: pv.to, typed: pv.typed, guessed: pv.guessed, several: statementPreviews.openIds(by).length > 1 }, !isEnglishOut());
+}
+
+/** What builds a previewed statement: the QuickBooks name is passed on exactly, so the customer is not guessed a second time. */
+const statementRun = ({ name, period, privateJid, say }) => async (style) => {
+  const y = await qboDesk.statementFor(name, { privateJid, period, style });
+  await say(y.text);
+};
+
+/** The answer to a preview («1», «2», «No», with or without «#S5»): true when it was one. [say]: where the answers go; [choicePending]: a numbered customer question waits in this chat (a bare number belongs to it). */
+async function styleReplyFlow({ text, by, say, choicePending = false }) {
+  const r = parseStyleReply(text);
+  if (!r) return false;
+  const mine = statementPreviews.openIds(by);
+  if (!mine.length) return false;
+  if (!r.id && choicePending && r.kind === 'style') return false;
+  const pick = r.id ? (mine.includes(r.id) ? r.id : '') : (mine.length === 1 ? mine[0] : '');
+  if (r.id && !pick) { await say(bi('That statement was not found or its half hour is over; ask again.', 'این صورت‌حساب پیدا نشد یا مهلتش (نیم ساعت) تمام شده؛ دوباره درخواست بدهید.')); return true; }
+  if (!pick) { await say(bi(`${mine.length} statements are waiting: ${mine.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the code, for example: ${r.kind === 'no' ? 'No' : r.style === 'balance' ? '1' : '2'} #${mine[0]}`, `چند صورت‌حساب منتظر است: ${mine.map((x) => `#${x}`).join('، ')}. کاری نشد؛ با کد پاسخ بدهید، مثلاً ${r.kind === 'no' ? 'نه' : r.style === 'balance' ? '۱' : '۲'} #${mine[0]}`)); return true; }
+  const p = statementPreviews.get(pick);
+  statementPreviews.clear(pick);
+  if (r.kind === 'no') { await say(bi('Cancelled. Nothing was made.', 'لغو شد؛ چیزی ساخته نشد.')); return true; }
+  const blocked = qboInvoices.guard();
+  if (blocked) { await say(blocked); return true; }
+  try { await p.run(r.style); } catch (e) { logger.warn(`statement ${pick} failed: ${e.name} ${e.status || ''}`); await say(e.paused ? bi('QuickBooks is paused by the owner.', 'کوییک‌بوکس با فرمان مالک متوقف است.') : bi('The statement could not be made; write it again.', 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.')); }
+  return true;
+}
 const persianText = (body) => { const content = { text: body }; keepLang.add(content); return content; }; // kept in Persian: the outgoing hook turns Persian into English in company groups and for colleagues
 const sayIn = async (raw, chatId, where, body) => { // always Persian here (the owner and the authorized people read it), quoted first then plain
   const d = await deliver({ send: (...args) => sock.sendMessage(...args), chatId, content: persianText(body), quoted: raw, where, log: (s) => logger.info(s) });
@@ -1116,6 +1155,7 @@ async function simulatedPost({ raw, text, where, role, reply }) {
 async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, canInvoice = false, where, role, test = false }) {
   const may = owner || authorized;
   const by = personOf(raw);
+  if (may && await styleReplyFlow({ text, by, say: (t) => sayIn(raw, chatId, where, t), choicePending: !!choiceDesk.get(`pc:${chatId}`) })) { trace(where, role, 'the answer to a statement preview'); return true; } // «1» / «2» / «No»
   // The owner's «بله #Q5» / «نه #Q5» (or the number of a statement waiting for a customer's group) typed in this internal group: the same decision as in his own chat.
   if (owner) {
     const dec = parseInvoiceCommand(text);
@@ -1147,8 +1187,9 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
         choiceDesk.clear(`pc:${chatId}`);
         trace(where, role, 'a numbered statement question was answered in the group');
         try {
-          const x = await qboDesk.statementFor(pending.options[at], { privateJid: chatId, period: pending.period });
-          await sayIn(raw, chatId, where, x.text);
+          const sayHere = (t) => sayIn(raw, chatId, where, t);
+          const x = await qboDesk.statementFor(pending.options[at], { privateJid: chatId, period: pending.period, preview: true });
+          await sayHere(x.preview ? stylePreview(x, { by, run: statementRun({ name: x.preview.name, period: pending.period, privateJid: chatId, say: sayHere }) }) : x.text);
         } catch (e) { await sayIn(raw, chatId, where, e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.'); }
         return true;
       }
@@ -1182,8 +1223,9 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
   const blocked = qboInvoices.guard();
   if (blocked) { await sayIn(raw, chatId, where, blocked); return true; }
   try {
-    const x = await qboDesk.statementFor(ask.customer, { privateJid: chatId, period: ask.period, style: ask.style });
-    await sayIn(raw, chatId, where, x.text);
+    const sayHere = (t) => sayIn(raw, chatId, where, t);
+    const x = await qboDesk.statementFor(ask.customer, { privateJid: chatId, period: ask.period, style: ask.style, preview: !ask.style });
+    await sayHere(x.preview ? stylePreview(x, { by, run: statementRun({ name: x.preview.name, period: ask.period, privateJid: chatId, say: sayHere }) }) : x.text);
     if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: ask.period, by });
   } catch (e) {
     logger.warn(`group statement failed: ${e.name} ${e.status || ''}`);
@@ -1197,7 +1239,7 @@ const bi = (en, fa) => (isEnglishOut() ? en : fa); // the few texts written dire
 const toRequester = async (requester, body) => sock.sendMessage(requester.notify, requester.by === 'owner' ? { text: `🤖 ${body}` } : persianText(body));
 const choiceKeys = (requester) => (requester.by === 'owner' ? ownIds().map((o) => `pc:${o}`) : [`pcp:${requester.by}`]);
 
-async function prepareGroupStatement({ customer, period, groupId, subject, kind = 'group', requester = null }) {
+async function prepareGroupStatement({ customer, period, groupId, subject, kind = 'group', requester = null, style = '' }) {
   const who = requester || { by: 'owner', notify: ownIds()[0] };
   const tell = (body) => toRequester(who, body);
   const where = kind === 'private' ? subject : `group "${subject}"`;
@@ -1205,7 +1247,11 @@ async function prepareGroupStatement({ customer, period, groupId, subject, kind 
   if (blocked) { await tell(blocked); return; }
   try {
     logger.info(`statement for a customer group: building "${customer}" for ${where}, asked by ${who.by}`);
-    const x = await qboDesk.statementFor(customer, { hold: true, period });
+    const x = await qboDesk.statementFor(customer, { hold: true, period, style, preview: !style });
+    if (x.preview) { // the layout is chosen first, privately; the held file and the yes for the group come after it
+      await tell(stylePreview(x, { by: who.by, run: (st) => prepareGroupStatement({ customer: x.preview.name, period, groupId, subject, kind, requester: who, style: st }) }));
+      return;
+    }
     if (x.ask) {
       if (x.options?.length) for (const key of choiceKeys(who)) choiceDesk.set(key, { kind: 'statement_group', options: x.options, period, groupId, subject, target: kind, requester: who });
       await tell(`${bi(`For ${where}: `, `برای ${kind === 'private' ? subject : `گروه «${subject}»`}: `)}${x.text}`);
@@ -1977,6 +2023,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   // The owner's invoice commands (his own chat, owner only): the request, his yes or no, the kill switch, the audit report, the authorized people.
   if (text && !audio && !image && !group && isSelf) {
+    if (await styleReplyFlow({ text, by: 'owner', say: (t) => reply(t), choicePending: !!choiceDesk.get(`pc:${chatId}`) })) return true; // «1» / «2» / «No» for a statement preview
     let ic = parseInvoiceCommand(text);
     // a bare yes or no answers the question the assistant asked last in this chat (a photo, a voice note, a follow-up); only without one does it look at open previews
     if (bareAnswerYieldsToPending(ic, !!(voiceDesk.get(`s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) || followDesk.get(`s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`)))) ic = null;

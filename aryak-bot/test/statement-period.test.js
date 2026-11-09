@@ -302,3 +302,14 @@ test('a very short name («AL») gives a numbered list of the best candidates, n
   const at = parseChoice('شماره دو', r.options);
   assert.equal(r.options[at], r.options[1]);
 });
+
+test('the desk: a preview names the QuickBooks customer and the exact period and builds nothing; the exact name then builds the chosen layout', async () => {
+  const { desk, posted } = mkDesk([{ Id: '58', DisplayName: 'GOLDEN DOOR KITCHEN TRADING L.L.C', Balance: 0 }, { Id: '59', DisplayName: 'ZED TRADING', Balance: 0 }]);
+  const pv = await desk.statementFor('goolden door', { privateJid: 'x@s.whatsapp.net', period: { from: '2026-09-01', to: '2026-09-30', label: '2026-09' }, preview: true });
+  assert.equal(pv.ok, true); assert.deepEqual([pv.preview.name, pv.preview.from, pv.preview.to, pv.preview.typed], ['GOLDEN DOOR KITCHEN TRADING L.L.C', '2026-09-01', '2026-09-30', 'goolden door']);
+  assert.equal(posted.length, 0); // nothing built, nothing sent
+  const open = await desk.statementFor('golden door', { privateJid: 'x@s.whatsapp.net', preview: true });
+  assert.equal(open.preview.to, desk.today()); assert.equal(open.preview.from, new Date(Date.parse(`${desk.today()}T00:00:00Z`) - 90 * 86400000).toISOString().slice(0, 10)); // no period: the last 90 days, said
+  for (const style of ['balance', 'transaction']) await desk.statementFor(pv.preview.name, { privateJid: 'x@s.whatsapp.net', period: { from: '2026-09-01', to: '2026-09-30', label: '2026-09' }, style });
+  assert.equal(posted.length, 2); assert.ok(posted.every((p) => p.size > 500));
+});

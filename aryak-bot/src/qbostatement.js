@@ -209,35 +209,41 @@ function balancePdf(data, { sandbox = false } = {}) {
   const cur = currency ? ` (${currency})` : '';
   const pdf = new MiniPdf();
   const L = 40; const R = 555;
+  // the company name is wrapped to the room left of the title (never over it); every block below starts under the one above
+  const nameLines = wrapText(data.company.name || 'Company', 16, 360, true).slice(0, 3);
+  const headLines = [...nameLines.map((t) => ({ t, size: 16, bold: true, step: 19 })), ...data.company.lines.slice(0, 4).flatMap((l) => wrapText(l, 9, 360).slice(0, 2).map((t) => ({ t, size: 9, gray: 0.3, step: 12 }))), ...(data.company.email ? [{ t: data.company.email, size: 9, gray: 0.3, step: 12 }] : [])];
+  const headBottom = Math.max(125, 50 + headLines.reduce((n, r) => n + r.step, 0) + 4);
+  const extra = headBottom - 125; // how much lower than the old fixed layout everything starts
   const page = (n, total) => {
     pdf.addPage();
-    pdf.text(L, 50, data.company.name || 'Company', { size: 16, bold: true });
-    data.company.lines.slice(0, 4).forEach((l, i) => pdf.text(L, 66 + i * 12, l, { size: 9, gray: 0.3 }));
-    if (data.company.email) pdf.text(L, 66 + Math.min(4, data.company.lines.length) * 12, data.company.email, { size: 9, gray: 0.3 });
+    let hy = 50;
+    for (const r of headLines) { pdf.text(L, hy, r.t, { size: r.size, bold: r.bold, gray: r.gray || 0 }); hy += r.step; }
     pdf.text(R, 50, 'STATEMENT', { size: 18, bold: true, align: 'right' });
     pdf.text(R, 68, `Date: ${dmy(data.today)}`, { size: 10, align: 'right' });
     pdf.text(R, 82, `Page ${n} of ${total}`, { size: 9, align: 'right', gray: 0.4 });
-    pdf.line(L, 125, R, 125, 1);
+    pdf.line(L, headBottom, R, headBottom, 1);
     if (sandbox) pdf.text(W / 2, 822, 'test, built by Atossa', { size: 10, bold: true, align: 'center', gray: 0.3 }); // every page of a sandbox statement
   };
   const W = pdf.width;
-  const perFirst = 28; const perNext = 48;
+  const custLines = wrapText(data.customer.name || '-', 12, 270, true).slice(0, 3);
+  const custExtra = (custLines.length - 1) * 14;
+  const perFirst = Math.max(8, 28 - Math.ceil((extra + custExtra) / 14)); const perNext = 48;
   const chunks = [data.lines.slice(0, perFirst)];
   for (let i = perFirst; i < data.lines.length; i += perNext) chunks.push(data.lines.slice(i, i + perNext));
   const total = chunks.length;
   chunks.forEach((chunk, idx) => {
     page(idx + 1, total);
-    let y = 145;
+    let y = headBottom + 20;
     if (idx === 0) {
       pdf.text(L, y, 'To', { size: 9, gray: 0.4 });
-      pdf.text(L, y + 14, data.customer.name || '-', { size: 12, bold: true });
-      data.customer.lines.slice(0, 4).forEach((l, i) => pdf.text(L, y + 28 + i * 12, l, { size: 9, gray: 0.3 }));
+      custLines.forEach((t, i) => pdf.text(L, y + 14 + i * 14, t, { size: 12, bold: true }));
+      data.customer.lines.slice(0, 4).forEach((l, i) => pdf.text(L, y + 28 + custExtra + i * 12, l.slice(0, 60), { size: 9, gray: 0.3 }));
       pdf.text(R, y, 'Statement period', { size: 9, gray: 0.4, align: 'right' });
       pdf.text(R, y + 14, `${dmy(data.start)} to ${dmy(data.periodEnd || data.today)}`, { size: 10, align: 'right' });
       pdf.box(330, y + 28, R - 330, 44, 0.94);
       pdf.text(340, y + 44, `Balance due${cur}`, { size: 9, gray: 0.35 });
       pdf.text(R - 10, y + 64, money(data.closing), { size: 15, bold: true, align: 'right' });
-      y += 100;
+      y += 100 + custExtra;
     }
     // table header
     const cols = { date: L + 4, type: L + 70, ref: L + 140, due: L + 235, amount: R - 95, balance: R - 4 };

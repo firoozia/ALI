@@ -127,3 +127,16 @@ test('the wiring: the default is the app layout, the style is passed on, the log
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   for (const v of ['ic', 'nl', 'ask', 'octxAsk']) assert.ok(index.includes(`style: ${v}.style`), v);
 });
+
+test('the balance layout (reply 1): a long company name and a long customer name do not overlap the title, the period or the table', () => {
+  const d = buildStatementData({ company: { ...COMPANY, CompanyName: COMPANY.CompanyName + ' ' + COMPANY.CompanyName }, customer: CUSTOMER, invoices: INV, today: TODAY, from: '2026-10-01', to: '2026-10-31' });
+  const raw = statementPdf(d, { style: 'balance' }).toString('latin1');
+  const ys = [...raw.matchAll(/([\d.]+) ([\d.]+) Td \(([^)]*)\) Tj/g)].map((m) => ({ x: +m[1], y: 842 - +m[2], s: m[3] }));
+  const title = ys.find((p) => p.s === 'STATEMENT'); const left = ys.filter((p) => p.x < 60 && p.y < 150);
+  for (const p of left) assert.ok(p.x + textWidth(p.s, 16, true) < title.x - 5 || p.y > title.y + 40 || p.s.length < 1, `${p.s} stays left of the title`);
+  const to = ys.find((p) => p.s === 'To'); const period = ys.find((p) => p.s === 'Statement period');
+  const names = ys.filter((p) => p.x < 60 && p.y > to.y && p.y < to.y + 80);
+  for (const p of names) assert.ok(p.x + textWidth(p.s, 12, true) < period.x - 100 - 5 || p.s.length < 1, `${p.s} ends before the period block`);
+  const band = ys.find((p) => p.s === 'Date' && p.y > to.y); assert.ok(band.y > Math.max(...names.map((p) => p.y)) + 8, 'the table is below the customer block');
+  assert.ok(ys.some((p) => p.s === 'Balance brought forward'));
+});

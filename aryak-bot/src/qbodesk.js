@@ -374,7 +374,7 @@ export class QboDesk {
    * A statement for a PERIOD of a customer named in any words, sent to [privateJid] (the asker's own chat). Returns { ok, text }; { ok: false, ask: true } when the
    * customer must be chosen first (a numbered list) or was not found (the three nearest).
    */
-  async statementFor(typed, { privateJid, period = null, hold = false, style = '' } = {}) {
+  async statementFor(typed, { privateJid, period = null, hold = false, style = '', preview = false } = {}) {
     const found = await this.resolveSpoken(typed);
     if (!found.id) {
       if (isEnglishOut()) { // written in English at once (not translated): a statement is a statement of account, never an invoice
@@ -383,6 +383,12 @@ export class QboDesk {
       }
       if (found.many) return { ok: false, ask: true, text: `چند مشتری به «${typed}» می‌خورد؛ شمارهٔ درست را بنویسید:\n${found.many.map((n, i) => `${fa(i + 1)}. ${n}`).join('\n')}`, options: found.many };
       return { ok: false, ask: true, text: `مشتری‌ای به نام «${typed}» پیدا نشد. نزدیک‌ترین‌ها:\n${(found.nearest || []).map((n, i) => `${fa(i + 1)}. ${n}`).join('\n') || '—'}\nنام درست را بنویسید یا بگویید.`, options: found.nearest || [] };
+    }
+    if (preview) { // nothing is built yet: the customer and the exact period are shown first, the asker chooses the layout
+      const today = this.today();
+      const to = period ? period.to : today;
+      const from = period ? period.from : new Date(Date.parse(`${today}T00:00:00Z`) - 90 * 86400000).toISOString().slice(0, 10);
+      return { ok: true, preview: { name: found.name, typed, guessed: found.via === 'sound', from, to } };
     }
     if (!privateJid && !hold) return { ok: false, text: 'مقصد صورت‌حساب مشخص نیست؛ چیزی فرستاده نشد.' };
     const data = buildStatementData({ ...(await loadCustomerData(this.qbo, found.id)), today: this.today(), ...(period ? { from: period.from, to: period.to } : {}) });

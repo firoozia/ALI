@@ -54,7 +54,7 @@ export function parsePeriod(text, today) {
   const t = norm(text);
   // from X to Y
   const D = String.raw`(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{1,2}[/.-]\d{1,2}|\d{1,2}\s*(?:${MONTH_RE})(?:\s*\d{4})?)`;
-  let m = new RegExp(String.raw`(?:(?:از|from)\s+)?${D}\s+(?:تا|to|until|till|-|–)\s+${D}`, 'iu').exec(t);
+  let m = new RegExp(String.raw`(?:(?:از|from)\s+)?${D}\s*(?:تا|to|until|till|-|–)\s*${D}`, 'iu').exec(t);
   if (m) {
     const b = dateAt(m[2], today); let a = dateAt(m[1], today);
     if (a && b && a > b && !/\d{4}/.test(m[1])) a = `${+a.slice(0, 4) - 1}${a.slice(4)}`; // «20/12 to 05/01»: the start is the year before
