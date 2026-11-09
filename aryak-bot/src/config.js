@@ -50,6 +50,8 @@ export function loadConfig(env = process.env) {
     vatRate: Number(env.VAT_RATE || 5),
     moneyTolerance: Number(env.MONEY_TOLERANCE || 0.05),
     digestHour: Number(env.DIGEST_HOUR || 18),
+    eveningReportHour: env.EVENING_REPORT_HOUR ? Number(env.EVENING_REPORT_HOUR) : null, // the hour of the «cut or delivered, not invoiced» report (empty: only on request)
+    eveningReportTo: (env.EVENING_REPORT_TO || 'owner').trim().toLowerCase(), // owner (his own chat) or info (the Information group)
     // The customer availability flow (ask the quantity, answer or ask the sales manager); AVAILABILITY_FLOW=off keeps the old answer.
     availabilityFlow: (env.AVAILABILITY_FLOW || 'on').toLowerCase() !== 'off',
     // The supervised pipeline: where goods are cut, where they are delivered, and the money side (a word of each group's name).

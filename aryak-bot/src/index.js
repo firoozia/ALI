@@ -63,6 +63,7 @@ import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases } from './cutaliases.js';
+import { unbilled, unbilledText } from './unbilled.js';
 import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -336,6 +337,21 @@ setInterval(async () => {
     experience.lastReport = day; experience.dirty = true; experience.save();
     logger.info(`weekly learning report for ${day} sent`);
   } catch (e) { logger.warn(`experience timer failed: ${e.message}`); }
+}, 5 * 60 * 1000).unref();
+
+// The evening report «cut or delivered, not invoiced»: once a day after EVENING_REPORT_HOUR, to the owner's own chat (or the Information group). Read only.
+let lastEvening = '';
+setInterval(async () => {
+  try {
+    if (config.eveningReportHour === null || !sock?.user || botState.paused || !qbo.connected) return;
+    const now = localParts(Date.now(), config.timezone);
+    if (now.day === lastEvening || Math.floor(now.minutes / 60) < config.eveningReportHour) return;
+    lastEvening = now.day;
+    const text = await unbilledReport();
+    if (config.eveningReportTo === 'info' && config.infoGroupName) await sendTo(config.infoGroupName, `${text}\n— ${config.displayName}`);
+    else await sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` });
+    logger.info(`evening report for ${now.day} sent (${config.eveningReportTo})`);
+  } catch (e) { logger.warn(`evening report failed: ${e.message}`); }
 }, 5 * 60 * 1000).unref();
 
 // The daily summary for the information group, once a day after the set hour (counts only).
@@ -638,6 +654,14 @@ const qbo = new Qbo({
 });
 setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); // refresh before the access token expires, not only when a call finds it expired
 const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = await sock.sendMessage(jid, { document: buf, mimetype, fileName, caption }); if (!r) throw new Error('the document was not sent'); };
+/** The text of the report «cut or delivered, not invoiced»: the posts against ALL of the customers' QuickBooks invoices of the last 40 days. Read only. */
+async function unbilledReport() {
+  const since = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const invoices = await qbo.query(`select * from Invoice where TxnDate >= '${since}'`);
+  const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
+  return unbilledText(unbilled({ events: tracker.events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone }));
+}
+
 function decideAlias(verb, id) {
   const r = cutAliases.decide(id, verb);
   if (r.error) return [`Proposal ${id} ${r.error === 'not found' ? 'was not found' : `is already ${r.error}`}.`];
@@ -728,6 +752,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       const p = cutAliases.propose(pairs);
       return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, ...pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];
     }
+    case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport()]; }
     case 'alias_drop': { const n = cutAliases.drop(ic.id, ic.numbers); return [n ? `Removed ${n} line(s) from #${ic.id}; reply yes #${ic.id} to approve the rest.` : `Nothing removed from #${ic.id}.`]; }
     case 'tax_inclusive': return await qboBulk.planTaxInclusive();
     case 'tax_inclusive_undo': return await qboBulk.planUndoTaxInclusive(ic.source);
