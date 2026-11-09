@@ -53,7 +53,7 @@ test('the shapes the group uses: a bank credit keeps the amount and no account n
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   const fn = index.slice(index.indexOf('async function paymentsReport'), index.indexOf('const availDrafts'));
   assert.match(fn, /select \* from Invoice where Balance > '0'/); assert.match(fn, /select \* from Payment where TxnDate >=/); assert.doesNotMatch(fn, /\.write\(|sock\.sendMessage|postDocument/); // only reads
-  assert.match(index, /role === 'payment' && Number\(event\.amount\) > 0 && qbo\.connected && !qbo\.paused/);
+  assert.match(index, /role === 'payment' && \(Number\(event\.amount\) > 0 \|\| event\.invoices\?\.length\) && qbo\.connected && !qbo\.paused/);
   assert.match(index, /paymentsReport\(tracker\.events, event\.ref\)\.then\(\(text\) => text && sock\.sendMessage\(ownIds\(\)\[0\]/); // to the owner's own chat only
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'payments.js'), 'utf8');
   assert.doesNotMatch(src, /\.write\(|POST|qbo\./); // the module cannot write

@@ -132,19 +132,28 @@ export function parsePaymentCaption(text) {
     return { kind: 'bank-credit', amount: num(bank[1]), ...(who ? { customer: title(who[1]) } : {}) };
   }
   if (/\b(sell(?:ing)?\s+car|expense|petrol|salary)\b/i.test(s)) return { kind: 'expense' };
-  const a = AMOUNT.exec(s);
+  // «inv 9940», «invoice no 9940», «inv-9940», «فاکتور ۹۹۴۰»: an INVOICE NUMBER (or a run of them: «inv 9808 / 9809»), never an amount; it is taken out before the amount is looked for
+  const invoices = [];
+  const INV = /(?:\binv(?:oice)?s?\b|فاکتور)\.?\s*(?:no\.?|number|#|شماره)?\s*[-:#]?\s*(\d{3,6}(?:\s*[/,&]\s*\d{3,6})*)/gi;
+  const noInv = s.replace(INV, (m, run) => { for (const n of run.split(/[\s/,&]+/).filter(Boolean)) invoices.push(`inv-${n}`); return ' '; }).replace(/\s+/g, ' ').trim();
+  const a = AMOUNT.exec(noInv);
+  if (invoices.length && !a) { // a message about an invoice only («Munich door kitchen inv 9940»): the customer and the invoice, the amount comes from the document it replies to
+    const rest0 = stripPaymentWords(noInv);
+    const names = rest0.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
+    return { kind: 'cash', amount: 0, customers: names, invoices };
+  }
   if (!a) { // no amount: a bare name (it may belong to the payment next to it); a message made only of payment words is no name
     if (!/^[\p{L} &.'+-]{3,40}$/u.test(s)) return null;
     const bare = stripPaymentWords(s).replace(/(?:^|\s)(?:and|\+|&)(?=\s|$)/gi, ' ').replace(/\s+/g, ' ').trim();
     return /\p{L}{2,}/u.test(bare) ? { kind: 'name', customer: title(bare) } : null;
   }
   const amount = num(a[1]);
-  let rest = (s.slice(0, a.index) + ' ' + s.slice(a.index + a[0].length))
+  let rest = (noInv.slice(0, a.index) + ' ' + noInv.slice(a.index + a[0].length))
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer
     .replace(/\b(AED|DHS?|CASH|CHEQUE|CHECK|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
     .replace(/[\/.]+/g, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
-  return { kind: 'cash', amount, customers };
+  return { kind: 'cash', amount, customers, ...(invoices.length ? { invoices } : {}) };
 }
 
 // ---- goods groups (accessories, saw blades, glue) --------------------------------------------------------------------------

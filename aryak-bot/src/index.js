@@ -16,7 +16,8 @@ import { parseOnBehalf } from './onbehalf.js';
 import { Aliases, parseAliasCommand } from './aliases.js';
 import { Rules, parseRuleCommand, ruleFrom } from './rules.js';
 import { eventsFromCaption } from './captionevents.js';
-import { deletedInvoice } from './captions.js';
+import { deletedInvoice, parsePaymentCaption } from './captions.js';
+import { mergePayment, parseReceiptText } from './receipt.js';
 import { looksLikeInvoice, onDemandText } from './ondemand.js';
 import { guardedSend, observedGroup, shadowGroup } from './guard.js';
 import { ShadowDesk, ShadowStore, dayLine, parseCardCorrection, parseShadowCommand, postingProblems, weekSummary } from './shadow.js';
@@ -27,7 +28,7 @@ import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
-import { Qbo, looksLikeConnectLine, parseConnectLine } from './qbo.js';
+import { Qbo, looksLikeConnectLine, parseConnectLine, qboEscape } from './qbo.js';
 import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
 import { Audit, AuthStore, InvoiceStore, ItemCodes, PERMISSIONS, QboInvoiceDesk, TaxChoices, looksLikeInvoiceRequest, parseInvoiceCommand } from './qboinvoice.js';
 import { extractInvoiceRequest } from './qboextract.js';
@@ -74,7 +75,7 @@ import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, N
 import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
 import { shouldProcess, OwnerSeen } from './intake.js';
-import { documentBlock, setDocMeter } from './pdftext.js';
+import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter } from './vision.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
@@ -545,9 +546,63 @@ setInterval(async () => {
 }, 30 * 60 * 1000).unref();
 
 const lastPayName = new Map(); // group -> the last bare name posted in the Confirmation group
+const payRef = (groupId, id) => createHash('sha256').update(`${groupId}|${id}`).digest('hex').slice(0, 24); // the reference of a payment entry made from message [id]
+
+/** The text of a PDF (its text layer, free) as payment evidence: { amount, date, payer, receipt, invoices } or null when it has no readable text or amount. */
+function receiptOfPdf(buf) {
+  const layer = pdfTextLayer(buf);
+  return layer.ok ? parseReceiptText(layer.text) : null;
+}
+const baseOfReceipt = (read) => ({ amount: read?.amount || 0, paidOn: read?.date || '', receipt: read?.receipt || 'receipt', payer: read?.payer || '', source: 'pdf', invoices: read?.invoices || [] });
+const withCustomer = (merged) => ({ ...merged, customer: canon(merged.customer), customerTyped: merged.customer });
+
+/** The owner is told what a new payment entry looks like (a proposal; nothing is recorded in QuickBooks). */
+function tellPayment(event) {
+  if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf')) void paymentsReport(tracker.events, event.ref).then((text) => text && sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
+}
+
+/** A bank receipt, a cheque slip or a transfer advice posted as a PDF in the Confirmation group: one payment entry from its text. */
+async function trackPaymentPdf(raw, groupId) {
+  let buf;
+  try { buf = await downloadMediaMessage(raw, 'buffer', {}); } catch (e) { logger.warn(`tracker: the receipt pdf could not be downloaded: ${e.message}`); return; }
+  if (buf.length > 10 * 1024 * 1024) { logger.warn(`tracker: a receipt pdf is too large in ${groupId}`); return; }
+  const merged = mergePayment(baseOfReceipt(receiptOfPdf(buf)), {});
+  const event = { ...withCustomer(merged), at: Date.now(), ref: payRef(groupId, raw.key.id) };
+  if (!tracker.add(event)) return;
+  trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', `payment evidence read from a pdf${event.amount ? ' (an amount)' : ' (no readable amount)'}`);
+  tellPayment(event);
+}
+
+/** A reply that quotes another message in the Confirmation group: the document or text it quotes gives the amount, the reply gives the customer and the invoice; ONE entry. true = handled here. */
+async function replyToPayment({ raw, groupId, content, quotedId, event }) {
+  const ctx = (content.extendedTextMessage || {}).contextInfo || {};
+  const quotedRef = payRef(groupId, quotedId);
+  const existing = tracker.events.find((e) => e.type === 'payment' && e.ref === quotedRef);
+  let base = null;
+  if (existing) base = { amount: existing.amount, paidOn: existing.paidOn, receipt: existing.receipt, payer: existing.pendingName ? '' : existing.customerTyped || existing.customer, source: existing.source, invoices: existing.invoices };
+  else if (ctx.quotedMessage) {
+    const quoted = normalizeMessageContent(ctx.quotedMessage);
+    if (quoted?.documentMessage && /pdf/i.test(quoted.documentMessage.mimetype || '')) {
+      try { base = baseOfReceipt(receiptOfPdf(await downloadMediaMessage({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }, 'buffer', {}))); } catch (e) { logger.warn(`tracker: the quoted receipt could not be downloaded: ${e.message}`); }
+    } else { const qt = textOf(quoted); const qp = qt ? parsePaymentCaption(qt) : null; if (qp && Number(qp.amount) > 0) base = { amount: qp.amount, source: 'text' }; }
+  }
+  if (!base) return false; // an ordinary caption: its own entry
+  const merged = withCustomer(mergePayment(base, event));
+  if (existing) {
+    tracker.update(existing.ref, { ...merged, pendingName: !!merged.pendingName, noAmount: !!merged.noAmount });
+    trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply gave the customer and the invoice of the receipt it quotes: one entry');
+    tellPayment(existing);
+  } else {
+    const made = { ...merged, at: Date.now(), ref: event.ref };
+    if (tracker.add(made)) { trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply to a receipt: the receipt and the reply are one entry'); tellPayment(made); }
+  }
+  return true;
+}
+
 async function trackGroup(raw, groupId, role) {
   if (sent.has(raw.key.id) || botState.paused) return;
   const content = normalizeMessageContent(raw.message);
+  if (role === 'payment' && content?.documentMessage && /pdf/i.test(content.documentMessage.mimetype || '')) { await trackPaymentPdf(raw, groupId); return; } // a receipt is payment evidence on its own
   const image = imageOf(content);
   const text = textOf(content) || image?.caption || '';
   if (!text && !image) return;
@@ -570,13 +625,14 @@ async function trackGroup(raw, groupId, role) {
       const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: refOf(raw.key.id, i) };
       const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
       if (role === 'payment' && !event.customer && pn && Date.now() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
+      if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event })) continue;
       if (isDuplicatePayment(tracker, event)) { trace(whereDet, 'tracker', 'the same payment was already recorded minutes ago: counted once'); continue; }
       if (!tracker.add(event)) continue;
       trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
-      if (role === 'payment' && Number(event.amount) > 0 && qbo.connected && !qbo.paused) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
+      if (role === 'payment' && (Number(event.amount) > 0 || event.invoices?.length) && qbo.connected && !qbo.paused) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
         void paymentsReport(tracker.events, event.ref).then((text) => text && sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
       }
       if (role === 'delivery') {
@@ -684,7 +740,10 @@ async function paymentsReport(events, only = '') {
   const invoices = await qbo.query("select * from Invoice where Balance > '0'");
   const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const payments = await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => []); // what the office already recorded
-  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only });
+  const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20); // the invoice numbers the messages give: paid or open
+  const lookup = new Map();
+  if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
+  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup });
 }
 
 const availDrafts = new AvailabilityDrafts();

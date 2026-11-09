@@ -53,7 +53,7 @@ export function findRecorded(raw, payments, aliasOf = () => '', { unique = false
 
 /** The same amount (to the fil) on the same day, and the same named customer OR both messages resolved to the SAME QuickBooks payment; a missing or different customer is otherwise never a duplicate. */
 function repeats(a, b, timeZone, payments = [], aliasOf = () => '') {
-  if (Math.round(Number(a.amount) * 100) !== Math.round(Number(b.amount) * 100)) return false;
+  if (!(Number(a.amount) > 0) || Math.round(Number(a.amount) * 100) !== Math.round(Number(b.amount) * 100)) return false; // an entry without a read amount is never a repeat
   const ca = a.customer ? stripPaymentWords(a.customer) : ''; const cb = b.customer ? stripPaymentWords(b.customer) : '';
   if (dm(a.at, timeZone) !== dm(b.at, timeZone) || Math.abs(a.at - b.at) >= 3 * 24 * 3600 * 1000) return false;
   if (ca && cb && !a.pendingName && !b.pendingName && sameCutCustomer(ca, cb)) return true;
@@ -65,11 +65,32 @@ function repeats(a, b, timeZone, payments = [], aliasOf = () => '') {
  * [event]: a payment event of the tracker ({ amount, kind, customer, at }). [invoices]: the OPEN invoices (Balance above zero) with CustomerRef.name. Returns the proposal as lines.
  * With a customer named: his open invoices that add up to the amount (up to four); else his open list. Without a name (a bank credit): the customers with an exact match.
  */
-export function proposePayment({ event: raw, invoices, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai' }) {
+export function proposePayment({ event: raw, invoices, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', lookup = new Map() }) {
   const clean = raw.customer ? stripPaymentWords(raw.customer) : '';
   const event = raw.customer && !clean ? { ...raw, customer: '', pendingName: true } : { ...raw, customer: clean }; // an event kept with «receipt + clear» as its name is a payment without a name
   const amount = Number(event.amount) || 0;
-  const how = `${money(amount)} ${event.currency || 'AED'} — ${event.kind === 'transfer' ? 'bank credit' : event.kind || 'payment'}${event.customer ? ` from ${event.customer}` : ''} (${dm(event.at, timeZone)})`;
+  // what the message is about: the invoice it names (looked up in QuickBooks, paid or open), the customer, and where it came from
+  const first = (event.invoices || []).map((r) => lookup.get(String(r).toLowerCase())).find(Boolean);
+  const who = event.customer || first?.CustomerRef?.name || '';
+  const cur = event.currency || 'AED';
+  const amountText = amount > 0 ? `${money(amount)} ${cur}` : 'amount not read';
+  const forInv = event.invoices?.length ? ` for ${event.invoices.join(', ')}` : '';
+  const when = dm(event.paidOn ? Date.parse(`${event.paidOn}T12:00:00Z`) : event.at, timeZone);
+  const how = event.receipt
+    ? `${amountText} — ${event.receipt} (${String(event.source || 'pdf').toUpperCase()})${forInv}${who ? `, ${who}` : ''} (${when})`
+    : `${amountText} — ${event.kind === 'transfer' ? 'bank credit' : event.kind || 'payment'}${forInv}${who ? ` from ${who}` : ''} (${when})`;
+  if (event.invoices?.length) { // an invoice number was given: is it paid, or what is open on it
+    const lines = event.invoices.map((ref) => {
+      const inv = lookup.get(String(ref).toLowerCase());
+      if (!inv) return `→ ${ref} not found in QuickBooks`;
+      const name = inv.CustomerRef?.name || '';
+      const open = Number(inv.Balance) || 0;
+      const state = open === 0 ? 'paid' : `open balance ${money(open)}${amount > 0 && Math.abs(open - amount) <= 1 ? '; this payment matches it' : ''}`;
+      return `→ ${ref} (${name ? `${name}, ` : ''}total ${money(inv.TotalAmt)}) — ${state}`;
+    });
+    const recordedNow = amount > 0 ? findRecorded({ ...event, customer: who }, payments, aliasOf) : null;
+    return [how, ...lines, ...(recordedNow ? [`→ already recorded in QuickBooks (payment of ${dm(Date.parse(`${recordedNow.TxnDate}T00:00:00Z`), timeZone)}${recordedNow.CustomerRef?.name ? `, ${recordedNow.CustomerRef.name}` : ''})`] : [])];
+  }
   const recorded = findRecorded(event, payments, aliasOf);
   if (recorded) return [how, `→ already recorded in QuickBooks (payment of ${dm(Date.parse(`${recorded.TxnDate}T00:00:00Z`), timeZone)}${recorded.CustomerRef?.name ? `, ${recorded.CustomerRef.name}` : ''})`];
   const open = invoices.filter((i) => Number(i.Balance) > 0);
@@ -96,8 +117,8 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
 }
 
 /** The report: [events] with an amount, newest first, at most [max] proposals; the footer says nothing was recorded. */
-export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '' }) {
-  const recent = events.filter((e) => e.type === 'payment' && Number(e.amount) > 0 && !e.simulated && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
+export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map() }) {
+  const recent = events.filter((e) => e.type === 'payment' && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
   const marked = new Map(); const dropped = new Set();
@@ -118,10 +139,10 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
   if (!shown.length) return '';
   const blocks = shown.slice(0, max).map((event, i) => {
     const mark = marked.get(event);
-    if (!mark) return `${i + 1}. ${proposePayment({ event, invoices, payments, aliasOf, timeZone }).join('\n   ')}`;
+    if (!mark) return `${i + 1}. ${proposePayment({ event, invoices, payments, aliasOf, timeZone, lookup }).join('\n   ')}`;
     const at = shown.indexOf(mark.original);
     const same = `${at >= 0 && at < max ? `#${at + 1}` : 'an earlier payment'} (${dm(mark.original.at, timeZone)})`;
-    return `${i + 1}. ${[proposePayment({ event, invoices, payments, aliasOf, timeZone })[0], `⚠ Duplicate? same amount and customer as ${same}`, `Reply: dup #${mark.id} (count once) / separate #${mark.id} (two payments)`].join('\n   ')}`;
+    return `${i + 1}. ${[proposePayment({ event, invoices, payments, aliasOf, timeZone, lookup })[0], `⚠ Duplicate? same amount and customer as ${same}`, `Reply: dup #${mark.id} (count once) / separate #${mark.id} (two payments)`].join('\n   ')}`;
   });
   return [`Payments to match (${shown.length}):`, withEnd(blocks, [...(shown.length > max ? [`and ${shown.length - max} more payments`] : []), 'Proposal only — nothing was recorded in QuickBooks.'])].join('\n');
 }
