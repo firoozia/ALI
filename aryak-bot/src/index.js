@@ -62,6 +62,7 @@ import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, withoutBo
 import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
+import { CutAliases, proposeAliases } from './cutaliases.js';
 import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -160,6 +161,7 @@ const experience = new Experience({ dir: path.join(config.authDir, 'experience')
 const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
 // The test groups keep their own memory: nothing said there reaches the real tracker, digest or reports.
 const testTracker = new Tracker({ dir: path.join(config.authDir, 'tracker-test') });
+const cutAliases = new CutAliases(path.join(config.authDir, 'qbo')); // names the cutting and delivery groups use for a customer, approved by the owner; on the server only
 const trackerOf = (test) => (test ? testTracker : tracker);
 const isTestSubject = (subject) => config.testGroupNames.some((w) => String(subject || '').toLowerCase().includes(w));
 const avail = new AvailabilityDesk({ dir: path.join(config.authDir, 'availability') }); // questions to the sales manager that wait for his answer
@@ -636,6 +638,12 @@ const qbo = new Qbo({
 });
 setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); // refresh before the access token expires, not only when a call finds it expired
 const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = await sock.sendMessage(jid, { document: buf, mimetype, fileName, caption }); if (!r) throw new Error('the document was not sent'); };
+function decideAlias(verb, id) {
+  const r = cutAliases.decide(id, verb);
+  if (r.error) return [`Proposal ${id} ${r.error === 'not found' ? 'was not found' : `is already ${r.error}`}.`];
+  logger.info(`aliases ${id}: ${verb} (${r.count})`);
+  return [verb === 'yes' ? `Approved ${r.count} alias(es). The cross-check and the reports use them from now on.` : `Cancelled ${id}. Those names will not be proposed again.`];
+}
 let stockDiffRunning = false;
 /** «stock diff»: QuickBooks quantities against the ZINAX sheet (the true stock), read only on both sides; the workbook comes back to the chat that asked. */
 async function runStockDiff(chatId) {
@@ -675,7 +683,7 @@ const qboInvoices = new QboInvoiceDesk({
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
   // the final cut of the customer and code, from the tracker (what the cutting group posted); marked with the invoice number once it is made
   cutsOf: (customer, codes) => cutRecords(tracker, customer, codes, { log: (s) => logger.info(s) }), markCuts: (refs, number) => markCutsInvoiced(tracker, refs, number),
-  crossOf: (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x) }), // a preview made in the test group is checked against the TEST data only
+  crossOf: (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x), aliasOf: (n) => cutAliases.resolve(n) }), // a preview made in the test group is checked against the TEST data only
   // the free stock of a code, for a warning line in an invoice preview (the sheet is read, nobody is told)
   stockOf: async (code) => { try { const r = await fetchStock(config, { code }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } },
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
@@ -710,6 +718,17 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'bulk_old_edge': return qboBulk.planOldEdge();
     case 'cost_report': return [cost.report(ic.range)];
     case 'details': return [qboInvoices.previewDetails(ic.id)];
+    case 'alias_propose': {
+      const blocked = qboInvoices.guard(); if (blocked) return [blocked];
+      const since = Date.now() - 120 * 24 * 3600 * 1000;
+      const postNames = tracker.events.filter((e) => ['cut', 'delivery'].includes(e.type) && !e.internal && e.at >= since).flatMap((e) => [e.customerTyped, e.customer]).filter(Boolean);
+      const qboNames = (await qboDesk.customers()).map((cu) => cu.DisplayName || cu.CompanyName).filter(Boolean);
+      const pairs = proposeAliases({ postNames: [...new Set(postNames)], qboNames, skip: (k) => cutAliases.settled(k) });
+      if (!pairs.length) return [`No new alias to propose (${cutAliases.list().length} approved so far).`];
+      const p = cutAliases.propose(pairs);
+      return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, ...pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];
+    }
+    case 'alias_drop': { const n = cutAliases.drop(ic.id, ic.numbers); return [n ? `Removed ${n} line(s) from #${ic.id}; reply yes #${ic.id} to approve the rest.` : `Nothing removed from #${ic.id}.`]; }
     case 'tax_inclusive': return await qboBulk.planTaxInclusive();
     case 'tax_inclusive_undo': return await qboBulk.planUndoTaxInclusive(ic.source);
     case 'stock_diff': {
@@ -765,7 +784,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'yes': case 'no': {
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
-        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds()];
+        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds()];
         if (!open.length) return null;
         if (open.length > 1) {
           if (isEnglishOut()) return [`${open.length} previews are waiting: ${open.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the full code, for example: ${ic.type === 'yes' ? 'yes' : 'no'} #${open[0]}`];
@@ -773,7 +792,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
+      const out = await (id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -1011,7 +1030,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
       const parts = await qboInvoiceCommand(dec, text, { chatId });
       if (parts) { trace(where, role, `the owner's bare ${dec.type} typed in an internal group`); for (const part of parts) await sayIn(raw, chatId, where, part); return true; }
     }
-    if (dec && (dec.type === 'yes' || dec.type === 'no') && /^[QS]\d+$/.test(dec.id || '')) {
+    if (dec && (dec.type === 'yes' || dec.type === 'no') && /^[QSA]\d+$/.test(dec.id || '')) {
       trace(where, role, `the owner's ${dec.type} for #${dec.id} typed in an internal group`);
       for (const part of (await qboInvoiceCommand(dec, text, { chatId })) || []) await sayIn(raw, chatId, where, part);
       return true;

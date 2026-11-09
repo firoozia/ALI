@@ -128,11 +128,12 @@ const amount = (qty, unit) => `${Math.round(qty * 1000) / 1000}${unit === 'm' ? 
  * invoice line of the same customer and the same code is dated on or after the cut day, whatever its quantity. Warned: no cut at all, an invoice line for a cut already
  * invoiced, an invoice LARGER than the cut, a cut no invoice carries. Returns { problems, more }: at most [max] lines, then the count of the rest. [log](text) says what matched.
  */
-export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai', invoiced = null, max = 5, log = null } = {}) {
+export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai', invoiced = null, max = 5, log = null, aliasOf = () => '' } = {}) {
   const rows = [];
+  const forCustomer = (name) => sameCutCustomer(name, customer) || (!!aliasOf(name) && sameCutCustomer(aliasOf(name), customer)); // an alias the owner approved stands for the QuickBooks name
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
-    if (!(sameCutCustomer(e.customer, customer) || sameCutCustomer(e.customerTyped, customer))) continue;
+    if (!(forCustomer(e.customer) || forCustomer(e.customerTyped))) continue;
     (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
   }
   const same = (r, inv) => (inv.codes || []).some((k) => code(k) === r.code || (r.digits && digitsOf(k) === r.digits));

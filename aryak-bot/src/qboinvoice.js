@@ -73,7 +73,7 @@ export function parseInvoiceCommand(text) {
     const W = 'بله|اره|آره|اوکی|نه|خیر|yes|no|ok|okay';
     const isYes = (w) => /^(?:بله|اره|آره|اوکی|yes|ok|okay)$/iu.test(w);
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
-    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKL])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLA])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
@@ -125,6 +125,8 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], perm };
     if ((m = new RegExp(String.raw`^مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], perm };
   }
+  if (/^(?:cut aliases|alias proposals|نام\s*های مستعار برش)$/iu.test(s)) return { type: 'alias_propose' };
+  if ((m = /^(?:drop|حذف)\s+(\d+(?:\s*[,،]\s*\d+)*)\s+#?\s*(A\s*\d+)$/iu.exec(s))) return { type: 'alias_drop', numbers: m[1].split(/[,،]/).map((x) => Number(x)), id: m[2].replace(/\s+/g, '').toUpperCase() };
   if (/^(?:check tax inclusive|tax inclusive|بررسی مالیات شامل(?: قیمت)?|قیمت شامل مالیات)$/iu.test(s)) return { type: 'tax_inclusive' };
   if ((m = /^(?:undo tax inclusive|برگرداندن مالیات شامل(?: قیمت)?)\s+#?\s*([IK]\s*\d+)$/iu.exec(s))) return { type: 'tax_inclusive_undo', source: m[1].replace(/\s+/g, '').toUpperCase() };
   if (/^(?:stock diff(?:erence)?|اختلاف موجودی(?: کوییک‌بوکس)?)$/iu.test(s)) return { type: 'stock_diff' };

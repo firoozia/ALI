@@ -241,7 +241,7 @@ test('wiring: each request needs its own permission, with one Persian line when 
 test('wiring: an invoice request in an internal group needs the owner or the invoice permission; the preview is posted there; the yes with an id works there for the owner only', () => {
   const turn = src.slice(src.indexOf('async function groupStatementTurn'), src.indexOf('async function prepareGroupStatement'));
   assert.match(turn, /if \(owner\) \{\s*const dec = parseInvoiceCommand\(text\);/); // the owner's «بله #Q5» typed here
-  assert.ok(turn.includes('[QS]') && turn.includes('.test(dec.id')); // only a named preview, never a bare yes
+  assert.ok(turn.includes('[QSA]') && turn.includes('.test(dec.id')); // only a named preview, never a bare yes
   assert.match(turn, /if \(!\(owner \|\| canInvoice\)\) \{[\s\S]*?'برای درخواست فاکتور مجوز ندارید\.'/);
   assert.match(turn, /qboInvoices\.request\(\{ text: eff, requester: owner \? 'owner' : by, quotedText: quoted, origin: \{ jid: chatId \}, test \}\)/);
   assert.match(turn, /await sayIn\(raw, chatId, where, r\.owner \|\| r\.requester\)/); // posted in the group, Persian

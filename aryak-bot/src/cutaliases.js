@@ -1,0 +1,64 @@
+// The names the cutting and delivery groups use for a customer are not always the QuickBooks name («HAMID TRD» for HAMED TRADING, «AR RAD» for AR-RAD INTERNATIONAL…). From the
+// history of the posts, a list of PROPOSED aliases is made for the owner; only what he approves with his YES is used by the cross-check and the evening report. Kept on the
+// server only (never in the repository). Nothing here writes to QuickBooks or to any group.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { rankNames } from './translit.js';
+import { nameKey } from './customergroups.js';
+import { sameCutCustomer } from './cuts.js';
+
+const DAY = 24 * 3600 * 1000;
+
+/**
+ * [postNames]: the names written in the posts, [qboNames]: the QuickBooks customers. A proposal is a post name that no QuickBooks customer already matches by the plain rules
+ * (sameCutCustomer) and that one customer fits clearly by sound and spelling. [skip](key) -> true for a name already settled. Returns [{ post, qbo, score }].
+ */
+export function proposeAliases({ postNames, qboNames, skip = () => false }) {
+  const out = []; const seen = new Set();
+  for (const post of postNames) {
+    const key = nameKey(post);
+    if (!key || seen.has(key) || skip(key)) continue;
+    seen.add(key);
+    if (qboNames.some((q) => sameCutCustomer(post, q))) continue; // already the same customer by the plain rules: no alias needed
+    const ranked = rankNames(post, qboNames);
+    const [best, second] = ranked;
+    if (best && best.score >= 0.8 && (!second || best.score - second.score >= 0.1)) out.push({ post, qbo: best.name, score: Math.round(best.score * 100) });
+  }
+  return out;
+}
+
+export class CutAliases {
+  constructor(dir = '', now = () => Date.now()) {
+    this.file = dir ? path.join(dir, 'qbo-cut-aliases.json') : ''; this.now = now;
+    this.d = { approved: {}, declined: [], proposals: {}, n: 0 };
+    try { if (this.file) Object.assign(this.d, JSON.parse(fs.readFileSync(this.file, 'utf8'))); } catch { /* none yet */ }
+  }
+  save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
+  /** The QuickBooks name an approved alias stands for, or ''. */
+  resolve(name) { return this.d.approved[nameKey(name)]?.qbo || ''; }
+  settled(key) { return !!this.d.approved[key] || this.d.declined.includes(key); }
+  list() { return Object.values(this.d.approved); }
+
+  /** A new proposal (id A1, A2 …) from [pairs]; replaces nothing. */
+  propose(pairs) {
+    this.d.n += 1; const id = `A${this.d.n}`;
+    this.d.proposals[id] = { id, pairs, status: 'pending', at: this.now() };
+    this.save(); return this.d.proposals[id];
+  }
+  get(id) { const p = this.d.proposals[String(id).toUpperCase()]; if (!p) return null; if (p.status === 'pending' && this.now() - p.at > DAY) { p.status = 'expired'; this.save(); } return p; }
+  openIds() { return Object.values(this.d.proposals).filter((p) => p.status === 'pending' && this.now() - p.at <= DAY).map((p) => p.id); }
+  drop(id, numbers) { const p = this.get(id); if (!p || p.status !== 'pending') return 0; const drop = new Set(numbers.map(Number)); const before = p.pairs.length; p.pairs = p.pairs.filter((_, i) => !drop.has(i + 1)); this.save(); return before - p.pairs.length; }
+  /** The owner's yes: every pair of the proposal becomes an alias; his no: they are remembered as declined and never proposed again. */
+  decide(id, verb) {
+    const p = this.get(id);
+    if (!p) return { error: 'not found' };
+    if (p.status !== 'pending') return { error: p.status };
+    for (const pair of p.pairs) {
+      const key = nameKey(pair.post);
+      if (verb === 'yes') this.d.approved[key] = { post: pair.post, qbo: pair.qbo, at: this.now() }; else if (!this.d.declined.includes(key)) this.d.declined.push(key);
+    }
+    p.status = verb === 'yes' ? 'approved' : 'declined'; this.save();
+    return { count: p.pairs.length };
+  }
+}

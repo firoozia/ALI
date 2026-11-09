@@ -7,7 +7,7 @@ const PERSIAN = {
   ر: 'r', ل: 'l', م: 'm', ن: 'n', ف: 'f', و: 'f', ق: 'k', ک: 'k', گ: 'k', غ: 'k', ع: '', ء: '', ئ: '', ی: '', ا: '', آ: '', ة: 'h', ك: 'k', ي: '',
 };
 const LATIN = { b: 'b', p: 'p', t: 't', d: 't', c: 'k', k: 'k', q: 'k', g: 'k', x: 'ks', s: 's', z: 's', j: 'j', h: 'h', r: 'r', l: 'l', m: 'm', n: 'n', f: 'f', v: 'f', w: 'f' };
-const NOISE = new Set(['llc', 'l', 'c', 'ltd', 'co', 'company', 'trading', 'tr', 'ind', 'industries', 'industrial', 'est', 'establishment', 'fze', 'fzco', 'general', 'the', 'and', 'of', 'شرکت', 'موسسه', 'مؤسسه', 'تجارت', 'بازرگانی', 'صنعتی', 'کارخانه']);
+const NOISE = new Set(['llc', 'l', 'c', 'ltd', 'co', 'company', 'trading', 'tr', 'trd', 'trdg', 'ind', 'industries', 'industrial', 'est', 'establishment', 'fze', 'fzco', 'general', 'the', 'and', 'of', 'شرکت', 'موسسه', 'مؤسسه', 'تجارت', 'بازرگانی', 'صنعتی', 'کارخانه']);
 
 const clean = (s) => String(s || '').normalize('NFKC').replace(/[‌‎‏]/g, ' ').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
