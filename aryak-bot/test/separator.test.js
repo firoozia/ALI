@@ -95,3 +95,21 @@ test('three codes in one message, the first with no warning and the second with 
   assert.equal(out.split(SEP).length - 1, 2); assert.equal(separateStockAnswers(out), out); // unchanged when run again
   assert.equal(separateStockAnswers('*Note — read this: 5*\nplain text'), '*Note — read this: 5*\nplain text'); // a bold line that is not a stock head
 });
+
+test('the exact owner-chat text: the «🤖 » mark before the first block, a blank line between 505 and 403, no asterisks left: the line is before EVERY code header but the first', async () => {
+  const { separateStockAnswers } = await import('../src/stock-format.js');
+  const text = [
+    '🤖 *Code 505 — Total: 295.1 m*', 'Stock of code 505 (PVC film) is enough', '- Size: 0.35*1400', '- Free: 295.1 m', '- Reserved: 0 m', '- Minimum stock: 200 m', '- Packages: 2 packs of 120 m + open (total 295.1 m)', '- Location: Showroom, Warehouse 2',
+    '', '*Code 403 — Total: 0.2 m*', 'Stock of code 403 (PVC film) is very low', '- Free: 0.2 m', '- Location: Showroom', '', '⚠ Free stock is below the minimum stock (200 m)',
+    '', '*Code 701 — Total: 454 m*', 'Stock of code 701 (PVC film) is enough', '- Free: 454 m',
+  ].join('\n');
+  const out = separateStockAnswers(text);
+  const lines = out.split('\n'); const at = lines.map((l, i) => (l === SEP ? i : -1)).filter((i) => i >= 0);
+  assert.equal(at.length, 2); assert.ok(lines[at[0] + 1].startsWith('*Code 403') && lines[at[1] + 1].startsWith('*Code 701'));
+  assert.ok(lines[at[0] - 1] === '- Location: Showroom, Warehouse 2' && lines[at[1] - 1].startsWith('⚠ Free stock')); // no blank line next to the separator
+  assert.ok(lines[0].startsWith('🤖 *Code 505'));
+  // without the asterisks (bold already rendered) and in Persian
+  assert.equal(separateStockAnswers('Code 505 — Total: 1 m\nx\n\nCode 403 — Total: 2 m\ny').split(SEP).length - 1, 1);
+  assert.equal(separateStockAnswers('🤖 *کد 505 — جمع: 1 m*\nx\n\n*کد 403 — جمع: 2 m*\ny\n\n*کد 701 — جمع: 3 m*\nz').split(SEP).length - 1, 2);
+  assert.equal(separateStockAnswers('🤖 *Code 505 — Total: 1 m*\nonly one').includes(SEP), false);
+});

@@ -236,7 +236,7 @@ export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa',
  * put them together (the formatter, the on-behalf desk or the model). A text with one answer, or already separated, is returned as it is.
  */
 export function separateStockAnswers(text) {
-  const head = /^\*[^*\n]{1,40}\d[^*\n]{0,20} — [^*\n]+:[^*\n]+\*\s*$/; // «*Code 505 — Total: 40 m (Free 30 m)*»
+  const head = /^[^*\n]{0,6}\*?\s*(?:Code|کد|الكود|کوڈ)\s+[^\s*]+ — [^\n:*]{1,20}:[^\n]*$/; // «*Code 505 — Total: 40 m*», also after the owner chat's robot mark or without the asterisks
   const out = []; let seen = false;
   for (const line of String(text).split('\n')) {
     if (head.test(line) && seen) {
