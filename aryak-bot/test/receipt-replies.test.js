@@ -54,6 +54,6 @@ test('the wiring: a reply to a receipt (PDF, photo or text) and a «cleared» to
   // another amount in the reply is another payment
   assert.match(index, /Math\.abs\(Number\(event\.amount\) - Number\(base\.amount\)\) > 1\) return false;/);
   // the words are kept and the old entries are migrated in the report; nothing is written to QuickBooks
-  assert.match(index, /\.\.\.\(role === 'payment' \? \{ text: String\(text\)\.slice\(0, 300\) \} : \{\}\)/); assert.match(index, /migrateOldPayments\(\{ events, invoiceRows: guessRows/);
+  assert.match(index, /\.\.\.\(role === 'payment' \? \{ text: String\(text\)\.slice\(0, 300\) \} : \{\}\)/); assert.match(index, /await migrateStoredPayments\(events\);/); assert.match(index, /payments: re-parsed \$\{moves\.length\} stored rows/); assert.match(index, /migrateOldPayments\(\{ events, invoiceRows: rows,/);
   const report = index.slice(index.indexOf('async function paymentsReport'), index.indexOf('const availDrafts')); assert.doesNotMatch(report, /\.write\(|sock\.sendMessage|postDocument/);
 });

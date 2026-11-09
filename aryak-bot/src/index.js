@@ -85,6 +85,7 @@ import { PendingChoice, parseChoice } from './pendingchoice.js';
 import { mergeTranscripts, isShortCorrection } from './voicemerge.js';
 import { codeKnownInItems } from './qboinvoice.js';
 import { buildSystemPrompt } from './prompt.js';
+import { acquireSingleInstance } from './singleinstance.js';
 import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
 
@@ -129,6 +130,15 @@ const systemPrompt = () => {
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 config.log = (s) => logger.warn(s);
 config.logInfo = (s) => logger.info(s);
+// ONE bot process per WhatsApp session: a second one (a double start) waits for the first to stop, or leaves; the lock lives in the auth folder
+{
+  const lock = await acquireSingleInstance(path.join(config.authDir, 'bot.lock'), { log: (m) => logger.warn(m) });
+  if (!lock.ok) { logger.error(`another bot process (${lock.holder}) holds the WhatsApp session; this one stops so the two do not answer twice`); process.exit(1); }
+  logger.info(`single instance: process ${process.pid} holds the session lock`);
+  const free = () => lock.release();
+  process.on('exit', free);
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { free(); process.exit(0); });
+}
 config.sheetCache = new SheetCache(); // the last answer per lookup: reused for a minute, a fallback for a quarter of an hour
 // The sheet's script falls asleep and then needs up to a minute to wake: a cheap lookup every four minutes keeps it up.
 setTimeout(() => warmSheet(config).catch((e) => logger.warn(`keep-warm lookup failed: ${e.message}`)), 5000).unref();
@@ -755,20 +765,32 @@ async function unbilledReport(events = tracker.events) {
 }
 
 /** Payments seen in the Confirmation group against the customers' OPEN invoices: a proposal only, read only; nothing is recorded in QuickBooks. */
+/** Payments stored before the new rules: a «9,940.00» that was really inv-9940 is read as the invoice, once; the numbers are logged («payments: re-parsed N stored rows»). */
+async function migrateStoredPayments(events) {
+  const old = events.filter((e) => e.type === 'payment' && !e.reparsed && !e.text && !e.source && e.kind === 'cash' && Number.isInteger(Number(e.amount)) && Number(e.amount) >= 100 && !(e.invoices || []).length);
+  const withText = events.filter((e) => e.type === 'payment' && !e.reparsed && e.text);
+  if (!old.length && !withText.length) return 0;
+  const guesses = [...new Set(old.map((e) => `inv-${Number(e.amount)}`))].slice(0, 20);
+  let rows = [];
+  try { rows = guesses.length ? await qbo.query(`select * from Invoice where DocNumber in (${guesses.map((n) => `'${qboEscape(n)}'`).join(',')})`) : []; } catch (e) { logger.warn(`payments: the invoice look-up for the old rows failed: ${e.message}`); return 0; }
+  const moves = migrateOldPayments({ events, invoiceRows: rows, aliasOf: (n) => cutAliases.resolve(n), parse: (t) => eventsFromCaption('payment', t)?.events?.[0] || null });
+  for (const m of moves) tracker.update(m.ref, m.patch);
+  logger.info(`payments: checked ${old.length} old cash row(s) and ${withText.length} with kept words; ${rows.length} invoice(s) found; payments: re-parsed ${moves.length} stored rows`);
+  return moves.length;
+}
+
 async function paymentsReport(events, only = '') {
   const invoices = await qbo.query("select * from Invoice where Balance > '0'");
   const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const payments = await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => []); // what the office already recorded
-  // payments stored before the new rules: a «9,940.00» that was really inv-9940 is read as the invoice, once
-  const guesses = [...new Set(events.filter((e) => e.type === 'payment' && !e.reparsed && !e.text && !e.source && e.kind === 'cash' && Number.isInteger(Number(e.amount)) && Number(e.amount) >= 100 && !(e.invoices || []).length).map((e) => `inv-${Number(e.amount)}`))].slice(0, 20);
-  const guessRows = guesses.length ? await qbo.query(`select * from Invoice where DocNumber in (${guesses.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => []) : [];
-  for (const m of migrateOldPayments({ events, invoiceRows: guessRows, aliasOf: (n) => cutAliases.resolve(n), parse: (t) => eventsFromCaption('payment', t)?.events?.[0] || null })) tracker.update(m.ref, m.patch);
+  await migrateStoredPayments(events);
   const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20); // the invoice numbers the messages give: paid or open
   const lookup = new Map();
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
   return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup });
 }
 
+setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
 const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
