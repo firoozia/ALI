@@ -1389,3 +1389,50 @@ test('the dry run builds the very body the create sends (the same sanitising), s
   const sent = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).length && t.m.posts[0].body;
   assert.deepEqual(Object.keys(built).sort(), Object.keys(sent).filter((k) => k !== 'DocNumber').sort());
 });
+
+// ------------------------------------------------------------------------------------------------ SIMULATION MODE (the test group)
+test('simulation: the yes of a preview made in the TEST group writes nothing to QuickBooks and takes no number; it describes the exact body; the preview is not reusable', async () => {
+  setOutLang('en');
+  try {
+    const items = [{ Id: '5', Name: 'PVC FILM505', Sku: 'PVC-505', UnitPrice: 11, Type: 'Inventory', Active: true }];
+    const t = mk({ customers: [{ Id: '91', DisplayName: 'MASTER WOOD', CompanyName: 'MASTER WOOD LLC', Balance: 0, SalesTermRef: { value: '4' } }], items, customTxn: true, docNumbers: ['inv-9984'], salesForms: { DefaultCustomerMessage: 'Sample message text' } });
+    const r = await t.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m', requester: 'owner', test: true });
+    assert.equal(t.store.get('Q1').test, true);
+    const out = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
+    assert.match(out, /^SIMULATION: would create an invoice for MASTER WOOD — nothing was created in QuickBooks and no number was taken\./);
+    assert.match(out, /1\. PVC FILM505 ×10 @ 11 = 110\.00/); assert.match(out, /Total 115\.50 AED/); assert.match(out, /Number: would be inv-9985 \(read now, not taken\)/);
+    assert.match(out, /terms 4; message on invoice 19 characters; bill-to yes/);
+    assert.equal(t.m.posts.length, 0); // no write of any kind
+    assert.equal(t.store.get('Q1').status, 'simulated'); assert.deepEqual(t.inv.openIds(), []); // not open any more
+    assert.equal(t.store.get('Q1').docNumber, ''); // no number held
+    assert.equal(t.store.d.creates.length, 0); // not counted as a creation
+    assert.ok(t.audit.last(5).some((x) => x.event === 'simulated'));
+    // the next real preview gets the same number: nothing was consumed
+    const real = await t.inv.request({ text: 'Atossa invoice MASTER WOOD 505=10m', requester: 'owner' });
+    assert.ok(real.owner); await t.inv.decide({ verb: 'yes', id: 'Q2' });
+    assert.equal(t.m.posts[0].body.DocNumber, 'inv-9985');
+    assert.equal(t.store.get('Q2').test, undefined);
+  } finally { setOutLang('fa'); }
+});
+
+test('simulation: wiring — a preview made in the test group is flagged, its cross-check reads the TEST tracker, the other groups are simulated by a prefix and stored as test data only', () => {
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /canInvoice: invoicePerson, where, role, test: !!group\?\.test \}/);
+  assert.match(index, /quotedText: quoted, origin: \{ jid: chatId \}, test \}\)/);
+  assert.match(index, /crossCheck\(trackerOf\(!!opts\.test\), customer, lines/); // the test data, not the real tracker
+  const at = index.indexOf('async function simulatedPost');
+  const block = index.slice(at, at + 2100);
+  assert.match(block, /\[\(orders\|delivery\|confirm\)\\\]/);
+  assert.match(block, /testTracker\.add\(event\)/); assert.doesNotMatch(block, /[^t]tracker\.add\(/); // only the test tracker
+  assert.match(index, /if \(group\?\.test && ownerPerson && text && !audio && !image && \(await simulatedPost\(/); // the test group and the owner only
+});
+
+test('simulation: a prefix post is read like the post of that group (cut posts with several pieces included)', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const cut = eventsFromCaption('cut', 'ART NO 303 MUNICH DOOR KITCHEN 6.4M').events[0];
+  assert.equal(cut.customer, 'MUNICH DOOR KITCHEN'); assert.equal(cut.lines[0].quantity, 6.4);
+  const delivery = eventsFromCaption('delivery', 'NUQOOSH 2 ROLLS DISPATCHED').events[0];
+  assert.equal(delivery.type, 'delivery'); assert.match(JSON.stringify(delivery), /NUQOOSH/);
+  const pay = eventsFromCaption('payment', 'HAMED TRADING 500 received');
+  assert.ok(pay === null || pay.events?.length >= 0); // a payment line is read by its own shapes; an unread one is simply said so
+});

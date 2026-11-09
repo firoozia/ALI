@@ -675,7 +675,7 @@ const qboInvoices = new QboInvoiceDesk({
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
   // the final cut of the customer and code, from the tracker (what the cutting group posted); marked with the invoice number once it is made
   cutsOf: (customer, codes) => cutRecords(tracker, customer, codes, { log: (s) => logger.info(s) }), markCuts: (refs, number) => markCutsInvoiced(tracker, refs, number),
-  crossOf: (customer, lines, invoiced) => crossCheck(tracker, customer, lines, { invoiced, log: (x) => logger.info(x) }),
+  crossOf: (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x) }), // a preview made in the test group is checked against the TEST data only
   // the free stock of a code, for a warning line in an invoice preview (the sheet is read, nobody is told)
   stockOf: async (code) => { try { const r = await fetchStock(config, { code }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } },
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
@@ -973,10 +973,32 @@ const addressedIn = (text, ctx) => isAddressed({
 });
 
 /**
+ * «[orders] ART NO 303 MUNICH DOOR KITCHEN 6.4M», «[delivery] NUQOOSH 2 ROLLS DISPATCHED», «[confirm] … credited with AED 500.00 …», typed by the owner in the TEST group:
+ * read exactly like a post of that group and stored in the TEST tracker, which no real report reads. Nothing is posted anywhere else.
+ */
+async function simulatedPost({ raw, text, where, role, reply }) {
+  const m = /^\s*\[(orders|delivery|confirm)\]\s*([\s\S]+)$/i.exec(text);
+  if (!m) return false;
+  const kind = m[1].toLowerCase();
+  const asRole = { orders: 'cut', delivery: 'delivery', confirm: 'payment' }[kind];
+  const det = eventsFromCaption(asRole, m[2].trim());
+  if (!det?.events?.length) { await reply(`SIMULATION: that text was not read as a post of the ${kind} group (nothing recorded).`); return true; }
+  const lines = [];
+  for (const [i, ev] of det.events.entries()) {
+    const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`test|${raw.key.id}|${i}`).digest('hex').slice(0, 24), simulated: true };
+    if (!testTracker.add(event)) continue;
+    trace(where, role, `simulated ${kind} post recorded as test data`);
+    lines.push(`${event.type}${event.internal ? ' (internal)' : ''}: ${event.customer || '-'} ${(event.lines || []).map((l) => `${l.code} ${l.quantity}${l.invoiceQuantity !== undefined ? ` (invoiced ${l.invoiceQuantity})` : ''}`).join(', ')}${event.amount ? ` ${event.amount}` : ''}`.trim());
+  }
+  await reply(`SIMULATION (test data only, never in the real reports): recorded ${lines.length} ${kind} item(s)${lines.length ? `\n${lines.join('\n')}` : ''}`);
+  return true;
+}
+
+/**
  * A statement in an INTERNAL group. The owner or an authorized person (۱) asks for it by her name or by quoting her; the PDF comes back in that group.
  * A numbered choice is kept for the person who asked. A colleague who is neither gets one Persian line. true = the message was taken.
  */
-async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, canInvoice = false, where, role }) {
+async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, canInvoice = false, where, role, test = false }) {
   const may = owner || authorized;
   const by = personOf(raw);
   // The owner's «بله #Q5» / «نه #Q5» (or the number of a statement waiting for a customer's group) typed in this internal group: the same decision as in his own chat.
@@ -1019,7 +1041,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
       if (!(owner || canInvoice)) { logger.info(`not authorized: ${raw.key.participant || raw.key.remoteJid} (invoice)`); trace(where, role, 'an invoice request from a colleague without the invoice permission'); await sayIn(raw, chatId, where, 'برای درخواست فاکتور مجوز ندارید.'); return true; }
       trace(where, role, 'invoice request in an internal group');
       try {
-        const r = await qboInvoices.request({ text: eff, requester: owner ? 'owner' : by, quotedText: quoted, origin: { jid: chatId } });
+        const r = await qboInvoices.request({ text: eff, requester: owner ? 'owner' : by, quotedText: quoted, origin: { jid: chatId }, test });
         await sayIn(raw, chatId, where, r.owner || r.requester);
         if (r.owner && !owner) await sock.sendMessage(ownIds()[0], { text: `🤖 ${r.owner}` });
       } catch (e) {
@@ -1643,7 +1665,7 @@ async function handleStaffChat(raw, chatId, group) {
     // an authorized person (not staff) may ask for a statement by her name in an internal group; nothing else of theirs is taken
     if (group && !staff && text && !audio && !image && qboAuth.isAuthorized(who, lids(info.lidToPhone))) {
       const gctx = (content.extendedTextMessage || {}).contextInfo || {};
-      if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: qboAuth.has(who, 'statement', lids(info.lidToPhone)), canInvoice: qboAuth.has(who, 'invoice', lids(info.lidToPhone)), where, role: 'authorized' })) return true;
+      if (await groupStatementTurn({ raw, chatId, text, ctx: gctx, owner: false, authorized: qboAuth.has(who, 'statement', lids(info.lidToPhone)), canInvoice: qboAuth.has(who, 'invoice', lids(info.lidToPhone)), where, role: 'authorized', test: !!group?.test })) return true;
     }
     requesterGrants = grantsOf(who, info.lidToPhone);
     authorizedPerson = !!(group && qboAuth.has(who, 'statement', lids(info.lidToPhone)));
@@ -1678,8 +1700,10 @@ async function handleStaffChat(raw, chatId, group) {
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  // THE OWNER SIMULATES THE OTHER GROUPS in the test group: «[orders] ART NO 303 MUNICH 6.4M», «[delivery] …», «[confirm] …». Read like a post of that group, kept as TEST data only.
+  if (group?.test && ownerPerson && text && !audio && !image && (await simulatedPost({ raw, text, where, role, reply }))) return true;
   // A statement asked for in an internal group (the owner or an authorized person): answered in that group.
-  if (group && text && !audio && !image && (await groupStatementTurn({ raw, chatId, text, ctx: (content.extendedTextMessage || {}).contextInfo || {}, owner: ownerPerson, authorized: authorizedPerson, canInvoice: invoicePerson, where, role }))) return true;
+  if (group && text && !audio && !image && (await groupStatementTurn({ raw, chatId, text, ctx: (content.extendedTextMessage || {}).contextInfo || {}, owner: ownerPerson, authorized: authorizedPerson, canInvoice: invoicePerson, where, role, test: !!group?.test }))) return true;
   // A numbered question just asked waits for its answer: «1», «۱», «یک», «اولی», «شماره یک درست است» or the name itself. Nothing else may take this message.
   const pending = text && !audio && !image ? choiceDesk.get(`pc:${chatId}`) : null;
   if (pending && (!pending.by || (!group && pending.by === personOf(raw)))) {

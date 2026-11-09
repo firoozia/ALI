@@ -755,7 +755,7 @@ export class QboInvoiceDesk {
    * requests are first read by the model into { customer, lines } (it only extracts); when it is unsure the request stops and says what was
    * understood. Returns { requester, owner }: the note for the person who asked, and the preview for the owner (null when it stopped). Never creates.
    */
-  async request({ text, requester, quotedText = '', origin = null }) {
+  async request({ text, requester, quotedText = '', origin = null, test = false }) {
     const cmd = parseInvoiceCommand(text);
     if (cmd?.type !== 'request') return { requester: 'Write: فاکتور بساز <customer> and then one item per line: item, quantity, price (price optional).', owner: null };
     const stop = (msg) => ({ requester: msg, owner: null });
@@ -773,7 +773,7 @@ export class QboInvoiceDesk {
       entries = cmd.lines.map((raw) => ({ raw, cands: lineCandidates(raw) }));
     } else {
       const blocks = parseInvoiceBlocks(text);
-      if (blocks) return this.requestBlocks({ blocks, requester, origin });
+      if (blocks) return this.requestBlocks({ blocks, requester, origin, test });
       if (!this.extract) return stop('بعد از نام مشتری، هر کالا را در یک سطر بنویسید: نام کالا، تعداد، قیمت (قیمت اختیاری).');
       let x = null;
       try { x = await this.extract(text); } catch (e) { this.log(`invoice request could not be read: ${e.name}`); }
@@ -786,14 +786,14 @@ export class QboInvoiceDesk {
       customerText = x.customer;
       entries = x.lines.map((l) => ({ raw: `${l.item} ${l.qty}${l.price !== null ? ` @ ${l.price}` : ''}`, cands: [{ item: l.item, qty: l.qty, price: l.price }] }));
     }
-    return this.makePreview({ customerText, entries, requester, stop, po, origin });
+    return this.makePreview({ customerText, entries, requester, stop, po, origin, test });
   }
 
   /**
    * Several customers in one message: one PREVIEW per customer, each with its own yes, never merged (separate customers keep separate balances).
    * The reply lists them all; «بله همه» approves every preview of this message.
    */
-  async requestBlocks({ blocks, requester, origin = null }) {
+  async requestBlocks({ blocks, requester, origin = null, test = false }) {
     // one preview per block, never merged: two names that look alike in the WhatsApp groups can be two customers with separate balances in QuickBooks
     const groups = blocks.map((b) => ({ names: [b.customer], lines: [...b.lines] }));
     const batch = `B${this.now()}`;
@@ -801,7 +801,7 @@ export class QboInvoiceDesk {
     for (const g of groups) {
       const entries = g.lines.map((l) => ({ raw: `${l.code} ${l.qty}`, cands: [{ item: l.code, qty: l.qty, price: null, unit: l.unit }] }));
       const stop = (msg) => ({ requester: msg, owner: null });
-      const r = await this.makePreview({ customerText: g.names[0], entries, requester, stop, batch, origin });
+      const r = await this.makePreview({ customerText: g.names[0], entries, requester, stop, batch, origin, test });
       if (r.owner) { made += 1; parts.push(r.owner); } else parts.push(`مشتری «${g.names[0]}»: ${r.requester}`);
     }
     const foot = made > 1 ? '\n\nبرای پذیرفتن همهٔ این پیش‌نمایش‌ها: «بله همه» — برای لغو همه: «نه همه» (هر کدام را جدا هم می‌توانید با شماره‌اش بپذیرید).' : '';
@@ -818,7 +818,7 @@ export class QboInvoiceDesk {
     return out;
   }
 
-  async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '', batch = '', po = '', origin = null }) {
+  async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '', batch = '', po = '', origin = null, test = false }) {
     let cust = overrides.customer ? { ours: customerText, id: overrides.customer.id, name: overrides.customer.name, loose: true, typed: customerText, chosen: true } : await this.desk.resolveLoose(customerText);
     const problems = { customer: '', items: [], tax: '' };
     const guesses = { customer: null, lines: [], tax: null }; // what was GUESSED (shown with alternatives; applied only by the owner's yes)
@@ -923,10 +923,11 @@ export class QboInvoiceDesk {
       guesses: (guesses.customer || guesses.lines.length || guesses.tax) ? guesses : null,
       // what the owner's yes will remember, so that the next time it is exact and not a guess
       aliases: { customer: (cust.guessed || cust.chosen) ? { text: customerText, id: cust.id, name: cust.name } : null, items: out.filter((l) => (l.via === 'guess' || l.chosen) && l.typed).map((l) => ({ typed: l.typed, itemId: l.itemId, name: l.name })) },
-      cross: this.crossOf ? this.crossOf(cutName, out.map((l) => ({ code: l.typed, sku: l.sku, name: l.name, qty: l.qty })), await this.customerInvoiceLines(cust.id, cat)) : null, // against the cutting group: warnings only
+      cross: this.crossOf ? this.crossOf(cutName, out.map((l) => ({ code: l.typed, sku: l.sku, name: l.name, qty: l.qty })), await this.customerInvoiceLines(cust.id, cat), { test }) : null, // against the cutting group: warnings only
       req: { customerText, entries, overrides, po },
       ...(po ? { po } : {}),
       ...(origin ? { origin } : {}), // the chat the request came from: the PDF goes back there
+      ...(test ? { test: true } : {}), // made in the test group: its yes only SIMULATES
       ...(batch ? { batch } : {}),
     };
     this.store.add(preview);
@@ -1047,6 +1048,25 @@ export class QboInvoiceDesk {
     return lines.length ? QboInvoiceDesk.pages(lines, head) : [`Dry run of ${id} against ${againstNumber} (nothing created, no number taken): the body matches in every compared field.`];
   }
 
+  /**
+   * The yes of a preview made in the TEST group: the exact body is built (the same defaults, read now) and described; NOTHING is written to QuickBooks and no number is taken.
+   */
+  async simulate(p) {
+    const defaults = await this.salesDefaults(p.customer.id);
+    const body = this.invoiceBody(p, defaults);
+    const next = p.customTxn ? (await this.nextDocNumber(p.id).catch(() => ({}))).docNumber : '';
+    p.status = 'simulated'; this.store.save();
+    this.audit.add({ event: 'simulated', previewId: p.id });
+    const set = (k) => (k in body ? 'yes' : 'no');
+    return [[
+      `SIMULATION: would create an invoice for ${p.customer.name} — nothing was created in QuickBooks and no number was taken.`,
+      ...body.Line.map((l, i) => `${i + 1}. ${p.lines[i].name} ×${l.SalesItemLineDetail.Qty} @ ${l.SalesItemLineDetail.UnitPrice} = ${Number(l.Amount).toFixed(2)}`),
+      `Total ${money(p.total)}${p.currency ? ` ${p.currency}` : ''} (tax ${p.tax.name}, ${p.tax.rate}%)`,
+      `Number: ${next ? `would be ${next} (read now, not taken)` : 'assigned by QuickBooks when created'}`,
+      `Would send: terms ${body.SalesTermRef ? body.SalesTermRef.value : 'none'}; message on invoice ${body.CustomerMemo ? `${body.CustomerMemo.value.length} characters` : 'none'}; bill-to ${set('BillAddr')}; ship-to ${set('ShipAddr')}; currency ${set('CurrencyRef')}; place of supply ${body.TransactionLocationType || 'none'}; online payment switches ${set('AllowOnlinePayment')}; print status ${body.PrintStatus || 'default'}`,
+    ].join('\n')];
+  }
+
   /** «details #Q14»: the full old preview. */
   previewDetails(id) { const p = this.store.get(id); return p ? this.previewFull(p) : `Preview ${id} was not found.`; }
 
@@ -1097,7 +1117,7 @@ export class QboInvoiceDesk {
       ov.tax = alt.id;
     }
     const stop = (msg) => ({ requester: msg, owner: null });
-    const r = await this.makePreview({ customerText: p.req.customerText, entries: p.req.entries, requester: p.requester, stop, overrides: ov, reuseId: p.id, po: p.req.po || p.po || "", origin: p.origin || null });
+    const r = await this.makePreview({ customerText: p.req.customerText, entries: p.req.entries, requester: p.requester, stop, overrides: ov, reuseId: p.id, po: p.req.po || p.po || "", origin: p.origin || null, test: !!p.test });
     return [r.owner || r.requester];
   }
 
@@ -1126,6 +1146,7 @@ export class QboInvoiceDesk {
       if (p.status !== 'expired') { p.status = 'expired'; this.store.save(); this.audit.add({ event: 'expire', previewId: p.id }); }
       return [`پیش‌نمایش ${p.id} بیش از ۲۴ ساعت پیش است و منقضی شد. دوباره درخواست کنید.`];
     }
+    if (p.test) return this.simulate(p); // made in the test group: nothing is created and no number is taken
     const blocked = this.guard();
     if (blocked) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'guard' }); return [blocked]; }
     if (!this.qbo.writeOn) { this.audit.add({ event: 'refuse', previewId: p.id, reason: 'write-off' }); return ['نوشتن در کوییک‌بوکس خاموش است؛ فاکتور ساخته نشد. پیش‌نمایش می‌ماند.']; }
