@@ -32,7 +32,7 @@ import { extractInvoiceRequest } from './qboextract.js';
 import { NamePreviews, QboNameDesk } from './qbonames.js';
 import { BulkPreviews, PriceDraft, QboBulkDesk } from './qbobulk.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
-import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, rowOfGroup, settleDuplicates } from './customergroups.js';
+import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, nameKey, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
 import { WatchList } from './watchlist.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
@@ -811,7 +811,8 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       const since = Date.now() - 120 * 24 * 3600 * 1000;
       const postNames = tracker.events.filter((e) => ['cut', 'delivery'].includes(e.type) && !e.internal && e.at >= since).flatMap((e) => [e.customerTyped, e.customer]).filter(Boolean);
       const qboNames = (await qboDesk.customers()).map((cu) => cu.DisplayName || cu.CompanyName).filter(Boolean);
-      const pairs = proposeAliases({ postNames: [...new Set(postNames)], qboNames, skip: (k) => cutAliases.settled(k) });
+      const own = [...config.botNames, 'atousa', 'atusa', 'atoosa', 'atosa', 'آتوسا', 'اتوسا', ...(config.aliasExclude || [])].map((n) => nameKey(n)).filter(Boolean);
+      const pairs = proposeAliases({ postNames: [...new Set(postNames)], qboNames, skip: (k) => cutAliases.settled(k), exclude: (n) => own.includes(nameKey(n)) }); // the assistant's own name (and staff names set in the settings) is never a customer
       if (!pairs.length) return [`No new alias to propose (${cutAliases.list().length} approved so far).`];
       const p = cutAliases.propose(pairs);
       return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, ...pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];

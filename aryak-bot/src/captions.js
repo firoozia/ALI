@@ -115,6 +115,11 @@ const AMOUNT = /(?:^|[^\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d,
  * "<amount> <customer>", "<amount> from <customer>", "<customer> <amount> Received [BY <courier>]", "<amount> cash received from
  * <customer>", "cash from a + b" -> { kind: 'cash', amount, customers: [...] }; an expense ("sell car") -> { kind: 'expense' }.
  */
+/** The words of a payment message that are never a customer («cash», «clear», «receipt», «inv», «pay» …) taken out of a name; '' when nothing is left. */
+export function stripPaymentWords(name) {
+  return String(name || '').replace(/\bBY\b.*$/i, ' ').replace(/\b(AED|DHS?|CASH|CHEQUE|CHECK|TRANSFER|RECEIVED?|PAID|FROM|PAYMENTS?|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ').replace(/[/.]+/g, ' ').replace(/^[\s+&-]+|[\s+&-]+$/g, '').replace(/\s*\+\s*(?=\+|$)/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export function parsePaymentCaption(text) {
   const s = clean(text);
   if (!s) return null;
@@ -128,7 +133,11 @@ export function parsePaymentCaption(text) {
   }
   if (/\b(sell(?:ing)?\s+car|expense|petrol|salary)\b/i.test(s)) return { kind: 'expense' };
   const a = AMOUNT.exec(s);
-  if (!a) return /^[\p{L} &.'+-]{3,40}$/u.test(s) ? { kind: 'name', customer: title(s) } : null;
+  if (!a) { // no amount: a bare name (it may belong to the payment next to it); a message made only of payment words is no name
+    if (!/^[\p{L} &.'+-]{3,40}$/u.test(s)) return null;
+    const bare = stripPaymentWords(s).replace(/(?:^|\s)(?:and|\+|&)(?=\s|$)/gi, ' ').replace(/\s+/g, ' ').trim();
+    return /\p{L}{2,}/u.test(bare) ? { kind: 'name', customer: title(bare) } : null;
+  }
   const amount = num(a[1]);
   let rest = (s.slice(0, a.index) + ' ' + s.slice(a.index + a[0].length))
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer

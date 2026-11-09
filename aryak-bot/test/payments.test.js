@@ -67,3 +67,22 @@ test('junk words are not a customer; a nameless cash payment waits for the name 
   assert.match(done[1], /^→ already recorded in QuickBooks \(payment of 08\/11, ALWAN ALSHAM\)$/);
   assert.doesNotMatch(proposePayment({ event: pay({ customer: 'OTHER CO', amount: 115 }), invoices: open, payments: paid })[1], /already recorded/);
 });
+
+test('payment names: «cash from receipt + clear», «cash from Pay» and «clear … inv» are read clean; a payment stored with junk is a payment without a name; a message of payment words only is no name', async () => {
+  const { stripPaymentWords } = await import('../src/captions.js');
+  const names = (t) => eventsFromCaption('payment', t).events?.map((e) => e.customer);
+  assert.deepEqual(names('cash from receipt + clear 115.00'), ['']); assert.equal(eventsFromCaption('payment', 'cash from receipt + clear 115.00').events[0].pendingName, true);
+  assert.deepEqual(names('cash from Pay 157.00'), ['']);
+  assert.deepEqual(names('cash from clear MUNICH DOOR KITCHEN inv 9,940.00'), ['MUNICH DOOR KITCHEN']);
+  assert.deepEqual(names('Cash received from clear Munich Door Kitchen inv AED 9940'), ['Munich Door Kitchen']);
+  assert.equal(eventsFromCaption('payment', 'cash from receipt + clear'), null); // payment words only and no amount: nothing, never a name for the neighbour payment
+  assert.deepEqual(eventsFromCaption('payment', 'Alwan sham'), { name: 'Alwan sham' });
+  assert.equal(stripPaymentWords('receipt + clear'), ''); assert.equal(stripPaymentWords('clear MUNICH DOOR KITCHEN inv'), 'MUNICH DOOR KITCHEN');
+  // a payment kept from before with the junk name is read as a payment without a name
+  const stored = proposePayment({ event: pay({ customer: 'Receipt + Clear', amount: 115 }), invoices: open });
+  assert.match(stored[1], /the name is needed|could be/);
+  const munich = [inv('MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C', 'inv-9645', 9940)];
+  assert.match(proposePayment({ event: pay({ customer: 'Clear MUNICH DOOR KITCHEN Inv', amount: 9940 }), invoices: munich })[1], /^→ pays inv-9645 9,940\.00$/);
+  const recorded = proposePayment({ event: pay({ customer: 'MUNICH DOOR KITCHEN', amount: 9940 }), invoices: munich, payments: [{ TotalAmt: 9940, TxnDate: '2026-11-08', CustomerRef: { name: 'MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C' } }] });
+  assert.match(recorded[1], /already recorded in QuickBooks \(payment of 08\/11/);
+});

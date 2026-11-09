@@ -2,7 +2,7 @@
 // A PROPOSAL only, read only: nothing is ever recorded in QuickBooks from here (recording a payment would be its own owner-approved job). The account numbers of the bank messages are
 // never kept: only the amount.
 
-import { matchCod } from './captions.js';
+import { matchCod, stripPaymentWords } from './captions.js';
 import { sameCutCustomer } from './cuts.js';
 
 const money = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -13,7 +13,9 @@ const label = (i) => `${i.DocNumber || `#${i.Id}`} ${money(i.Balance)}`;
  * [event]: a payment event of the tracker ({ amount, kind, customer, at }). [invoices]: the OPEN invoices (Balance above zero) with CustomerRef.name. Returns the proposal as lines.
  * With a customer named: his open invoices that add up to the amount (up to four); else his open list. Without a name (a bank credit): the customers with an exact match.
  */
-export function proposePayment({ event, invoices, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai' }) {
+export function proposePayment({ event: raw, invoices, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai' }) {
+  const clean = raw.customer ? stripPaymentWords(raw.customer) : '';
+  const event = raw.customer && !clean ? { ...raw, customer: '', pendingName: true } : { ...raw, customer: clean }; // an event kept with «receipt + clear» as its name is a payment without a name
   const amount = Number(event.amount) || 0;
   const how = `${money(amount)} ${event.currency || 'AED'} — ${event.kind === 'transfer' ? 'bank credit' : event.kind || 'payment'}${event.customer ? ` from ${event.customer}` : ''} (${dm(event.at, timeZone)})`;
   // already received in QuickBooks by the office? a payment of about this amount (within 1) near this date (within 6 days), of this customer when he is named

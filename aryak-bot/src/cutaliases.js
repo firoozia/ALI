@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { rankNames } from './translit.js';
 import { nameKey } from './customergroups.js';
-import { sameCutCustomer } from './cuts.js';
+import { GENERIC, sameCutCustomer } from './cuts.js';
 
 const DAY = 24 * 3600 * 1000;
 
@@ -14,15 +14,33 @@ const DAY = 24 * 3600 * 1000;
  * [postNames]: the names written in the posts, [qboNames]: the QuickBooks customers. A proposal is a post name that no QuickBooks customer already matches by the plain rules
  * (sameCutCustomer) and that one customer fits clearly by sound and spelling. [skip](key) -> true for a name already settled. Returns [{ post, qbo, score }].
  */
-export function proposeAliases({ postNames, qboNames, skip = () => false }) {
+/** The words that say WHICH company (not what it does or where): «AILA WOOD PRESSING» -> aila, pressing. */
+const brandWords = (name) => nameKey(name).split(/\s+/).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
+/** One letter wrong, missing, extra or swapped (Aila / Alia, Hamid / Hamed, Wahadan / Wahdan). */
+function nearWord(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1 || Math.min(a.length, b.length) < 3) return false;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length] <= 1;
+}
+const sameBrand = (post, qbo) => { const pw = brandWords(post); const qw = brandWords(qbo); return pw.some((w) => qw.some((v) => nearWord(w, v))); };
+
+export function proposeAliases({ postNames, qboNames, skip = () => false, exclude = () => false }) {
   const out = []; const seen = new Set();
   for (const post of postNames) {
     const key = nameKey(post);
-    if (!key || seen.has(key) || skip(key)) continue;
+    if (!key || seen.has(key) || skip(key) || exclude(post)) continue;
     seen.add(key);
     if (qboNames.some((q) => sameCutCustomer(post, q))) continue; // already the same customer by the plain rules: no alias needed
     const ranked = rankNames(post, qboNames);
-    const close = ranked.filter((x) => x.score >= 0.8 && ranked[0].score - x.score < 0.1);
+    let close = ranked.filter((x) => x.score >= 0.8 && ranked[0].score - x.score < 0.1);
+    // the brand word decides: a customer whose brand word is the post's (one letter off) beats one that only shares generic words (a different brand is never proposed)
+    if (brandWords(post).length) { const same = close.filter((x) => sameBrand(post, x.name)); close = same.length ? same : ranked.filter((x) => x.score >= 0.8 && sameBrand(post, x.name)); }
     if (!close.length) continue;
     const edit = (x) => { const a = nameKey(post); const b = nameKey(x.name); const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]); for (let j = 1; j <= b.length; j++) d[0][j] = j; for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; };
     const byEdit = [...close].sort((x, y) => edit(x) - edit(y));

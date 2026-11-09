@@ -71,3 +71,17 @@ test('two close names: the nearer spelling wins, an equal pair is left to the ow
   const r = parseCutCaption('ART NO 105 AL AHALIA KITCHEN BD REPAIRED 6M');
   assert.equal((r.customer || '').toUpperCase(), 'AL AHALIA KITCHEN');
 });
+
+test('the brand word decides: a typo of the brand finds its customer, a customer that shares only trade words is never proposed, the assistant\'s own name is never a customer', () => {
+  const qbo = ['ALIA WOOD PRESSING L.L.C', 'AL SAMA WOOD INDUSTRIES', 'GLORIFIED TS', 'HAMED TRADING', 'WAHDAN ALUMINIUM AND KITCHENS WORKS', 'PALM BIRD TRADING LLC'];
+  const names = ['Aila wood', 'ATOSSA', 'Atousa', 'آتوسا', 'WOOD WORKS', 'HAMID TRD', 'WAHADAN ALUMINUM'];
+  const own = ['atossa', 'atousa', 'آتوسا'];
+  const by = Object.fromEntries(proposeAliases({ postNames: names, qboNames: qbo, exclude: (n) => own.includes(String(n).toLowerCase()) }).map((x) => [x.post, x.qbo]));
+  assert.equal(by['Aila wood'], 'ALIA WOOD PRESSING L.L.C'); // not AL SAMA WOOD INDUSTRIES
+  assert.ok(!('ATOSSA' in by) && !('Atousa' in by) && !('آتوسا' in by)); assert.ok(!('WOOD WORKS' in by)); // only trade words in common: nothing
+  assert.equal(by['HAMID TRD'], 'HAMED TRADING'); assert.equal(by['WAHADAN ALUMINUM'], 'WAHDAN ALUMINIUM AND KITCHENS WORKS');
+  // without the exclusion a sound-alike would still be proposed by the brand rule only when a brand word is near, so the bot's name finds nothing here either
+  assert.ok(!('ATOSSA' in Object.fromEntries(proposeAliases({ postNames: ['ATOSSA'], qboNames: qbo }).map((x) => [x.post, x.qbo]))));
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /exclude: \(n\) => own\.includes\(nameKey\(n\)\)/); assert.match(index, /config\.botNames, 'atousa'/);
+});

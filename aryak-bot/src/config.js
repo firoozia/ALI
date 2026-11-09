@@ -36,6 +36,7 @@ export function loadConfig(env = process.env) {
     // The assistant's name: how she introduces herself and signs, and the first word colleagues call her by.
     displayName: (env.BOT_DISPLAY_NAME || 'آتوسا').trim(),
     replyLanguage: (env.REPLY_LANGUAGE || 'en').trim().toLowerCase() === 'fa' ? 'fa' : 'en', // the language of everything she writes in WhatsApp (en by default)
+    aliasExclude: env.ALIAS_EXCLUDE_NAMES ? list(env.ALIAS_EXCLUDE_NAMES) : [], // names that appear in the posts but are never a customer (staff)
     botNames: (env.BOT_NAMES ? list(env.BOT_NAMES) : [env.BOT_DISPLAY_NAME || 'آتوسا', 'atossa', 'دستیار']).map((x) => x.toLowerCase()),
     // Voice notes: speech-to-text languages (the first is the main one, up to three more are alternatives), the lowest
     // confidence accepted, and a switch (VOICE=off keeps the old behaviour: voice notes are ignored).

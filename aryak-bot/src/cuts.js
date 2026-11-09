@@ -14,7 +14,7 @@ export const faDigits = (s) => String(s).replace(/\d/g, (d) => FA[d]);
 const code = (c) => productCode(c) || String(c || '').trim().toUpperCase();
 const digitsOf = (c) => (String(c || '').match(/\d{2,5}/g) || []).join('-'); // «ART NO 220» and «220» share the number
 // Words that say what a company does or where it is, never which company it is (a customer «MUNICH DOOR KITCHEN» is not «AL NOOR DOOR»).
-const GENERIC = new Set(['llc', 'l', 'c', 'ltd', 'co', 'company', 'trading', 'tr', 'ind', 'industries', 'industrial', 'est', 'fze', 'fzco', 'spc', 'general', 'the', 'and', 'of', 'international', 'for', 'trade', 'investment',
+export const GENERIC = new Set(['llc', 'l', 'c', 'ltd', 'co', 'company', 'trading', 'tr', 'ind', 'industries', 'industrial', 'est', 'fze', 'fzco', 'spc', 'general', 'the', 'and', 'of', 'international', 'for', 'trade', 'investment',
   'kitchen', 'kitchens', 'door', 'doors', 'wood', 'woods', 'wooden', 'furniture', 'decoration', 'decor', 'interiors', 'interior', 'carpentry', 'joinery', 'works', 'workshop', 'factory', 'group', 'design', 'designs', 'glass', 'aluminium', 'aluminum',
   'building', 'construction', 'contracting', 'contractors', 'furnishing', 'furnishings', 'national', 'dubai', 'sharjah', 'ajman', 'emirates', 'uae', 'gulf', 'al']);
 const distinctive = (name) => looseWords(name).filter((w) => w.length >= 4 && !GENERIC.has(w));
