@@ -773,7 +773,7 @@ async function migrateStoredPayments(events) {
   const guesses = [...new Set(old.map((e) => `inv-${Number(e.amount)}`))].slice(0, 20);
   let rows = [];
   try { rows = guesses.length ? await qbo.query(`select * from Invoice where DocNumber in (${guesses.map((n) => `'${qboEscape(n)}'`).join(',')})`) : []; } catch (e) { logger.warn(`payments: the invoice look-up for the old rows failed: ${e.message}`); return 0; }
-  const moves = migrateOldPayments({ events, invoiceRows: rows, aliasOf: (n) => cutAliases.resolve(n), parse: (t) => eventsFromCaption('payment', t)?.events?.[0] || null });
+  const moves = migrateOldPayments({ events, invoiceRows: rows, aliasOf: (n) => cutAliases.resolve(n), parse: (t) => eventsFromCaption('payment', t)?.events?.[0] || null, onRow: (e, why) => logger.info(`payments: row ${String(e.ref).slice(0, 8)} amount ${e.amount} customer "${e.customer || ''}": ${why}`) });
   for (const m of moves) tracker.update(m.ref, m.patch);
   logger.info(`payments: checked ${old.length} old cash row(s) and ${withText.length} with kept words; ${rows.length} invoice(s) found; payments: re-parsed ${moves.length} stored rows`);
   return moves.length;

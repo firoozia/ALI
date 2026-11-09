@@ -86,7 +86,7 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
       const name = inv.CustomerRef?.name || '';
       const open = Number(inv.Balance) || 0;
       const state = open === 0 ? 'paid' : `open balance ${money(open)}${amount > 0 && Math.abs(open - amount) <= 1 ? '; this payment matches it' : ''}`;
-      return `→ ${ref} (${name ? `${name}, ` : ''}total ${money(inv.TotalAmt)}) — ${state}`;
+      return `→ ${ref} (${name ? `${name}, ` : ''}total ${money(inv.TotalAmt)}) — ${state}${event.cleared ? ` (cleared ${dm(event.at, timeZone)})` : ''}`;
     });
     const recordedNow = amount > 0 ? findRecorded({ ...event, customer: who }, payments, aliasOf) : null;
     return [how, ...lines, ...(recordedNow ? [`→ already recorded in QuickBooks (payment of ${dm(Date.parse(`${recordedNow.TxnDate}T00:00:00Z`), timeZone)}${recordedNow.CustomerRef?.name ? `, ${recordedNow.CustomerRef.name}` : ''})`] : [])];
@@ -152,25 +152,33 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
  * customer in QuickBooks («9940» and inv-9940 of MUNICH DOOR KITCHEN) was the invoice number. Returns [{ ref, patch }] to apply once (the entry then carries `reparsed`).
  * [invoiceRows]: the QuickBooks invoices whose DocNumber is «inv-<amount>» of those entries. Entries with a kept text are parsed again by the current rules.
  */
-export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '', parse = null }) {
+export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '', parse = null, onRow = null }) {
+  const report = onRow || (() => {});
   const out = [];
   const byNumber = new Map(invoiceRows.map((r) => [String(r.DocNumber).toLowerCase(), r]));
+  const skip = (e, why) => report(e, why); // every row says why it was left as it is (the owner reads this in the log)
   for (const e of events) {
-    if (e.type !== 'payment' || e.reparsed) continue;
+    if (e.type !== 'payment') continue;
+    if (e.reparsed) { skip(e, 'already re-read'); continue; }
     if (e.text && parse) { // the words are kept: read them again with today's rules
       const again = parse(e.text);
-      if (again && (again.invoices?.length ? !(e.invoices || []).length : false)) out.push({ ref: e.ref, patch: { amount: again.amount, invoices: again.invoices, noAmount: again.amount > 0 ? false : true, reparsed: true } });
+      if (again && (again.invoices?.length ? !(e.invoices || []).length : false)) { out.push({ ref: e.ref, patch: { amount: again.amount, invoices: again.invoices, noAmount: again.amount > 0 ? false : true, reparsed: true } }); skip(e, 're-read from the kept words'); } else skip(e, 'kept words give the same reading');
       continue;
     }
-    if (e.source || e.receipt || e.kind !== 'cash' || (e.invoices || []).length) continue;
+    if (e.source || e.receipt) { skip(e, 'a receipt entry'); continue; }
+    if (e.kind !== 'cash') { skip(e, `kind is ${e.kind}, not cash`); continue; }
+    if ((e.invoices || []).length) { skip(e, 'already has an invoice number'); continue; }
     const amount = Number(e.amount);
-    if (!(Number.isInteger(amount) && amount >= 100 && amount <= 999999)) continue;
+    if (!(Number.isInteger(amount) && amount >= 100 && amount <= 999999)) { skip(e, `amount ${e.amount} is not a whole number from 100`); continue; }
     const inv = byNumber.get(`inv-${amount}`);
-    if (!inv) continue;
+    if (!inv) { skip(e, `no invoice inv-${amount} in QuickBooks`); continue; }
     const name = inv.CustomerRef?.name || '';
-    const mine = e.customer ? String(e.customer).split(' + ').some((one) => sameCutCustomer(one, name) || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), name))) : false;
-    if (!mine) continue; // another customer's invoice with the same digits is only a coincidence
-    out.push({ ref: e.ref, patch: { amount: 0, noAmount: true, invoices: [inv.DocNumber], reparsed: true } });
+    // the stored name may still carry words of the old reading («clear MUNICH DOOR KITCHEN inv»): the payment words are taken out before the names are compared
+    const typed = stripPaymentWords(e.customer || '');
+    const mine = typed ? typed.split(' + ').some((one) => sameCutCustomer(one, name) || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), name))) : false;
+    if (!mine) { skip(e, typed ? `invoice inv-${amount} is of "${name}", not of "${typed}"` : 'no customer to compare with the invoice'); continue; } // another customer's invoice with the same digits is only a coincidence
+    out.push({ ref: e.ref, patch: { amount: 0, noAmount: true, invoices: [inv.DocNumber], reparsed: true, ...(typed !== e.customer ? { customer: typed, pendingName: false } : {}) } });
+    skip(e, `read as the invoice ${inv.DocNumber} of "${name}"`);
   }
   return out;
 }
