@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Tracker } from '../src/tracker.js';
-import { crossCheck, markCutsInvoiced } from '../src/cuts.js';
+import { crossCheck, markCutsInvoiced, sameCutCustomer } from '../src/cuts.js';
 import { parseEnglishInvoice } from '../src/qboinvoice.js';
 
 // Invented customers, codes and quantities only.
@@ -31,9 +31,8 @@ test('the cross-check with the cutting group: no order, already invoiced, a diff
   assert.deepEqual(problems, [
     '211: no order found',
     '507: already invoiced (inv-9981) on 07/11',
-    '509: cut 12m on 06/11, invoice has 10',
     '503: cut 8m on 07/11, not invoiced',
-  ]);
+  ]); // 509: cut 12m against an invoice of 10 is normal (the invoice follows the order, not the cut)
   const clean = new Tracker({ dir: '' });
   cut(clean, 'k1', 'MASTER WOOD', '505', 10, 1);
   assert.deepEqual(crossCheck(clean, 'MASTER WOOD', [{ code: '505', qty: 10 }], { now: NOW, invoiced: [] }).problems, []);
@@ -44,21 +43,46 @@ test('the cross-check with the cutting group: no order, already invoiced, a diff
   assert.deepEqual(crossCheck(old, 'MASTER WOOD', [{ code: '505', qty: 10 }], { now: NOW }).problems, ['505: no order found']);
 });
 
-test('«not invoiced» looks at ALL of the customer\'s QuickBooks invoices (the office\'s on the screen too): a cut is invoiced when the invoices of its code since the cut day carry its quantity', () => {
+test('the owner\'s rule: an invoice line of the same customer and code on or after the cut day counts as invoiced WHATEVER its quantity; a cut larger than the invoice is never a warning; an invoice larger than the cut is', () => {
   const tr = new Tracker({ dir: '' });
   cut(tr, 'a1', 'MASTER WOOD', '216', 12, 5); cut(tr, 'a2', 'MASTER WOOD', '235', 6, 4); cut(tr, 'a3', 'MASTER WOOD', '203', 9, 3); cut(tr, 'a4', 'MASTER WOOD', '512', 7, 2); cut(tr, 'a5', 'MASTER WOOD', '410', 4, 1);
   const at = (daysAgo) => NOW - daysAgo * DAY;
   const invoiced = [
     { codes: ['216', 'PVC FILM216'], qty: 12, number: 'inv-9906', at: at(4) },   // the office, on the screen: the whole cut
-    { codes: ['235', 'PVC FILM235'], qty: 4, number: 'inv-9918', at: at(3) },    // only part of the cut
+    { codes: ['235', 'PVC FILM235'], qty: 4, number: 'inv-9918', at: at(3) },    // a smaller quantity than the cut: the order was 4, still invoiced
     { codes: ['203', 'PVC FILM203'], qty: 9, number: 'inv-9929', at: at(10) },   // dated BEFORE the cut: another order
   ];
   const { problems } = crossCheck(tr, 'MASTER WOOD', [], { now: NOW, invoiced });
-  assert.deepEqual(problems, ['235: cut 2m on 04/11, not invoiced', '203: cut 9m on 05/11, not invoiced', '512: cut 7m on 06/11, not invoiced', '410: cut 4m on 07/11, not invoiced']); // 216 is invoiced: not listed
-  // QuickBooks could not be read: nothing is claimed about «not invoiced»
-  assert.deepEqual(crossCheck(tr, 'MASTER WOOD', [], { now: NOW, invoiced: null }).problems, []);
-  // a line the office already invoiced is a double-invoice warning that names its number
-  assert.deepEqual(crossCheck(tr, 'MASTER WOOD', [{ code: '216', qty: 12 }], { now: NOW, invoiced }).problems.slice(0, 1), ['216: already invoiced (inv-9906) on 04/11']);
+  assert.deepEqual(problems, ['203: cut 9m on 05/11, not invoiced', '512: cut 7m on 06/11, not invoiced', '410: cut 4m on 07/11, not invoiced']); // 216 and 235 are invoiced
+  assert.deepEqual(crossCheck(tr, 'MASTER WOOD', [], { now: NOW, invoiced: null }).problems, []); // QuickBooks could not be read: nothing claimed
+  assert.deepEqual(crossCheck(tr, 'MASTER WOOD', [{ code: '216', qty: 12 }], { now: NOW, invoiced }).problems.slice(0, 1), ['216: already invoiced (inv-9906) on 04/11']); // a double invoice names its number
+  // a cut larger than the invoice (a margin, the end of a roll) is normal
+  const margin = new Tracker({ dir: '' });
+  cut(margin, 'm1', 'MASTER WOOD', '303', 6.4, 1); cut(margin, 'm2', 'MASTER WOOD', '702', 4.4, 1);
+  assert.deepEqual(crossCheck(margin, 'MASTER WOOD', [{ code: '303', qty: 6 }, { code: '702', qty: 4 }], { now: NOW, invoiced: [] }).problems, []);
+  // an invoice larger than the cut is charged for more than was cut
+  assert.deepEqual(crossCheck(margin, 'MASTER WOOD', [{ code: '303', qty: 7 }], { now: NOW, invoiced: [] }).problems.slice(0, 1), ['303: invoice has 7, cut 6.4m on 07/11']);
+  // the invoice a few days later still takes the cut; an invoice dated before the cut does not
+  const later = new Tracker({ dir: '' });
+  cut(later, 'l1', 'MASTER WOOD', '215', 11, 4);
+  assert.deepEqual(crossCheck(later, 'MASTER WOOD', [], { now: NOW, invoiced: [{ codes: ['PVC FILM215'], qty: 3, number: 'inv-1', at: at(1) }] }).problems, []);
+  assert.equal(crossCheck(later, 'MASTER WOOD', [], { now: NOW, invoiced: [{ codes: ['PVC FILM215'], qty: 11, number: 'inv-0', at: at(9) }] }).problems.length, 1);
+});
+
+test('the customer of a post must be THIS customer: a trade word shared with another customer (door, kitchen, wood, trading, LLC) never joins them; the brand word does', () => {
+  const tr = new Tracker({ dir: '' });
+  const post = (ref, customer, code, daysAgo) => cut(tr, ref, customer, code, 5, daysAgo);
+  post('p1', 'Munich door', '303', 1);                       // the caption names Munich
+  post('p2', 'AL NOOR DOOR KITCHEN TRADING LLC', '215', 1);  // another customer that shares «door kitchen trading llc»
+  post('p3', 'HIGH POINT WOOD DOOR', '702', 1);              // and another
+  post('p4', 'MUNICH DOOR KITCHEN', '220', 1);               // the same customer, written longer
+  const books = 'MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C';
+  const log = [];
+  const { problems } = crossCheck(tr, books, [{ code: '303', qty: 5 }], { now: NOW, invoiced: [], log: (x) => log.push(x) });
+  assert.deepEqual(problems, ['220: cut 5m on 07/11, not invoiced']); // 215 and 702 belong to other customers: not listed
+  assert.ok(log.some((l) => l.includes('posts named: Munich door')));
+  assert.ok(!log.some((l) => l.includes('AL NOOR')));
+  for (const [a, b, want] of [['Munich door', books, true], ['NUQOOSH', 'NUQOOSH IND . LLC', true], ['AL NOOR DOOR KITCHEN TRADING LLC', books, false], ['HIGH POINT WOOD DOOR', 'HIGH POINT TRADING', true], ['AL BURTOMANI NATIONAL', 'ARABIAN NATIONAL', false], ['DOOR TRADING', books, false]]) assert.equal(sameCutCustomer(a, b), want, `${a} / ${b}`);
 });
 
 test('at most five problem lines, then the count of the rest; meters are compared with meters only', () => {

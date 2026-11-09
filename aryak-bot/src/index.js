@@ -675,7 +675,7 @@ const qboInvoices = new QboInvoiceDesk({
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
   // the final cut of the customer and code, from the tracker (what the cutting group posted); marked with the invoice number once it is made
   cutsOf: (customer, codes) => cutRecords(tracker, customer, codes, { log: (s) => logger.info(s) }), markCuts: (refs, number) => markCutsInvoiced(tracker, refs, number),
-  crossOf: (customer, lines, invoiced) => crossCheck(tracker, customer, lines, { invoiced }),
+  crossOf: (customer, lines, invoiced) => crossCheck(tracker, customer, lines, { invoiced, log: (x) => logger.info(x) }),
   // the free stock of a code, for a warning line in an invoice preview (the sheet is read, nobody is told)
   stockOf: async (code) => { try { const r = await fetchStock(config, { code }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } },
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
