@@ -24,6 +24,13 @@ const distinctive = (name) => looseWords(name).filter((w) => w.length >= 4 && !G
  */
 export function sameCutCustomer(a, b) {
   if (!a || !b) return false;
+  // short names written with other punctuation or spaces: «AR RAD», «AR-RAD», «ARRAD» are one name; two or more brand words that open the longer name are the same customer
+  const ca = looseWords(a).filter((w) => !GENERIC.has(w)); const cb = looseWords(b).filter((w) => !GENERIC.has(w));
+  const [shortWords, longWords] = ca.length <= cb.length ? [ca, cb] : [cb, ca];
+  if (shortWords.length >= 1) {
+    const sj = shortWords.join('');
+    if (sj.length >= 4 && longWords.some((_, i) => longWords.slice(0, i + 1).join('') === sj)) return true; // equal to the first words of the longer name, joined (a whole word, never half of one)
+  }
   const da = distinctive(a); const db = distinctive(b);
   if (!da.length || !db.length) return looseWords(a).join(' ') === looseWords(b).join(' '); // only trade words: the same name or nothing
   if (sameCustomer(a, b)) return true;

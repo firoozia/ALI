@@ -16,7 +16,7 @@ test('proposals: a post name that no customer matches by the plain rules but one
   const pairs = proposeAliases({ postNames: ['HAMID TRD', 'AL AHALIA KITCHEN', 'WAHADAN ALUMINUM', 'ALWAN AL SHAM', 'RANDOM STRANGER', 'AR RAD', 'HAMED TRADING'], qboNames: QBO });
   const by = Object.fromEntries(pairs.map((x) => [x.post, x.qbo]));
   assert.equal(by['HAMID TRD'], 'HAMED TRADING'); assert.equal(by['AL AHALIA KITCHEN'], 'AL AHLIA KITCHEN');
-  assert.equal(by['WAHADAN ALUMINUM'], 'WAHDAN ALUMINIUM AND KITCHENS WORKS'); assert.equal(by['AR RAD'], 'AR-RAD INTERNATIONAL FOR TRADE');
+  assert.equal(by['WAHADAN ALUMINUM'], 'WAHDAN ALUMINIUM AND KITCHENS WORKS'); assert.ok(!('AR RAD' in by)); // AR RAD = AR-RAD: the plain rules take it
   assert.ok(!('ALWAN AL SHAM' in by)); // the plain rules already take it
   assert.ok(!('HAMED TRADING' in by)); assert.ok(!('RANDOM STRANGER' in by));
   assert.ok(pairs.every((x) => x.score >= 80));

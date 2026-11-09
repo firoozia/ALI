@@ -115,7 +115,7 @@ test('cut posts: several pieces added, a stated total kept, 1.8×2 as two pieces
   // the roll prepared for cutting is never a customer's cut in the cross-check
   const tr = new Tracker({ dir: '' });
   tr.add({ type: 'cut', at: NOW - DAY, ...roll, ref: 'r1' }); tr.add({ type: 'cut', at: NOW - DAY, ...event, ref: 'r2' });
-  assert.deepEqual(crossCheck(tr, 'AR-RAD INTERNATIONAL', [{ code: '235', qty: 20 }], { now: NOW, invoiced: [] }).problems, ['235: no order found']);
+  assert.deepEqual(crossCheck(tr, 'AR-RAD INTERNATIONAL', [{ code: '235', qty: 20 }], { now: NOW, invoiced: [] }).problems, ['235: no order found', '105: cut 14.5m on 07/11, not invoiced']); // the AR RAD cut belongs to AR-RAD INTERNATIONAL: it is listed, not hidden
   // the post says 14.5 was invoiced: an invoice of 14.5 or less is fine, more than that is not
   assert.deepEqual(crossCheck(tr, 'AR RAD', [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, []);
   assert.deepEqual(crossCheck(tr, 'AR RAD', [{ code: '105', qty: 15 }], { now: NOW, invoiced: [] }).problems, ['105: invoice has 15, cut 14.5m on 07/11']);
@@ -129,4 +129,25 @@ test('a voice note the person replies to («this one») goes the same way as a s
   assert.match(block, /audioRaw = \{ key: \{ remoteJid: chatId, id: ctx\.stanzaId, participant: ctx\.participant \}, message: ctx\.quotedMessage \}/);
   assert.match(src, /downloadMediaMessage\(audioRaw, 'buffer', \{\}\), audio\.seconds/); // the quoted message is the one downloaded
   assert.match(src, /let audio = config\.voiceEnabled \? content\?\.audioMessage : null;\s*let audioRaw = raw;/);
+});
+
+test('AR RAD, AR-RAD and ARRAD are one customer; the test tracker is the one read for a preview made in the test group (the exact simulation case)', () => {
+  const { sameCutCustomer: same } = { sameCutCustomer };
+  const books = 'AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC';
+  for (const post of ['AR RAD', 'AR-RAD', 'ARRAD', 'Ar.Rad', 'AR RAD INTERNATIONAL']) assert.equal(same(post, books), true, post);
+  for (const other of ['AL RADWAN TRADING', 'AR RAHMAN', 'RAD', 'AR']) assert.equal(same(other, books), false, other);
+  const test = new Tracker({ dir: '' }); const real = new Tracker({ dir: '' });
+  test.add({ type: 'cut', at: NOW - 3600000, customer: 'AR RAD', customerTyped: 'AR RAD', lines: [{ code: '105', quantity: 15.4, unit: 'm', invoiceQuantity: 14.5 }], ref: 't1', simulated: true });
+  assert.deepEqual(crossCheck(test, books, [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, []); // found in the test data
+  assert.deepEqual(crossCheck(real, books, [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, ['105: no order found']); // the real data has none
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /crossCheck\(trackerOf\(!!opts\.test\), customer, lines/);
+});
+
+test('a bank message that names the customer after the amount keeps the name and never the account number', async () => {
+  const { eventsFromCaption: events } = await import('../src/captionevents.js');
+  const named = events('payment', 'Your AC No:XXXXXXXX1234 is credited with AED 197.93 for AR RAD').events[0];
+  assert.equal(named.amount, 197.93); assert.equal(named.customer, 'AR RAD'); assert.equal(named.pendingName, undefined); assert.ok(!JSON.stringify(named).includes('1234'));
+  const plain = events('payment', 'Your AC No:XXXXXXXX1234 is credited with AED 8000.00 by transfer').events[0];
+  assert.equal(plain.customer, ''); assert.equal(plain.pendingName, true);
 });

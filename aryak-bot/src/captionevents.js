@@ -32,7 +32,7 @@ export function eventsFromCaption(role, text) {
     if (p.kind === 'cleared') return { cleared: true };
     if (p.kind === 'clear-invoices') return { clearInvoices: p.invoices };
     if (p.kind === 'expense') return { ignore: true };
-    if (p.kind === 'bank-credit') return { events: [{ type: 'payment', kind: 'transfer', customer: '', amount: p.amount, currency: 'AED', lines: [], pendingName: true }] };
+    if (p.kind === 'bank-credit') return { events: [{ type: 'payment', kind: 'transfer', customer: p.customer || '', amount: p.amount, currency: 'AED', lines: [], ...(p.customer ? {} : { pendingName: true }) }] };
     if (p.kind === 'cash' && p.customers.length) {
       // several customers in one caption: one event with the names joined; the amount is not split between them
       return { events: [{ type: 'payment', kind: 'cash', customer: p.customers.join(' + '), amount: p.amount, currency: 'AED', lines: [], ...(p.customers.length > 1 ? { multi: true } : {}) }] };

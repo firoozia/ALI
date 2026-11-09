@@ -121,7 +121,10 @@ export function parsePaymentCaption(text) {
   const ci = /^clear\s+inv(?:oices?)?\.?\s*([\d\s/,&-]+)$/i.exec(s);
   if (ci) return { kind: 'clear-invoices', invoices: ci[1].split(/[\s/,&-]+/).filter(Boolean).map((n) => `inv-${n}`) };
   const bank = /\bis\s+credited\s+with\s+AED\s*([\d,]+(?:\.\d+)?)/i.exec(s);
-  if (bank) return { kind: 'bank-credit', amount: num(bank[1]) };
+  if (bank) { // a name written after the amount («… credited with AED 197.93 for AR RAD») is kept; the account number never is
+    const who = /(?:\bfor\b|\bfrom\b)\s+([A-Za-z][A-Za-z &.'-]{2,40})\s*$/i.exec(s.slice(bank.index + bank[0].length));
+    return { kind: 'bank-credit', amount: num(bank[1]), ...(who ? { customer: title(who[1]) } : {}) };
+  }
   if (/\b(sell(?:ing)?\s+car|expense|petrol|salary)\b/i.test(s)) return { kind: 'expense' };
   const a = AMOUNT.exec(s);
   if (!a) return /^[\p{L} &.'+-]{3,40}$/u.test(s) ? { kind: 'name', customer: title(s) } : null;
