@@ -67,7 +67,7 @@ import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases } from './cutaliases.js';
 import { unbilled, unbilledText } from './unbilled.js';
-import { PaymentDups, paymentsText } from './payments.js';
+import { PaymentDups, migrateOldPayments, paymentsText } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
 import { GroupStatements, StatementPreviews, askLine, effectiveRequest, parseStyleReply, previewText, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
@@ -553,6 +553,8 @@ function receiptOfPdf(buf) {
   const layer = pdfTextLayer(buf);
   return layer.ok ? parseReceiptText(layer.text) : null;
 }
+/** What a photo reading (extractEvent) gives, as the base of a payment entry; null when it read no amount. */
+const photoBase = (ev) => (ev && Number(ev.amount) > 0 ? { amount: Number(ev.amount), receipt: ev.kind === 'cheque' ? 'cheque' : ev.kind === 'transfer' ? 'transfer receipt' : 'receipt', payer: ev.customer || '', source: 'photo', invoices: ev.number ? [`inv-${String(ev.number).replace(/\D/g, '')}`] : [] } : null);
 const baseOfReceipt = (read) => ({ amount: read?.amount || 0, paidOn: read?.date || '', receipt: read?.receipt || 'receipt', payer: read?.payer || '', source: 'pdf', invoices: read?.invoices || [] });
 const withCustomer = (merged) => ({ ...merged, customer: canon(merged.customer), customerTyped: merged.customer });
 
@@ -584,16 +586,25 @@ async function replyToPayment({ raw, groupId, content, quotedId, event }) {
     const quoted = normalizeMessageContent(ctx.quotedMessage);
     if (quoted?.documentMessage && /pdf/i.test(quoted.documentMessage.mimetype || '')) {
       try { base = baseOfReceipt(receiptOfPdf(await downloadMediaMessage({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }, 'buffer', {}))); } catch (e) { logger.warn(`tracker: the quoted receipt could not be downloaded: ${e.message}`); }
+    } else if (imageOf(quoted)) { // a photo of a receipt or cheque: the cheap model first (the same path as every photo), only when the owner allows model reading
+      if (mayTrackWithModel(config)) {
+        try {
+          const buf = await downloadMediaMessage({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }, 'buffer', {});
+          const ev = await extractEvent({ client, config, role: 'payment', caption: imageOf(quoted).caption || '', images: [{ base64: buf.toString('base64'), mimeType: String(imageOf(quoted).mimetype || 'image/jpeg').split(';')[0] }] });
+          base = photoBase(ev) || { amount: 0, receipt: 'receipt', source: 'photo' };
+        } catch (e) { logger.warn(`tracker: the quoted photo could not be read: ${e.message}`); }
+      } else { usage.count(groupLabel((await groupInfo(groupId)).subject), 'notRead'); base = { amount: 0, receipt: 'receipt', source: 'photo' }; }
     } else { const qt = textOf(quoted); const qp = qt ? parsePaymentCaption(qt) : null; if (qp && Number(qp.amount) > 0) base = { amount: qp.amount, source: 'text' }; }
   }
   if (!base) return false; // an ordinary caption: its own entry
+  if (Number(event.amount) > 0 && Number(base.amount) > 0 && Math.abs(Number(event.amount) - Number(base.amount)) > 1) return false; // the reply names another amount: it is another payment
   const merged = withCustomer(mergePayment(base, event));
   if (existing) {
-    tracker.update(existing.ref, { ...merged, pendingName: !!merged.pendingName, noAmount: !!merged.noAmount });
+    tracker.update(existing.ref, { ...merged, pendingName: !!merged.pendingName, noAmount: !!merged.noAmount, cleared: !!(merged.cleared || existing.cleared) });
     trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply gave the customer and the invoice of the receipt it quotes: one entry');
     tellPayment(existing);
   } else {
-    const made = { ...merged, at: Date.now(), ref: event.ref };
+    const made = { ...merged, at: Date.now(), ref: quotedRef }; // under the quoted receipt's own reference: a later «cleared» to the same receipt finds this entry
     if (tracker.add(made)) { trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply to a receipt: the receipt and the reply are one entry'); tellPayment(made); }
   }
   return true;
@@ -612,9 +623,17 @@ async function trackGroup(raw, groupId, role) {
   const det = text ? eventsFromCaption(role, text) : null;
   if (det) {
     const whereDet = `group "${(await groupInfo(groupId)).subject}"`;
-    if (det.cleared) { const done = markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', done ? 'a money item was cleared' : 'cleared, but no open money item'); return; }
+    if (det.cleared) {
+      let done = null;
+      const own = role === 'payment' && quotedId ? tracker.events.find((e) => e.type === 'payment' && e.ref === refOf(quotedId)) : null;
+      if (own) { if (!own.cleared) tracker.update(own.ref, { cleared: true }); done = own; } // the very receipt it quotes (already cleared by someone else: the same payment, not another one)
+      else if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event: { cleared: true, customer: '', amount: 0, invoices: [] } })) done = true; // an older receipt: read from the quote
+      if (!done) done = markCleared(tracker, quotedId ? refOf(quotedId) : '');
+      trace(whereDet, 'tracker', done ? 'a money item was cleared' : 'cleared, but no open money item'); return;
+    }
     if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    if (det.name && role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event: { customer: det.name, amount: 0, invoices: [] } })) return; // «Awab» as a reply to a receipt photo or PDF: the name belongs to that receipt
     if (det.name) { // a bare name: it belongs to the nameless payment just before it (ten minutes), or to the one that comes just after
       lastPayName.set(groupId, { customer: det.name, at: Date.now() });
       const before = [...tracker.events].reverse().find((e) => e.type === 'payment' && !e.customer && e.pendingName && Date.now() - e.at < 10 * 60 * 1000);
@@ -622,7 +641,7 @@ async function trackGroup(raw, groupId, role) {
       return;
     }
     for (const [i, ev] of det.events.entries()) {
-      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: refOf(raw.key.id, i) };
+      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: refOf(raw.key.id, i), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}) };
       const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
       if (role === 'payment' && !event.customer && pn && Date.now() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
       if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event })) continue;
@@ -654,7 +673,7 @@ async function trackGroup(raw, groupId, role) {
   const ev = await extractEvent({ client, config, role, caption: text, images });
   const where = `group "${(await groupInfo(groupId)).subject}"`;
   if (!ev) { trace(where, 'tracker', `${role}: nothing to record`); return; }
-  const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24) };
+  const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24), ...(role === 'payment' && image ? { source: 'photo', receipt: ev.kind === 'cheque' ? 'cheque' : ev.kind === 'transfer' ? 'transfer receipt' : 'receipt', ...(ev.customer ? {} : { pendingName: true }) } : {}) };
   if (!tracker.add(event)) return;
   trace(where, 'tracker', `${role} recorded (${event.lines?.length || 0} line(s)${event.amount ? ', an amount' : ''})`);
   if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
@@ -740,6 +759,10 @@ async function paymentsReport(events, only = '') {
   const invoices = await qbo.query("select * from Invoice where Balance > '0'");
   const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const payments = await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => []); // what the office already recorded
+  // payments stored before the new rules: a «9,940.00» that was really inv-9940 is read as the invoice, once
+  const guesses = [...new Set(events.filter((e) => e.type === 'payment' && !e.reparsed && !e.text && !e.source && e.kind === 'cash' && Number.isInteger(Number(e.amount)) && Number(e.amount) >= 100 && !(e.invoices || []).length).map((e) => `inv-${Number(e.amount)}`))].slice(0, 20);
+  const guessRows = guesses.length ? await qbo.query(`select * from Invoice where DocNumber in (${guesses.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => []) : [];
+  for (const m of migrateOldPayments({ events, invoiceRows: guessRows, aliasOf: (n) => cutAliases.resolve(n), parse: (t) => eventsFromCaption('payment', t)?.events?.[0] || null })) tracker.update(m.ref, m.patch);
   const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20); // the invoice numbers the messages give: paid or open
   const lookup = new Map();
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);

@@ -58,6 +58,7 @@ export function mergePayment(base = {}, reply = {}) {
   if (invoices.length) out.invoices = invoices;
   if (!customer) out.pendingName = true;
   if (reply.multi) out.multi = true;
+  if (base.cleared || reply.cleared) out.cleared = true;
   if (amount === 0) out.noAmount = true;
   return out;
 }

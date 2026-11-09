@@ -146,3 +146,31 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
   });
   return [`Payments to match (${shown.length}):`, withEnd(blocks, [...(shown.length > max ? [`and ${shown.length - max} more payments`] : []), 'Proposal only — nothing was recorded in QuickBooks.'])].join('\n');
 }
+
+/**
+ * Payments stored before an invoice number was told from an amount: a cash entry with no text kept whose «amount» is a whole number that is the number of an invoice of the same
+ * customer in QuickBooks («9940» and inv-9940 of MUNICH DOOR KITCHEN) was the invoice number. Returns [{ ref, patch }] to apply once (the entry then carries `reparsed`).
+ * [invoiceRows]: the QuickBooks invoices whose DocNumber is «inv-<amount>» of those entries. Entries with a kept text are parsed again by the current rules.
+ */
+export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '', parse = null }) {
+  const out = [];
+  const byNumber = new Map(invoiceRows.map((r) => [String(r.DocNumber).toLowerCase(), r]));
+  for (const e of events) {
+    if (e.type !== 'payment' || e.reparsed) continue;
+    if (e.text && parse) { // the words are kept: read them again with today's rules
+      const again = parse(e.text);
+      if (again && (again.invoices?.length ? !(e.invoices || []).length : false)) out.push({ ref: e.ref, patch: { amount: again.amount, invoices: again.invoices, noAmount: again.amount > 0 ? false : true, reparsed: true } });
+      continue;
+    }
+    if (e.source || e.receipt || e.kind !== 'cash' || (e.invoices || []).length) continue;
+    const amount = Number(e.amount);
+    if (!(Number.isInteger(amount) && amount >= 100 && amount <= 999999)) continue;
+    const inv = byNumber.get(`inv-${amount}`);
+    if (!inv) continue;
+    const name = inv.CustomerRef?.name || '';
+    const mine = e.customer ? String(e.customer).split(' + ').some((one) => sameCutCustomer(one, name) || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), name))) : false;
+    if (!mine) continue; // another customer's invoice with the same digits is only a coincidence
+    out.push({ ref: e.ref, patch: { amount: 0, noAmount: true, invoices: [inv.DocNumber], reparsed: true } });
+  }
+  return out;
+}

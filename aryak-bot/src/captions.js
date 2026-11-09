@@ -123,7 +123,8 @@ export function stripPaymentWords(name) {
 export function parsePaymentCaption(text) {
   const s = clean(text);
   if (!s) return null;
-  if (/^cleared?\b(?!\s+inv)/i.test(s)) return { kind: 'cleared' };
+  const INV_NO = /(?:\binv(?:oice)?s?\b|فاکتور)\.?\s*(?:no\.?|number|#|شماره)?\s*[-:#]?\s*\d{3,6}/i;
+  if (/^cleared?\b(?!\s+inv)/i.test(s) && !INV_NO.test(s)) return { kind: 'cleared' }; // with an invoice number it is a payment message («clear MUNICH DOOR KITCHEN inv 9940»), below
   const ci = /^clear\s+inv(?:oices?)?\.?\s*([\d\s/,&-]+)$/i.exec(s);
   if (ci) return { kind: 'clear-invoices', invoices: ci[1].split(/[\s/,&-]+/).filter(Boolean).map((n) => `inv-${n}`) };
   const bank = /\bis\s+credited\s+with\s+AED\s*([\d,]+(?:\.\d+)?)/i.exec(s);
@@ -140,7 +141,7 @@ export function parsePaymentCaption(text) {
   if (invoices.length && !a) { // a message about an invoice only («Munich door kitchen inv 9940»): the customer and the invoice, the amount comes from the document it replies to
     const rest0 = stripPaymentWords(noInv);
     const names = rest0.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
-    return { kind: 'cash', amount: 0, customers: names, invoices };
+    return { kind: 'cash', amount: 0, customers: names, invoices, ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
   }
   if (!a) { // no amount: a bare name (it may belong to the payment next to it); a message made only of payment words is no name
     if (!/^[\p{L} &.'+-]{3,40}$/u.test(s)) return null;
@@ -153,7 +154,7 @@ export function parsePaymentCaption(text) {
     .replace(/\b(AED|DHS?|CASH|CHEQUE|CHECK|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
     .replace(/[\/.]+/g, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
-  return { kind: 'cash', amount, customers, ...(invoices.length ? { invoices } : {}) };
+  return { kind: 'cash', amount, customers, ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
 }
 
 // ---- goods groups (accessories, saw blades, glue) --------------------------------------------------------------------------
