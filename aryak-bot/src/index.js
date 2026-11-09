@@ -64,6 +64,7 @@ import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases } from './cutaliases.js';
 import { unbilled, unbilledText } from './unbilled.js';
+import { paymentsText } from './payments.js';
 import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -562,6 +563,9 @@ async function trackGroup(raw, groupId, role) {
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
+      if (role === 'payment' && Number(event.amount) > 0 && qbo.connected && !qbo.paused) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
+        void paymentsReport([event]).then((text) => sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
+      }
       if (role === 'delivery') {
         const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
         if (findings.length) trace(whereDet, 'tracker', `${findings.length} delivery note(s) kept for the digest only`);
@@ -662,6 +666,12 @@ async function unbilledReport() {
   return unbilledText(unbilled({ events: tracker.events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone }));
 }
 
+/** Payments seen in the Confirmation group against the customers' OPEN invoices: a proposal only, read only; nothing is recorded in QuickBooks. */
+async function paymentsReport(events) {
+  const invoices = await qbo.query("select * from Invoice where Balance > '0'");
+  return paymentsText({ events, invoices, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone });
+}
+
 function decideAlias(verb, id) {
   const r = cutAliases.decide(id, verb);
   if (r.error) return [`Proposal ${id} ${r.error === 'not found' ? 'was not found' : `is already ${r.error}`}.`];
@@ -752,6 +762,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       const p = cutAliases.propose(pairs);
       return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, ...pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];
     }
+    case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
     case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport()]; }
     case 'alias_drop': { const n = cutAliases.drop(ic.id, ic.numbers); return [n ? `Removed ${n} line(s) from #${ic.id}; reply yes #${ic.id} to approve the rest.` : `Nothing removed from #${ic.id}.`]; }
     case 'tax_inclusive': return await qboBulk.planTaxInclusive();
