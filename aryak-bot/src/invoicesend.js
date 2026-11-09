@@ -176,6 +176,13 @@ export class OneShot {
     return true;
   }
 
+  /** A token for ONE plain-text message to ONE group: the manager's yes on an availability draft. Only a bare { text } object can hold it. */
+  grantText(jid, content) {
+    if (!content || typeof content !== 'object' || typeof content.text !== 'string' || !content.text.trim() || Object.keys(content).some((k) => k !== 'text')) return false;
+    this.tokens.set(content, jid);
+    return true;
+  }
+
   /** True once for the exact (group, content) it was granted for; every other send, and every second try, is refused. */
   consume(jid, content) {
     if (!content || typeof content !== 'object' || this.tokens.get(content) !== jid) return false;

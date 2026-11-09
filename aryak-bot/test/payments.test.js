@@ -43,7 +43,7 @@ test('the shapes the group uses: a bank credit keeps the amount and no account n
   assert.equal(e.amount, 8000); assert.equal(e.pendingName, true); assert.ok(!JSON.stringify(e).includes('1234'));
   assert.deepEqual(parseInvoiceCommand('payments'), { type: 'payments' }); assert.deepEqual(parseInvoiceCommand('پرداخت ها'), { type: 'payments' });
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  const fn = index.slice(index.indexOf('async function paymentsReport'), index.indexOf('function decideAlias'));
+  const fn = index.slice(index.indexOf('async function paymentsReport'), index.indexOf('const availDrafts'));
   assert.match(fn, /select \* from Invoice where Balance > '0'/); assert.doesNotMatch(fn, /\.write\(|sock\.sendMessage|postDocument|Payment/); // only reads
   assert.match(index, /role === 'payment' && Number\(event\.amount\) > 0 && qbo\.connected && !qbo\.paused/);
   assert.match(index, /paymentsReport\(\[event\]\)\.then\(\(text\) => sock\.sendMessage\(ownIds\(\)\[0\]/); // to the owner's own chat only

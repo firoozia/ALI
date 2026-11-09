@@ -60,5 +60,5 @@ test('the words and the wiring: «cut aliases», «drop 2,3 #A1», «yes #A1»; 
   assert.match(index, /new CutAliases\(path\.join\(config\.authDir, 'qbo'\)\)/); // the server's own folder
   assert.match(index, /aliasOf: \(n\) => cutAliases\.resolve\(n\)/);
   assert.match(index, /id\.startsWith\('A'\) \? decideAlias\(ic\.type, id\)/);
-  assert.match(index, /\.\.\.cutAliases\.openIds\(\)\]/); // a bare yes counts the open proposal
+  assert.match(index, /\.\.\.cutAliases\.openIds\(\)/); // a bare yes counts the open proposal
 });

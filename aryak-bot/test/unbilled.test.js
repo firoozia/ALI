@@ -53,7 +53,7 @@ test('the text: short, at most ten lines then «+N more», a clean day in one li
 test('the words and the wiring: «unbilled» on request; the evening hour and the target are settings; read only', () => {
   assert.deepEqual(parseInvoiceCommand('unbilled'), { type: 'unbilled' }); assert.deepEqual(parseInvoiceCommand('گزارش فاکتور نشده'), { type: 'unbilled' }); assert.deepEqual(parseInvoiceCommand('Not invoiced'), { type: 'unbilled' });
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  const report = index.slice(index.indexOf('async function unbilledReport'), index.indexOf('function decideAlias'));
+  const report = index.slice(index.indexOf('async function unbilledReport'), index.indexOf('async function paymentsReport'));
   assert.match(report, /select \* from Invoice where TxnDate >=/); assert.doesNotMatch(report, /\.write\(|sock\.sendMessage|postDocument/); // reads only
   assert.match(index, /config\.eveningReportHour === null \|\| !sock\?\.user \|\| botState\.paused \|\| !qbo\.connected/);
   assert.match(index, /config\.eveningReportTo === 'info' && config\.infoGroupName\) await sendTo\(config\.infoGroupName/);

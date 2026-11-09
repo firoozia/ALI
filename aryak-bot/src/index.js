@@ -65,6 +65,7 @@ import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases } from './cutaliases.js';
 import { unbilled, unbilledText } from './unbilled.js';
 import { paymentsText } from './payments.js';
+import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
 import { GroupStatements, askLine, effectiveRequest, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -672,6 +673,47 @@ async function paymentsReport(events) {
   return paymentsText({ events, invoices, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone });
 }
 
+const availDrafts = new AvailabilityDrafts();
+const asked = new Set(); // customer messages already answered with a draft
+/**
+ * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
+ * manager (the owner when there is none, and always in a simulation). Nothing is said in the customer group until the manager's «yes #V1».
+ */
+async function customerAsksAvailability({ messageId, groupId, subject, text, simulated = false }) {
+  const ask = parseAvailabilityAsk(text);
+  if (!ask || asked.has(messageId)) return false;
+  asked.add(messageId); if (asked.size > 300) asked.delete(asked.values().next().value);
+  const states = [];
+  for (const code of ask.codes) { try { states.push(stateOf(code, await fetchStock(config, { code }), ask.quantity)); } catch (e) { logger.warn(`availability draft: the sheet did not answer for ${code}: ${e.message}`); return false; } }
+  const draft = states.some((x) => x.state === 'ambiguous') ? '' : draftText(states, ask.quantity);
+  const id = draft ? availDrafts.add({ groupId, subject, draft, simulated }) : '';
+  const managerDigits = jidDigits(config.salesManager);
+  const to = !simulated && managerDigits ? `${managerDigits}@s.whatsapp.net` : ownIds()[0];
+  logger.info(`availability draft ${id || '(none)'} for "${subject}" sent privately to ${simulated ? 'the owner (simulation)' : managerDigits ? 'the sales manager' : 'the owner'}`);
+  await sock.sendMessage(to, { text: `${to === ownIds()[0] ? '🤖 ' : ''}${managerText({ id, subject, asked: text.slice(0, 120), states, draft, simulated })}` });
+  return true;
+}
+
+/** The manager's (or the owner's) «yes #V1» / «no #V1»: only now the draft is posted in the customer group (one token: this group, this text). A simulation posts nothing. */
+async function decideAvailability(verb, id) {
+  const d = availDrafts.get(id);
+  if (!d) return ['That draft was not found or its half hour is over.'];
+  availDrafts.clear(id);
+  if (verb !== 'yes') { logger.info(`availability draft ${id} dropped`); return [`Dropped ${id}. Nothing was posted.`]; }
+  if (d.simulated) return [`SIMULATION: would post in the group "${d.subject}": ${d.draft.replace(/\n/g, ' / ')} (nothing was posted)`];
+  try {
+    const content = { text: d.draft };
+    oneShot.grantText(d.groupId, content);
+    const r = await sock.sendMessage(d.groupId, content);
+    if (!r) throw new Error('the message was not sent');
+    logger.info(`availability draft ${id} posted in group "${d.subject}" by the yes of the manager`);
+    return [`Posted the answer in the group "${d.subject}".`];
+  } catch (e) {
+    logger.warn(`availability draft ${id} could not be posted: ${e.message}`);
+    return [`Posting in the group "${d.subject}" failed; it was not retried.`];
+  }
+}
+
 function decideAlias(verb, id) {
   const r = cutAliases.decide(id, verb);
   if (r.error) return [`Proposal ${id} ${r.error === 'not found' ? 'was not found' : `is already ${r.error}`}.`];
@@ -820,7 +862,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'yes': case 'no': {
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
-        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds()];
+        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds()];
         if (!open.length) return null;
         if (open.length > 1) {
           if (isEnglishOut()) return [`${open.length} previews are waiting: ${open.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the full code, for example: ${ic.type === 'yes' ? 'yes' : 'no'} #${open[0]}`];
@@ -828,7 +870,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
+      const out = await (id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -1032,6 +1074,12 @@ const addressedIn = (text, ctx) => isAddressed({
  * read exactly like a post of that group and stored in the TEST tracker, which no real report reads. Nothing is posted anywhere else.
  */
 async function simulatedPost({ raw, text, where, role, reply }) {
+  const cm = /^\s*\[customer\s+([^\]]+)\]\s*([\s\S]+)$/i.exec(text); // «[customer MASTER WOOD] 209 available?»: a message in that customer's group
+  if (cm) {
+    const done = await customerAsksAvailability({ messageId: raw.key.id, groupId: raw.key.remoteJid, subject: cm[1].trim(), text: cm[2].trim(), simulated: true });
+    await reply(done ? `SIMULATION: the question was read; the draft and the sheet figures went to your own chat (nothing is posted anywhere).` : 'SIMULATION: that text was not read as an availability question (a code with "available?").');
+    return true;
+  }
   const m = /^\s*\[(orders|delivery|confirm)\]\s*([\s\S]+)$/i.exec(text);
   if (!m) return false;
   const kind = m[1].toLowerCase();
@@ -1755,6 +1803,11 @@ async function handleStaffChat(raw, chatId, group) {
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  // The sales manager's (or the owner's) answer to an availability draft, in a private chat: «yes #V1» / «no #V1» (the full code is needed).
+  if (!group && text && !audio && !image && (ownerPerson || [chatId, raw.key.remoteJidAlt].some((j) => j && jidDigits(j) === jidDigits(config.salesManager) && jidDigits(config.salesManager)))) {
+    const dv = parseInvoiceCommand(text);
+    if (dv && (dv.type === 'yes' || dv.type === 'no') && /^V\d+$/.test(dv.id || '')) { for (const part of await decideAvailability(dv.type, dv.id)) await reply(part); return true; }
+  }
   // THE OWNER SIMULATES THE OTHER GROUPS in the test group: «[orders] ART NO 303 MUNICH 6.4M», «[delivery] …», «[confirm] …». Read like a post of that group, kept as TEST data only.
   if (group?.test && ownerPerson && text && !audio && !image && (await simulatedPost({ raw, text, where, role, reply }))) return true;
   // A statement asked for in an internal group (the owner or an authorized person): answered in that group.
@@ -2388,6 +2441,13 @@ async function onMessage(raw) {
   const watchedInfo = await groupInfo(groupId);
   // The owner's statement request in a CUSTOMER group (not an internal one): asked in his own chat, sent to the group only after his yes.
   if (!groupAllowed(watchedInfo.subject, config).ok && await customerGroupStatement({ raw, groupId, info: watchedInfo }).catch((e) => { logger.warn(`customer-group statement: ${e.message}`); return false; })) return;
+  if (!groupAllowed(watchedInfo.subject, config).ok && !raw.key.fromMe) { // a customer's «209 available?» in his own group: a private draft for the sales manager; the group itself is never written to by this
+    const customerText = textOf(normalizeMessageContent(raw.message)) || '';
+    const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+    if (customerText && staffChecker([...config.staffNumbers, ...config.adminNumbers, ...config.ownerNumbers], lids(watchedInfo.lidToPhone))(sender) !== true) {
+      void customerAsksAvailability({ messageId: raw.key.id, groupId, subject: watchedInfo.subject, text: customerText }).catch((e) => logger.warn(`availability draft failed: ${e.message}`));
+    }
+  }
   // A SHADOW group: the real customer flow runs on it and its answers become cards in the test group; nothing is ever sent to it.
   const inShadow = shadowGroup(watchedInfo.subject, config);
   if (inShadow) shadowIntake(raw, groupId, watchedInfo).catch((e) => logger.warn(`shadow failed: ${e.message}`));
