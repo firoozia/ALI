@@ -40,12 +40,25 @@ export class PaymentDups {
   }
 }
 
-/** The same amount (to the fil) and the same named customer on the same day; a missing or different customer is never a duplicate. */
-function repeats(a, b, timeZone) {
+const cleaned = (raw) => { const clean = raw.customer ? stripPaymentWords(raw.customer) : ''; return raw.customer && !clean ? { ...raw, customer: '', pendingName: true } : { ...raw, customer: clean }; };
+const recordedId = (x) => String(x.Id || `${x.TxnDate}|${x.CustomerRef?.name || ''}|${x.TotalAmt}`);
+
+/** The QuickBooks payment the office already recorded for this message: about this amount (within 1) within 7 days before or after it, of this customer when he is named; or null. */
+export function findRecorded(raw, payments, aliasOf = () => '', { unique = false } = {}) {
+  const event = cleaned(raw); const amount = Number(event.amount) || 0;
+  const hits = payments.filter((x) => Math.abs(Number(x.TotalAmt) - amount) <= 1 && Math.abs(Date.parse(`${x.TxnDate}T00:00:00Z`) - event.at) <= 7 * 24 * 3600 * 1000
+    && (!event.customer || event.pendingName || event.customer.split(' + ').some((one) => sameCutCustomer(one, x.CustomerRef?.name || '') || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), x.CustomerRef?.name || '')))));
+  return unique && hits.length > 1 && (!event.customer || event.pendingName) ? null : hits[0] || null; // for the duplicate rule a nameless message must fit ONE payment, not several
+}
+
+/** The same amount (to the fil) on the same day, and the same named customer OR both messages resolved to the SAME QuickBooks payment; a missing or different customer is otherwise never a duplicate. */
+function repeats(a, b, timeZone, payments = [], aliasOf = () => '') {
   if (Math.round(Number(a.amount) * 100) !== Math.round(Number(b.amount) * 100)) return false;
   const ca = a.customer ? stripPaymentWords(a.customer) : ''; const cb = b.customer ? stripPaymentWords(b.customer) : '';
-  if (!ca || !cb || a.pendingName || b.pendingName || !sameCutCustomer(ca, cb)) return false;
-  return dm(a.at, timeZone) === dm(b.at, timeZone) && Math.abs(a.at - b.at) < 3 * 24 * 3600 * 1000;
+  if (dm(a.at, timeZone) !== dm(b.at, timeZone) || Math.abs(a.at - b.at) >= 3 * 24 * 3600 * 1000) return false;
+  if (ca && cb && !a.pendingName && !b.pendingName && sameCutCustomer(ca, cb)) return true;
+  const ra = payments.length ? findRecorded(a, payments, aliasOf, { unique: true }) : null; const rb = payments.length ? findRecorded(b, payments, aliasOf, { unique: true }) : null;
+  return !!(ra && rb && recordedId(ra) === recordedId(rb)); // one of them without a name: both are the receipt the office recorded once
 }
 
 /**
@@ -57,9 +70,7 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
   const event = raw.customer && !clean ? { ...raw, customer: '', pendingName: true } : { ...raw, customer: clean }; // an event kept with «receipt + clear» as its name is a payment without a name
   const amount = Number(event.amount) || 0;
   const how = `${money(amount)} ${event.currency || 'AED'} — ${event.kind === 'transfer' ? 'bank credit' : event.kind || 'payment'}${event.customer ? ` from ${event.customer}` : ''} (${dm(event.at, timeZone)})`;
-  // already received in QuickBooks by the office? a payment of about this amount (within 1) within 7 days before or after the message, of this customer when he is named
-  const recorded = payments.find((x) => Math.abs(Number(x.TotalAmt) - amount) <= 1 && Math.abs(Date.parse(`${x.TxnDate}T00:00:00Z`) - event.at) <= 7 * 24 * 3600 * 1000
-    && (!event.customer || event.pendingName || event.customer.split(' + ').some((one) => sameCutCustomer(one, x.CustomerRef?.name || '') || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), x.CustomerRef?.name || '')))));
+  const recorded = findRecorded(event, payments, aliasOf);
   if (recorded) return [how, `→ already recorded in QuickBooks (payment of ${dm(Date.parse(`${recorded.TxnDate}T00:00:00Z`), timeZone)}${recorded.CustomerRef?.name ? `, ${recorded.CustomerRef.name}` : ''})`];
   const open = invoices.filter((i) => Number(i.Balance) > 0);
   const named = event.customer && !event.pendingName;
@@ -91,7 +102,7 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
   const marked = new Map(); const dropped = new Set();
   recent.forEach((e, idx) => {
-    const original = recent.slice(idx + 1).find((o) => repeats(e, o, timeZone));
+    const original = recent.slice(idx + 1).find((o) => repeats(e, o, timeZone, payments, aliasOf));
     if (!original) return;
     const answer = dups.state(original, e);
     if (answer === 'dup') dropped.add(e); else if (answer !== 'separate') marked.set(e, { original, id: dups.ask(original, e) });

@@ -79,3 +79,19 @@ test('several stock answers in one message (one per code) get the line between t
   assert.match(index, /const sep = separateStockAnswers\(a\[1\]\.text\);/); // every outgoing text, groups included
   assert.match(index, /withSeparators\(blocks\)\]\.join/); // the on-behalf desk
 });
+
+test('three codes in one message, the first with no warning and the second with one: the line is between EVERY pair of blocks, however they were joined', async () => {
+  const { separateStockAnswers } = await import('../src/stock-format.js');
+  const plain = (code) => `*Code ${code} — Total: 40 m (Free 30 m)*\nCode ${code} is in stock\n- Free: 30 m\n- Location: A1`;
+  const warned = (code) => `${plain(code)}\n\n⚠ Free stock is below the minimum stock`;
+  for (const joiner of ['\n\n', '\n', '\n\n\n']) { // the model may join the blocks with a blank line, a single newline or more
+    const out = separateStockAnswers([plain(505), warned(403), plain(701)].join(joiner));
+    assert.equal(out.split(SEP).length - 1, 2, JSON.stringify(joiner));
+    const lines = out.split('\n'); const at = lines.map((l, i) => (l === SEP ? i : -1)).filter((i) => i >= 0);
+    assert.ok(lines[at[0] + 1].startsWith('*Code 403') && lines[at[1] + 1].startsWith('*Code 701')); assert.ok(lines[at[0] - 1].trim() !== '' && lines[at[1] - 1].trim() !== ''); // nothing but the line between two blocks
+    assert.ok(lines[0].startsWith('*Code 505') && !out.trimEnd().endsWith(SEP));
+  }
+  const out = separateStockAnswers([warned(505), plain(403), warned(701)].join('\n\n'));
+  assert.equal(out.split(SEP).length - 1, 2); assert.equal(separateStockAnswers(out), out); // unchanged when run again
+  assert.equal(separateStockAnswers('*Note — read this: 5*\nplain text'), '*Note — read this: 5*\nplain text'); // a bold line that is not a stock head
+});

@@ -236,12 +236,15 @@ export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa',
  * put them together (the formatter, the on-behalf desk or the model). A text with one answer, or already separated, is returned as it is.
  */
 export function separateStockAnswers(text) {
-  const head = /^\*[^*\n]{1,40}\d[^*\n]{0,20} — [^*\n]+\*/;
+  const head = /^\*[^*\n]{1,40}\d[^*\n]{0,20} — [^*\n]+:[^*\n]+\*\s*$/; // «*Code 505 — Total: 40 m (Free 30 m)*»
   const out = []; let seen = false;
-  for (const p of String(text).split(/\n{2,}/)) {
-    if (head.test(p) && seen && out.length) out[out.length - 1] += `\n${SEP}\n${p}`;
-    else out.push(p);
-    if (head.test(p)) seen = true;
+  for (const line of String(text).split('\n')) {
+    if (head.test(line) && seen) {
+      while (out.length && out[out.length - 1].trim() === '') out.pop(); // the blank line before the next block goes; the line takes its place
+      if (out.at(-1) !== SEP) out.push(SEP);
+    }
+    if (head.test(line)) seen = true;
+    out.push(line);
   }
-  return out.join('\n\n');
+  return out.join('\n');
 }

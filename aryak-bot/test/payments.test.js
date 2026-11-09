@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { proposePayment, paymentsText } from '../src/payments.js';
+import { PaymentDups, proposePayment, paymentsText } from '../src/payments.js';
 import { eventsFromCaption } from '../src/captionevents.js';
 import { parseInvoiceCommand } from '../src/qboinvoice.js';
 
@@ -130,4 +130,17 @@ test('a repeated payment: the first is listed, the second is marked and the owne
   assert.deepEqual(parseInvoiceCommand('dup #D1'), { type: 'payment_dup', verb: 'dup', id: 'D1' }); assert.deepEqual(parseInvoiceCommand('separate D2'), { type: 'payment_dup', verb: 'separate', id: 'D2' });
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(index, /new PaymentDups\(path\.join\(config\.authDir, 'qbo'\)\)/); assert.match(index, /dups: paymentDups, only/); assert.match(index, /case 'payment_dup': \{ const r = paymentDups\.decide\(ic\.id, ic\.verb\)/);
+});
+
+test('a repeated payment also when the second message has no name but both are the SAME QuickBooks payment (same amount, same day)', () => {
+  const rec = [{ Id: '77', TotalAmt: 115, TxnDate: '2026-11-09', CustomerRef: { name: 'ALWAN ALSHAM' } }];
+  const a = pay({ ref: 'q1', customer: 'ALWAN ALSHAM', amount: 115, at: NOW - 3 * 3600000 }); const b = pay({ ref: 'q2', customer: '', pendingName: true, amount: 115, at: NOW - 3600000 });
+  const text = paymentsText({ events: [a, b], invoices: open, payments: rec, now: NOW, dups: new PaymentDups('') });
+  assert.match(text, /already recorded in QuickBooks[^\n]*\n━+\n2\. [^\n]*\n\s+⚠ Duplicate\? same amount and customer as #1/);
+  assert.match(text, /Reply: dup #D1 \(count once\) \/ separate #D1 \(two payments\)/);
+  // without a QuickBooks payment to share, a nameless message is not a duplicate
+  assert.ok(!paymentsText({ events: [a, b], invoices: open, payments: [], now: NOW, dups: new PaymentDups('') }).includes('Duplicate'));
+  // two different QuickBooks payments of the same amount: not the same receipt
+  const two = [...rec, { Id: '78', TotalAmt: 115, TxnDate: '2026-11-09', CustomerRef: { name: 'OTHER CO' } }];
+  assert.ok(!paymentsText({ events: [pay({ ref: 'n1', customer: 'ZED CARPENTRY', amount: 115, at: NOW - 3 * 3600000 }), b], invoices: open, payments: [{ ...two[1], CustomerRef: { name: 'ZED CARPENTRY' } }, ...rec], now: NOW, dups: new PaymentDups('') }).includes('Duplicate'));
 });
