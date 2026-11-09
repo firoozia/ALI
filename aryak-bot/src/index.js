@@ -48,7 +48,7 @@ import { Experience, describeCandidate, importPatterns, formatStatus, learnedRep
 import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
-import { formatStaffStock } from './stock-format.js';
+import { formatStaffStock, separateStockAnswers } from './stock-format.js';
 import { AvailabilityDesk, answerRequest, classify, managerQuestion, parseManagerReply, reminderText, runAvailability } from './availability.js';
 import { LANG_NAME, correctionSaved, detectLang, noVoice, notUnderstood, photoNotRequest, photoUnclear, sheetFailed, sizeNote } from './lang.js';
 import { imageAction, understandImages } from './image.js';
@@ -65,7 +65,7 @@ import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases } from './cutaliases.js';
 import { unbilled, unbilledText } from './unbilled.js';
-import { paymentsText } from './payments.js';
+import { PaymentDups, paymentsText } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
 import { GroupStatements, StatementPreviews, askLine, effectiveRequest, parseStyleReply, previewText, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
@@ -165,6 +165,7 @@ const experience = new Experience({ dir: path.join(config.authDir, 'experience')
 const tracker = new Tracker({ dir: path.join(config.authDir, 'tracker') }); // the steps of each order, from the supervised groups
 // The test groups keep their own memory: nothing said there reaches the real tracker, digest or reports.
 const testTracker = new Tracker({ dir: path.join(config.authDir, 'tracker-test') });
+const paymentDups = new PaymentDups(path.join(config.authDir, 'qbo')); // the owner's answers about payments that repeat (count once or two payments), kept on the server
 const cutAliases = new CutAliases(path.join(config.authDir, 'qbo')); // names the cutting and delivery groups use for a customer, approved by the owner; on the server only
 const trackerOf = (test) => (test ? testTracker : tracker);
 const isTestSubject = (subject) => config.testGroupNames.some((w) => String(subject || '').toLowerCase().includes(w));
@@ -575,7 +576,7 @@ async function trackGroup(raw, groupId, role) {
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
       if (role === 'payment' && Number(event.amount) > 0 && qbo.connected && !qbo.paused) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
-        void paymentsReport([event]).then((text) => sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
+        void paymentsReport(tracker.events, event.ref).then((text) => text && sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
       }
       if (role === 'delivery') {
         const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
@@ -678,15 +679,15 @@ async function unbilledReport(events = tracker.events) {
 }
 
 /** Payments seen in the Confirmation group against the customers' OPEN invoices: a proposal only, read only; nothing is recorded in QuickBooks. */
-async function paymentsReport(events) {
+async function paymentsReport(events, only = '') {
   const invoices = await qbo.query("select * from Invoice where Balance > '0'");
   const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const payments = await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => []); // what the office already recorded
-  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone });
+  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only });
 }
 
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -818,6 +819,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       const p = cutAliases.propose(pairs);
       return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, withSeparators(pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`)), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];
     }
+    case 'payment_dup': { const r = paymentDups.decide(ic.id, ic.verb); return [r.error ? `No open question #${ic.id} (it was answered or never asked).` : r.verb === 'dup' ? `Noted: the second payment is the same as the first; it will be counted once (#${ic.id}).` : `Noted: two separate payments (#${ic.id}); I will not ask again.`]; }
     case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
     case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport()]; }
     case 'alias_drop': { const n = cutAliases.drop(ic.id, ic.numbers); return [n ? `Removed ${n} line(s) from #${ic.id}; reply yes #${ic.id} to approve the rest.` : `Nothing removed from #${ic.id}.`]; }
@@ -1723,7 +1725,7 @@ async function handleOnBehalf({ ob, raw, reply, role, where, lang, test = false 
     T.add({ type: 'order', at: Date.now(), customer, lines: ob.lines.map((l) => ({ code: l.code, quantity: l.quantity, unit: l.unit })), ref: createHash('sha256').update(`behalf|${raw.key.id}`).digest('hex').slice(0, 24) });
   }
   trace(where, role, `request on behalf of a customer: ${ob.lines.length} line(s), ${toManager} sent to the sales manager`);
-  await reply([`درخواست ${customer}:`, ...blocks].join('\n\n'));
+  await reply([`درخواست ${customer}:`, withSeparators(blocks)].join('\n\n'));
 }
 
 /**
@@ -2581,6 +2583,8 @@ async function start() {
     if (typeof a[1]?.text === 'string') {
       const c = cleanOutgoing(a[1].text);
       if (c.changed) { logger.warn('an unresolved placeholder was removed from an outgoing text'); if (!c.text) return undefined; a[1] = { ...a[1], text: c.text }; }
+      const sep = separateStockAnswers(a[1].text); // several stock answers in one message: a line between the code blocks
+      if (sep !== a[1].text) a[1] = { ...a[1], text: sep };
     }
     if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && config.replyLanguage === 'en') {
       try { const en = await englishOut(a[1].text, englishViaModel); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } catch { /* sent as written */ }

@@ -8,7 +8,7 @@
 // The words follow the language of the question (Persian by default; Arabic, English and Urdu). Figures, units,
 // codes and place names are exactly as in the sheet in every language.
 
-import { withSeparators } from './separator.js';
+import { SEP, withSeparators } from './separator.js';
 import { langOf } from './lang.js';
 
 const MAX_PIECES = 6;
@@ -229,4 +229,19 @@ export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa',
   if (result.sizeFound === false) return t.noSize(result.code, result.size, (result.sizes || []).join(`${t.comma} `) || '—');
   const old = result.stale ? t.stale(result.ageMinutes) : '';
   return [note, old, withSeparators(stockBlocks(result, lang, want, opts))].filter(Boolean).join('\n\n'); // one block per code or size: a separator line between them
+}
+
+/**
+ * A text made of several stock answers (one per code: «*Code 505 — Total: …*», «*Code 403 — Total: …*») gets the shared separator line between the blocks, whoever
+ * put them together (the formatter, the on-behalf desk or the model). A text with one answer, or already separated, is returned as it is.
+ */
+export function separateStockAnswers(text) {
+  const head = /^\*[^*\n]{1,40}\d[^*\n]{0,20} — [^*\n]+\*/;
+  const out = []; let seen = false;
+  for (const p of String(text).split(/\n{2,}/)) {
+    if (head.test(p) && seen && out.length) out[out.length - 1] += `\n${SEP}\n${p}`;
+    else out.push(p);
+    if (head.test(p)) seen = true;
+  }
+  return out.join('\n\n');
 }

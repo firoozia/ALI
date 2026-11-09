@@ -44,7 +44,7 @@ test('every report formatter puts the line between its entries, not before the f
 });
 
 test('the wiring: every multi-entry report uses the shared helper (aliases, choice lists, stock blocks, the week summary), and the previews of one customer do not', () => {
-  for (const f of ['unbilled.js', 'payments.js', 'staff.js', 'report.js', 'stock-format.js', 'invoicesend.js', 'qbodesk.js', 'shadow.js', 'index.js']) assert.match(src(f), /import \{ withSeparators \} from '\.\/separator\.js';/, f);
+  for (const f of ['unbilled.js', 'payments.js', 'staff.js', 'report.js', 'stock-format.js', 'invoicesend.js', 'qbodesk.js', 'shadow.js', 'index.js']) assert.match(src(f), /import \{[^}]*withSeparators[^}]* \} from '\.\/separator\.js';/, f);
   const index = src('index.js');
   assert.match(index, /withSeparators\(pairs\.slice\(0, 25\)\.map\(/); // cut aliases, one line each
   assert.match(index, /withSeparators\(found\.names\.map\(/); // a customer group with several customers
@@ -56,4 +56,26 @@ test('the wiring: every multi-entry report uses the shared helper (aliases, choi
   // a single-customer preview has no separator
   const inv = src('qboinvoice.js'); assert.ok(!inv.includes('withSeparators') && !/\bSEP\b/.test(inv));
   const stm = src('qbostatement.js'); assert.ok(!stm.includes('withSeparators'));
+});
+
+test('several stock answers in one message (one per code) get the line between the code blocks, in any language, whoever assembled them; one answer is left alone', async () => {
+  const { separateStockAnswers, formatStaffStock } = await import('../src/stock-format.js');
+  const block = (code) => `*Code ${code} — Total: 40 m (Free 30 m)*\nCode ${code} is in stock\n- Free: 30 m`;
+  const three = [block(505), block(403), block(701)].join('\n\n');
+  const out = separateStockAnswers(three);
+  assert.equal(out, [block(505), block(403), block(701)].join(`\n${SEP}\n`));
+  assert.equal(out.split(SEP).length - 1, 2); assert.ok(!out.startsWith(SEP) && !out.trimEnd().endsWith(SEP));
+  assert.equal(separateStockAnswers(out), out); // already separated: unchanged
+  assert.equal(separateStockAnswers(block(505)), block(505)); // one answer: unchanged
+  const fa = ['*کد 505 — جمع: 40 m*\nخط', '*کد 403 — جمع: 12 m*\nخط'].join('\n\n');
+  assert.equal(separateStockAnswers(fa).split(SEP).length - 1, 1);
+  const withNote = `Note for the group\n\n${block(505)}\n\nwarning line\n\n${block(403)}`; // a note first, a warning paragraph inside a block
+  const w = separateStockAnswers(withNote);
+  assert.ok(w.startsWith('Note for the group\n\n*Code 505')); assert.ok(w.includes(`warning line\n${SEP}\n*Code 403`)); assert.equal(w.split(SEP).length - 1, 1);
+  assert.equal(separateStockAnswers('Hello, no stock here'), 'Hello, no stock here');
+  const real = formatStaffStock({ found: true, code: '505', category: 'PVC film', unit: 'm', free: 30, reserved: 5, limit: 10, sizes: ['1.4 x 50'], packages: [], places: [] }, '505', '', 'en', null, { boldTotal: true });
+  assert.equal(separateStockAnswers(`${real}\n\n${real.replace(/505/g, '403')}`).split(SEP).length - 1, 1); // the real formatter's blocks are recognized
+  const index = src('index.js');
+  assert.match(index, /const sep = separateStockAnswers\(a\[1\]\.text\);/); // every outgoing text, groups included
+  assert.match(index, /withSeparators\(blocks\)\]\.join/); // the on-behalf desk
 });

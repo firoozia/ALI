@@ -125,6 +125,7 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^لغو\s+مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_remove', number: m[1], perm };
     if ((m = new RegExp(String.raw`^مجوز\s+(?:${def.words})\s+${NUM}$`, 'iu').exec(s))) return { type: 'auth_add', number: m[1], perm };
   }
+  { const dm = /^(dup|duplicate|separate)\s*#?\s*(D\d+)$/i.exec(s); if (dm) return { type: 'payment_dup', verb: dm[1].toLowerCase() === 'separate' ? 'separate' : 'dup', id: dm[2].toUpperCase() }; } // the owner's answer about a repeated payment
   if (/^(?:payments|payment matches|پرداخت\s*ها)$/iu.test(s)) return { type: 'payments' };
   if (/^(?:unbilled|not invoiced|گزارش فاکتور\s*نشده)$/iu.test(s)) return { type: 'unbilled' };
   if (/^(?:cut aliases|alias proposals|نام\s*های مستعار برش)$/iu.test(s)) return { type: 'alias_propose' };

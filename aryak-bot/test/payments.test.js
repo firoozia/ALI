@@ -46,7 +46,7 @@ test('the shapes the group uses: a bank credit keeps the amount and no account n
   const fn = index.slice(index.indexOf('async function paymentsReport'), index.indexOf('const availDrafts'));
   assert.match(fn, /select \* from Invoice where Balance > '0'/); assert.match(fn, /select \* from Payment where TxnDate >=/); assert.doesNotMatch(fn, /\.write\(|sock\.sendMessage|postDocument/); // only reads
   assert.match(index, /role === 'payment' && Number\(event\.amount\) > 0 && qbo\.connected && !qbo\.paused/);
-  assert.match(index, /paymentsReport\(\[event\]\)\.then\(\(text\) => sock\.sendMessage\(ownIds\(\)\[0\]/); // to the owner's own chat only
+  assert.match(index, /paymentsReport\(tracker\.events, event\.ref\)\.then\(\(text\) => text && sock\.sendMessage\(ownIds\(\)\[0\]/); // to the owner's own chat only
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'payments.js'), 'utf8');
   assert.doesNotMatch(src, /\.write\(|POST|qbo\./); // the module cannot write
 });
@@ -85,4 +85,41 @@ test('payment names: «cash from receipt + clear», «cash from Pay» and «clea
   assert.match(proposePayment({ event: pay({ customer: 'Clear MUNICH DOOR KITCHEN Inv', amount: 9940 }), invoices: munich })[1], /^→ pays inv-9645 9,940\.00$/);
   const recorded = proposePayment({ event: pay({ customer: 'MUNICH DOOR KITCHEN', amount: 9940 }), invoices: munich, payments: [{ TotalAmt: 9940, TxnDate: '2026-11-08', CustomerRef: { name: 'MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C' } }] });
   assert.match(recorded[1], /already recorded in QuickBooks \(payment of 08\/11/);
+});
+
+test('a repeated payment: the first is listed, the second is marked and the owner is asked; his answer is kept; a different or missing customer is never a duplicate', async () => {
+  const { PaymentDups } = await import('../src/payments.js');
+  const fs2 = await import('node:fs'); const os2 = await import('node:os'); const path2 = await import('node:path');
+  const dir = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'dups-'));
+  const dups = new PaymentDups(dir);
+  const a = pay({ ref: 'm1', customer: 'ALWAN ALSHAM', amount: 115, at: NOW - 3 * 3600000 }); const b = pay({ ref: 'm2', customer: 'ALWAN ALSHAM', amount: 115, at: NOW - 3600000 });
+  const text = paymentsText({ events: [a, b], invoices: open, now: NOW, dups });
+  assert.match(text, /^Payments to match \(2\):/);
+  assert.match(text, /1\. 115\.00 AED — cash from ALWAN ALSHAM \(09\/11\)\n\s+→ no open invoice[^\n]*\n━+\n2\. 115\.00 AED — cash from ALWAN ALSHAM \(09\/11\)\n\s+⚠ Duplicate\? same amount and customer as #1 \(09\/11\)\n\s+Reply: dup #D1 \(count once\) \/ separate #D1 \(two payments\)/); // the first listed, its repeat marked right under it
+  assert.ok(text.includes('━'.repeat(18)));
+  assert.equal(paymentsText({ events: [a, b], invoices: open, now: NOW, dups }).includes('#D2'), false); // the same pair keeps its code
+  // the owner says «count once»: the second is not listed any more, and a new process still knows
+  assert.deepEqual(dups.decide('D1', 'dup'), { verb: 'dup' });
+  const again = new PaymentDups(dir);
+  const after = paymentsText({ events: [a, b], invoices: open, now: NOW, dups: again });
+  assert.match(after, /^Payments to match \(1\):/); assert.ok(!after.includes('Duplicate'));
+  // «separate»: both listed, no question, not asked again
+  const dir2 = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'dups-')); const d2 = new PaymentDups(dir2);
+  paymentsText({ events: [a, b], invoices: open, now: NOW, dups: d2 }); d2.decide('D1', 'separate');
+  const sep = paymentsText({ events: [a, b], invoices: open, now: NOW, dups: new PaymentDups(dir2) });
+  assert.match(sep, /^Payments to match \(2\):/); assert.ok(!sep.includes('Duplicate') && !sep.includes('dup #'));
+  assert.deepEqual(d2.decide('D9', 'dup'), { error: 'not found' });
+  // not duplicates: another customer, no customer, another amount, another day
+  const quiet = (events) => paymentsText({ events, invoices: open, now: NOW, dups: new PaymentDups('') });
+  assert.ok(!quiet([a, pay({ ref: 'x', customer: 'ZED CARPENTRY', amount: 115, at: NOW - 3600000 })]).includes('Duplicate'));
+  assert.ok(!quiet([a, pay({ ref: 'y', customer: '', pendingName: true, amount: 115, at: NOW - 3600000 })]).includes('Duplicate'));
+  assert.ok(!quiet([a, pay({ ref: 'z', customer: 'ALWAN ALSHAM', amount: 115.5, at: NOW - 3600000 })]).includes('Duplicate'));
+  assert.ok(!quiet([a, pay({ ref: 'w', customer: 'ALWAN ALSHAM', amount: 115, at: NOW - 3 * DAY })]).includes('Duplicate'));
+  // the live single report: only the new payment is shown, a dropped one gives nothing
+  assert.match(paymentsText({ events: [a, b], invoices: open, now: NOW, dups: new PaymentDups(''), only: 'm2' }), /^Payments to match \(1\):\n1\. .*\n\s+⚠ Duplicate\?/);
+  assert.equal(paymentsText({ events: [a, b], invoices: open, now: NOW, dups: again, only: 'm2' }), '');
+  // the words and the wiring
+  assert.deepEqual(parseInvoiceCommand('dup #D1'), { type: 'payment_dup', verb: 'dup', id: 'D1' }); assert.deepEqual(parseInvoiceCommand('separate D2'), { type: 'payment_dup', verb: 'separate', id: 'D2' });
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /new PaymentDups\(path\.join\(config\.authDir, 'qbo'\)\)/); assert.match(index, /dups: paymentDups, only/); assert.match(index, /case 'payment_dup': \{ const r = paymentDups\.decide\(ic\.id, ic\.verb\)/);
 });
