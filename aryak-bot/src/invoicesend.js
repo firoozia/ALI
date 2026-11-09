@@ -4,6 +4,7 @@
 // single narrow exception is a one-shot token bound to the exact group and to the exact PDF message, created only by the approved flow
 // and used up by the send; no text can pass through it.
 
+import { withSeparators } from './separator.js';
 import { sameName } from './sheetcheck.js';
 import { shadowGroup } from './guard.js';
 import { readableFileName } from './nameline.js';
@@ -126,7 +127,7 @@ export function confirmTextFa({ read, fileName, group, alreadySent, unconfirmed 
   return lines.join('\n');
 }
 
-export const chooseText = (groups, lang = 'en') => `${lang === 'fa' ? 'کدام گروه؟ شماره را بنویسید:' : 'Which group? Reply with the number:'}\n${groups.map((g, i) => `${i + 1}) ${g.subject}`).join('\n')}`;
+export const chooseText = (groups, lang = 'en') => `${lang === 'fa' ? 'کدام گروه؟ شماره را بنویسید:' : 'Which group? Reply with the number:'}\n${withSeparators(groups.map((g, i) => `${i + 1}) ${g.subject}`))}`;
 
 /** The readable file name of the invoice, from what is printed on it. */
 export const sendFileName = (read) => readableFileName(read.number, read.customer);

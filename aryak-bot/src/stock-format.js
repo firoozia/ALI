@@ -8,6 +8,7 @@
 // The words follow the language of the question (Persian by default; Arabic, English and Urdu). Figures, units,
 // codes and place names are exactly as in the sheet in every language.
 
+import { withSeparators } from './separator.js';
 import { langOf } from './lang.js';
 
 const MAX_PIECES = 6;
@@ -224,8 +225,8 @@ export function stockBlocks(result, lang = 'fa', want = null, opts = {}) {
 export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa', want = null, opts = {}) {
   const t = wordsOf(lang, !!opts.units);
   if (!result.found) return t.notFound(result.code || askedCode);
-  if (result.ambiguous) return t.ambiguous(askedCode, result.categories.map((c, i) => `${i + 1}) ${c}`).join('\n'));
+  if (result.ambiguous) return t.ambiguous(askedCode, withSeparators(result.categories.map((c, i) => `${i + 1}) ${c}`)));
   if (result.sizeFound === false) return t.noSize(result.code, result.size, (result.sizes || []).join(`${t.comma} `) || '—');
   const old = result.stale ? t.stale(result.ageMinutes) : '';
-  return [note, old, ...stockBlocks(result, lang, want, opts)].filter(Boolean).join('\n\n');
+  return [note, old, withSeparators(stockBlocks(result, lang, want, opts))].filter(Boolean).join('\n\n'); // one block per code or size: a separator line between them
 }

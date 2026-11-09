@@ -69,7 +69,7 @@ test('the other fixed sentences of the stock answer in each language', () => {
   for (const lang of ['fa', 'ar', 'en', 'ur']) {
     assert.ok(formatStaffStock({ found: false, code: '999' }, '999', '', lang).includes('999'));
     const q = formatStaffStock({ found: true, ambiguous: true, categories: ['PVC film', 'Edge banding'] }, '1810', '', lang);
-    assert.ok(q.includes('1) PVC film\n2) Edge banding') && q.includes('1810'), `${lang} question`);
+    assert.ok(q.includes('1) PVC film\n━━━━━━━━━━━━━━━━━━\n2) Edge banding') && q.includes('1810'), `${lang} question`);
     assert.ok(formatStaffStock({ ...sheet, stale: true, ageMinutes: 5 }, '229', '', lang).includes('5'));
     assert.ok(formatStaffStock({ found: true, sizeFound: false, code: '12', size: '1*1', sizes: ['2*2'] }, '12', '', lang).includes('2*2'));
     assert.ok(sizeNote(lang, '0.40').includes('0.40'));

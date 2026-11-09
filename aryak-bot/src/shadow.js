@@ -8,6 +8,7 @@
 // parsing, stock lookup, price and limit rules and the customer's language) is given in as [analyze] and has no side effects outside
 // the shadow state.
 
+import { withSeparators } from './separator.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyAnswer, classifyIntent } from './experience.js';
@@ -321,11 +322,8 @@ export function weekSummary(store, today, now = Date.now()) {
     for (const [key, v] of Object.entries(d.by || {})) { const g = (by[key] ||= { q: 0, agreed: 0, differed: 0 }); g.q += v.q; g.agreed += v.agreed; g.differed += v.differed; }
   }
   const lines = [`Shadow week (${days.length} day${days.length === 1 ? '' : 's'}): ${t.questions} questions, ${t.agreed} agreed, ${t.differed} differed, ${t.asked} she asked and staff answered, ${t.unknown} unknown, ${unanswered(store, days, 60, now)} not answered by staff; staff average ${fmtMin(t.staffMs, t.staffN)}; she would have been faster in ${t.fasterN} cases${t.fasterN ? ` (by ${fmtMin(t.fasterMs, t.fasterN)} on average)` : ''}; ${t.needsMedia} requests depend on a photo or voice note (not read, counted apart); model calls ${t.calls}`];
-  for (const [key, v] of Object.entries(by).sort((a, b) => b[1].q - a[1].q).slice(0, 12)) {
-    const [group, lang] = key.split('|');
-    lines.push(`- ${group} (${lang}): ${v.q} questions, ${v.agreed} agreed, ${v.differed} differed`);
-  }
-  return lines.join('\n');
+  const perGroup = Object.entries(by).sort((a, b) => b[1].q - a[1].q).slice(0, 12).map(([key, v]) => { const [group, lang] = key.split('|'); return `- ${group} (${lang}): ${v.q} questions, ${v.agreed} agreed, ${v.differed} differed`; });
+  return [...lines, ...(perGroup.length ? [withSeparators(perGroup)] : [])].join('\n');
 }
 
 /** Cards that were numbered but never reached the group, and gaps in the numbering (for the status command). */

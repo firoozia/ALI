@@ -659,7 +659,7 @@ test('the invoice-send questions speak Persian to the owner and English by defau
   assert.match(fa, /فرستاده شود\؟ بله \/ نه/); assert.match(fa, /جمع با مالیات: AED 157\.50/); assert.match(fa, /گروه: ACME - ARYAK/);
   assert.doesNotMatch(fa, /Send\?|Group:|Total with VAT/);
   assert.match(confirmText({ read, fileName: 'f', group: 'g', alreadySent: '' }), /Send\? yes \/ no/); // the default is unchanged
-  assert.match(chooseText([{ subject: 'A' }, { subject: 'B' }], 'fa'), /^کدام گروه؟ شماره را بنویسید:\n1\) A\n2\) B/);
+  assert.match(chooseText([{ subject: 'A' }, { subject: 'B' }], 'fa'), /^کدام گروه؟ شماره را بنویسید:\n1\) A\n━{18}\n2\) B/);
   assert.match(chooseText([{ subject: 'A' }]), /^Which group\? Reply with the number:/);
   const warn = confirmText({ read: { ...read, urgent: 2, points: ['x', 'y'], checked: false }, fileName: 'f', group: 'g', alreadySent: 'پیش‌تر', unconfirmed: true, lang: 'fa' });
   assert.match(warn, /این گروه در فهرست تأیید نشده/); assert.match(warn, /بررسی نشده/); assert.match(warn, /۲ ایراد فوری/);

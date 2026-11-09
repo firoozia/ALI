@@ -2,6 +2,7 @@
 // A PROPOSAL only, read only: nothing is ever recorded in QuickBooks from here (recording a payment would be its own owner-approved job). The account numbers of the bank messages are
 // never kept: only the amount.
 
+import { withSeparators } from './separator.js';
 import { matchCod, stripPaymentWords } from './captions.js';
 import { sameCutCustomer } from './cuts.js';
 
@@ -46,5 +47,5 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
   const recent = events.filter((e) => e.type === 'payment' && Number(e.amount) > 0 && !e.simulated && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   const blocks = recent.slice(0, max).map((event, i) => `${i + 1}. ${proposePayment({ event, invoices, payments, aliasOf, timeZone }).join('\n   ')}`);
-  return [`Payments to match (${recent.length}):`, ...blocks, ...(recent.length > max ? [`+${recent.length - max} more`] : []), 'Proposal only: nothing was recorded in QuickBooks.'].join('\n');
+  return [`Payments to match (${recent.length}):`, withSeparators(blocks), ...(recent.length > max ? [`+${recent.length - max} more`] : []), 'Proposal only: nothing was recorded in QuickBooks.'].join('\n');
 }

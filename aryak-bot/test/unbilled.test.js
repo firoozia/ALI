@@ -43,7 +43,7 @@ test('the text: short, at most ten lines then «+N more», a clean day in one li
   const groups = Array.from({ length: 13 }, (_, i) => ({ customer: `CUSTOMER ${i + 1}`, parts: ['303 6m 08/11'] }));
   const text = unbilledText({ groups });
   const lines = text.split('\n');
-  assert.equal(lines[0], 'Cut or delivered, not invoiced (13 customers):'); assert.equal(lines.length, 12); assert.equal(lines.at(-1), '+3 more');
+  assert.equal(lines[0], 'Cut or delivered, not invoiced (13 customers):'); assert.equal(lines.length, 21); assert.equal(lines.filter((l) => l === '━━━━━━━━━━━━━━━━━━').length, 9); assert.notEqual(lines[1], '━━━━━━━━━━━━━━━━━━'); assert.notEqual(lines.at(-2), '━━━━━━━━━━━━━━━━━━'); assert.equal(lines.at(-1), '+3 more');
   const many = unbilledText({ groups: [{ customer: 'X', parts: ['1', '2', '3', '4', '5', '6'] }] }).split('\n')[1];
   assert.equal(many, '• X: 1, 2, 3, 4 +2');
   const done = unbilled({ events: [cut('X', 'ART NO 303', 6, 1, { invoiced: { number: 'inv-1', at: NOW } })], invoices: [], itemCodes: codesOf, now: NOW });

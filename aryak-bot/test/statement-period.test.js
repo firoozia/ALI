@@ -156,7 +156,7 @@ test('the desk: two companies fit "نبرد" so a numbered list is asked, nothin
   const { desk, posted } = mkDesk([{ Id: '58', DisplayName: 'PALM BIRD TRADING LLC' }, { Id: '61', DisplayName: 'BRIGHT BIRD CO' }, { Id: '59', DisplayName: 'HAKIM CARPENTRY' }, { Id: '60', DisplayName: 'ZED TRADING' }]);
   const many = await desk.statementFor('نبرد', { privateJid: 'x@s.whatsapp.net', period: null });
   assert.equal(many.ok, false); assert.equal(many.ask, true);
-  assert.match(many.text, /۱\. .*\n۲\. /);
+  assert.match(many.text, /۱\. .*\n━{18}\n۲\. /);
   assert.ok(many.options.includes('PALM BIRD TRADING LLC') && many.options.includes('BRIGHT BIRD CO'));
   const none = await desk.statementFor('اف', { privateJid: 'x@s.whatsapp.net' });
   assert.equal(none.ask, true); assert.match(none.text, /پیدا نشد/); assert.equal(none.options.length, 3);
@@ -294,7 +294,7 @@ test('a very short name («AL») gives a numbered list of the best candidates, n
   const { desk, posted } = mkDesk([{ Id: '1', DisplayName: 'AL AFEEF KITCHEN' }, { Id: '2', DisplayName: 'AL SAIFI DOORS' }, { Id: '3', DisplayName: 'AL MASTER WOOD INDUSTRIES LLC FOR TRADING' }, { Id: '4', DisplayName: 'ZED TRADING' }]);
   const r = await desk.statementFor('AL', { privateJid: 'x@s.whatsapp.net', period: null });
   assert.equal(r.ok, false); assert.equal(r.ask, true);
-  assert.match(r.text, /۱\. .*\n۲\. .*\n۳\. /);
+  assert.match(r.text, /۱\. .*\n━{18}\n۲\. .*\n━{18}\n۳\. /);
   assert.deepEqual([...r.options].sort(), ['AL AFEEF KITCHEN', 'AL MASTER WOOD INDUSTRIES LLC FOR TRADING', 'AL SAIFI DOORS']);
   assert.ok(!r.options.includes('ZED TRADING'));
   assert.equal(posted.length, 0);

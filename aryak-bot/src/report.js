@@ -1,6 +1,7 @@
 // The report of goods sent out for the team: dates (Gregorian or Jalali in, Gregorian dd/mm/yyyy out) and the short
 // answer in the staff format. The figures come from the sheet's botReport action and are shown exactly.
 
+import { withSeparators } from './separator.js';
 import { langOf } from './lang.js';
 import { normalizeDigits } from './text.js';
 
@@ -116,7 +117,7 @@ export function formatReport(result, lang = 'fa', { maxCodes = 8 } = {}) {
     ...(c.customers.length ? [`- ${t.mainCustomers}: ${c.customers.map((x) => `${who(x)} ${qty(x.qty, c.unit)}`).join(`${t.comma} `)}`] : []),
   ].join('\n'));
   const rest = result.byCode.length - blocks.length;
-  const parts = [lines.join('\n'), ...blocks];
+  const parts = [lines.join('\n'), withSeparators(blocks)];
   if (rest > 0) parts.push(t.moreCodes(rest));
   parts.push(t.hint);
   return parts.join('\n\n');

@@ -1,6 +1,7 @@
 // The assistant for the ARYAK team: answers staff questions (stock with real figures, invoice checks, orders), and
 // takes simple commands from the owner. Customers never get anything from here.
 
+import { withSeparators } from './separator.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -136,8 +137,8 @@ const VERDICT = { match: 'درست', mismatch: 'ناهماهنگ', unreadable: '
 /** One line per recorded check, newest first. */
 export function formatChecks(entries) {
   if (!entries.length) return 'هنوز بررسی‌ای ثبت نشده است.';
-  return entries.map((e, i) => `${i + 1}. ${VERDICT[e.verdict] || e.verdict}، مشتری: ${e.customer || '—'}، سفارش: ${e.po || '—'}، فایل: ${e.file || '—'}` +
-    (e.problems ? `، ${e.problems} مورد` : '')).join('\n');
+  return withSeparators(entries.map((e, i) => `${i + 1}. ${VERDICT[e.verdict] || e.verdict}، مشتری: ${e.customer || '—'}، سفارش: ${e.po || '—'}، فایل: ${e.file || '—'}` +
+    (e.problems ? `، ${e.problems} مورد` : '')));
 }
 
 /** Runs one command; [ctx]: { state, desk, staffNumbers, startedAt, now }. Returns the text to send. */

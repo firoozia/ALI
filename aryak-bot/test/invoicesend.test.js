@@ -65,7 +65,7 @@ test('the invoice is found among the kept files by its read; the confirmation sa
   assert.match(lines.at(-1), /Send\? yes \/ no/);
   assert.match(confirmText({ read: hit.read, fileName: 'x.pdf', group: 'G', alreadySent: 'before' }), /already sent to this group/);
   assert.equal(readableFileName('INV-1', 'A.B.C LLC'), 'inv-1 ABC LLC.pdf');
-  assert.match(chooseText(nu2()), /^Which group\? Reply with the number:\n1\) NUQOUCH---ARYAK\n2\) SY x NUQOOSH KITCHENS$/);
+  assert.match(chooseText(nu2()), /^Which group\? Reply with the number:\n1\) NUQOUCH---ARYAK\n━{18}\n2\) SY x NUQOOSH KITCHENS$/);
 });
 function nu2() { return [GROUPS[0], GROUPS[1]]; }
 

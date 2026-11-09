@@ -1,5 +1,6 @@
 // ARYAK Assistant: WhatsApp (Baileys) + Claude + Zinax Stock.
 
+import { withSeparators } from './separator.js';
 import makeWASocket, { BufferJSON, DisconnectReason, downloadMediaMessage, isJidGroup, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
@@ -815,7 +816,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       const pairs = proposeAliases({ postNames: [...new Set(postNames)], qboNames, skip: (k) => cutAliases.settled(k), exclude: (n) => own.includes(nameKey(n)) }); // the assistant's own name (and staff names set in the settings) is never a customer
       if (!pairs.length) return [`No new alias to propose (${cutAliases.list().length} approved so far).`];
       const p = cutAliases.propose(pairs);
-      return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, ...pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];
+      return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, withSeparators(pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`)), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];
     }
     case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
     case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport()]; }
@@ -1351,7 +1352,7 @@ async function customerGroupStatement({ raw, groupId, info }) {
     }
     if (found.names.length > 1) {
       for (const key of choiceKeys(requester)) choiceDesk.set(key, { kind: 'statement_group', options: found.names, period: ask.period, groupId, subject: info.subject, target: 'group', requester });
-      await tell(`${bi(`The group "${info.subject}" has several customers; write the number:`, `گروه «${info.subject}» چند مشتری دارد؛ شمارهٔ درست را بنویسید:`)}\n${found.names.map((n, i) => `${i + 1}. ${n}`).join('\n')}`);
+      await tell(`${bi(`The group "${info.subject}" has several customers; write the number:`, `گروه «${info.subject}» چند مشتری دارد؛ شمارهٔ درست را بنویسید:`)}\n${withSeparators(found.names.map((n, i) => `${i + 1}. ${n}`))}`);
       return true;
     }
     [customer] = found.names;
