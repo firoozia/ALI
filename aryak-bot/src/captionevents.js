@@ -11,7 +11,7 @@ export function eventsFromCaption(role, text) {
   if (role === 'cut') {
     const c = parseCutCaption(text);
     if (!c || c.kind === 'name') return null;
-    const lines = [{ code: c.code, quantity: c.quantity, unit: c.unit }];
+    const lines = [{ code: c.code, quantity: c.quantity, unit: c.unit, ...(c.invoiceQuantity !== undefined ? { invoiceQuantity: c.invoiceQuantity } : {}) }];
     // an opened roll or a damaged piece is kept (the cutters' log) but is never a sale: no customer, flagged internal
     if (c.kind === 'open-roll' || c.kind === 'damage') return { events: [{ type: 'cut', internal: true, kind: c.kind, customer: c.kind === 'damage' ? c.customer : '', lines }] };
     return { events: [{ type: 'cut', customer: c.customer, lines, ...(c.pieces ? { pieces: c.pieces } : {}) }] };

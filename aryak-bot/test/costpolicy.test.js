@@ -41,7 +41,7 @@ test('the source: media is left alone before any download, the model fallback is
   assert.match(src.slice(quiet, quiet + 420), /media left alone[^\n]*\n\s*return true;|media left alone[^\n]*return true;/); // consumed, no reply
   // the gate comes before every place the picture or the voice note is downloaded in the staff flow
   const firstDownload = src.indexOf("downloadMediaMessage(imageRaw, 'buffer'");
-  const firstAudioDownload = src.indexOf("understandAudio(() => downloadMediaMessage(raw, 'buffer', {})");
+  const firstAudioDownload = src.indexOf("understandAudio(() => downloadMediaMessage(audioRaw, 'buffer', {})");
   assert.ok(quiet < firstDownload && quiet < firstAudioDownload);
   // the tracker: the model fallback (and the photo download) come after the free reader and the TRACK_MODEL gate
   const tg = src.slice(src.indexOf('async function trackGroup'), src.indexOf('async function findGroupJid'));

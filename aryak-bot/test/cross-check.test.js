@@ -94,3 +94,39 @@ test('at most five problem lines, then the count of the rest; meters are compare
   pieces.add({ type: 'cut', at: NOW - DAY, customer: 'MASTER WOOD', customerTyped: 'MASTER WOOD', lines: [{ code: '211', quantity: 2, unit: 'roll' }], ref: 'p1' });
   assert.deepEqual(crossCheck(pieces, 'MASTER WOOD', [{ code: '211', qty: 20 }], { now: NOW, invoiced: [] }).problems, []); // 2 rolls against 20 (meters): not a mismatch
 });
+
+// ------------------------------------------------------------------------------------------------ the shapes of the real cut posts (invented customers)
+import { parseCutCaption } from '../src/captions.js';
+import { eventsFromCaption } from '../src/captionevents.js';
+import fs from 'node:fs';
+import path from 'node:path';
+
+test('cut posts: several pieces added, a stated total kept, 1.8×2 as two pieces, «INVOICE 14.5M» is the invoiced quantity; a roll «FOR CUT» is never a customer\'s cut', () => {
+  assert.deepEqual(parseCutCaption('ART NO 105 AR RAD 6+3.5+3.2+2.7= INVOICE 14.5M'), { code: '105', customer: 'AR RAD', quantity: 15.4, unit: 'm', pieces: [6, 3.5, 3.2, 2.7], invoiceQuantity: 14.5, kind: 'cut' });
+  assert.deepEqual(parseCutCaption('ART NO 105 AR RAD 19+11+2.5=32.7M'), { code: '105', customer: 'AR RAD', quantity: 32.7, unit: 'm', pieces: [19, 11, 2.5], kind: 'cut' });
+  assert.deepEqual(parseCutCaption('ART NO 108 AR RAD 1.8×2 M'), { code: '108', customer: 'AR RAD', quantity: 3.6, unit: 'm', pieces: [1.8, 1.8], kind: 'cut' });
+  assert.deepEqual(parseCutCaption('ART NO 410 DANDY DOOR 18+12 = 30M'), { code: '410', customer: 'DANDY DOOR', quantity: 30, unit: 'm', pieces: [18, 12], kind: 'cut' });
+  assert.equal(parseCutCaption('ART NO 303 MUNICH DOOR KITCHEN 6.4M').quantity, 6.4);
+  assert.deepEqual(parseCutCaption('ART NO 235 120M FOR CUT'), { code: '235', customer: '', quantity: 120, unit: 'm', kind: 'open-roll' });
+  const roll = eventsFromCaption('cut', 'ART NO 235 120M FOR CUT').events[0];
+  assert.equal(roll.internal, true); assert.equal(roll.customer, '');
+  const event = eventsFromCaption('cut', 'ART NO 105 AR RAD 6+3.5+3.2+2.7= INVOICE 14.5M').events[0];
+  assert.equal(event.lines[0].quantity, 15.4); assert.equal(event.lines[0].invoiceQuantity, 14.5);
+  // the roll prepared for cutting is never a customer's cut in the cross-check
+  const tr = new Tracker({ dir: '' });
+  tr.add({ type: 'cut', at: NOW - DAY, ...roll, ref: 'r1' }); tr.add({ type: 'cut', at: NOW - DAY, ...event, ref: 'r2' });
+  assert.deepEqual(crossCheck(tr, 'AR-RAD INTERNATIONAL', [{ code: '235', qty: 20 }], { now: NOW, invoiced: [] }).problems, ['235: no order found']);
+  // the post says 14.5 was invoiced: an invoice of 14.5 or less is fine, more than that is not
+  assert.deepEqual(crossCheck(tr, 'AR RAD', [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, []);
+  assert.deepEqual(crossCheck(tr, 'AR RAD', [{ code: '105', qty: 15 }], { now: NOW, invoiced: [] }).problems, ['105: invoice has 15, cut 14.5m on 07/11']);
+});
+
+test('a voice note the person replies to («this one») goes the same way as a sent one', () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  const at = src.indexOf('the quoted voice note goes the same way a sent one does');
+  const block = src.slice(at - 100, at + 1100);
+  assert.match(block, /!audio && !image && addressed && config\.voiceEnabled && ctx\.quotedMessage && ctx\.stanzaId/);
+  assert.match(block, /audioRaw = \{ key: \{ remoteJid: chatId, id: ctx\.stanzaId, participant: ctx\.participant \}, message: ctx\.quotedMessage \}/);
+  assert.match(src, /downloadMediaMessage\(audioRaw, 'buffer', \{\}\), audio\.seconds/); // the quoted message is the one downloaded
+  assert.match(src, /let audio = config\.voiceEnabled \? content\?\.audioMessage : null;\s*let audioRaw = raw;/);
+});

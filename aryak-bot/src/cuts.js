@@ -133,7 +133,7 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
     if (!(sameCutCustomer(e.customer, customer) || sameCutCustomer(e.customerTyped, customer))) continue;
-    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
+    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
   }
   const same = (r, inv) => (inv.codes || []).some((k) => code(k) === r.code || (r.digits && digitsOf(k) === r.digits));
   if (invoiced) { // any invoice line of this customer and this code, on or after the cut day, takes the cut

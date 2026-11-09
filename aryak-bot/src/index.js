@@ -58,7 +58,7 @@ import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
-import { BotState, isAddressed, parseCommand, runCommand, staffAnswer } from './staff.js';
+import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, withoutBotNames } from './staff.js';
 import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
@@ -1576,7 +1576,8 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '', af
 
 async function handleStaffChat(raw, chatId, group) {
   const content = normalizeMessageContent(raw.message);
-  const audio = config.voiceEnabled ? content?.audioMessage : null;
+  let audio = config.voiceEnabled ? content?.audioMessage : null;
+  let audioRaw = raw; // the message the voice note is downloaded from (the quoted one when the person replies to a voice note with «this one»)
   let image = config.imageConfirm ? imageOf(content) : null;
   let imageRaw = raw; // the message the picture is downloaded from (the quoted or the earlier one when she is asked about "the picture above")
   if (imageOf(content)) { lastPhotos.set(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`, { raw, image: imageOf(content), at: Date.now() }); if (lastPhotos.size > 80) lastPhotos.delete(lastPhotos.keys().next().value); }
@@ -1945,6 +1946,14 @@ async function handleStaffChat(raw, chatId, group) {
     await reply(correctionSaved(staffLang));
     return true;
   }
+  // "atossa listen to this one" as a reply to a voice note: the quoted voice note goes the same way a sent one does
+  if (!audio && !image && addressed && config.voiceEnabled && ctx.quotedMessage && ctx.stanzaId) {
+    const quotedAudio = normalizeMessageContent(ctx.quotedMessage)?.audioMessage;
+    if (quotedAudio && (!text || withoutBotNames(text, config.botNames).replace(/[.!؟?،,\s]+/g, ' ').trim().split(/\s+/).length <= 8)) {
+      audio = quotedAudio; audioRaw = { key: { remoteJid: chatId, id: ctx.stanzaId, participant: ctx.participant }, message: ctx.quotedMessage };
+      trace(where, role, 'voice note: the quoted voice note is taken');
+    }
+  }
   // A voice note is only answered with a question; the request goes on after the same person says yes.
   const key = `s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   // "atossa read the picture above": addressed with no picture attached -> the quoted picture, or that person's previous one, read once
@@ -1960,7 +1969,7 @@ async function handleStaffChat(raw, chatId, group) {
     // in it decide. Addressed anyway: a mention, a reply to the assistant, a private chat, or a note that
     // follows its question.
     const explicit = addressed || !!voiceDesk.get(key) || !!followDesk.get(key);
-    const u = await understandAudio(() => downloadMediaMessage(raw, 'buffer', {}), audio.seconds || 0, staffLang, !!group?.quiet && !explicit);
+    const u = await understandAudio(() => downloadMediaMessage(audioRaw, 'buffer', {}), audio.seconds || 0, staffLang, !!group?.quiet && !explicit);
     const named = !u.ok && !!u.transcript && nameHeard(u.transcript, config.botNames);
     const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
     const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });

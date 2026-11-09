@@ -11,8 +11,12 @@ const num = (s) => Number(String(s).replace(/,/g, ''));
 const title = (s) => s.replace(/[\s.,;:\-]+$/g, '').replace(/^[\s.,;:\-]+/g, '').trim();
 
 // ---- cut group -------------------------------------------------------------------------------------------------------------
-const QTY_PIECES = /(\d+(?:\s*\+\s*\d+)+)\s*(?:=\s*(\d+(?:\.\d+)?))?\s*(?:M|MTRS?|METERS?|METRES?)\b/i;
+const UNIT = String.raw`(?:M|MTRS?|METERS?|METRES?)`;
+// pieces added up: «18+12 = 30M», «6+3.5+3.2+2.7= INVOICE 14.5M» (the number after INVOICE is what was invoiced); the total after «=» and the unit are optional
+const QTY_PIECES = new RegExp(String.raw`(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+)\s*(?:=\s*(INVOICED?\s*)?(\d+(?:\.\d+)?)\s*)?(?:${UNIT}\b)?`, 'i');
+const QTY_TIMES = new RegExp(String.raw`(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+)\s*(?:${UNIT}\b)?`, 'i'); // «1.8×2»: two pieces of 1.8
 const QTY_ONE = /(\d+(?:\.\d+)?)\s*(M|MTRS?|METERS?|METRES?|ROLLS?)\b/i;
+const round3 = (n) => Math.round(n * 1000) / 1000;
 
 /**
  * "ART NO 410 DANDY DOOR 6M" -> { kind: 'cut', code: '410', customer: 'DANDY DOOR', quantity: 6, unit: 'm' }.
@@ -30,11 +34,19 @@ export function parseCutCaption(text) {
   let quantity = null;
   let pieces;
   let unit = 'm';
+  let invoiceQuantity;
   const p = QTY_PIECES.exec(rest);
+  const t = p ? null : QTY_TIMES.exec(rest);
   if (p) {
     pieces = p[1].split('+').map((x) => num(x));
-    quantity = p[2] ? num(p[2]) : pieces.reduce((a, b) => a + b, 0);
+    const sum = round3(pieces.reduce((a, b) => a + b, 0));
+    if (p[2] && p[3]) { quantity = sum; invoiceQuantity = num(p[3]); } // «= INVOICE 14.5M»: the cut is the sum, 14.5 is what the office invoices
+    else quantity = p[3] ? num(p[3]) : sum;
     rest = rest.replace(p[0], ' ');
+  } else if (t) {
+    const each = num(t[1]); const n = Number(t[2]);
+    pieces = Array.from({ length: n }, () => each); quantity = round3(each * n);
+    rest = rest.replace(t[0], ' ');
   } else {
     const q = QTY_ONE.exec(rest);
     if (q) { quantity = num(q[1]); unit = /^roll/i.test(q[2]) ? 'roll' : 'm'; rest = rest.replace(q[0], ' '); }
@@ -42,7 +54,7 @@ export function parseCutCaption(text) {
   const internal = /\bFOR\s+CUT(?:TING)?\b/i.test(rest);
   const damaged = /\bDAMAG\w*/i.test(rest);
   const customer = title(rest.replace(/\bFOR\s+CUT(?:TING)?\b/gi, ' ').replace(/\bDAMAG\w*(?:\s+PIECES?)?/gi, ' ').replace(/\bPIECES?\b/gi, ' ').replace(/\s+/g, ' '));
-  const base = { code, customer, quantity, unit, ...(pieces ? { pieces } : {}) };
+  const base = { code, customer, quantity, unit, ...(pieces ? { pieces } : {}), ...(invoiceQuantity !== undefined ? { invoiceQuantity } : {}) };
   if (internal) return { ...base, kind: 'open-roll', customer: '' };
   if (damaged) return { ...base, kind: 'damage' };
   return { ...base, kind: 'cut' };
