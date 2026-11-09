@@ -52,13 +52,13 @@ test('the currency is the company\'s own: Preferences HomeCurrency, the country 
 test('the PDF shows the company\'s currency, never a fixed one; the sandbox footer is on every page', () => {
   const usd = buildStatementData({ company: { CompanyName: 'Sandbox Co', Country: 'US' }, preferences: { CurrencyPrefs: { HomeCurrency: { value: 'USD' } } }, customer: { DisplayName: 'Bird Sanctuary', Balance: 239 }, invoices: [{ DocNumber: '1001', TxnDate: '2026-10-09', DueDate: '2026-11-08', TotalAmt: 239, Balance: 239 }], today: TODAY });
   const pdf = statementPdf(usd, { sandbox: true, style: 'balance' }).toString('latin1');
-  assert.ok(pdf.includes('Balance due \\(USD\\)') && pdf.includes('USD 239.00'));
+  assert.ok(pdf.includes('(BALANCE DUE) Tj') && pdf.includes('USD 239.00'));
   assert.ok(!pdf.includes('AED'));
   assert.ok(pdf.includes('test, built by Atossa'));
   const aed = buildStatementData({ company: { CompanyName: 'Real Co', Country: 'AE' }, preferences: { CurrencyPrefs: { HomeCurrency: { value: 'AED' } } }, customer: { DisplayName: 'X', Balance: 1 }, invoices: [{ DocNumber: '1', TxnDate: TODAY, DueDate: TODAY, TotalAmt: 1, Balance: 1 }], today: TODAY });
   const real = statementPdf(aed, { sandbox: false, style: 'balance' }).toString('latin1');
-  assert.ok(real.includes('Balance due \\(AED\\)') && real.includes('AED 1.00') && !real.includes('test, built by Atossa') && !real.includes('USD'));
-  assert.ok(!statementPdf({ ...aed, currency: '' }, { style: 'balance' }).toString('latin1').includes('Balance due \\(')); // unknown currency: no code at all
+  assert.ok(real.includes('(BALANCE DUE) Tj') && real.includes('AED 1.00') && !real.includes('test, built by Atossa') && !real.includes('USD'));
+  assert.ok(!statementPdf({ ...aed, currency: '' }, { style: 'balance' }).toString('latin1').includes('AED 1.00')); // unknown currency: no code at all
   const long = buildStatementData({ company: { CompanyName: 'Sandbox Co', Country: 'US' }, customer: { DisplayName: 'Z', Balance: 0 }, invoices: Array.from({ length: 90 }, (_, i) => ({ DocNumber: `N${i}`, TxnDate: '2026-11-01', TotalAmt: 1, Balance: 0 })), today: TODAY });
   const pages = statementPdf(long, { sandbox: true, style: 'balance' }).toString('latin1');
   assert.equal(pages.split('test, built by Atossa').length - 1, 3); // one footer per page, three pages

@@ -119,7 +119,7 @@ test('a statement for a period: opening balance, the lines of the period, the cl
   const now = buildStatementData({ company, customer, invoices, payments, credits: [], today: TODAY, from: '2026-10-01', to: TODAY });
   assert.equal(now.historical, false); assert.equal(now.closing, 70000);
   const pdf = Buffer.from(statementPdf(d, { style: 'balance' })).toString('latin1');
-  assert.match(pdf, /Balance at end of period/); assert.match(pdf, /01\/10\/2026 to 31\/10\/2026/);
+  assert.match(pdf, /BALANCE DUE/); assert.match(pdf, /01\/10\/2026 - 31\/10\/2026/);
   assert.doesNotMatch(pdf, /Over 90 days/); // no ageing for a past period
 });
 

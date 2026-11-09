@@ -129,23 +129,42 @@ function firstPageBlock(data) {
   return { top, left, titleY, bandY: Math.max(ly, titleY + 70) + 14 };
 }
 
+/** What each layout puts in the table and under it; the header and the styling are the same code for both (drawStatement). */
+function layoutSpec(data, style) {
+  const currency = data.currency || '';
+  const cur = currency ? `${currency} ` : ''; // an unknown currency prints no code at all
+  if (style === 'balance') { // like the QuickBooks app's Balance Forward statement
+    const rows = [{ date: dmy(data.start), desc: 'Balance forward', c3: '', c4: money(data.opening) }];
+    for (const l of data.lines) {
+      const ref = l.ref ? String(l.ref) : '';
+      const desc = l.type === 'Invoice' ? 'Invoice No.' + ref : l.type === 'Payment' ? 'Payment' + (ref ? ' ' + ref : '') : 'Credit memo' + (ref ? ' No.' + ref : '');
+      rows.push({ date: dmy(l.date), desc, c3: money(l.amount), c4: money(l.balance) });
+    }
+    return { heads: ['DATE', 'DESCRIPTION', 'AMOUNT', 'BALANCE'], rows, totals: [['BALANCE DUE', cur + money(data.closing)]], empty: '' };
+  }
+  const rows = data.txn.map((r) => ({ date: dmy(r.date), desc: 'Invoice No.' + r.ref, c3: money(r.amount), c4: money(r.received) }));
+  const amount = data.txn.reduce((n, r) => n + r.amount, 0); const received = data.txn.reduce((n, r) => n + r.received, 0);
+  return { heads: ['DATE', 'DESCRIPTION', 'AMOUNT', 'RECEIVED'], rows, totals: [['TOTAL AMOUNT', cur + money(amount)], ['TOTAL RECEIVED', cur + money(received)]], empty: 'No invoice dated in this period.' };
+}
+
 /**
- * The statement like the QuickBooks app's transaction statement (the default): company and logo, the big title, the customer and the date, then
- * DATE | DESCRIPTION | AMOUNT | RECEIVED, one row per invoice of the period, and the two totals. The table header band repeats on every page.
- * [logo]: a picture from loadLogo or null. The app's statement number is not printed: QuickBooks numbers its own and the API cannot make one.
+ * The statement in the QuickBooks app's look, for BOTH layouts: company block and logo, the big title, TO, DATE and PERIOD, the table with its light-blue band
+ * (repeated on every page), the dotted line and the totals. [style]: 'transaction' (the app's Transaction statement, the default) or 'balance' (its Balance Forward).
+ * Only the table's columns and the totals differ; the header is one function, so the two cannot drift apart. [logo]: a picture from loadLogo or null.
+ * The app's statement number is not printed: QuickBooks numbers its own and the API cannot make one.
  */
-export function transactionPdf(data, { sandbox = false, logo = null } = {}) {
+export function drawStatement(data, { sandbox = false, logo = null, style = 'transaction' } = {}) {
   const pdf = new MiniPdf();
   const L = 40; const R = 555; const W = pdf.width;
-  const currency = data.currency || 'AED';
-  const cx = { date: L + 6, desc: L + 100, amount: R - 120, received: R - 6 };
+  const spec = layoutSpec(data, style);
+  const cx = { date: L + 6, desc: L + 100, c3: R - 120, c4: R - 6 };
   const blk = firstPageBlock(data);
   const band = (y) => {
     pdf.box(L, y - 12, R - L, 20, 0, BAND);
-    pdf.text(cx.date, y + 2, 'DATE', { size: 9, bold: true, rgb: BLUE_TEXT });
-    pdf.text(cx.desc, y + 2, 'DESCRIPTION', { size: 9, bold: true, rgb: BLUE_TEXT });
-    pdf.text(cx.amount, y + 2, 'AMOUNT', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
-    pdf.text(cx.received, y + 2, 'RECEIVED', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
+    pdf.text(cx.date, y + 2, spec.heads[0], { size: 9, bold: true, rgb: BLUE_TEXT });
+    pdf.text(cx.desc, y + 2, spec.heads[1], { size: 9, bold: true, rgb: BLUE_TEXT });
+    pdf.text(cx.c3, y + 2, spec.heads[2], { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
+    pdf.text(cx.c4, y + 2, spec.heads[3], { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
     return y + 24;
   };
   const head = () => {
@@ -161,8 +180,8 @@ export function transactionPdf(data, { sandbox = false, logo = null } = {}) {
     pdf.text(R, blk.titleY + 52, `${dmy(data.start)} - ${dmy(data.periodEnd || data.today)}`, { size: 10, align: 'right' });
   };
   // pages: how many rows fit (the first page starts lower); the totals need room too, else they go on a page of their own
-  const rowH = 17; const bottom = 780; const totalsH = 62;
-  const rows = data.txn;
+  const rowH = 17; const bottom = 780; const totalsH = 24 + 18 * spec.totals.length;
+  const rows = spec.rows;
   const pageRows = [];
   let y = blk.bandY + 24; let i = 0;
   do {
@@ -177,20 +196,19 @@ export function transactionPdf(data, { sandbox = false, logo = null } = {}) {
     let yy;
     if (idx === 0) { head(); yy = band(blk.bandY); } else yy = band(60);
     for (const r of chunk) {
-      pdf.text(cx.date, yy, dmy(r.date), { size: 9 });
-      pdf.text(cx.desc, yy, `Invoice No.${r.ref}`.slice(0, 40), { size: 9 });
-      pdf.text(cx.amount, yy, money(r.amount), { size: 9, align: 'right' });
-      pdf.text(cx.received, yy, money(r.received), { size: 9, align: 'right' });
+      pdf.text(cx.date, yy, r.date, { size: 9 });
+      pdf.text(cx.desc, yy, r.desc.slice(0, 40), { size: 9 });
+      if (r.c3) pdf.text(cx.c3, yy, r.c3, { size: 9, align: 'right' });
+      pdf.text(cx.c4, yy, r.c4, { size: 9, align: 'right' });
       yy += rowH;
     }
     if (idx === total - 1) {
       pdf.line(L, yy - 6, R, yy - 6, 0.8, 0.4, [1, 3]);
-      const amount = rows.reduce((n, r) => n + r.amount, 0); const received = rows.reduce((n, r) => n + r.received, 0);
-      pdf.text(R - 150, yy + 12, 'TOTAL AMOUNT', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
-      pdf.text(R, yy + 12, `${currency} ${money(amount)}`, { size: 10, bold: true, align: 'right' });
-      pdf.text(R - 150, yy + 30, 'TOTAL RECEIVED', { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
-      pdf.text(R, yy + 30, `${currency} ${money(received)}`, { size: 10, bold: true, align: 'right' });
-      if (!rows.length) pdf.text(L + 6, yy + 12, 'No invoice dated in this period.', { size: 9, gray: 0.4 });
+      spec.totals.forEach(([label, value], k) => {
+        pdf.text(R - 150, yy + 12 + 18 * k, label, { size: 9, bold: true, rgb: BLUE_TEXT, align: 'right' });
+        pdf.text(R, yy + 12 + 18 * k, value, { size: 10, bold: true, align: 'right' });
+      });
+      if (!rows.length && spec.empty) pdf.text(L + 6, yy + 12, spec.empty, { size: 9, gray: 0.4 });
     }
     pdf.text(W / 2, 826, `Page ${idx + 1} of ${total}`, { size: 8, align: 'center', gray: 0.5 });
     if (sandbox) pdf.text(W / 2, 812, 'test, built by Atossa', { size: 10, bold: true, align: 'center', gray: 0.3 });
@@ -198,116 +216,11 @@ export function transactionPdf(data, { sandbox = false, logo = null } = {}) {
   return pdf.build();
 }
 
-/** The statement as a PDF (bytes): the QuickBooks app's transaction statement, or with { style: 'balance' } the older layout with a running balance. [sandbox]: the test footer is printed. */
+/** The statement as a PDF (bytes): the app's transaction statement by default, or with { style: 'balance' } its balance-forward statement, in the same look. */
 export function statementPdf(data, { sandbox = false, style = 'transaction', logo = null } = {}) {
-  return style === 'balance' ? balancePdf(data, { sandbox, logo }) : transactionPdf(data, { sandbox, logo });
+  return drawStatement(data, { sandbox, logo, style: style === 'balance' ? 'balance' : 'transaction' });
 }
-
-/** The balance-forward layout: opening balance, every invoice, payment and credit memo with a running balance, ageing. */
-function balancePdf(data, { sandbox = false, logo = null } = {}) {
-  const currency = data.currency || '';
-  const cur = currency ? ` (${currency})` : '';
-  const pdf = new MiniPdf();
-  const L = 40; const R = 555;
-  // the company name is wrapped to the room left of the title (never over it); every block below starts under the one above
-  const nameLines = wrapText(data.company.name || 'Company', 16, 360, true).slice(0, 3);
-  const headLines = [...nameLines.map((t) => ({ t, size: 16, bold: true, step: 19 })), ...data.company.lines.slice(0, 4).flatMap((l) => wrapText(l, 9, 360).slice(0, 2).map((t) => ({ t, size: 9, gray: 0.3, step: 12 }))), ...(data.company.email ? [{ t: data.company.email, size: 9, gray: 0.3, step: 12 }] : [])];
-  const headBottom = Math.max(logo ? 140 : 125, 50 + headLines.reduce((n, r) => n + r.step, 0) + 4);
-  const extra = headBottom - 125; // how much lower than the old fixed layout everything starts
-  const page = (n, total) => {
-    pdf.addPage();
-    let hy = 50;
-    for (const r of headLines) { pdf.text(L, hy, r.t, { size: r.size, bold: r.bold, gray: r.gray || 0 }); hy += r.step; }
-    const ty = logo ? 100 : 50; // with a logo the title block moves under it (top right), never over it
-    if (logo) pdf.image(logo, R - 150, 24, 150, 54);
-    pdf.text(R, ty, 'STATEMENT', { size: 18, bold: true, align: 'right' });
-    pdf.text(R, ty + 18, `Date: ${dmy(data.today)}`, { size: 10, align: 'right' });
-    pdf.text(R, ty + 32, `Page ${n} of ${total}`, { size: 9, align: 'right', gray: 0.4 });
-    pdf.line(L, headBottom, R, headBottom, 1);
-    if (sandbox) pdf.text(W / 2, 822, 'test, built by Atossa', { size: 10, bold: true, align: 'center', gray: 0.3 }); // every page of a sandbox statement
-  };
-  const W = pdf.width;
-  const custLines = wrapText(data.customer.name || '-', 12, 270, true).slice(0, 3);
-  const custExtra = (custLines.length - 1) * 14;
-  const perFirst = Math.max(8, 28 - Math.ceil((extra + custExtra) / 14)); const perNext = 48;
-  const chunks = [data.lines.slice(0, perFirst)];
-  for (let i = perFirst; i < data.lines.length; i += perNext) chunks.push(data.lines.slice(i, i + perNext));
-  const total = chunks.length;
-  chunks.forEach((chunk, idx) => {
-    page(idx + 1, total);
-    let y = headBottom + 20;
-    if (idx === 0) {
-      pdf.text(L, y, 'To', { size: 9, gray: 0.4 });
-      custLines.forEach((t, i) => pdf.text(L, y + 14 + i * 14, t, { size: 12, bold: true }));
-      data.customer.lines.slice(0, 4).forEach((l, i) => pdf.text(L, y + 28 + custExtra + i * 12, l.slice(0, 60), { size: 9, gray: 0.3 }));
-      pdf.text(R, y, 'Statement period', { size: 9, gray: 0.4, align: 'right' });
-      pdf.text(R, y + 14, `${dmy(data.start)} to ${dmy(data.periodEnd || data.today)}`, { size: 10, align: 'right' });
-      pdf.box(330, y + 28, R - 330, 44, 0.94);
-      pdf.text(340, y + 44, `Balance due${cur}`, { size: 9, gray: 0.35 });
-      pdf.text(R - 10, y + 64, money(data.closing), { size: 15, bold: true, align: 'right' });
-      y += 100 + custExtra;
-    }
-    // table header
-    const cols = { date: L + 4, type: L + 70, ref: L + 140, due: L + 235, amount: R - 95, balance: R - 4 };
-    pdf.box(L, y - 11, R - L, 16, 0.9);
-    pdf.text(cols.date, y, 'Date', { size: 9, bold: true });
-    pdf.text(cols.type, y, 'Type', { size: 9, bold: true });
-    pdf.text(cols.ref, y, 'No.', { size: 9, bold: true });
-    pdf.text(cols.due, y, 'Due', { size: 9, bold: true });
-    pdf.text(cols.amount, y, 'Amount', { size: 9, bold: true, align: 'right' });
-    pdf.text(cols.balance, y, 'Balance', { size: 9, bold: true, align: 'right' });
-    y += 16;
-    if (idx === 0) {
-      pdf.text(cols.type, y, 'Balance brought forward', { size: 9 });
-      pdf.text(cols.balance, y, money(data.opening), { size: 9, align: 'right' });
-      y += 14;
-    }
-    for (const l of chunk) {
-      pdf.text(cols.date, y, dmy(l.date), { size: 9 });
-      pdf.text(cols.type, y, l.type, { size: 9 });
-      pdf.text(cols.ref, y, String(l.ref).slice(0, 18), { size: 9 });
-      pdf.text(cols.due, y, l.due ? dmy(l.due) : '', { size: 9 });
-      pdf.text(cols.amount, y, money(l.amount), { size: 9, align: 'right' });
-      pdf.text(cols.balance, y, money(l.balance), { size: 9, align: 'right' });
-      y += 14;
-    }
-    if (idx === total - 1) {
-      pdf.line(L, y - 6, R, y - 6, 0.6);
-      pdf.text(cols.type, y + 6, data.historical ? 'Balance at end of period' : 'Balance due', { size: 10, bold: true });
-      pdf.text(cols.balance, y + 6, `${currency ? `${currency} ` : ''}${money(data.closing)}`, { size: 10, bold: true, align: 'right' });
-      y += 36;
-      if (data.historical) { for (const [i, w] of data.warnings.entries()) pdf.text(L, y + i * 11, w, { size: 8, gray: 0.4 }); return; } // no ageing for a past period
-      const a = data.ageing;
-      const heads = ['Current', '1-30 days', '31-60 days', '61-90 days', 'Over 90 days', 'Total'];
-      const vals = [a.current, a.d1_30, a.d31_60, a.d61_90, a.d91, data.ageingTotal];
-      const cw = (R - L) / 6;
-      pdf.box(L, y - 11, R - L, 16, 0.9);
-      heads.forEach((h, i) => pdf.text(L + cw * (i + 1) - 6, y, h, { size: 9, bold: true, align: 'right' }));
-      vals.forEach((v, i) => pdf.text(L + cw * (i + 1) - 6, y + 16, money(v), { size: 9, align: 'right', bold: i === 5 }));
-      y += 34;
-      if (data.credit) pdf.text(L, y, `Ageing includes unapplied payments and credit memos: ${money(data.credit)}`, { size: 8, gray: 0.4 });
-      if (data.balanceCheck.matches === false) pdf.text(L, y + 12, `QuickBooks shows a customer balance of ${money(data.balanceCheck.qbo)}; this statement differs.`, { size: 8, bold: true });
-      for (const [i, w] of data.warnings.entries()) pdf.text(L, y + 24 + i * 11, w, { size: 8, gray: 0.4 });
-      // the open invoices with their days overdue (zero or less = not yet due), when there is room on the page
-      const items = data.openItems.slice(0, 10);
-      const top = y + 40 + data.warnings.length * 11;
-      if (items.length && top + 12 + items.length * 12 < 805) {
-        pdf.text(L, top, 'Open invoices', { size: 9, bold: true });
-        pdf.text(L + 150, top, 'Due', { size: 8, gray: 0.4 });
-        pdf.text(L + 230, top, 'Days overdue', { size: 8, gray: 0.4 });
-        pdf.text(R - 4, top, 'Balance', { size: 8, gray: 0.4, align: 'right' });
-        items.forEach((it, k) => {
-          const yy = top + 12 * (k + 1);
-          pdf.text(L, yy, String(it.ref).slice(0, 18), { size: 8 });
-          pdf.text(L + 150, yy, dmy(it.due), { size: 8 });
-          pdf.text(L + 230, yy, it.past > 0 ? String(it.past) : 'not yet due', { size: 8 });
-          pdf.text(R - 4, yy, money(it.balance), { size: 8, align: 'right' });
-        });
-      }
-    }
-  });
-  return pdf.build();
-}
+export const transactionPdf = (data, opts = {}) => drawStatement(data, { ...opts, style: 'transaction' });
 
 /** All the rows QuickBooks holds for one customer, as read-only queries. */
 export async function loadCustomerData(qbo, customerId) {

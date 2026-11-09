@@ -54,7 +54,7 @@ test('the app layout: one row per invoice of the period (date, then number), amo
   assert.ok(!text.some((x) => /Balance brought forward|Payment|Credit memo|Over 90/.test(x))); assert.ok(!text.includes('Invoice No.inv-9500') && !text.includes('Invoice No.inv-9700'));
   assert.ok(!text.some((x) => /STATEMENT NO/i.test(x))); // QuickBooks numbers its own statements
   const old = strings(statementPdf(d, { style: 'balance' }));
-  assert.ok(old.includes('Balance brought forward'));
+  assert.ok(old.includes('Balance forward') && old.includes('BALANCE DUE'));
 });
 
 test('nothing overlaps: long names are wrapped by measured width; the title is below the company block; the customer block is above the period', () => {
@@ -128,30 +128,28 @@ test('the wiring: the default is the app layout, the style is passed on, the log
   for (const v of ['ic', 'nl', 'ask', 'octxAsk']) assert.ok(index.includes(`style: ${v}.style`), v);
 });
 
-test('the balance layout (reply 1): a long company name and a long customer name do not overlap the title, the period or the table', () => {
-  const d = buildStatementData({ company: { ...COMPANY, CompanyName: COMPANY.CompanyName + ' ' + COMPANY.CompanyName }, customer: CUSTOMER, invoices: INV, today: TODAY, from: '2026-10-01', to: '2026-10-31' });
-  const raw = statementPdf(d, { style: 'balance' }).toString('latin1');
-  const ys = [...raw.matchAll(/([\d.]+) ([\d.]+) Td \(([^)]*)\) Tj/g)].map((m) => ({ x: +m[1], y: 842 - +m[2], s: m[3] }));
-  const title = ys.find((p) => p.s === 'STATEMENT'); const left = ys.filter((p) => p.x < 60 && p.y < 150);
-  for (const p of left) assert.ok(p.x + textWidth(p.s, 16, true) < title.x - 5 || p.y > title.y + 40 || p.s.length < 1, `${p.s} stays left of the title`);
-  const to = ys.find((p) => p.s === 'To'); const period = ys.find((p) => p.s === 'Statement period');
-  const names = ys.filter((p) => p.x < 60 && p.y > to.y && p.y < to.y + 80);
-  for (const p of names) assert.ok(p.x + textWidth(p.s, 12, true) < period.x - 100 - 5 || p.s.length < 1, `${p.s} ends before the period block`);
-  const band = ys.find((p) => p.s === 'Date' && p.y > to.y); assert.ok(band.y > Math.max(...names.map((p) => p.y)) + 8, 'the table is below the customer block');
-  assert.ok(ys.some((p) => p.s === 'Balance brought forward'));
-});
-
-test('layout 1 carries the logo too (top right, title under it, no overlap); the reply of layout 2 says the totals, layout 1 the balance', () => {
+test('both layouts are one look: the very same header (company, logo, title, TO, DATE, PERIOD) and band styling; only the columns and the totals differ', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logo2-'));
   fs.writeFileSync(path.join(dir, 'statement-logo.png'), png(4, 3, 6, 4, 90));
   const logo = loadLogo(dir);
-  const d = buildStatementData({ company: { ...COMPANY, CompanyName: COMPANY.CompanyName + ' ' + COMPANY.CompanyName }, customer: CUSTOMER, invoices: INV, today: TODAY, from: '2026-10-01', to: '2026-10-31' });
-  const raw = statementPdf(d, { style: 'balance', logo }).toString('latin1');
-  assert.ok(raw.includes('/Subtype /Image') && raw.includes('/Im0 Do') && raw.includes('(STATEMENT) Tj'));
-  assert.ok(!statementPdf(d, { style: 'balance' }).toString('latin1').includes('/Subtype /Image'));
-  const ys = [...raw.matchAll(/([\d.]+) ([\d.]+) Td \(([^)]*)\) Tj/g)].map((m) => ({ x: +m[1], y: 842 - +m[2], s: m[3] }));
-  const title = ys.find((p) => p.s === 'STATEMENT'); assert.ok(title.y > 80, 'the title is under the logo (logo box ends at y 78)');
-  const company = ys.filter((p) => p.x < 60 && p.y < 130); for (const p of company) assert.ok(p.x + textWidth(p.s, 16, true) < title.x - 5 || p.y < 5, p.s);
-  const desk = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'qbodesk.js'), 'utf8');
-  assert.match(desk, /layout === 'transaction' \? totals : `balance /); assert.match(desk, /total amount \$\{cur\}.*total received/);
+  const d = buildStatementData({ company: { ...COMPANY, CompanyName: COMPANY.CompanyName + ' ' + COMPANY.CompanyName }, customer: CUSTOMER, invoices: INV, payments: [{ TxnDate: '2026-10-25', TotalAmt: 100, UnappliedAmt: 0, PaymentRefNum: 'CHQ-9' }], today: TODAY, from: '2026-10-01', to: '2026-10-31' });
+  const draw = (style) => statementPdf(d, { style, logo }).toString('latin1');
+  const one = draw('balance'); const two = draw('transaction');
+  const ops = (raw) => [...raw.matchAll(/(\S+ \S+ \S+ rg|\S+ g) BT \/(F\d) ([\d.]+) Tf ([\d.]+) ([\d.]+) Td \(([^)]*)\) Tj/g)].map((m) => ({ color: m[1], font: m[2], size: m[3], x: +m[4], y: 842 - +m[5], s: m[6] }));
+  const bandY = (raw) => ops(raw).find((p) => ['DESCRIPTION'].includes(p.s)).y;
+  assert.equal(bandY(one), bandY(two)); // the table starts at the same place
+  const above = (raw) => ops(raw).filter((p) => p.y < bandY(raw) - 5).map((p) => `${p.s}|${p.x}|${p.y}|${p.size}|${p.font}|${p.color}`);
+  assert.deepEqual(above(one), above(two)); // the header is identical, text by text, position by position
+  assert.ok(above(one).some((x) => x.startsWith('Statement|')) && above(one).some((x) => x.startsWith('TO|')) && above(one).some((x) => x.startsWith('PERIOD|')));
+  for (const raw of [one, two]) { assert.ok(raw.includes('/Im0 Do')); assert.ok(raw.includes('(Page 1 of 1) Tj')); }
+  const band = (raw) => raw.match(/[\d.]+ [\d.]+ [\d.]+ rg [\d.]+ [\d.]+ [\d.]+ 20 re f/)[0].split(' ').slice(0, 3).join(' ');
+  assert.equal(band(one), band(two)); // the same light-blue band
+  const heads = (raw) => ops(raw).filter((p) => p.y === bandY(raw)).map((p) => p.s);
+  assert.deepEqual(heads(one), ['DATE', 'DESCRIPTION', 'AMOUNT', 'BALANCE']); assert.deepEqual(heads(two), ['DATE', 'DESCRIPTION', 'AMOUNT', 'RECEIVED']);
+  const text = strings(Buffer.from(one, 'latin1'));
+  for (const s of ['Balance forward', 'Invoice No.inv-9645', 'Payment CHQ-9', 'BALANCE DUE']) assert.ok(text.some((x) => x.startsWith(s)), s);
+  assert.ok(!text.some((x) => /Balance brought forward|Over 90|Balance due/.test(x))); // nothing of the old look is left
+  assert.ok(!/\(STATEMENT\) Tj/.test(one)); // the black title of the old layout is gone
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'qbostatement.js'), 'utf8');
+  assert.equal((src.match(/function drawStatement\(/g) || []).length, 1); assert.ok(!/function balancePdf/.test(src)); // one drawing function for both
 });
