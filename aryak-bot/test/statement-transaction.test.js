@@ -140,3 +140,18 @@ test('the balance layout (reply 1): a long company name and a long customer name
   const band = ys.find((p) => p.s === 'Date' && p.y > to.y); assert.ok(band.y > Math.max(...names.map((p) => p.y)) + 8, 'the table is below the customer block');
   assert.ok(ys.some((p) => p.s === 'Balance brought forward'));
 });
+
+test('layout 1 carries the logo too (top right, title under it, no overlap); the reply of layout 2 says the totals, layout 1 the balance', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logo2-'));
+  fs.writeFileSync(path.join(dir, 'statement-logo.png'), png(4, 3, 6, 4, 90));
+  const logo = loadLogo(dir);
+  const d = buildStatementData({ company: { ...COMPANY, CompanyName: COMPANY.CompanyName + ' ' + COMPANY.CompanyName }, customer: CUSTOMER, invoices: INV, today: TODAY, from: '2026-10-01', to: '2026-10-31' });
+  const raw = statementPdf(d, { style: 'balance', logo }).toString('latin1');
+  assert.ok(raw.includes('/Subtype /Image') && raw.includes('/Im0 Do') && raw.includes('(STATEMENT) Tj'));
+  assert.ok(!statementPdf(d, { style: 'balance' }).toString('latin1').includes('/Subtype /Image'));
+  const ys = [...raw.matchAll(/([\d.]+) ([\d.]+) Td \(([^)]*)\) Tj/g)].map((m) => ({ x: +m[1], y: 842 - +m[2], s: m[3] }));
+  const title = ys.find((p) => p.s === 'STATEMENT'); assert.ok(title.y > 80, 'the title is under the logo (logo box ends at y 78)');
+  const company = ys.filter((p) => p.x < 60 && p.y < 130); for (const p of company) assert.ok(p.x + textWidth(p.s, 16, true) < title.x - 5 || p.y < 5, p.s);
+  const desk = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'qbodesk.js'), 'utf8');
+  assert.match(desk, /layout === 'transaction' \? totals : `balance /); assert.match(desk, /total amount \$\{cur\}.*total received/);
+});

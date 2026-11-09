@@ -200,11 +200,11 @@ export function transactionPdf(data, { sandbox = false, logo = null } = {}) {
 
 /** The statement as a PDF (bytes): the QuickBooks app's transaction statement, or with { style: 'balance' } the older layout with a running balance. [sandbox]: the test footer is printed. */
 export function statementPdf(data, { sandbox = false, style = 'transaction', logo = null } = {}) {
-  return style === 'balance' ? balancePdf(data, { sandbox }) : transactionPdf(data, { sandbox, logo });
+  return style === 'balance' ? balancePdf(data, { sandbox, logo }) : transactionPdf(data, { sandbox, logo });
 }
 
 /** The balance-forward layout: opening balance, every invoice, payment and credit memo with a running balance, ageing. */
-function balancePdf(data, { sandbox = false } = {}) {
+function balancePdf(data, { sandbox = false, logo = null } = {}) {
   const currency = data.currency || '';
   const cur = currency ? ` (${currency})` : '';
   const pdf = new MiniPdf();
@@ -212,15 +212,17 @@ function balancePdf(data, { sandbox = false } = {}) {
   // the company name is wrapped to the room left of the title (never over it); every block below starts under the one above
   const nameLines = wrapText(data.company.name || 'Company', 16, 360, true).slice(0, 3);
   const headLines = [...nameLines.map((t) => ({ t, size: 16, bold: true, step: 19 })), ...data.company.lines.slice(0, 4).flatMap((l) => wrapText(l, 9, 360).slice(0, 2).map((t) => ({ t, size: 9, gray: 0.3, step: 12 }))), ...(data.company.email ? [{ t: data.company.email, size: 9, gray: 0.3, step: 12 }] : [])];
-  const headBottom = Math.max(125, 50 + headLines.reduce((n, r) => n + r.step, 0) + 4);
+  const headBottom = Math.max(logo ? 140 : 125, 50 + headLines.reduce((n, r) => n + r.step, 0) + 4);
   const extra = headBottom - 125; // how much lower than the old fixed layout everything starts
   const page = (n, total) => {
     pdf.addPage();
     let hy = 50;
     for (const r of headLines) { pdf.text(L, hy, r.t, { size: r.size, bold: r.bold, gray: r.gray || 0 }); hy += r.step; }
-    pdf.text(R, 50, 'STATEMENT', { size: 18, bold: true, align: 'right' });
-    pdf.text(R, 68, `Date: ${dmy(data.today)}`, { size: 10, align: 'right' });
-    pdf.text(R, 82, `Page ${n} of ${total}`, { size: 9, align: 'right', gray: 0.4 });
+    const ty = logo ? 100 : 50; // with a logo the title block moves under it (top right), never over it
+    if (logo) pdf.image(logo, R - 150, 24, 150, 54);
+    pdf.text(R, ty, 'STATEMENT', { size: 18, bold: true, align: 'right' });
+    pdf.text(R, ty + 18, `Date: ${dmy(data.today)}`, { size: 10, align: 'right' });
+    pdf.text(R, ty + 32, `Page ${n} of ${total}`, { size: 9, align: 'right', gray: 0.4 });
     pdf.line(L, headBottom, R, headBottom, 1);
     if (sandbox) pdf.text(W / 2, 822, 'test, built by Atossa', { size: 10, bold: true, align: 'center', gray: 0.3 }); // every page of a sandbox statement
   };

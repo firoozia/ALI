@@ -396,18 +396,22 @@ export class QboDesk {
     const safe = (data.customer.name || found.name).replace(/[^\w.-]+/g, '_').slice(0, 40) || 'customer';
     const cur = data.currency ? `${data.currency} ` : '';
     const dm = (d) => d.split('-').reverse().join('/'); // the period is echoed day first, as the books are read here
-    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${dm(period.from)} to ${dm(period.to)}` : 'current'} - balance ${cur}${money(data.closing)}`;
+    // the app layout shows the total amount and the total received, so those are said; the balance layout says the balance
+    const sum = (k) => (data.txn || []).reduce((n, r) => n + r[k], 0);
+    const layout = style || 'transaction';
+    const totals = `total amount ${cur}${money(sum('amount'))}, total received ${cur}${money(sum('received'))}`;
+    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${dm(period.from)} to ${dm(period.to)}` : 'current'} - ${layout === 'transaction' ? totals : `balance ${cur}${money(data.closing)}`}`;
     const fileName = `statement-${safe}${period ? `-${period.label}` : ''}.pdf`;
-    if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, balance: `${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}`, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
+    if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, balance: layout === 'transaction' ? totals : `${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}`, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
     await this.post(privateJid, pdf, fileName, caption);
     // a read-only action with ONE clearly best candidate is done and said, not asked: «(حدس از …)»
     const guessed = found.via === 'sound' ? ` (حدس از «${typed}» — اگر مشتری دیگری بود بنویسید)` : '';
     if (isEnglishOut()) {
       const shown = data.customer.name || found.name;
       const note = found.via === 'sound' ? ` (guessed from "${typed}"; tell me if it is another customer)` : '';
-      return { ok: true, name: shown, guessed: !!guessed, text: `Statement of account for "${shown}"${note}${period ? ` from ${dm(period.from)} to ${dm(period.to)}` : ''} sent (balance ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? ', closing balance of the period' : ''}).` };
+      return { ok: true, name: shown, guessed: !!guessed, text: `Statement of account for "${shown}"${note}${period ? ` from ${dm(period.from)} to ${dm(period.to)}` : ''} sent (${layout === 'transaction' ? totals : `balance ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? ', closing balance of the period' : ''}`}).` };
     }
-    return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(dm(period.from))} تا ${fa(dm(period.to))}` : ''} فرستاده شد (مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}).` };
+    return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(dm(period.from))} تا ${fa(dm(period.to))}` : ''} فرستاده شد (${layout === 'transaction' ? `جمع مبلغ ${money((data.txn || []).reduce((n, r) => n + r.amount, 0))}، جمع دریافتی ${money((data.txn || []).reduce((n, r) => n + r.received, 0))}${data.currency ? ` ${data.currency}` : ''}` : `مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}`}).` };
   }
 
   async statementOne(typed, privateJid = null) {
