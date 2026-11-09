@@ -225,7 +225,7 @@ export function stockBlocks(result, lang = 'fa', want = null, opts = {}) {
 export function formatStaffStock(result, askedCode = '', note = '', lang = 'fa', want = null, opts = {}) {
   const t = wordsOf(lang, !!opts.units);
   if (!result.found) return t.notFound(result.code || askedCode);
-  if (result.ambiguous) return t.ambiguous(askedCode, withSeparators(result.categories.map((c, i) => `${i + 1}) ${c}`)));
+  if (result.ambiguous) return t.ambiguous(askedCode, withSeparators(result.categories.map((c, i) => `${i + 1}) ${c}`)) + `\n${SEP}`);
   if (result.sizeFound === false) return t.noSize(result.code, result.size, (result.sizes || []).join(`${t.comma} `) || '—');
   const old = result.stale ? t.stale(result.ageMinutes) : '';
   return [note, old, withSeparators(stockBlocks(result, lang, want, opts))].filter(Boolean).join('\n\n'); // one block per code or size: a separator line between them

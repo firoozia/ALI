@@ -1,6 +1,7 @@
 // ARYAK Assistant: WhatsApp (Baileys) + Claude + Zinax Stock.
 
-import { withSeparators } from './separator.js';
+import { withEnd, withSeparators } from './separator.js';
+import { markAmounts } from './amount.js';
 import makeWASocket, { BufferJSON, DisconnectReason, downloadMediaMessage, isJidGroup, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
@@ -817,7 +818,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       const pairs = proposeAliases({ postNames: [...new Set(postNames)], qboNames, skip: (k) => cutAliases.settled(k), exclude: (n) => own.includes(nameKey(n)) }); // the assistant's own name (and staff names set in the settings) is never a customer
       if (!pairs.length) return [`No new alias to propose (${cutAliases.list().length} approved so far).`];
       const p = cutAliases.propose(pairs);
-      return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, withSeparators(pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`)), ...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`].join('\n')];
+      return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, withEnd(pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), [...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`])].join('\n')];
     }
     case 'payment_dup': { const r = paymentDups.decide(ic.id, ic.verb); return [r.error ? `No open question #${ic.id} (it was answered or never asked).` : r.verb === 'dup' ? `Noted: the second payment is the same as the first; it will be counted once (#${ic.id}).` : `Noted: two separate payments (#${ic.id}); I will not ask again.`]; }
     case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
@@ -2590,6 +2591,9 @@ async function start() {
       try { const en = await englishOut(a[1].text, englishViaModel); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } catch { /* sent as written */ }
     } else if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && !keepLang.has(a[1])) {
       try { if (await englishFor(a[0])) { const en = toEnglish(a[1].text); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } } catch { /* sent as written */ }
+    }
+    if (typeof a[1]?.text === 'string' && (ownIds().some((o) => jidDigits(o) === jidDigits(a[0])) || await englishFor(a[0]).catch(() => false))) { // the team's texts (never a customer group): amounts bold and unbroken, invoice numbers plain
+      const marked = markAmounts(a[1].text); if (marked !== a[1].text) a[1] = { ...a[1], text: marked };
     }
     const r = await guarded(...a); if (r && isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
   sock.ev.on('creds.update', saveCreds);

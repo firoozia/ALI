@@ -36,5 +36,5 @@ test('no match for something else, and none when two options fit equally', () =>
 
 test('the question lists the options with numbers', () => {
   const q = formatStaffStock({ found: true, ambiguous: true, categories: groups }, '1810');
-  assert.match(q, /^کد 1810 در چند گروه هست:\n1\) PVC film\n━{18}\n2\) Edge banding\nکدام را می‌خواهید؟/);
+  assert.match(q, /^کد 1810 در چند گروه هست:\n1\) PVC film\n━{18}\n2\) Edge banding\n━{18}\nکدام را می‌خواهید؟/);
 });

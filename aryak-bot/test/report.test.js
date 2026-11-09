@@ -47,8 +47,7 @@ test('the short report: period in dd/mm/yyyy, totals, a block per code, the hint
   assert.equal(t, [
     'خروجی کالا از 01/10/2026 تا 31/10/2026\n- تعداد عملیات: 7\n- جمع: 442.5 m، 12 pcs',
     'کد 229 (PVC film)\n- جمع خروج: 300 m\n- تعداد عملیات: 4\n- تعداد بسته: 3\n- مشتری‌های اصلی: Bahar 200 m، بدون مشتری 100 m\n━━━━━━━━━━━━━━━━━━\nکد 408 (PVC film)\n- جمع خروج: 142.5 m\n- تعداد عملیات: 2\n- تعداد بسته: 2\n- مشتری‌های اصلی: Master Wood 142.5 m\n━━━━━━━━━━━━━━━━━━\nکد H-1 (Hinge)\n- جمع خروج: 12 pcs\n- تعداد عملیات: 1\n- تعداد بسته: 1',
-    'برای فهرست عملیات بنویسید «جزئیات»',
-  ].join('\n\n'));
+  ].join('\n\n') + '\n━━━━━━━━━━━━━━━━━━\nبرای فهرست عملیات بنویسید «جزئیات»'); // the hint is set apart from the last block by the line
 });
 
 test('long lists are cut: eight codes, then "and N more"', () => {

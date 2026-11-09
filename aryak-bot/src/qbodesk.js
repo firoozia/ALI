@@ -2,7 +2,7 @@
 // "صورت‌حساب <customer>" and "صورت‌حساب همه" (at most 50, a gap between posts). READ ONLY: nothing is ever written to QuickBooks here. Every statement
 // is posted ONLY to the test group, whatever is asked: the desk has no target to choose, it asks for "the test group" and nothing else.
 
-import { withSeparators } from './separator.js';
+import { withEnd, withSeparators } from './separator.js';
 import { isEnglishOut } from './outlang.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -380,10 +380,10 @@ export class QboDesk {
     if (!found.id) {
       if (isEnglishOut()) { // written in English at once (not translated): a statement is a statement of account, never an invoice
         if (found.many) return { ok: false, ask: true, text: `Several customers match "${typed}"; write the right number:\n${withSeparators(found.many.map((n, i) => `${i + 1}. ${n}`))}`, options: found.many };
-        return { ok: false, ask: true, text: `No customer named "${typed}" was found. Closest:\n${withSeparators((found.nearest || []).map((n, i) => `${i + 1}. ${n}`)) || '-'}\nWrite the right name.`, options: found.nearest || [] };
+        return { ok: false, ask: true, text: `No customer named "${typed}" was found. Closest:\n${withEnd((found.nearest || []).length ? found.nearest.map((n, i) => `${i + 1}. ${n}`) : ['-'], ['Write the right name.'])}`, options: found.nearest || [] };
       }
       if (found.many) return { ok: false, ask: true, text: `چند مشتری به «${typed}» می‌خورد؛ شمارهٔ درست را بنویسید:\n${withSeparators(found.many.map((n, i) => `${fa(i + 1)}. ${n}`))}`, options: found.many };
-      return { ok: false, ask: true, text: `مشتری‌ای به نام «${typed}» پیدا نشد. نزدیک‌ترین‌ها:\n${withSeparators((found.nearest || []).map((n, i) => `${fa(i + 1)}. ${n}`)) || '—'}\nنام درست را بنویسید یا بگویید.`, options: found.nearest || [] };
+      return { ok: false, ask: true, text: `مشتری‌ای به نام «${typed}» پیدا نشد. نزدیک‌ترین‌ها:\n${withEnd((found.nearest || []).length ? found.nearest.map((n, i) => `${fa(i + 1)}. ${n}`) : ['—'], ['نام درست را بنویسید یا بگویید.'])}`, options: found.nearest || [] };
     }
     if (preview) { // nothing is built yet: the customer and the exact period are shown first, the asker chooses the layout
       const today = this.today();

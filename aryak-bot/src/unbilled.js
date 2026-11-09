@@ -2,7 +2,7 @@
 // invoices (the office's on the screen and ours). The owner's rule: the invoice follows what the customer ORDERED, so an invoice line of the same customer and code dated on or after
 // the cut day counts whatever its quantity, and a cut larger than the invoice is normal. A delivery has no code in its post: it is a customer-level note (no invoice at all since).
 
-import { withSeparators } from './separator.js';
+import { withEnd, withSeparators } from './separator.js';
 import { sameCutCustomer } from './cuts.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -50,5 +50,5 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
 export function unbilledText({ groups }, { max = 10, days = 30 } = {}) {
   if (!groups.length) return `✔ Everything cut or delivered in the last ${days} days has an invoice.`;
   const rows = groups.map((g) => `• ${g.customer}: ${g.parts.slice(0, 4).join(', ')}${g.parts.length > 4 ? ` +${g.parts.length - 4}` : ''}`);
-  return [`Cut or delivered, not invoiced (${groups.length} customer${groups.length === 1 ? '' : 's'}):`, withSeparators(rows.slice(0, max)), ...(rows.length > max ? [`+${rows.length - max} more`] : [])].join('\n');
+  return [`Cut or delivered, not invoiced (${groups.length} customer${groups.length === 1 ? '' : 's'}):`, withEnd(rows.slice(0, max), rows.length > max ? [`+${rows.length - max} more`] : [])].join('\n');
 }

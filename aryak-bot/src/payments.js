@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { withSeparators } from './separator.js';
+import { withEnd } from './separator.js';
 import { matchCod, stripPaymentWords } from './captions.js';
 import { sameCutCustomer } from './cuts.js';
 
@@ -123,5 +123,5 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
     const same = `${at >= 0 && at < max ? `#${at + 1}` : 'an earlier payment'} (${dm(mark.original.at, timeZone)})`;
     return `${i + 1}. ${[proposePayment({ event, invoices, payments, aliasOf, timeZone })[0], `⚠ Duplicate? same amount and customer as ${same}`, `Reply: dup #${mark.id} (count once) / separate #${mark.id} (two payments)`].join('\n   ')}`;
   });
-  return [`Payments to match (${shown.length}):`, withSeparators(blocks), ...(shown.length > max ? [`and ${shown.length - max} more payments`] : []), 'Proposal only — nothing was recorded in QuickBooks.'].join('\n');
+  return [`Payments to match (${shown.length}):`, withEnd(blocks, [...(shown.length > max ? [`and ${shown.length - max} more payments`] : []), 'Proposal only — nothing was recorded in QuickBooks.'])].join('\n');
 }
