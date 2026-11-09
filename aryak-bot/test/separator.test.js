@@ -28,7 +28,7 @@ test('every report formatter puts the line between its entries, not before the f
   const NOW = Date.parse('2026-11-09T14:00:00Z');
   const pay = (customer, amount, at) => ({ type: 'payment', kind: 'cash', currency: 'AED', customer, amount, at });
   const p = between(paymentsText({ events: [pay('ZED CARPENTRY', 250, NOW - 3600000), pay('HAMED TRADING', 8000, NOW - 7200000), pay('PALM BIRD', 100, NOW - 9000000)], invoices: [], now: NOW }));
-  assert.equal(p.at.length, 2); assert.equal(p.lines.at(-1), 'Proposal only: nothing was recorded in QuickBooks.'); assert.notEqual(p.lines[1], SEP);
+  assert.equal(p.at.length, 2); assert.equal(p.lines.at(-1), 'Proposal only — nothing was recorded in QuickBooks.'); assert.notEqual(p.lines[1], SEP);
 
   const c = between(formatChecks([{ verdict: 'match', customer: 'A', po: '1', file: 'f1.pdf' }, { verdict: 'mismatch', customer: 'B', po: '2', file: 'f2.pdf', problems: 2 }, { verdict: 'match', customer: 'C', po: '3', file: 'f3.pdf' }]));
   assert.equal(c.at.length, 2); assert.equal(c.lines.length, 5);

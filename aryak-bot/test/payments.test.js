@@ -16,26 +16,34 @@ test('a payment with a customer name: the open invoices that add up to it, else 
   const two = proposePayment({ event: pay({ customer: 'HAMED TRADING', amount: 8000 }), invoices: open });
   assert.deepEqual(two, ['8,000.00 AED — cash from HAMED TRADING (08/11)', '→ pays inv-9906 4,000.00 + inv-9918 4,000.00']);
   const none = proposePayment({ event: pay({ customer: 'HAMED TRADING', amount: 5000 }), invoices: open });
-  assert.match(none[1], /^→ no exact match; open: inv-9906 4,000\.00, inv-9918 4,000\.00, inv-9925 1,234\.50 \(total 9,234\.50\); a part payment or an advance$/);
-  assert.equal(proposePayment({ event: pay({ customer: 'NOBODY LLC', amount: 10 }), invoices: open })[1], '→ no open invoice found for this customer');
+  assert.equal(none[1], '→ not found in QuickBooks payments (±7 days) and no open invoice of this amount. Open invoices of this customer: inv-9906 4,000.00, inv-9918 4,000.00, inv-9925 1,234.50.');
+  assert.equal(proposePayment({ event: pay({ customer: 'NOBODY LLC', amount: 10 }), invoices: open })[1], '→ not found in QuickBooks payments (±7 days) and this customer has no open invoice');
   const bank = proposePayment({ event: pay({ kind: 'transfer', customer: '', pendingName: true, amount: 8000 }), invoices: open });
-  assert.equal(bank[0], '8,000.00 AED — bank credit (08/11)'); assert.match(bank[1], /^→ could be: HAMED TRADING: inv-9906 4,000\.00 \+ inv-9918 4,000\.00 \| ZED CARPENTRY: inv-9930 8,000\.00$/);
-  assert.match(proposePayment({ event: pay({ kind: 'transfer', customer: '', pendingName: true, amount: 250 }), invoices: open })[1], /^→ most likely ZED CARPENTRY: inv-9931 250\.00$/);
-  assert.match(proposePayment({ event: pay({ kind: 'transfer', customer: '', pendingName: true, amount: 777 }), invoices: open })[1], /the name is needed/);
+  assert.equal(bank[0], '8,000.00 AED — bank credit (08/11)'); assert.deepEqual(bank.slice(1), ['→ no customer name in the message. Possible matches:', '• ZED CARPENTRY — inv-9930 8,000.00', '• HAMED TRADING — inv-9906 4,000.00 + inv-9918 4,000.00 = 8,000.00']); // one invoice before several
+  assert.deepEqual(proposePayment({ event: pay({ kind: 'transfer', customer: '', pendingName: true, amount: 250 }), invoices: open }).slice(1), ['→ no customer name in the message. Possible matches:', '• ZED CARPENTRY — inv-9931 250.00']);
+  assert.match(proposePayment({ event: pay({ kind: 'transfer', customer: '', pendingName: true, amount: 777 }), invoices: open })[1], /no customer name in the message, and no customer has open invoices adding up/);
   // an alias the owner approved
   const alias = proposePayment({ event: pay({ customer: 'HAMID TRD', amount: 4000 }), invoices: open, aliasOf: (n) => (n === 'HAMID TRD' ? 'HAMED TRADING' : '') });
   assert.match(alias[1], /^→ pays inv-99(06|18) 4,000\.00$/);
 });
 
-test('the report: recent payments only, newest first, at most six, test data and zero amounts left out, the footer says nothing was recorded', () => {
+test('the report: recent payments only, newest first, at most ten, test data and zero amounts left out, the footer says nothing was recorded', () => {
   const events = [pay({ customer: 'ZED CARPENTRY', amount: 250, at: NOW - 3600000 }), pay({ customer: 'HAMED TRADING', amount: 8000 }), pay({ customer: 'OLD', amount: 5, at: NOW - 30 * DAY }), pay({ customer: 'TEST', amount: 9, simulated: true }), pay({ customer: 'ZERO', amount: 0 })];
   const text = paymentsText({ events, invoices: open, now: NOW });
   const lines = text.split('\n');
   assert.equal(lines[0], 'Payments to match (2):'); assert.match(lines[1], /^1\. 250\.00 AED — cash from ZED CARPENTRY/); assert.match(text, /2\. 8,000\.00 AED — cash from HAMED TRADING/);
-  assert.ok(!text.includes('OLD') && !text.includes('TEST')); assert.equal(lines.at(-1), 'Proposal only: nothing was recorded in QuickBooks.');
+  assert.ok(!text.includes('OLD') && !text.includes('TEST')); assert.equal(lines.at(-1), 'Proposal only — nothing was recorded in QuickBooks.');
   assert.equal(paymentsText({ events: [], invoices: open, now: NOW }), 'No payment was seen in the Confirmation group in the last 14 days.');
-  const many = Array.from({ length: 9 }, (_, i) => pay({ customer: 'ZED CARPENTRY', amount: 250 + i, at: NOW - i * 3600000 }));
-  assert.match(paymentsText({ events: many, invoices: open, now: NOW }), /\+3 more/);
+  const nine = Array.from({ length: 9 }, (_, i) => pay({ customer: 'ZED CARPENTRY', amount: 250 + i, at: NOW - i * 3600000 }));
+  const all = paymentsText({ events: nine, invoices: open, now: NOW }); assert.equal((all.match(/^\d+\. /gm) || []).length, 9); assert.ok(!/more/.test(all)); // up to ten are all listed: no «+1 more» for one item
+  const twelve = Array.from({ length: 12 }, (_, i) => pay({ customer: 'ZED CARPENTRY', amount: 250 + i, at: NOW - i * 3600000 }));
+  const cut = paymentsText({ events: twelve, invoices: open, now: NOW }); assert.equal((cut.match(/^\d+\. /gm) || []).length, 10); assert.match(cut, /\nand 2 more payments\nProposal only — /);
+  // the owner's example: no name, three customers and more; one per line, three at most, then «and N other customers»
+  const inv2 = [inv('AL EBDA AL MALKI KITCHEN', 'inv-9961', 88.2), inv('AL EBDA AL MALKI KITCHEN', 'inv-9714', 23.1), inv('AL EBDA AL MALKI KITCHEN', 'inv-9441', 46.2), inv('NUQOOSH IND . LLC', 'inv-9969', 113.4), inv('NUQOOSH IND . LLC', 'inv-9821', 44.1), inv('MASTER WOOD', 'inv-9423', 157.5), inv('ZED', 'inv-1', 157), inv('ONE MORE', 'inv-2', 156.8), inv('LAST', 'inv-3', 157.4)];
+  const nameless = proposePayment({ event: pay({ kind: 'cash', customer: '', pendingName: true, amount: 157 }), invoices: inv2 });
+  assert.deepEqual(nameless.slice(1), ['→ no customer name in the message. Possible matches:', '• ZED — inv-1 157.00', '• ONE MORE — inv-2 156.80', '• LAST — inv-3 157.40', '• and 3 other customers']); // exact first, then fewer invoices, then closer
+  const multi = proposePayment({ event: pay({ kind: 'cash', customer: '', pendingName: true, amount: 157 }), invoices: inv2.slice(0, 6) });
+  assert.deepEqual(multi.slice(2), ['• MASTER WOOD — inv-9423 157.50', '• NUQOOSH IND . LLC — inv-9969 113.40 + inv-9821 44.10 = 157.50', '• AL EBDA AL MALKI KITCHEN — inv-9961 88.20 + inv-9714 23.10 + inv-9441 46.20 = 157.50']);
 });
 
 test('the shapes the group uses: a bank credit keeps the amount and no account number; the words «payments» and the wiring (read only, proposal to the owner)', () => {
@@ -80,7 +88,7 @@ test('payment names: «cash from receipt + clear», «cash from Pay» and «clea
   assert.equal(stripPaymentWords('receipt + clear'), ''); assert.equal(stripPaymentWords('clear MUNICH DOOR KITCHEN inv'), 'MUNICH DOOR KITCHEN');
   // a payment kept from before with the junk name is read as a payment without a name
   const stored = proposePayment({ event: pay({ customer: 'Receipt + Clear', amount: 115 }), invoices: open });
-  assert.match(stored[1], /the name is needed|could be/);
+  assert.match(stored[1], /no customer name in the message/);
   const munich = [inv('MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C', 'inv-9645', 9940)];
   assert.match(proposePayment({ event: pay({ customer: 'Clear MUNICH DOOR KITCHEN Inv', amount: 9940 }), invoices: munich })[1], /^→ pays inv-9645 9,940\.00$/);
   const recorded = proposePayment({ event: pay({ customer: 'MUNICH DOOR KITCHEN', amount: 9940 }), invoices: munich, payments: [{ TotalAmt: 9940, TxnDate: '2026-11-08', CustomerRef: { name: 'MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C' } }] });
@@ -95,7 +103,7 @@ test('a repeated payment: the first is listed, the second is marked and the owne
   const a = pay({ ref: 'm1', customer: 'ALWAN ALSHAM', amount: 115, at: NOW - 3 * 3600000 }); const b = pay({ ref: 'm2', customer: 'ALWAN ALSHAM', amount: 115, at: NOW - 3600000 });
   const text = paymentsText({ events: [a, b], invoices: open, now: NOW, dups });
   assert.match(text, /^Payments to match \(2\):/);
-  assert.match(text, /1\. 115\.00 AED — cash from ALWAN ALSHAM \(09\/11\)\n\s+→ no open invoice[^\n]*\n━+\n2\. 115\.00 AED — cash from ALWAN ALSHAM \(09\/11\)\n\s+⚠ Duplicate\? same amount and customer as #1 \(09\/11\)\n\s+Reply: dup #D1 \(count once\) \/ separate #D1 \(two payments\)/); // the first listed, its repeat marked right under it
+  assert.match(text, /1\. 115\.00 AED — cash from ALWAN ALSHAM \(09\/11\)\n\s+→ not found[^\n]*\n━+\n2\. 115\.00 AED — cash from ALWAN ALSHAM \(09\/11\)\n\s+⚠ Duplicate\? same amount and customer as #1 \(09\/11\)\n\s+Reply: dup #D1 \(count once\) \/ separate #D1 \(two payments\)/); // the first listed, its repeat marked right under it
   assert.ok(text.includes('━'.repeat(18)));
   assert.equal(paymentsText({ events: [a, b], invoices: open, now: NOW, dups }).includes('#D2'), false); // the same pair keeps its code
   // the owner says «count once»: the second is not listed any more, and a new process still knows

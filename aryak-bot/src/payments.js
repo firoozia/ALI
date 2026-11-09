@@ -57,8 +57,8 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
   const event = raw.customer && !clean ? { ...raw, customer: '', pendingName: true } : { ...raw, customer: clean }; // an event kept with «receipt + clear» as its name is a payment without a name
   const amount = Number(event.amount) || 0;
   const how = `${money(amount)} ${event.currency || 'AED'} — ${event.kind === 'transfer' ? 'bank credit' : event.kind || 'payment'}${event.customer ? ` from ${event.customer}` : ''} (${dm(event.at, timeZone)})`;
-  // already received in QuickBooks by the office? a payment of about this amount (within 1) near this date (within 6 days), of this customer when he is named
-  const recorded = payments.find((x) => Math.abs(Number(x.TotalAmt) - amount) <= 1 && Math.abs(Date.parse(`${x.TxnDate}T00:00:00Z`) - event.at) <= 6 * 24 * 3600 * 1000
+  // already received in QuickBooks by the office? a payment of about this amount (within 1) within 7 days before or after the message, of this customer when he is named
+  const recorded = payments.find((x) => Math.abs(Number(x.TotalAmt) - amount) <= 1 && Math.abs(Date.parse(`${x.TxnDate}T00:00:00Z`) - event.at) <= 7 * 24 * 3600 * 1000
     && (!event.customer || event.pendingName || event.customer.split(' + ').some((one) => sameCutCustomer(one, x.CustomerRef?.name || '') || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), x.CustomerRef?.name || '')))));
   if (recorded) return [how, `→ already recorded in QuickBooks (payment of ${dm(Date.parse(`${recorded.TxnDate}T00:00:00Z`), timeZone)}${recorded.CustomerRef?.name ? `, ${recorded.CustomerRef.name}` : ''})`];
   const open = invoices.filter((i) => Number(i.Balance) > 0);
@@ -66,22 +66,26 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
   const sameNamed = (inv) => event.customer.split(' + ').some((one) => sameCutCustomer(one, inv.CustomerRef?.name || '') || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), inv.CustomerRef?.name || '')));
   if (named) {
     const his = open.filter(sameNamed);
-    if (!his.length) return [how, '→ no open invoice found for this customer'];
+    if (!his.length) return [how, '→ not found in QuickBooks payments (±7 days) and this customer has no open invoice'];
     const hit = matchCod(amount, his.map((i) => i.Balance), 1);
     if (hit) { const sum = hit.reduce((x, k) => x + Number(his[k].Balance), 0); return [how, `→ pays ${hit.map((k) => label(his[k])).join(' + ')}${Math.abs(sum - amount) > 0.05 ? ` (rounded: ${money(sum)})` : ''}`]; }
-    const total = his.reduce((s, i) => s + Number(i.Balance), 0);
-    return [how, `→ no exact match; open: ${his.slice(0, 5).map(label).join(', ')}${his.length > 5 ? ` +${his.length - 5}` : ''} (total ${money(total)})${amount < total ? '; a part payment or an advance' : ''}`];
+    return [how, `→ not found in QuickBooks payments (±7 days) and no open invoice of this amount. Open invoices of this customer: ${his.slice(0, 5).map(label).join(', ')}${his.length > 5 ? ` and ${his.length - 5} more` : ''}.`];
   }
   const byCustomer = new Map();
   for (const inv of open) byCustomer.set(inv.CustomerRef?.name || '?', [...(byCustomer.get(inv.CustomerRef?.name || '?') || []), inv]);
+  // no name in the message: the customers whose open invoices add up to the amount, one per line, the best first (the exact amount before one dirham off, one invoice before several)
   const found = [];
-  for (const [customer, list] of byCustomer) { const hit = matchCod(amount, list.map((i) => i.Balance), 1); if (hit) found.push(`${customer}: ${hit.map((k) => label(list[k])).join(' + ')}`); }
-  if (!found.length) return [how, '→ no customer has open invoices adding up to this amount; the name is needed'];
-  return [how, found.length === 1 ? `→ most likely ${found[0]}` : `→ could be: ${found.slice(0, 3).join(' | ')}${found.length > 3 ? ` +${found.length - 3}` : ''}`];
+  for (const [customer, list] of byCustomer) {
+    const hit = matchCod(amount, list.map((i) => i.Balance), 1);
+    if (hit) { const sum = hit.reduce((x, k) => x + Number(list[k].Balance), 0); found.push({ customer, text: `${hit.map((k) => label(list[k])).join(' + ')}${hit.length > 1 ? ` = ${money(sum)}` : ''}`, exact: Math.abs(sum - amount) <= 0.005, count: hit.length, diff: Math.abs(sum - amount) }); }
+  }
+  if (!found.length) return [how, '→ no customer name in the message, and no customer has open invoices adding up to this amount'];
+  found.sort((x, y) => (x.exact === y.exact ? x.count - y.count || x.diff - y.diff || x.customer.localeCompare(y.customer) : x.exact ? -1 : 1));
+  return [how, '→ no customer name in the message. Possible matches:', ...found.slice(0, 3).map((f) => `• ${f.customer} — ${f.text}`), ...(found.length > 3 ? [`• and ${found.length - 3} other customer${found.length - 3 === 1 ? '' : 's'}`] : [])];
 }
 
 /** The report: [events] with an amount, newest first, at most [max] proposals; the footer says nothing was recorded. */
-export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 6, dups = new PaymentDups(''), only = '' }) {
+export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '' }) {
   const recent = events.filter((e) => e.type === 'payment' && Number(e.amount) > 0 && !e.simulated && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
@@ -108,5 +112,5 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
     const same = `${at >= 0 && at < max ? `#${at + 1}` : 'an earlier payment'} (${dm(mark.original.at, timeZone)})`;
     return `${i + 1}. ${[proposePayment({ event, invoices, payments, aliasOf, timeZone })[0], `⚠ Duplicate? same amount and customer as ${same}`, `Reply: dup #${mark.id} (count once) / separate #${mark.id} (two payments)`].join('\n   ')}`;
   });
-  return [`Payments to match (${shown.length}):`, withSeparators(blocks), ...(shown.length > max ? [`+${shown.length - max} more`] : []), 'Proposal only: nothing was recorded in QuickBooks.'].join('\n');
+  return [`Payments to match (${shown.length}):`, withSeparators(blocks), ...(shown.length > max ? [`and ${shown.length - max} more payments`] : []), 'Proposal only — nothing was recorded in QuickBooks.'].join('\n');
 }
