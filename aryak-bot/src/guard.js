@@ -12,7 +12,7 @@ const digits = (j) => String(j || '').replace(/@.*$/, '').replace(/:\d+$/, '').r
 export function internalWords(config) {
   return [
     ...(config.staffGroupNames || []), ...(config.commandGroupNames || []), ...(config.testGroupNames || []), ...(config.goodsGroupNames || []),
-    config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName,
+    config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...(config.expensesGroupNames || []),
     ...(config.observeExcludeNames || []),
   ].map(low).filter(Boolean);
 }
@@ -23,7 +23,7 @@ const holds = (subject, words) => words.some((w) => low(subject).includes(w));
 export function groupAllowed(subject, config) {
   if (holds(subject, (config.testGroupNames || []).map(low).filter(Boolean))) return { ok: true, why: 'test group' };
   if (holds(subject, [...(config.staffGroupNames || []), ...(config.commandGroupNames || []), ...(config.goodsGroupNames || []),
-    config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName].map(low).filter(Boolean))) return { ok: true, why: 'internal group' };
+    config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...(config.expensesGroupNames || [])].map(low).filter(Boolean))) return { ok: true, why: 'internal group' };
   if (holds(subject, (config.morningGroupNames || []).map(low).filter(Boolean))) return { ok: true, why: 'good-morning list' };
   if (config.allowCustomerGroupSends) return { ok: true, why: 'customer sends switched on' };
   return { ok: false, why: 'customer or unknown group' };

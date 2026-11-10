@@ -64,6 +64,8 @@ export function loadConfig(env = process.env) {
     // groups for live tests: the account's own messages run the real paths there, the reports stay in the group and nothing enters the real tracker
     testGroupNames: (env.TEST_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     // the good-morning message: only the groups listed here (empty = nothing is ever sent)
+    expensesGroupNames: (env.EXPENSES_GROUP_NAME || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean), // the company expenses group: a word of its name (the owner can also say «this is the expenses group» inside it)
+    expensesReportHour: env.EXPENSES_REPORT_HOUR ? Number(env.EXPENSES_REPORT_HOUR) : 19, // Dubai time: the daily expenses report and the Thursday check
     morningGroupNames: (env.MORNING_GROUP_NAMES || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     morningTime: (env.MORNING_TIME || '08:30').trim(),
     morningCatchUpUntil: (env.MORNING_CATCHUP_UNTIL || '10:00').trim(),

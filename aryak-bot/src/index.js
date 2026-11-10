@@ -76,7 +76,8 @@ import { normalizeDigits } from './text.js';
 import { matchOption } from './choice.js';
 import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
-import { setVisionMeter } from './vision.js';
+import { setVisionMeter, visionRead } from './vision.js';
+import { ExpenseStore, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, monthlyFullText, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -792,7 +793,7 @@ async function paymentsReport(events, only = '') {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -925,6 +926,9 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, withEnd(pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), [...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`])].join('\n')];
     }
     case 'payment_dup': { const r = paymentDups.decide(ic.id, ic.verb); return [r.error ? `No open question #${ic.id} (it was answered or never asked).` : r.verb === 'dup' ? `Noted: the second payment is the same as the first; it will be counted once (#${ic.id}).` : `Noted: two separate payments (#${ic.id}); I will not ask again.`]; }
+    case 'expenses_report': return [expensesReportText(ic.range)];
+    case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
+    case 'weekly_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await weeklyCheckReport()]; }
     case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
     case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport()]; }
     case 'alias_drop': { const n = cutAliases.drop(ic.id, ic.numbers); return [n ? `Removed ${n} line(s) from #${ic.id}; reply yes #${ic.id} to approve the rest.` : `Nothing removed from #${ic.id}.`]; }
@@ -2585,11 +2589,128 @@ setInterval(async () => {
   } catch (e) { logger.warn(`shadow summary failed: ${e.message}`); }
 }, 5 * 60 * 1000).unref();
 
+// ---------------------------------------------------------------------------------------------------------------- company expenses
+// A receipt photo with the amount as its caption in the EXPENSES group (see expenses.js). Kept on the server; read only towards QuickBooks (it is only compared with what the office recorded).
+const expenseStore = new ExpenseStore(path.join(config.authDir, 'expenses'));
+if (expenseStore.d.group?.subject && !config.expensesGroupNames.includes(String(expenseStore.d.group.subject).toLowerCase())) config.expensesGroupNames.push(String(expenseStore.d.group.subject).toLowerCase());
+const isExpensesSubject = (subject) => config.expensesGroupNames.some((w) => String(subject || '').toLowerCase().includes(w));
+const expensesGroupJid = async () => expenseStore.d.group?.id || (config.expensesGroupNames[0] ? findGroupJid(config.expensesGroupNames[0]) : null);
+
+/** The owner says «Atossa, this is the expenses group» inside the group: it is remembered (on the server) and she may write there. true = handled. */
+async function maybeSetExpensesGroup(raw, groupId, info) {
+  const text = textOf(normalizeMessageContent(raw.message)) || '';
+  if (!text || !/(?:atossa|atosa|atousa|آتوسا|اتوسا)/i.test(text) || !/(?:this is|here is|اینجا|این)[\s\S]{0,40}(?:expenses?\s+group|گروه\s+هزینه)/i.test(text)) return false;
+  const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+  const owner = !!raw.key.fromMe || staffChecker(config.ownerNumbers, lids(info.lidToPhone))(who) === true;
+  if (!owner) return false;
+  expenseStore.setGroup({ id: groupId, subject: info.subject });
+  const word = String(info.subject).toLowerCase();
+  if (!config.expensesGroupNames.includes(word)) config.expensesGroupNames.push(word);
+  logger.info(`expenses: the group "${info.subject}" was set by the owner`);
+  await sock.sendMessage(groupId, { text: `✅ This is now the expenses group ("${info.subject}"). Post a receipt photo with the amount as the caption, for example: 85.5 fuel` });
+  return true;
+}
+
+/** A receipt photo read by the cheapest vision model first: { total, currency, vendor, date, category } or null when it is not readable. */
+async function readReceiptPhoto(buf, mimeType) {
+  const call = (model) => client.beta.messages.create({
+    model, max_tokens: 400, system: RECEIPT_RULES, output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+    messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: mimeType, data: buf.toString('base64') } }, { type: 'text', text: 'Read this receipt.' }] }],
+  });
+  const parse = (res) => { const t = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); return JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); };
+  const r = await visionRead({ config, call, parse, check: (x) => (!x.relevant || Number(x.total) > 0 ? { ok: true } : { ok: false, reason: 'missing' }) });
+  return r?.value?.relevant ? r.value : null;
+}
+
+/** A message in the expenses group: a receipt photo (with the amount as caption), the answers (1 / 2 / card / cash / a type word / an amount), or a caption-only expense. true = it was an expense message. */
+async function expensesTurn(raw, groupId) {
+  if (sent.has(raw.key.id)) return true; // her own message
+  const content = normalizeMessageContent(raw.message);
+  const image = imageOf(content);
+  const text = String(textOf(content) || image?.caption || '').trim();
+  const by = personOf(raw); const byName = raw.pushName || '';
+  const say = (t) => sock.sendMessage(groupId, { text: t }, { quoted: raw });
+  if (image) {
+    let reading = null;
+    if (mayTrackWithModel(config)) {
+      try { reading = await readReceiptPhoto(await downloadMediaMessage(raw, 'buffer', {}), String(image.mimetype || 'image/jpeg').split(';')[0]); } catch (e) { logger.warn(`expenses: the receipt could not be read: ${e.message}`); }
+    } else logger.info('expenses: the receipt photo was not read (model reading is off); the caption amount is used');
+    const entry = expenseStore.add(makeEntry({ caption: text, reading, hasReceipt: !!reading, by, byName, ref: raw.key.id, timeZone: config.timezone }));
+    await say(entryText(entry));
+    return true;
+  }
+  if (!text) return false;
+  const done = handleReply(expenseStore, by, parseExpenseReply(text), config.timezone);
+  if (done) { await say(done.text); return true; }
+  const cap = parseExpenseCaption(text);
+  if (cap.amount && /^[\s\d.,]+(?:aed|dhs?|درهم)?\s*[\p{L}]{0,12}\s*$/iu.test(normalizeDigits(text))) { // only an amount (and a type word): an expense with no receipt
+    await say(entryText(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone }))));
+    return true;
+  }
+  return false;
+}
+
+const dayPlus = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+/** The QuickBooks rows of an entity in a period (read only; a failed look-up gives none). */
+const qbRows = async (entity, from, to) => qbo.query(`select * from ${entity} where TxnDate >= '${from}' and TxnDate <= '${to}'`).catch((e) => { logger.warn(`expenses: the QuickBooks ${entity} look-up failed: ${e.message}`); return []; });
+const todayDubai = () => localParts(Date.now(), config.timezone).day;
+async function invoiceLookupFor(events) {
+  const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20);
+  const lookup = new Map();
+  if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
+  return lookup;
+}
+const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
+async function receivedReportText(kind) {
+  const r = rangeOf(kind, todayDubai());
+  const items = receivedItems(tracker.events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(tracker.events) });
+  const records = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  return receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
+}
+async function weeklyCheckReport() {
+  const r = rangeOf('week', todayDubai());
+  const items = receivedItems(tracker.events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(tracker.events) });
+  const purchases = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label });
+}
+async function monthlyFullReport() {
+  const r = rangeOf('month', todayDubai());
+  const records = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))].filter((x) => x.TxnDate >= r.from && x.TxnDate <= r.to);
+  return monthlyFullText({ expenses: expenseStore.done(r), records, title: r.label });
+}
+
+// 19:00 Dubai time: the daily expenses report in the expenses group (never salaries, rent or QuickBooks figures there) and the money received report to the owner only; on Thursday the week and the check
+// of what the office has not recorded in QuickBooks; on the last day of the month the month and the owner's full report. Each is sent once (the day is remembered on the server).
+setInterval(async () => {
+  try {
+    if (!sock?.user || botState.paused) return;
+    const now = localParts(Date.now(), config.timezone);
+    if (now.minutes < config.expensesReportHour * 60) return;
+    const once = (key) => { if (expenseStore.d.sent[key]) return false; expenseStore.mark(key, Date.now()); return true; };
+    const toGroup = async (text) => { const jid = await expensesGroupJid(); if (jid) await sock.sendMessage(jid, { text }); };
+    const toOwner = (text) => sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` });
+    const steps = [];
+    if (once(`daily:${now.day}`)) steps.push(['daily expenses', async () => { if (expenseStore.done(rangeOf('today', now.day)).length) await toGroup(expensesReportText('today')); }]);
+    if (qbo.connected && !qbo.paused && once(`received:${now.day}`)) steps.push(['money received', async () => { const t = await receivedReportText('today'); if (!/No money was recorded/.test(t)) await toOwner(t); }]);
+    if (now.weekday === 4 && once(`weekly:${now.day}`)) {
+      steps.push(['weekly expenses', async () => { if (expenseStore.done(rangeOf('week', now.day)).length) await toGroup(expensesReportText('week')); }]);
+      if (qbo.connected && !qbo.paused) steps.push(['weekly check', async () => toOwner(await weeklyCheckReport())]);
+    }
+    if (dayPlus(now.day, 1).endsWith('-01') && once(`monthly:${now.day}`)) {
+      steps.push(['monthly expenses', async () => { if (expenseStore.done(rangeOf('month', now.day)).length) await toGroup(expensesReportText('month')); }]);
+      if (qbo.connected && !qbo.paused) steps.push(['monthly full report', async () => toOwner(await monthlyFullReport())]);
+    }
+    for (const [name, run] of steps) { try { await run(); logger.info(`expenses: ${name} sent for ${now.day}`); } catch (e) { logger.warn(`expenses: ${name} failed: ${e.message}`); } }
+  } catch (e) { logger.warn(`expenses timer failed: ${e.message}`); }
+}, 5 * 60 * 1000).unref();
+
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
   const store = usageCtx.getStore();
   if (store) store.group = groupLabel((await groupInfo(groupId)).subject);
+  { const info = await groupInfo(groupId); if (await maybeSetExpensesGroup(raw, groupId, info) || (isExpensesSubject(info.subject) && await expensesTurn(raw, groupId))) return; } // the expenses group: receipts, answers, the owner's «this is the expenses group»
   const isTest = isTestSubject((await groupInfo(groupId)).subject);
   if (isTest) {
     // A test group: the account's own messages run the real paths here; the reports stay in the group and the memory is separate.
