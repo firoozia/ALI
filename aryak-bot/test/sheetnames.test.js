@@ -106,14 +106,15 @@ function sheetScript(writeOn) {
   const cust = ctx.SpreadsheetApp.getActive().insertSheet('Customers'); cust.cells = [C.Customers, ['c1', 'Delta lion', 1, 'x', false, 1, 1], ['c2', 'OMEGA WOOD', 1, 'x', false, 1, 1]];
   const mov = ctx.SpreadsheetApp.getActive().insertSheet('Movements');
   const m = (id, type, who) => { const r = Array(C.Movements.length).fill(''); r[0] = id; r[2] = type; r[12] = who; return r; };
+  const items = ctx.SpreadsheetApp.getActive().insertSheet('Items'); const it = (id, who) => { const r = Array(C.Items.length).fill(''); r[0] = id; r[18] = who; return r; }; items.cells = [C.Items, it('i1', 'Delta lion'), it('i2', '')];
   mov.cells = [C.Movements, m('m1', 'OUT', 'Delta lion'), m('m2', 'IN', 'Delta lion'), m('m3', 'CUT', 'Delta lion'), m('m4', 'OUT', '')];
-  return { post, cust, mov, copies };
+  return { post, cust, mov, items, copies };
 }
 
 test('the sheet script: read lists the names with their rows (outgoing only); backup copies the whole sheet; apply changes only matching name cells and only when switched on', () => {
   const off = sheetScript(false);
   const read = off.post({ mode: 'read' });
-  assert.deepEqual(read.names.map((n) => [n.tab, n.name, n.rows]), [['Customers', 'Delta lion', [2]], ['Customers', 'OMEGA WOOD', [3]], ['Movements', 'Delta lion', [2, 4]]]); // the IN row and the empty name are not outgoing names
+  assert.deepEqual(read.names.map((n) => [n.tab, n.name, n.rows]), [['Customers', 'Delta lion', [2]], ['Customers', 'OMEGA WOOD', [3]], ['Items', 'Delta lion', [2]], ['Movements', 'Delta lion', [2, 4]]]); // the IN row and the empty name are not outgoing names
   assert.equal(off.post({ mode: 'backup', name: 'ZINAX stock backup 2026-11-10 before names' }).name, 'ZINAX stock backup 2026-11-10 before names'); assert.deepEqual(off.copies, ['ZINAX stock backup 2026-11-10 before names']);
   const refused = off.post({ mode: 'apply', cells: [{ tab: 'Customers', row: 2, old: 'Delta lion', new: 'DELTAA LIONS' }] });
   assert.equal(refused.ok, false); assert.match(refused.error, /ZINAX_NAMES_WRITE = on/); assert.deepEqual(off.cust.writes, []); // switched off: not one cell written
@@ -123,11 +124,11 @@ test('the sheet script: read lists the names with their rows (outgoing only); ba
   const res = on.post({ mode: 'apply', cells: [
     { tab: 'Customers', row: 2, old: 'Delta lion', new: 'DELTAA LIONS' }, { tab: 'Movements', row: 2, old: 'Delta lion', new: 'DELTAA LIONS' },
     { tab: 'Movements', row: 4, old: 'Someone else', new: 'DELTAA LIONS' }, // the cell holds another value now: left alone
-    { tab: 'Items', row: 2, old: 'x', new: 'y' }, { tab: 'Customers', row: 1, old: 'Name', new: 'Z' }, // not a name cell / the header row
+    { tab: 'Items', row: 2, old: 'Delta lion', new: 'DELTAA LIONS' }, { tab: 'Shipments', row: 2, old: 'x', new: 'y' }, { tab: 'Customers', row: 1, old: 'Name', new: 'Z' }, // an Items reservation / not a name tab / the header row
   ] });
-  assert.equal(res.ok, true); assert.deepEqual(res.applied, [{ tab: 'Customers', row: 2 }, { tab: 'Movements', row: 2 }]); assert.equal(res.skipped.length, 3);
-  const w = [...on.cust.writes, ...on.mov.writes].map((x) => x.slice(0, 3).join('#'));
-  assert.deepEqual(w, ['Customers#2#2', 'Customers#2#6', 'Customers#2#7', 'Movements#2#13']); // the name cells, and the renamed customer's UpdatedAt and ServerAt (as a hand edit does) so the phones pull it; nothing else
+  assert.equal(res.ok, true); assert.deepEqual(res.applied, [{ tab: 'Customers', row: 2 }, { tab: 'Movements', row: 2 }, { tab: 'Items', row: 2 }]); assert.equal(res.skipped.length, 3);
+  const w = [...on.cust.writes, ...on.items.writes, ...on.mov.writes].map((x) => x.slice(0, 3).join('#'));
+  assert.deepEqual(w, ['Customers#2#2', 'Customers#2#6', 'Customers#2#7', 'Items#2#19', 'Items#2#16', 'Items#2#17', 'Movements#2#13']); // the name cells, and the renamed customer's UpdatedAt and ServerAt (as a hand edit does) so the phones pull it; nothing else
   assert.equal(on.cust.writes[0][3], 'DELTAA LIONS'); assert.ok(on.cust.writes[2][3] > 1e12);
   assert.equal(on.mov.cells[3][12], 'Delta lion'); // the IN row untouched
   assert.equal(on.post({ mode: 'apply', cells: Array(201).fill({ tab: 'Customers', row: 2, old: 'a', new: 'b' }) }).ok, false); // a batch over 200

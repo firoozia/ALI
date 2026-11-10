@@ -2951,7 +2951,7 @@ async function sheetNamesPreview() {
   const cells = cellsOf(plan);
   const id = sheetNameStore.nextId();
   pendingSheetNames = cells.length ? { id, at: Date.now(), plan, cells } : null;
-  const tabs = ['Customers', 'Movements'].map((t) => `${t} ${new Set((read.names || []).filter((x) => x.tab === t).map((x) => x.name)).size} names`);
+  const tabs = ['Customers', 'Items', 'Movements'].map((t) => `${t} ${new Set((read.names || []).filter((x) => x.tab === t).map((x) => x.name)).size} names`);
   for (const u of plan.unclear) logger.info(`sheet names: unclear "${u.name}" (${u.rows} rows): ${u.candidates.length ? u.candidates.join(' | ') : 'no QuickBooks customer fits'}`);
   return [sheetPreviewText(plan, id, { namesIn: tabs })];
 }

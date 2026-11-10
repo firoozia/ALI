@@ -985,20 +985,21 @@ function weeklyBackup() { nightlyBackup(); }
 
 /**
  * Customer names, for the assistant (owner's explicit exception to «the assistant only reads»). The only cells it can ever touch are the ones in NAME_CELLS:
- * the Name of the Customers tab and the Customer of the Movements tab. Modes:
+ * the Name of the Customers tab, the ReservedFor of the Items tab and the Customer of the Movements tab. Modes:
  *   read   - every distinct name with the rows that hold it (Movements: only OUT and CUT rows). Changes nothing.
  *   backup - a full copy of the whole spreadsheet in the backup folder, named [req.name].
  *   apply  - [req.cells] = [{ tab, row, old, new }]: a cell is changed only if it still holds [old] exactly; nothing else is written (no other cell, no row or column added or removed,
- *            no format or formula) EXCEPT that a renamed Customers row gets its UpdatedAt and ServerAt stamped and the revision bumped, as a hand edit does, so the phones pull the new name. It needs the script property ZINAX_NAMES_WRITE = on, which the owner sets by hand and removes again when done.
+ *            no format or formula) EXCEPT that a renamed Customers or Items row gets its UpdatedAt and ServerAt stamped and the revision bumped, as a hand edit does, so the phones pull the new name. It needs the script property ZINAX_NAMES_WRITE = on, which the owner sets by hand and removes again when done.
  */
-const NAME_CELLS = { Customers: 'Name', Movements: 'Customer' };
+const NAME_CELLS = { Customers: 'Name', Items: 'ReservedFor', Movements: 'Customer' };
+const NAME_STAMPED = { Customers: true, Items: true }; // rows the phones pull by UpdatedAt / ServerAt (Movements are never pulled again)
 const NAMES_BATCH_MAX = 200;
 function botNames_(req) {
   const ss = SpreadsheetApp.getActive();
   const col = function (tab) { return SHEETS[tab].indexOf(NAME_CELLS[tab]); };
   if (req.mode === 'read') {
     const out = [];
-    ['Customers', 'Movements'].forEach(function (tab) {
+    ['Customers', 'Items', 'Movements'].forEach(function (tab) {
       const byName = {};
       readAll_(tab).forEach(function (r, i) {
         if (tab === 'Movements' && r[2] !== 'OUT' && r[2] !== 'CUT') return;
@@ -1036,8 +1037,8 @@ function botNames_(req) {
         const now = String(cell.getValue());
         if (now !== String(c.old)) { skipped.push({ tab: tab, row: row, why: 'the cell now holds a different value', now: now }); return; }
         cell.setValue(String(c.new));
-        if (tab === 'Customers') { // exactly what a hand edit does (customersEdited_): the phones pull a customer only when its UpdatedAt / ServerAt are newer, else they never see the new name
-          const upAt = SHEETS.Customers.indexOf('UpdatedAt') + 1; const srvAt = SHEETS.Customers.indexOf('ServerAt') + 1;
+        if (NAME_STAMPED[tab]) { // exactly what a hand edit does (customersEdited_): the phones pull a customer or an item only when its UpdatedAt / ServerAt are newer, else they never see the new name
+          const upAt = SHEETS[tab].indexOf('UpdatedAt') + 1; const srvAt = SHEETS[tab].indexOf('ServerAt') + 1;
           const stamp = Date.now();
           sh.getRange(row, upAt).setValue(Math.max(stamp, (Number(sh.getRange(row, upAt).getValue()) || 0) + 1));
           sh.getRange(row, srvAt).setValue(stamp);
