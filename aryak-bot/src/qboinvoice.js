@@ -133,9 +133,17 @@ export function parseInvoiceCommand(text) {
     let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
     em = /^(?:money\s+received|received|دریافتی(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
     if (/^(?:weekly\s+check|بررسی\s*هفتگی)$/iu.test(s)) return { type: 'weekly_check' };
+    { // several corrections in one message: a line each, «OLD -> NEW», «name OLD (3) -> NEW», NEW = none / cancel / wrong / leave: keep that name as it is
+      const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+      const one = (l) => /^(?:name\s+)?(.+?)\s*(?:\(\s*\d+\s*\)\s*)?(?:→|->|=>)\s*(.+)$/iu.exec(l);
+      if (lines.length >= 2 && lines.every((l) => one(l))) {
+        const pairs = lines.map((l) => { const mm = one(l); const to = mm[2].trim(); return { from: mm[1].trim(), to, leave: /^(?:none|cancel(?:led)?|wrong|leave|skip|ignore|هیچ|رها|لغو)\b/iu.test(to) }; });
+        return { type: 'sheet_name_set_many', pairs };
+      }
+    }
     { // the sheet's customer names: «sheet names», «name OLD → QuickBooks name», «undo names #H1»
       let sn = /^(?:sheet\s+names?|sheet\s+customers?|اسامی\s+جدول|نام‌?های\s+جدول)$/iu.exec(s); if (sn) return { type: 'sheet_names' };
-      sn = /^name\s+(.{1,80}?)\s*(?:→|->|=>)\s*(.{2,120})$/iu.exec(s); if (sn) return { type: 'sheet_name_set', from: sn[1].trim(), to: sn[2].trim() };
+      sn = /^name\s+(.{1,80}?)\s*(?:\(\s*\d+\s*\)\s*)?(?:→|->|=>)\s*(.{2,120})$/iu.exec(s); if (sn) return { type: 'sheet_name_set', from: sn[1].trim(), to: sn[2].trim() };
       sn = /^undo\s+names?\s+#?\s*(H\d+)$/iu.exec(s); if (sn) return { type: 'sheet_names_undo', id: sn[1].toUpperCase() };
     }
     { const rc = /^(?:check\s+received|received\s+check|بررسی\s+دریافتی)\s+(.{2,60})$/iu.exec(s); if (rc) return { type: 'received_check', name: rc[1].trim() }; } // why a received entry is not found in QuickBooks

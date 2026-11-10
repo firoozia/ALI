@@ -66,7 +66,7 @@ import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
-import { SheetNameStore, applyCells, backupName, cellsOf, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
+import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
 import { unbilled, unbilledText } from './unbilled.js';
 import { PaymentDups, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
@@ -804,7 +804,7 @@ async function paymentsReport(events, only = '') {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_names_undo', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_name_set_many', 'sheet_names_undo', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -952,6 +952,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       return [`Reading ${count} kept photo${count === 1 ? '' : 's'} of the ${photoGroupLabel(ic.group)} from the last ${ic.days} day${ic.days === 1 ? '' : 's'} with ${TEST_MODEL} only. One message per photo follows, then a summary. Nothing is stored or recorded.`];
     }
     case 'sheet_names': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNamesPreview(); }
+    case 'sheet_name_set_many': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNameSetMany(ic.pairs); }
     case 'sheet_name_set': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNameSet(ic.from, ic.to); }
     case 'sheet_names_undo': return sheetNamesUndo(ic.id);
     case 'received_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedCheck(ic.name)]; }
@@ -2947,7 +2948,7 @@ async function sheetNamesPreview() {
   let read;
   try { read = await sheetCall(config, { mode: 'read' }); } catch (e) { return [sheetProblem(e)]; }
   const qboNames = [...new Set((await qboDesk.customers()).map((r) => r.DisplayName).filter(Boolean))];
-  const plan = planSheetNames({ sheetNames: read.names || [], qboNames, aliasOf: (n) => cutAliases.resolve(n), overrides: sheetNameStore.d.overrides });
+  const plan = planSheetNames({ sheetNames: read.names || [], qboNames, aliasOf: (n) => cutAliases.resolve(n), overrides: sheetNameStore.d.overrides, leave: sheetNameStore.d.leave || {} });
   const cells = cellsOf(plan);
   const id = sheetNameStore.nextId();
   pendingSheetNames = cells.length ? { id, at: Date.now(), plan, cells } : null;
@@ -2956,13 +2957,21 @@ async function sheetNamesPreview() {
   return [sheetPreviewText(plan, id, { namesIn: tabs })];
 }
 
-async function sheetNameSet(from, to) {
-  const names = (await qboDesk.customers()).map((r) => r.DisplayName).filter(Boolean);
-  const found = names.find((n) => n.toLowerCase() === to.toLowerCase());
-  if (!found) return [`No QuickBooks customer is named exactly "${to}". Nothing was noted.`];
-  sheetNameStore.tell(from, found);
-  return [`Noted: ${from} → ${found}. A fresh preview follows; nothing is changed in the sheet before your yes.`, ...await sheetNamesPreview()];
+const LEAVE_WORDS = /^(?:none|cancel(?:led)?|wrong|leave|skip|ignore|هیچ|رها|لغو)\b/iu;
+/** One or several corrections «OLD → NEW» (NEW = none / cancel / wrong / leave keeps that sheet name as it is): each noted or refused by itself, then ONE fresh preview. */
+async function sheetNameSetMany(pairs) {
+  const names = [...new Set((await qboDesk.customers()).map((r) => r.DisplayName).filter(Boolean))];
+  const said = pairs.map((p) => {
+    if (p.leave || LEAVE_WORDS.test(p.to)) { sheetNameStore.leaveAlone(p.from); return 'Left as is: ' + p.from; }
+    const found = findQboName(names, p.to); // case and runs of spaces ignored; the EXACT QuickBooks name is kept
+    if (!found) return 'Not found: "' + p.to + '" is not a QuickBooks customer (' + p.from + ' not changed)';
+    sheetNameStore.tell(p.from, found);
+    return 'Noted: ' + p.from + ' → ' + found;
+  });
+  return [said.join('\n') + '\nNothing is changed in the sheet before your yes.', ...await sheetNamesPreview()];
 }
+
+async function sheetNameSet(from, to) { return sheetNameSetMany([{ from, to, leave: false }]); }
 
 async function decideSheetNames(verb, id) {
   const p = pendingSheetNames;

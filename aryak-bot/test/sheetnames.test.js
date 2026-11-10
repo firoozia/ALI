@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { SheetNameStore, applyCells, backupName, cellsOf, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from '../src/sheetnames.js';
+import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from '../src/sheetnames.js';
 import { parseInvoiceCommand } from '../src/qboinvoice.js';
 
 // Invented names and rows only.
@@ -79,7 +79,7 @@ test('the wiring: owner only; the backup comes BEFORE the first write; unclear n
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   const part = index.slice(index.indexOf('async function decideSheetNames'), index.indexOf('async function sheetNamesUndo'));
   assert.ok(part.indexOf("mode: 'backup'") < part.indexOf('applyCells(')); assert.match(part, /return \[`The backup copy of the sheet failed, so NOTHING was changed/);
-  assert.match(index, /'received_check', 'sheet_names', 'sheet_name_set', 'sheet_names_undo'/); // typed in a group: «use your own chat»
+  assert.match(index, /'received_check', 'sheet_names', 'sheet_name_set', 'sheet_name_set_many', 'sheet_names_undo'/); // typed in a group: «use your own chat»
   assert.match(index, /id\.startsWith\('H'\) \? decideSheetNames\(ic\.type, id\)/);
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'sheetnames.js'), 'utf8');
   assert.doesNotMatch(src, /delete|clear|remove|insertRow|deleteRow/i.source ? /\b(deleteRow|insertRow|clearContents|setTrashed)\b/ : /x/);
@@ -132,4 +132,37 @@ test('the sheet script: read lists the names with their rows (outgoing only); ba
   assert.equal(on.cust.writes[0][3], 'DELTAA LIONS'); assert.ok(on.cust.writes[2][3] > 1e12);
   assert.equal(on.mov.cells[3][12], 'Delta lion'); // the IN row untouched
   assert.equal(on.post({ mode: 'apply', cells: Array(201).fill({ tab: 'Customers', row: 2, old: 'a', new: 'b' }) }).ok, false); // a batch over 200
+});
+
+test('a QuickBooks name with two spaces: found with spaces and case ignored on both sides, the EXACT name kept; one letter more or less fits only when nothing stronger does', () => {
+  const qbo = ['AL  AHLIA KITCHEN', 'OMEGA WOOD PRESSING L.L.C', 'ALAFEEFI KITCHEN', 'AL AFEEF KITCHEN'];
+  assert.equal(findQboName(qbo, 'al ahlia kitchen'), 'AL  AHLIA KITCHEN'); assert.equal(findQboName(qbo, 'AL  AHLIA KITCHEN'), 'AL  AHLIA KITCHEN'); assert.equal(findQboName(qbo, 'AL AHLIA KITCHENS'), '');
+  const mk = (name) => [{ tab: 'Customers', column: 'Name', name, rows: [2] }];
+  const near = planSheetNames({ sheetNames: mk('AL AHALIA KITCHEN'), qboNames: qbo }); // the extra A
+  assert.deepEqual(near.rename.map((r) => [r.name, r.to]), [['AL AHALIA KITCHEN', 'AL  AHLIA KITCHEN']]);
+  assert.deepEqual(planSheetNames({ sheetNames: mk('AL AHLIA KITCHEN'), qboNames: qbo }).rename.map((r) => r.to), ['AL  AHLIA KITCHEN']); // only the spaces differ: renamed to the exact one
+  assert.deepEqual(planSheetNames({ sheetNames: mk('AL AFEEFI KITCHEN'), qboNames: qbo }).rename.map((r) => r.to), ['ALAFEEFI KITCHEN']); // the stronger match, not the near AL AFEEF
+  assert.deepEqual(cellsOf(near).map((c) => c.new), ['AL  AHLIA KITCHEN']); // written with its double space
+});
+
+test('left as is: the owner\'s names are not unclear any more, not changed, and told in the preview', () => {
+  const sheet = [{ tab: 'Movements', column: 'Customer', name: 'Cut In Roll', rows: [5, 6] }, { tab: 'Movements', column: 'Customer', name: '207', rows: [7] }];
+  const plan = planSheetNames({ sheetNames: sheet, qboNames: ['OMEGA WOOD'], leave: { 'cut in roll': true, 207: true } });
+  assert.deepEqual([plan.unclear.length, plan.rename.length, plan.left.map((g) => g.name)], [0, 0, ['Cut In Roll', '207']]);
+  assert.match(sheetPreviewText(plan, 'H3'), /↷ left as is by you \(2\): Cut In Roll, 207/); assert.equal(cellsOf(plan).length, 0);
+  const dir = fs.mkdtempSync(path.join(import.meta.dirname, 'sn-')); try {
+    const s = new SheetNameStore(dir); s.leaveAlone('Open roll'); s.tell('Open roll', 'OMEGA WOOD'); assert.ok(!s.d.leave['open roll']); s.leaveAlone('Open roll'); assert.ok(s.d.leave['open roll'] && !s.d.overrides['open roll']);
+    assert.ok(new SheetNameStore(dir).d.leave['open roll']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('one message with many corrections: a line each, with or without «name», an optional (N), the leave words; a single line still works; plain text is not one', () => {
+  const t = 'Cut In Roll (4) -> cancel is wrong\nname 207 -> none\nNew Customer → leave\nAL AHALIA KITCHEN (3) -> AL AHLIA KITCHEN';
+  assert.deepEqual(parseInvoiceCommand(t), { type: 'sheet_name_set_many', pairs: [
+    { from: 'Cut In Roll', to: 'cancel is wrong', leave: true }, { from: '207', to: 'none', leave: true }, { from: 'New Customer', to: 'leave', leave: true }, { from: 'AL AHALIA KITCHEN', to: 'AL AHLIA KITCHEN', leave: false }] });
+  assert.deepEqual(parseInvoiceCommand('name ALIA (2) -> ALIA WOOD'), { type: 'sheet_name_set', from: 'ALIA', to: 'ALIA WOOD' });
+  assert.notEqual(parseInvoiceCommand('hello there\nsee you -> soon but this line is plain')?.type, 'sheet_name_set_many'); // the first line is not a pair
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const many = index.slice(index.indexOf('async function sheetNameSetMany'), index.indexOf('async function decideSheetNames'));
+  assert.equal((many.match(/sheetNamesPreview\(\)/g) || []).length, 1); assert.doesNotMatch(many, /sheetCall|applyCells/); // ONE preview, and no write at all
 });

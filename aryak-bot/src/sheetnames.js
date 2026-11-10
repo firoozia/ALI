@@ -7,23 +7,35 @@ import { askSheet } from './stock.js';
 import { sameCutCustomer } from './cuts.js';
 import { looseKey } from './namekey.js';
 import { sameBrandForm } from './expenses.js';
+import { brandWords, nearWord } from './cutaliases.js';
 import { SEP } from './separator.js';
 
 const BATCH = 100; // cells per request (the sheet's own limit is 200)
 const key = (n) => looseKey(n);
+const squeeze = (n) => String(n ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** The QuickBooks name the owner typed: found with case and runs of spaces ignored on BOTH sides (WhatsApp squeezes spaces, QuickBooks may hold two); the name returned is the EXACT QuickBooks one. */
+export function findQboName(qboNames, typed) {
+  const t = squeeze(typed);
+  return qboNames.find((n) => n === typed) || qboNames.find((n) => squeeze(n) === t) || '';
+}
+
+/** One letter more or less in each brand word, in order (AHALIA / AHLIA): a weaker match, used only when nothing stronger fits. */
+const nearBrand = (a, b) => { const x = brandWords(a); const y = brandWords(b); return x.length > 0 && x.length === y.length && x.every((w, i) => nearWord(w, y[i])); };
 const day = (ms) => new Date(ms + 4 * 3600 * 1000).toISOString().slice(0, 10);
 
 /** The sheet's names as [{ tab, column, name, rows }] and the QuickBooks names as [string] -> { same, rename, unclear } (the cells of a rename are kept for the apply). */
-export function planSheetNames({ sheetNames, qboNames, aliasOf = () => '', overrides = {} }) {
+export function planSheetNames({ sheetNames, qboNames, aliasOf = () => '', overrides = {}, leave = {} }) {
   const exact = new Set(qboNames);
   const byName = new Map();
   for (const e of sheetNames) {
     const g = byName.get(e.name) || { name: e.name, uses: [], rows: 0 };
     g.uses.push({ tab: e.tab, column: e.column, rows: e.rows }); g.rows += e.rows.length; byName.set(e.name, g);
   }
-  const out = { same: [], rename: [], unclear: [] };
+  const out = { same: [], rename: [], unclear: [], left: [] };
   for (const g of byName.values()) {
     if (exact.has(g.name)) { out.same.push(g); continue; }
+    if (leave[key(g.name)]) { out.left.push(g); continue; } // the owner said: leave it as it is
     const told = overrides[key(g.name)];
     let candidates;
     if (told && exact.has(told)) candidates = [told];
@@ -31,6 +43,7 @@ export function planSheetNames({ sheetNames, qboNames, aliasOf = () => '', overr
       const all = qboNames.filter((q) => key(q) === key(g.name) || sameCutCustomer(g.name, q) || (!!aliasOf(g.name) && sameCutCustomer(aliasOf(g.name), q)) || sameBrandForm(g.name, q));
       const same = all.filter((q) => key(q) === key(g.name)); // one that differs only in case, spaces or punctuation beats the looser ones
       candidates = same.length === 1 ? same : all;
+      if (!candidates.length) candidates = qboNames.filter((q) => nearBrand(g.name, q)); // only when nothing stronger fits
     }
     if (candidates.length === 1) out.rename.push({ ...g, to: candidates[0] }); else out.unclear.push({ ...g, candidates: candidates.slice(0, 4) });
   }
@@ -48,8 +61,9 @@ export function sheetPreviewText(plan, id, { namesIn = [] } = {}) {
   const same = `✔ already identical: ${plan.same.length}`;
   const rename = plan.rename.length ? `✎ will rename (${plan.rename.length}):\n${plan.rename.map((r, i) => `${i + 1}. ${r.name} → ${r.to} (${rowsWord(r.rows)}; ${tabsLine(r.uses)})`).join('\n')}` : '✎ nothing to rename.';
   const unclear = plan.unclear.length ? `❓ unclear (${plan.unclear.length}), never changed until you tell me the right name:\n${plan.unclear.map((r, i) => `${i + 1}. ${r.name} (${rowsWord(r.rows)}) — ${r.candidates.length ? `candidates: ${r.candidates.join(' | ')}` : 'no QuickBooks customer fits'}`).join('\n')}\nTell me the right name: name ${plan.unclear[0].name} → <QuickBooks name>` : '';
+  const left = plan.left?.length ? `↷ left as is by you (${plan.left.length}): ${plan.left.map((g) => g.name).join(', ')}` : '';
   const ask = plan.rename.length ? `Reply yes #${id} to rename the ✎ names only (a backup copy of the sheet is made first), or no #${id}.` : 'Nothing to apply.';
-  return [`${head}\n${same}`, rename, unclear, ask].filter(Boolean).join(`\n${SEP}\n`);
+  return [`${head}\n${same}`, rename, unclear, left, ask].filter(Boolean).join(`\n${SEP}\n`);
 }
 
 /** The cells of the ✎ names: [{ tab, row, old, new }]. */
@@ -78,7 +92,8 @@ export class SheetNameStore {
 
   save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
   nextId() { this.d.n += 1; this.save(); return `H${this.d.n}`; }
-  tell(oldName, to) { this.d.overrides[key(oldName)] = to; this.save(); }
+  tell(oldName, to) { this.d.overrides[key(oldName)] = to; delete (this.d.leave ||= {})[key(oldName)]; this.save(); }
+  leaveAlone(oldName) { (this.d.leave ||= {})[key(oldName)] = true; delete this.d.overrides[key(oldName)]; this.save(); }
   openRun(id, at, backup) { this.d.runs[id] = { id, at, backup, applied: [], undone: false }; this.save(); return this.d.runs[id]; }
   logApplied(id, cells) { this.d.runs[id].applied.push(...cells); this.save(); }
   run(id) { return this.d.runs[String(id).toUpperCase()] || null; }
