@@ -15,9 +15,9 @@ const DAY = 24 * 3600 * 1000;
  * (sameCutCustomer) and that one customer fits clearly by sound and spelling. [skip](key) -> true for a name already settled. Returns [{ post, qbo, score }].
  */
 /** The words that say WHICH company (not what it does or where): «AILA WOOD PRESSING» -> aila, pressing. */
-const brandWords = (name) => nameKey(name).split(/\s+/).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
+export const brandWords = (name) => nameKey(name).split(/\s+/).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
 /** One letter wrong, missing, extra or swapped (Aila / Alia, Hamid / Hamed, Wahadan / Wahdan). */
-function nearWord(a, b) {
+export function nearWord(a, b) {
   if (a === b) return true;
   if (Math.abs(a.length - b.length) > 1 || Math.min(a.length, b.length) < 3) return false;
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
@@ -28,7 +28,7 @@ function nearWord(a, b) {
   }
   return d[a.length][b.length] <= 1;
 }
-const sameBrand = (post, qbo) => { const pw = brandWords(post); const qw = brandWords(qbo); return pw.some((w) => qw.some((v) => nearWord(w, v))); };
+export const sameBrand = (post, qbo) => { const pw = brandWords(post); const qw = brandWords(qbo); return pw.some((w) => qw.some((v) => nearWord(w, v))); };
 
 export function proposeAliases({ postNames, qboNames, skip = () => false, exclude = () => false }) {
   const out = []; const seen = new Set();

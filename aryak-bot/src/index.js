@@ -65,7 +65,7 @@ import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, withoutBo
 import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
-import { CutAliases, proposeAliases } from './cutaliases.js';
+import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
 import { unbilled, unbilledText } from './unbilled.js';
 import { PaymentDups, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
@@ -78,7 +78,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, monthlyFullText, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
+import { ExpenseStore, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -803,7 +803,7 @@ async function paymentsReport(events, only = '') {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -950,6 +950,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       void readPhotoTest(here.chatId || ownIds()[0], ic.group, ic.days).catch((e) => logger.warn(`photo test failed: ${e.message}`));
       return [`Reading ${count} kept photo${count === 1 ? '' : 's'} of the ${photoGroupLabel(ic.group)} from the last ${ic.days} day${ic.days === 1 ? '' : 's'} with ${TEST_MODEL} only. One message per photo follows, then a summary. Nothing is stored or recorded.`];
     }
+    case 'received_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedCheck(ic.name)]; }
     case 'expenses_report': return [expensesReportText(ic.range)];
     case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
     case 'weekly_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await weeklyCheckReport()]; }
@@ -2903,7 +2904,7 @@ async function expensesTurn(raw, groupId, info) {
 
 const dayPlus = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 /** The QuickBooks rows of an entity in a period (read only; a failed look-up gives none). */
-const qbRows = async (entity, from, to) => qbo.query(`select * from ${entity} where TxnDate >= '${from}' and TxnDate <= '${to}'`).catch((e) => { logger.warn(`expenses: the QuickBooks ${entity} look-up failed: ${e.message}`); return []; });
+const qbRows = async (entity, from, to) => qbo.query(`select * from ${entity} where TxnDate >= '${from}' and TxnDate <= '${to}'`).then((rows) => rows.map((r) => ({ ...r, _type: entity }))).catch((e) => { logger.warn(`expenses: the QuickBooks ${entity} look-up failed: ${e.message}`); return []; });
 const todayDubai = () => localParts(Date.now(), config.timezone).day;
 async function invoiceLookupFor(events) {
   const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20);
@@ -2912,17 +2913,37 @@ async function invoiceLookupFor(events) {
   return lookup;
 }
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
+/** For every received entry that QuickBooks does not have: one log line saying what was searched and what came nearest. */
+function logNotFound(items, records) {
+  const got = matchReceipts(items.filter((i) => !i.foreign), records, (n) => cutAliases.resolve(n));
+  for (const it of items) if (!it.foreign && it.paid !== true && !got.has(it)) logger.info(`received: not found in QuickBooks — ${whyNotFound(it, records, (n) => cutAliases.resolve(n))}`);
+}
+
+/** «check received <customer>»: for the received entries of that customer (the last two weeks from the monitor day) what QuickBooks holds around them. Read only. */
+async function receivedCheck(name) {
+  const to = todayDubai(); const from = clampRange({ from: dayPlus(to, -14), to }).from;
+  const records = [...await qbRows('Payment', dayPlus(from, -5), dayPlus(to, 5)), ...await qbRows('SalesReceipt', dayPlus(from, -5), dayPlus(to, 5)), ...await qbRows('Deposit', dayPlus(from, -5), dayPlus(to, 5))];
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() });
+  const items = receivedItems(events, { from, to }, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) }).filter((i) => sameBrandName(name, i.customer));
+  if (!items.length) return `No received entry of "${name}" was found from ${from.split('-').reverse().join('/')} on.`;
+  const got = matchReceipts(items, records, (n) => cutAliases.resolve(n));
+  const lines = items.map((it) => got.has(it) ? `✔ ${it.customer || 'UNKNOWN'} — ${it.shown} (${it.day.split('-').reverse().join('/')}): found ${[got.get(it)].map((r) => `${r._type || 'record'}${r._part ? ' line' : ''} ${String(r.TxnDate).split('-').reverse().join('/')} ${Number(r.TotalAmt).toFixed(2)}${r.CustomerRef?.name ? ` ${r.CustomerRef.name}` : ''}`)[0]}` : `⚠ ${whyNotFound(it, records, (n) => cutAliases.resolve(n))}`);
+  return [`*Received check — ${name}*`, withSeparators(lines)].join('\n');
+}
+const sameBrandName = (a, b) => !a || sameBrand(a, b || '');
+
 async function receivedReportText(kind) {
   const r = clampRange(rangeOf(kind, todayDubai()));
-  const records = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  const records = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() }); // the same list as «payments»: names, repeats, cheques
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
+  logNotFound(items, records);
   return receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
 }
 async function weeklyCheckReport() {
   const r = clampRange(rangeOf('week', todayDubai()));
   const purchases = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))];
-  const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() });
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label });

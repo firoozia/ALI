@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SEP, withSeparators } from './separator.js';
 import { sameCutCustomer } from './cuts.js';
+import { sameBrand } from './cutaliases.js';
 import { localParts } from './morning.js';
 import { normalizeDigits } from './text.js';
 
@@ -159,7 +160,7 @@ export function expensesText(entries, title) {
 
 const near = (a, b, tol = 1) => Math.abs(Number(a) - Number(b)) <= tol;
 const closeDay = (isoA, isoB, tol = 3) => Math.abs(dayNum(isoA) - dayNum(isoB)) <= tol;
-const nameOk = (a, b, aliasOf = () => '') => !a || !b || sameCutCustomer(a, b) || (!!aliasOf(a) && sameCutCustomer(aliasOf(a), b));
+const nameOk = (a, b, aliasOf = () => '') => !a || !b || sameCutCustomer(a, b) || (!!aliasOf(a) && sameCutCustomer(aliasOf(a), b)) || sameBrand(a, b); // «Akrasa lion» is «AKRASAA LIONS …»: a letter more or less, singular or plural
 
 /** The QuickBooks records (Purchase / Bill: { TxnDate, TotalAmt, EntityRef|VendorRef }) that match each expense by amount (±1) and date (±3 days); the vendor when both are known. Each record is used once. */
 export function matchExpenses(entries, records) {
@@ -171,14 +172,47 @@ export function matchExpenses(entries, records) {
   return { found, missing, unused: records.filter((_, i) => !used.has(i)) };
 }
 
-/** What the office recorded as received: Payment / Deposit ({ TxnDate, TotalAmt, CustomerRef }) for each money entry { amount, day, customer }; each record once. */
-export function matchReceipts(items, records, aliasOf = () => '') {
-  const used = new Set(); const out = new Map();
-  for (const it of items) {
-    const at = records.findIndex((r, i) => !used.has(i) && near(r.TotalAmt, it.amount) && closeDay(r.TxnDate, it.day) && nameOk(it.customer, r.CustomerRef?.name || '', aliasOf));
-    if (at >= 0) { used.add(at); out.set(it, records[at]); }
+/**
+ * Every amount a QuickBooks record could stand for: its total AND the amount of each of its lines (a payment applied to several invoices, a deposit of several items), each with the
+ * record's date and customer (a deposit line carries its own entity). A line of the same amount as the total is not repeated.
+ */
+export function expandRecords(records) {
+  const out = [];
+  for (const r of records) {
+    out.push(r);
+    for (const l of r.Line || []) {
+      const amount = Number(l.Amount);
+      if (!(amount > 0) || Math.abs(amount - Number(r.TotalAmt)) < 0.005) continue;
+      const entity = l.DepositLineDetail?.Entity;
+      out.push({ ...r, TotalAmt: amount, CustomerRef: r.CustomerRef || (entity ? { name: entity.name || '' } : undefined), _part: true });
+    }
   }
   return out;
+}
+
+/** What the office recorded as received: a Payment, a SalesReceipt (cash sale) or a Deposit ({ TxnDate, TotalAmt, CustomerRef }), the total or a line of it, for each money entry { amount, day, customer }; each record once. */
+export function matchReceipts(items, records, aliasOf = () => '') {
+  const all = expandRecords(records);
+  const used = new Set(); const out = new Map();
+  for (const it of items) {
+    const at = all.findIndex((r, i) => !used.has(i) && near(r.TotalAmt, it.amount) && closeDay(r.TxnDate, it.day) && nameOk(it.customer, r.CustomerRef?.name || '', aliasOf));
+    if (at >= 0) { used.add(at); out.set(it, all[at]); }
+  }
+  return out;
+}
+
+const describe = (r) => `${r._type || 'record'}${r._part ? ' line' : ''} ${dmy(r.TxnDate)} ${money(r.TotalAmt)}${r.CustomerRef?.name ? ` ${r.CustomerRef.name}` : ''}`;
+
+/** Why an entry was not found: what was searched, and the nearest candidates (the same amount of another customer, the same customer with another amount) — for the log and for the owner's check. */
+export function whyNotFound(item, records, aliasOf = () => '', { types = ['Payment', 'SalesReceipt', 'Deposit'], days = 3 } = {}) {
+  const all = expandRecords(records);
+  const win = all.filter((r) => closeDay(r.TxnDate, item.day, days));
+  const sameAmount = win.filter((r) => near(r.TotalAmt, item.amount));
+  const sameCustomer = all.filter((r) => closeDay(r.TxnDate, item.day, 14) && item.customer && r.CustomerRef?.name && nameOk(item.customer, r.CustomerRef.name, aliasOf));
+  const from = new Date((dayNum(item.day) - days) * 86400000).toISOString().slice(0, 10); const to = new Date((dayNum(item.day) + days) * 86400000).toISOString().slice(0, 10);
+  return [`${item.customer || 'UNKNOWN'} ${money(item.amount)} AED of ${dmy(item.day)}: searched ${types.join(', ')} from ${dmy(from)} to ${dmy(to)} (amount ±1, customer when known)`,
+    `same amount, another customer: ${sameAmount.length ? sameAmount.slice(0, 4).map(describe).join(' | ') : 'none'}`,
+    `same customer (±14 days), other amounts: ${sameCustomer.length ? sameCustomer.slice(0, 6).map(describe).join(' | ') : 'none'}`].join('; ');
 }
 
 const AED_PER = { OMR: 9.5516, USD: 3.6725, SAR: 0.97933 }; // the pegged currencies; another one is shown as it is and left out of the AED totals

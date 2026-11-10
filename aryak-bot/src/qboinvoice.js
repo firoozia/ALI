@@ -133,6 +133,7 @@ export function parseInvoiceCommand(text) {
     let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
     em = /^(?:money\s+received|received|دریافتی(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
     if (/^(?:weekly\s+check|بررسی\s*هفتگی)$/iu.test(s)) return { type: 'weekly_check' };
+    { const rc = /^(?:check\s+received|received\s+check|بررسی\s+دریافتی)\s+(.{2,60})$/iu.exec(s); if (rc) return { type: 'received_check', name: rc[1].trim() }; } // why a received entry is not found in QuickBooks
     { // «backfill» / «backfill 01/11» / «پر کردن تاریخچه ۰۱/۱۱»: the history of the groups from that day (owner only)
       const bm = /^(?:backfill|پر\s*کردن\s*تاریخچه)(?:\s+([0-9۰-۹]{1,2})[/.-]([0-9۰-۹]{1,2}))?$/iu.exec(s);
       if (bm) { const num = (x) => Number(String(x).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))); return { type: 'backfill', ...(bm[1] ? { day: num(bm[1]), month: num(bm[2]) } : {}) }; }
