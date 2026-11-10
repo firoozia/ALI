@@ -61,7 +61,7 @@ test('two steps: «backfill» only counts and estimates; only the owner\'s yes d
   assert.doesNotMatch(step1, /downloadMedia\(|extractEvent|visionRead|trackGroup|processHistoryMessage|keepPhotoMessage|photoFile\([^)]*\), buf/); // step 1: no download, no model, nothing kept
   assert.match(step1, /Nothing was downloaded, read or kept yet\. Reply yes #\$\{pendingBackfill\.id\} to go on, or no #\$\{pendingBackfill\.id\}\./);
   assert.match(step1, /Estimated cost: about \$\$\{est\.usd\.toFixed\(2\)\} \(≈ \$\{\(est\.usd \* 3\.6725\)\.toFixed\(2\)\} AED\)/); assert.match(step1, /Photos: \$\{est\.photos\}\. PDFs: \$\{est\.pdfs\}\./);
-  assert.match(b, /const PHOTO_TOKENS = \{ input: 1700, output: 150 \};/); assert.match(b, /\(media\.length \* \(PHOTO_TOKENS\.input \* 1 \+ PHOTO_TOKENS\.output \* 5\)\) \/ 1e6/); // Haiku prices; what is already downloaded is not counted
+  assert.match(b, /const PHOTO_TOKENS = \{ input: 1700, output: 100 \};/); assert.match(b, /costOf\(media\.length \* PHOTO_TOKENS\.input, media\.length \* PHOTO_TOKENS\.output\)/); // Haiku prices; what is already downloaded is not counted
   assert.match(b, /!fs\.existsSync\(photoFile\(m\.key\.id\)\)/);
   const step2 = b.slice(b.indexOf('async function decideBackfill'), b.indexOf('async function runBackfill'));
   assert.match(step2, /if \(verb !== 'yes'\) return \['Cancelled\. Nothing was downloaded, read or kept\.'\];/); assert.ok(step2.indexOf("verb !== 'yes'") < step2.indexOf('runBackfill(p)')); // the yes comes before any work

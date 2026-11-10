@@ -77,7 +77,7 @@ import { matchOption } from './choice.js';
 import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
-import { PHOTO_RULES, TEST_MODEL, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
+import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
 import { ExpenseStore, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, monthlyFullText, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
@@ -2682,7 +2682,7 @@ async function readPhotoTest(chatId, groupKey, days) {
       const block = isPdf ? documentBlock({ base64: buf.toString('base64'), mimeType: 'application/pdf', fileName: e.fileName }) : { type: 'image', source: { type: 'base64', media_type: String(e.mimetype || 'image/jpeg').split(';')[0], data: buf.toString('base64') } };
       let reading = null; let usage = null;
       try {
-        const res = await client.beta.messages.create({ model: TEST_MODEL, max_tokens: 500, system: PHOTO_RULES, output_config: { effort: 'low' }, messages: [{ role: 'user', content: [block, { type: 'text', text: e.caption ? `Message text: ${e.caption}` : 'No text.' }] }] }); // this model only: no fallback behind it
+        const res = await client.beta.messages.create({ model: TEST_MODEL, max_tokens: 1024, system: PHOTO_RULES, thinking: { type: 'disabled' }, output_config: { effort: 'low' }, messages: [{ role: 'user', content: [block, { type: 'text', text: e.caption ? `Message text: ${e.caption}` : 'No text.' }] }] }); // this model only: no fallback behind it
         usage = { input: res.usage?.input_tokens || 0, output: res.usage?.output_tokens || 0 }; inTokens += usage.input; outTokens += usage.output;
         reading = parseReading(res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'));
       } catch (err) { logger.warn(`photo test: the read failed: ${err.message}`); }
@@ -2746,7 +2746,7 @@ async function processHistoryMessage(m, groupId, info, groupKey, counts) {
 // answers with an ESTIMATE of the reading cost; step 2 is his «yes #B1»: only then are the media downloaded and read. His «no» drops it. Nothing starts by itself at the start of the bot.
 let pendingBackfill = null; // { id, at, fromDay, groups: [{ groupId, info, groupKey, messages }], counts }
 let backfillCount = 0;
-const PHOTO_TOKENS = { input: 1700, output: 150 }; // a photo read by the cheap model, as measured in the photo test
+const PHOTO_TOKENS = { input: 1700, output: 100 }; // a photo read by the cheap model with thinking off: about 60-100 tokens out
 const isMediaMessage = (m) => { const c = normalizeMessageContent(m.message); return !!(c?.imageMessage || (c?.documentMessage && /pdf/i.test(c.documentMessage.mimetype || ''))); };
 
 /** Step 1: the history of every group with an anchor, backwards to [fromDay]. Only the message list is fetched. */
@@ -2782,7 +2782,7 @@ function backfillEstimate(p) {
   const media = p.groups.flatMap((g) => g.messages.filter((m) => isMediaMessage(m) && !fs.existsSync(photoFile(m.key.id))));
   const photos = media.filter((m) => normalizeMessageContent(m.message)?.imageMessage).length;
   const pdfs = media.length - photos;
-  const usd = (media.length * (PHOTO_TOKENS.input * 1 + PHOTO_TOKENS.output * 5)) / 1e6; // Haiku: 1 and 5 US dollars per million tokens
+  const usd = costOf(media.length * PHOTO_TOKENS.input, media.length * PHOTO_TOKENS.output); // the cheap model at the price table of the cost meter
   return { photos, pdfs, usd, tokensIn: media.length * PHOTO_TOKENS.input, tokensOut: media.length * PHOTO_TOKENS.output };
 }
 
@@ -2864,7 +2864,7 @@ async function maybeSetExpensesGroup(raw, groupId, info) {
 /** A receipt photo read by the cheapest vision model first: { total, currency, vendor, date, category } or null when it is not readable. */
 async function readReceiptPhoto(buf, mimeType) {
   const call = (model) => client.beta.messages.create({
-    model, max_tokens: 400, system: RECEIPT_RULES, output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+    model, max_tokens: 1024, system: RECEIPT_RULES, thinking: { type: 'disabled' }, output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
     messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: mimeType, data: buf.toString('base64') } }, { type: 'text', text: 'Read this receipt.' }] }],
   });
   const parse = (res) => { const t = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); return JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); };

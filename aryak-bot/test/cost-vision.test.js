@@ -64,8 +64,8 @@ test('cost: the days are kept on disk and a week sums the last seven', () => {
   clock.t += 2 * 86400000;
   a.model('claude-haiku-5-5', { input_tokens: 1_000_000 }); a.save();
   const b = new CostMeter(dir, { now: () => clock.t });
-  assert.ok(Math.abs(b.totals().usd - 1) < 1e-9);
-  assert.ok(Math.abs(b.range(7).usd - 2) < 1e-9);
+  assert.ok(Math.abs(b.totals().usd - PRICES['claude-haiku-5-5'][0]) < 1e-9);
+  assert.ok(Math.abs(b.range(7).usd - 2 * PRICES['claude-haiku-5-5'][0]) < 1e-9);
   assert.match(parseInvoiceCommand('هزینهٔ امروز').type, /cost_report/);
   assert.deepEqual(parseInvoiceCommand('هزینهٔ هفته'), { type: 'cost_report', range: 'week' });
 });

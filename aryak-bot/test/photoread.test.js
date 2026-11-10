@@ -24,11 +24,11 @@ test('the message of one photo: where and when, the type, the amount and date on
   const reading = parseReading('```json\n{"type":"cheque","amount":2000,"currency":"AED","date":"2026-11-08","party":"AWAB WOOD — Mashreq — 001234"}\n```');
   assert.deepEqual(reading, { type: 'cheque', amount: 2000, currency: 'AED', date: '2026-11-08', party: 'AWAB WOOD — Mashreq — 001234' });
   assert.equal(photoMessage({ n: 3, total: 12, entry, reading, usage: { input: 1650, output: 120 } }), [
-    '📷 Photo 3/12 — Confirmation group — 09/11 14:55 — from Manager', 'Type: cheque', 'Amount: *2,000.00 AED*   Date on paper: 08/11/2026', 'Payer / bank / cheque no.: AWAB WOOD — Mashreq — 001234', 'Caption/reply text: "Awab"', 'Tokens: in 1,650 / out 120 — cost $0.0022',
+    '📷 Photo 3/12 — Confirmation group — 09/11 14:55 — from Manager', 'Type: cheque', 'Amount: *2,000.00 AED*   Date on paper: 08/11/2026', 'Payer / bank / cheque no.: AWAB WOOD — Mashreq — 001234', 'Caption/reply text: "Awab"', `Tokens: in 1,650 / out 120 — cost $${costOf(1650, 120).toFixed(4)}`,
   ].join('\n'));
-  assert.equal(costOf(1650, 120), (1650 * 1 + 120 * 5) / 1e6); assert.equal(TEST_MODEL, 'claude-haiku-5-5');
+  assert.equal(costOf(1650, 120), (1650 * 0.1 + 120 * 0.5) / 1e6); // the price table: $0.10 in, $0.50 out per million tokens (the earlier table was ten times too dear) assert.equal(TEST_MODEL, 'claude-haiku-5-5');
   // unreadable, no text, no date
-  assert.equal(photoMessage({ n: 1, total: 1, entry: { groupKey: 'expenses', at: AT, caption: '', replies: [] }, reading: null, usage: { input: 900, output: 10 } }), ['📷 Photo 1/1 — Expenses group — 09/11 14:55', 'Type: not readable', 'Amount: not read', 'Caption/reply text: none', 'Tokens: in 900 / out 10 — cost $0.0009'].join('\n'));
+  assert.equal(photoMessage({ n: 1, total: 1, entry: { groupKey: 'expenses', at: AT, caption: '', replies: [] }, reading: null, usage: { input: 900, output: 10 } }), ['📷 Photo 1/1 — Expenses group — 09/11 14:55', 'Type: not readable', 'Amount: not read', 'Caption/reply text: none', `Tokens: in 900 / out 10 — cost $${costOf(900, 10).toFixed(4)}`].join('\n'));
   assert.match(photoMessage({ n: 1, total: 1, entry: { groupKey: 'confirmation', at: AT, caption: '85.5', replies: [] }, reading: { type: 'not a receipt', amount: null, currency: '', date: '', party: '' }, usage: null }), /Amount: not read   Date on paper: none[\s\S]*Caption\/reply text: "85\.5"[\s\S]*Tokens: none/);
   assert.equal(parseReading('not json at all'), null); assert.equal(parseReading('{"type":"cash receipt","amount":-5}').amount, null);
 });
@@ -38,14 +38,14 @@ test('the summary: photos read, unreadable, skipped with the reason, tokens, the
   assert.equal(text, [
     '*Photo reading test — Confirmation group, last 7 days* (claude-haiku-5-5 only)', 'Photos kept: 12', 'Read: 10', 'Unreadable: 1', 'Skipped (could not be downloaded): 1 — media expired',
     'Only photos posted since 09/11 14:55 are available: the bot keeps no message history, so older ones cannot be fetched.', 'Tokens: in 16,500 / out 1,200',
-    `Cost: $0.0225 (≈ ${(0.0225 * USD_TO_AED).toFixed(2)} AED at 1 USD = 3.6725 AED)`, 'Nothing was stored in the payments or recorded in QuickBooks; no setting was changed.',
+    `Cost: $${costOf(16500, 1200).toFixed(4)} (≈ ${(costOf(16500, 1200) * USD_TO_AED).toFixed(2)} AED at 1 USD = 3.6725 AED)`, 'Nothing was stored in the payments or recorded in QuickBooks; no setting was changed.',
   ].join('\n'));
   assert.match(summaryText({ groupKey: 'expenses', days: 1, kept: 0, read: 0, unreadable: 0, skipped: 0, inTokens: 0, outTokens: 0 }), /No photo has been kept yet: only photos posted from now on can be read/);
 });
 
 test('the wiring: owner only, this model only (no fallback), nothing stored or recorded, paced, the photos are kept from now on and a reply is kept with its photo', () => {
   const run = index.slice(index.indexOf('async function readPhotoTest'), index.indexOf('// ---------------------------------------------------------------------------------------------------------------- history backfill'));
-  assert.match(run, /model: TEST_MODEL, max_tokens: 500, system: PHOTO_RULES, output_config: \{ effort: 'low' \}/); assert.doesNotMatch(run, /betas|fallbacks|visionRead|extractEvent/); // this model only
+  assert.match(run, /model: TEST_MODEL, max_tokens: 1024, system: PHOTO_RULES, thinking: \{ type: 'disabled' \}, output_config: \{ effort: 'low' \}/); assert.match(run, /max_tokens: 1024, system: PHOTO_RULES, thinking: \{ type: 'disabled' \}/); assert.doesNotMatch(run, /betas|fallbacks|visionRead|extractEvent/); // this model only
   assert.doesNotMatch(run, /tracker\.|qbo\.|paymentDups|expenseStore|config\.trackModel|trackModel\s*=/); // nothing stored or recorded, no setting changed
   assert.match(run, /await new Promise\(\(r\) => setTimeout\(r, 1500\)\)/); assert.match(run, /isPdf \? \{ document: buf, mimetype: 'application\/pdf'[^}]*caption: text \} : \{ image: buf, caption: text \}/); // one message per photo, the photo attached
   assert.match(run, /skipped \+= 1; reasons\.push\(/); assert.match(run, /finally \{ photoTestRunning = false; \}/);

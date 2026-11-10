@@ -9,9 +9,9 @@ import { localParts } from './morning.js';
 
 /** US dollars per million tokens: [input, output]. They are estimates; COST_PRICES (JSON) overrides any of them. */
 export const PRICES = {
-  'claude-opus-5-5': [5, 25],
-  'claude-sonnet-5-5': [3, 15],
-  'claude-haiku-5-5': [1, 5],
+  'claude-opus-5-5': [4, 20],
+  'claude-sonnet-5-5': [2, 10],
+  'claude-haiku-5-5': [0.1, 0.5],
 };
 export const SPEECH_PER_MINUTE = 0.016;
 

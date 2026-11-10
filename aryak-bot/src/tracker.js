@@ -125,8 +125,8 @@ export async function extractEvent({ client, config, role, caption = '', images 
       { type: 'text', text: caption ? `Message text: ${caption}` : 'No text, only the picture.' },
     ];
     const call = (model) => client.beta.messages.create({
-      model, max_tokens: 800, system: EXTRACT_RULES[role], messages: [{ role: 'user', content }],
-      output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+      model, max_tokens: 1024, system: EXTRACT_RULES[role], messages: [{ role: 'user', content }],
+      thinking: { type: 'disabled' }, output_config: { effort: 'low' }, // an extraction, not a puzzle: no thinking (it ate the output and made the cheap model fail the parse) betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
     });
     const parse = (res) => { const s = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); return JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); };
     let v;
