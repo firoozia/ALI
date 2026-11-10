@@ -117,8 +117,8 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
 }
 
 /** The report: [events] with an amount, newest first, at most [max] proposals; the footer says nothing was recorded. */
-export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map() }) {
-  const recent = events.filter((e) => e.type === 'payment' && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
+export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map(), since = 0 }) {
+  const recent = events.filter((e) => e.type === 'payment' && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
   const marked = new Map(); const dropped = new Set();
@@ -187,9 +187,9 @@ export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '
  * The payment entries as ONE list for every report (payments, money received, the Thursday check): the same cleaned names (no «receipt + clear», «cheaque», «OMR =»), a cheque
  * recognised by its word, the same repeats dropped (a repeat the owner answered «dup» is gone; one not yet answered counts once; «separate» keeps both). Simulated entries are left out.
  */
-export function sharedPaymentList({ events, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups('') }) {
+export function sharedPaymentList({ events, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0 }) {
   const FOREIGN_WORD = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
-  const list = events.filter((e) => e.type === 'payment' && !e.simulated).sort((a, b) => a.at - b.at).map((e) => {
+  const list = events.filter((e) => e.type === 'payment' && !e.simulated && e.at >= since).sort((a, b) => a.at - b.at).map((e) => {
     const c = cleaned(e);
     const words = `${e.customer || ''} ${e.text || ''}`;
     const asked = FOREIGN_WORD.exec(words);

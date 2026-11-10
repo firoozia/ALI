@@ -133,6 +133,10 @@ export function parseInvoiceCommand(text) {
     let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
     em = /^(?:money\s+received|received|دریافتی(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
     if (/^(?:weekly\s+check|بررسی\s*هفتگی)$/iu.test(s)) return { type: 'weekly_check' };
+    { // «backfill» / «backfill 01/11» / «پر کردن تاریخچه ۰۱/۱۱»: the history of the groups from that day (owner only)
+      const bm = /^(?:backfill|پر\s*کردن\s*تاریخچه)(?:\s+([0-9۰-۹]{1,2})[/.-]([0-9۰-۹]{1,2}))?$/iu.exec(s);
+      if (bm) { const num = (x) => Number(String(x).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))); return { type: 'backfill', ...(bm[1] ? { day: num(bm[1]), month: num(bm[2]) } : {}) }; }
+    }
     { // a one-off, owner-only test of photo reading: «read photos confirmation 7», «خواندن عکس‌ها گروه تأیید ۷»
       const pm = /^(?:read\s+photos?|خواندن\s+عکس(?:[\s\u200c]*ها)?)\s+(?:group\s+|گروه\s+)?(confirmation|expenses?|تأیید|تاییید|تایید|تأييد|هزینه(?:[\s\u200c]*ها)?)\s+([0-9۰-۹]{1,3})$/iu.exec(s);
       if (pm) { const days = Number(String(pm[2]).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))); if (days >= 1 && days <= 60) return { type: 'read_photos', group: /^(?:confirmation|تأیید|تایید)$/i.test(pm[1]) ? 'confirmation' : 'expenses', days }; }

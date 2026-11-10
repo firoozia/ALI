@@ -44,12 +44,12 @@ test('the summary: photos read, unreadable, skipped with the reason, tokens, the
 });
 
 test('the wiring: owner only, this model only (no fallback), nothing stored or recorded, paced, the photos are kept from now on and a reply is kept with its photo', () => {
-  const run = index.slice(index.indexOf('async function readPhotoTest'), index.indexOf('// ---------------------------------------------------------------------------------------------------------------- company expenses'));
+  const run = index.slice(index.indexOf('async function readPhotoTest'), index.indexOf('// ---------------------------------------------------------------------------------------------------------------- history backfill'));
   assert.match(run, /model: TEST_MODEL, max_tokens: 500, system: PHOTO_RULES, output_config: \{ effort: 'low' \}/); assert.doesNotMatch(run, /betas|fallbacks|visionRead|extractEvent/); // this model only
   assert.doesNotMatch(run, /tracker\.|qbo\.|paymentDups|expenseStore|config\.trackModel|trackModel\s*=/); // nothing stored or recorded, no setting changed
   assert.match(run, /await new Promise\(\(r\) => setTimeout\(r, 1500\)\)/); assert.match(run, /isPdf \? \{ document: buf, mimetype: 'application\/pdf'[^}]*caption: text \} : \{ image: buf, caption: text \}/); // one message per photo, the photo attached
   assert.match(run, /skipped \+= 1; reasons\.push\(/); assert.match(run, /finally \{ photoTestRunning = false; \}/);
-  assert.match(index, /OWNER_CHAT_COMMANDS = new Set\(\['unbilled', 'payments', 'read_photos'/); // typed in a group: «use your own chat»
+  assert.match(index, /OWNER_CHAT_COMMANDS = new Set\(\['unbilled', 'payments', 'backfill', 'read_photos'/); // typed in a group: «use your own chat»
   assert.match(index, /case 'read_photos': \{\n\s+if \(photoTestRunning\)/);
   assert.match(index, /\(e\.replies \|\|= \[\]\)\.push\(text\.slice\(0, 200\)\)/); assert.match(index, /try \{ keepPhotoMessage\(raw, groupId, info\); \}/);
   assert.match(index, /new MediaKeep\(path\.join\(config\.authDir, 'photo-media'\)/); // on the server, never in the repository

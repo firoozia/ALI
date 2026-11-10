@@ -570,18 +570,27 @@ const photoBase = (ev) => (ev && Number(ev.amount) > 0 ? { amount: Number(ev.amo
 const baseOfReceipt = (read) => ({ amount: read?.amount || 0, paidOn: read?.date || '', receipt: read?.receipt || 'receipt', payer: read?.payer || '', source: 'pdf', invoices: read?.invoices || [] });
 const withCustomer = (merged) => ({ ...merged, customer: canon(merged.customer), customerTyped: merged.customer });
 
+/** The time of the message being read (its own time when it comes from the history), else now. */
+const replayCtx = new AsyncLocalStorage();
+const nowAt = () => replayCtx.getStore()?.at || Date.now();
+/** A media download; when the copy on WhatsApp's servers has expired the phone is asked to upload it again. */
+function downloadMedia(message) { return downloadMediaMessage(message, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage, logger }); }
+const monitorStartMs = () => Date.parse(`${config.monitorFrom}T00:00:00+04:00`) || 0; // nothing before this day is monitored
+const clampRange = (r) => (r.from < config.monitorFrom ? { ...r, from: config.monitorFrom } : r);
+
 /** The owner is told what a new payment entry looks like (a proposal; nothing is recorded in QuickBooks). */
 function tellPayment(event) {
+  if (replayCtx.getStore()?.quiet) return; // a message read from the history is never announced
   if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf')) void paymentsReport(tracker.events, event.ref).then((text) => text && sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
 }
 
 /** A bank receipt, a cheque slip or a transfer advice posted as a PDF in the Confirmation group: one payment entry from its text. */
 async function trackPaymentPdf(raw, groupId) {
   let buf;
-  try { buf = await downloadMediaMessage(raw, 'buffer', {}); } catch (e) { logger.warn(`tracker: the receipt pdf could not be downloaded: ${e.message}`); return; }
+  try { buf = await downloadMedia(raw); } catch (e) { logger.warn(`tracker: the receipt pdf could not be downloaded: ${e.message}`); return; }
   if (buf.length > 10 * 1024 * 1024) { logger.warn(`tracker: a receipt pdf is too large in ${groupId}`); return; }
   const merged = mergePayment(baseOfReceipt(receiptOfPdf(buf)), {});
-  const event = { ...withCustomer(merged), at: Date.now(), ref: payRef(groupId, raw.key.id) };
+  const event = { ...withCustomer(merged), at: nowAt(), ref: payRef(groupId, raw.key.id) };
   if (!tracker.add(event)) return;
   trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', `payment evidence read from a pdf${event.amount ? ' (an amount)' : ' (no readable amount)'}`);
   tellPayment(event);
@@ -597,11 +606,11 @@ async function replyToPayment({ raw, groupId, content, quotedId, event }) {
   else if (ctx.quotedMessage) {
     const quoted = normalizeMessageContent(ctx.quotedMessage);
     if (quoted?.documentMessage && /pdf/i.test(quoted.documentMessage.mimetype || '')) {
-      try { base = baseOfReceipt(receiptOfPdf(await downloadMediaMessage({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }, 'buffer', {}))); } catch (e) { logger.warn(`tracker: the quoted receipt could not be downloaded: ${e.message}`); }
+      try { base = baseOfReceipt(receiptOfPdf(await downloadMedia({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }))); } catch (e) { logger.warn(`tracker: the quoted receipt could not be downloaded: ${e.message}`); }
     } else if (imageOf(quoted)) { // a photo of a receipt or cheque: the cheap model first (the same path as every photo), only when the owner allows model reading
       if (mayReadReceipts(config)) {
         try {
-          const buf = await downloadMediaMessage({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }, 'buffer', {});
+          const buf = await downloadMedia({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage });
           const ev = await extractEvent({ client, config, role: 'payment', caption: imageOf(quoted).caption || '', images: [{ base64: buf.toString('base64'), mimeType: String(imageOf(quoted).mimetype || 'image/jpeg').split(';')[0] }] });
           base = photoBase(ev) || { amount: 0, receipt: 'receipt', source: 'photo' };
         } catch (e) { logger.warn(`tracker: the quoted photo could not be read: ${e.message}`); }
@@ -616,7 +625,7 @@ async function replyToPayment({ raw, groupId, content, quotedId, event }) {
     trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply gave the customer and the invoice of the receipt it quotes: one entry');
     tellPayment(existing);
   } else {
-    const made = { ...merged, at: Date.now(), ref: quotedRef }; // under the quoted receipt's own reference: a later «cleared» to the same receipt finds this entry
+    const made = { ...merged, at: nowAt(), ref: quotedRef }; // under the quoted receipt's own reference: a later «cleared» to the same receipt finds this entry
     if (tracker.add(made)) { trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply to a receipt: the receipt and the reply are one entry'); tellPayment(made); }
   }
   return true;
@@ -647,15 +656,15 @@ async function trackGroup(raw, groupId, role) {
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
     if (det.name && role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event: { customer: det.name, amount: 0, invoices: [] } })) return; // «Awab» as a reply to a receipt photo or PDF: the name belongs to that receipt
     if (det.name) { // a bare name: it belongs to the nameless payment just before it (ten minutes), or to the one that comes just after
-      lastPayName.set(groupId, { customer: det.name, at: Date.now() });
-      const before = [...tracker.events].reverse().find((e) => e.type === 'payment' && !e.customer && e.pendingName && Date.now() - e.at < 10 * 60 * 1000);
+      lastPayName.set(groupId, { customer: det.name, at: nowAt() });
+      const before = [...tracker.events].reverse().find((e) => e.type === 'payment' && !e.customer && e.pendingName && nowAt() - e.at < 10 * 60 * 1000);
       if (before) { tracker.update(before.ref, { customer: canon(det.name), customerTyped: det.name, pendingName: false }); trace(whereDet, 'tracker', 'a name was given to the payment just before it'); }
       return;
     }
     for (const [i, ev] of det.events.entries()) {
-      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: refOf(raw.key.id, i), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}) };
+      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}) };
       const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
-      if (role === 'payment' && !event.customer && pn && Date.now() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
+      if (role === 'payment' && !event.customer && pn && nowAt() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
       if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event })) continue;
       if (isDuplicatePayment(tracker, event)) { trace(whereDet, 'tracker', 'the same payment was already recorded minutes ago: counted once'); continue; }
       if (!tracker.add(event)) continue;
@@ -663,7 +672,7 @@ async function trackGroup(raw, groupId, role) {
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
-      if (role === 'payment' && (Number(event.amount) > 0 || event.invoices?.length) && qbo.connected && !qbo.paused) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
+      if (role === 'payment' && (Number(event.amount) > 0 || event.invoices?.length) && qbo.connected && !qbo.paused && !replayCtx.getStore()?.quiet) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
         void paymentsReport(tracker.events, event.ref).then((text) => text && sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
       }
       if (role === 'delivery') {
@@ -680,12 +689,12 @@ async function trackGroup(raw, groupId, role) {
   if (!(role === 'payment' && image ? mayReadReceipts(config) : mayTrackWithModel(config))) { usage.count(groupLabel((await groupInfo(groupId)).subject), 'notRead'); return; }
   const images = [];
   if (image) {
-    try { images.push({ base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: String(image.mimetype || 'image/jpeg').split(';')[0] }); } catch (e) { logger.warn(`tracker: photo download failed: ${e.message}`); }
+    try { images.push({ base64: (await downloadMedia(raw)).toString('base64'), mimeType: String(image.mimetype || 'image/jpeg').split(';')[0] }); } catch (e) { logger.warn(`tracker: photo download failed: ${e.message}`); }
   }
   const ev = await extractEvent({ client, config, role, caption: text, images });
   const where = `group "${(await groupInfo(groupId)).subject}"`;
   if (!ev) { trace(where, 'tracker', `${role}: nothing to record`); return; }
-  const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24), ...(role === 'payment' && image ? { source: 'photo', receipt: ev.kind === 'cheque' ? 'cheque' : ev.kind === 'transfer' ? 'transfer receipt' : 'receipt', ...(ev.customer ? {} : { pendingName: true }) } : {}) };
+  const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: createHash('sha256').update(`${groupId}|${raw.key.id}`).digest('hex').slice(0, 24), ...(role === 'payment' && image ? { source: 'photo', receipt: ev.kind === 'cheque' ? 'cheque' : ev.kind === 'transfer' ? 'transfer receipt' : 'receipt', ...(ev.customer ? {} : { pendingName: true }) } : {}) };
   if (!tracker.add(event)) return;
   trace(where, 'tracker', `${role} recorded (${event.lines?.length || 0} line(s)${event.amount ? ', an amount' : ''})`);
   if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
@@ -789,12 +798,12 @@ async function paymentsReport(events, only = '') {
   const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20); // the invoice numbers the messages give: paid or open
   const lookup = new Map();
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
-  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup });
+  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup, since: monitorStartMs() });
 }
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -928,6 +937,13 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     }
     case 'payment_dup': { const r = paymentDups.decide(ic.id, ic.verb); return [r.error ? `No open question #${ic.id} (it was answered or never asked).` : r.verb === 'dup' ? `Noted: the second payment is the same as the first; it will be counted once (#${ic.id}).` : `Noted: two separate payments (#${ic.id}); I will not ask again.`]; }
     case 'expense_delete': { const gone = expenseStore.remove(ic.id); return [gone ? `Expense #${gone.id} (${gone.amount ? `${gone.amount.toFixed(2)} AED` : 'no amount'}${gone.test ? ', test data' : ''}) was deleted.` : `No expense #${ic.id} was found.`]; }
+    case 'backfill': {
+      if (backfillRunning) return ['A history backfill is already running; its report follows.'];
+      const year = Number(localParts(Date.now(), config.timezone).day.slice(0, 4));
+      const from = ic.day ? `${year}-${String(ic.month).padStart(2, '0')}-${String(ic.day).padStart(2, '0')}` : config.monitorFrom;
+      void backfillHistory(from).then((text) => sock.sendMessage(here.chatId || ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`history backfill failed: ${e.message}`));
+      return [`Asking WhatsApp for the history of the Confirmation and Expenses groups from ${from.split('-').reverse().join('/')} (the monitor day is ${config.monitorFrom.split('-').reverse().join('/')}). It can take a few minutes; the report follows here. Nothing is posted to any group.`];
+    }
     case 'read_photos': {
       if (photoTestRunning) return ['A photo reading test is already running; its messages are still coming.'];
       const count = photoKeep.list_.filter((e) => e.groupKey === ic.group && e.at >= Date.now() - ic.days * 86400000).length;
@@ -2635,30 +2651,32 @@ setInterval(async () => {
 const photoKeep = new MediaKeep(path.join(config.authDir, 'photo-media'), { replacer: BufferJSON.replacer, reviver: BufferJSON.reviver, max: 600 });
 const photoStartFile = path.join(config.authDir, 'photo-media', 'started.txt');
 const photoSince = () => { try { return Number(fs.readFileSync(photoStartFile, 'utf8')) || 0; } catch { return 0; } };
-function keepPhotoMessage(raw, groupId, info) {
+function keepPhotoMessage(raw, groupId, info, atMs = Date.now()) {
   const content = normalizeMessageContent(raw.message);
   if (!content) return;
   const subject = String(info.subject || '').toLowerCase();
   const groupKey = config.confirmGroupName && subject.includes(config.confirmGroupName) ? 'confirmation' : isExpensesSubject(subject) ? 'expenses' : '';
   if (!groupKey) return;
+  noteSeen(raw, groupId, groupKey); // the oldest message seen here is where a history request starts
+  if (atMs < monitorStartMs()) return;
   const text = String(textOf(content) || '');
   const quoted = content.extendedTextMessage?.contextInfo?.stanzaId;
   if (text && quoted) { const e = photoKeep.list_.find((x) => x.id === quoted); if (e && !(e.replies || []).includes(text)) { (e.replies ||= []).push(text.slice(0, 200)); photoKeep.save(); } } // «Awab» as a reply to a photo
   const image = content.imageMessage; const doc = content.documentMessage && /pdf/i.test(content.documentMessage.mimetype || '') ? content.documentMessage : null;
   if (!image && !doc) return;
   if (!photoSince()) { try { fs.mkdirSync(path.dirname(photoStartFile), { recursive: true }); fs.writeFileSync(photoStartFile, String(Date.now())); } catch { /* best effort */ } }
-  photoKeep.add({ id: raw.key.id, groupId, groupKey, key: raw.key, message: image ? { imageMessage: image } : { documentMessage: doc }, caption: (image || doc).caption || '', fileName: doc?.fileName || '', mimetype: (image || doc).mimetype || '', at: Date.now(), sender: raw.pushName || '', replies: [] });
+  photoKeep.add({ id: raw.key.id, groupId, groupKey, key: raw.key, message: image ? { imageMessage: image } : { documentMessage: doc }, caption: (image || doc).caption || '', fileName: doc?.fileName || '', mimetype: (image || doc).mimetype || '', at: atMs, sender: raw.pushName || '', replies: [] });
 }
 let photoTestRunning = false;
 /** The one-off test: every kept photo of a group in the last days read by the test model only, one message per photo (with the photo attached) to the owner, then one summary. */
 async function readPhotoTest(chatId, groupKey, days) {
   photoTestRunning = true;
   try {
-    const entries = photoKeep.list_.filter((e) => e.groupKey === groupKey && e.at >= Date.now() - days * 86400000).sort((a, b) => a.at - b.at);
+    const entries = photoKeep.list_.filter((e) => e.groupKey === groupKey && e.at >= Math.max(Date.now() - days * 86400000, monitorStartMs())).sort((a, b) => a.at - b.at);
     let read = 0; let unreadable = 0; let skipped = 0; let inTokens = 0; let outTokens = 0; const reasons = [];
     for (const [i, e] of entries.entries()) {
       let buf;
-      try { buf = await downloadMediaMessage({ key: e.key, message: e.message }, 'buffer', {}); } catch (err) { skipped += 1; reasons.push(String(err.message || 'download failed').slice(0, 60)); continue; }
+      try { buf = fs.existsSync(photoFile(e.id)) ? fs.readFileSync(photoFile(e.id)) : await downloadMedia({ key: e.key, message: e.message }); } catch (err) { skipped += 1; reasons.push(String(err.message || 'download failed').slice(0, 60)); continue; }
       const isPdf = !!e.message.documentMessage;
       const block = isPdf ? documentBlock({ base64: buf.toString('base64'), mimeType: 'application/pdf', fileName: e.fileName }) : { type: 'image', source: { type: 'base64', media_type: String(e.mimetype || 'image/jpeg').split(';')[0], data: buf.toString('base64') } };
       let reading = null; let usage = null;
@@ -2675,6 +2693,104 @@ async function readPhotoTest(chatId, groupKey, days) {
     await sock.sendMessage(chatId, { text: summaryText({ groupKey, days, kept: entries.length, read, unreadable, skipped, reasons, inTokens, outTokens, since: photoSince(), timeZone: config.timezone }) });
   } finally { photoTestRunning = false; }
 }
+
+// ---------------------------------------------------------------------------------------------------------------- history backfill
+// Messages of the Confirmation and Expenses groups from the monitor day (MONITOR_FROM, default 01/11/2026) onward that were posted before the bot kept them: WhatsApp's on-demand history is
+// asked for, starting at the oldest message the bot has seen in each group, again and again until the monitor day is reached. The answer arrives as «messaging-history.set» events; the
+// messages are then read exactly like live ones (photos and PDFs kept and downloaded, the payment parser run with the message's own time), silently: nothing is posted to any group, nothing
+// is recorded in QuickBooks. It needs the owner's phone online, and WhatsApp may refuse; the counts say what really came back.
+const historyDir = path.join(config.authDir, 'history');
+const readHistoryJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8'), BufferJSON.reviver); } catch { return fallback; } };
+const writeHistoryJson = (file, value) => { try { fs.mkdirSync(historyDir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(value, BufferJSON.replacer), { mode: 0o600 }); } catch { /* best effort */ } };
+const anchors = readHistoryJson(path.join(historyDir, 'anchors.json'), {}); // group -> { key, ts (seconds), groupKey }: the oldest message seen there
+const historyDone = readHistoryJson(path.join(historyDir, 'done.json'), {}); // monitor day -> when the backfill finished
+const messageSeconds = (m) => { const t = m?.messageTimestamp; return Number(typeof t === 'object' && t ? (t.low ?? t.toNumber?.()) : t) || 0; };
+function noteSeen(raw, groupId, groupKey) { // the anchor of a later history request
+  const ts = messageSeconds(raw) || Math.floor(Date.now() / 1000);
+  if (!anchors[groupId] || ts < anchors[groupId].ts) { anchors[groupId] = { key: raw.key, ts, groupKey }; writeHistoryJson(path.join(historyDir, 'anchors.json'), anchors); }
+}
+const photoFile = (id) => path.join(config.authDir, 'photo-media', 'files', `${String(id).replace(/[^\w-]+/g, '_')}.bin`);
+let historyInbox = []; let historyWaiter = null; let backfillRunning = false;
+function onHistorySet({ messages = [] }) { // the answer to an on-demand request (or WhatsApp's own sync): only the groups we asked about, from the monitor day
+  const mine = messages.filter((m) => m?.key?.remoteJid && anchors[m.key.remoteJid] && messageSeconds(m) * 1000 >= monitorStartMs() - 7 * 86400000);
+  if (!mine.length) return;
+  historyInbox.push(...mine);
+  if (historyWaiter) historyWaiter();
+}
+const napMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function requestHistory(groupId, cur) {
+  historyInbox = [];
+  const arrived = new Promise((resolve) => { historyWaiter = resolve; setTimeout(resolve, 45000); });
+  await sock.fetchMessageHistory(50, cur.key, cur.ts * 1000);
+  await arrived; historyWaiter = null;
+  await napMs(3000); // the rest of the answer
+  return historyInbox.filter((m) => m.key.remoteJid === groupId);
+}
+
+/** One message from the history, read like a live one but silently (its own time, nothing announced). */
+async function processHistoryMessage(m, groupId, info, groupKey, counts) {
+  const atMs = messageSeconds(m) * 1000;
+  const content = normalizeMessageContent(m.message);
+  if (!content) return;
+  keepPhotoMessage(m, groupId, info, atMs);
+  const media = content.imageMessage || (content.documentMessage && /pdf/i.test(content.documentMessage.mimetype || '') ? content.documentMessage : null);
+  if (media && !fs.existsSync(photoFile(m.key.id))) {
+    try { const buf = await downloadMedia(m); fs.mkdirSync(path.dirname(photoFile(m.key.id)), { recursive: true }); fs.writeFileSync(photoFile(m.key.id), buf, { mode: 0o600 }); counts.downloaded += 1; } catch (e) { counts.unavailable += 1; counts.reasons.push(String(e.message || 'download failed').slice(0, 50)); }
+  }
+  if (groupKey === 'confirmation') await replayCtx.run({ at: atMs, quiet: true }, () => trackGroup(m, groupId, 'payment')).catch((e) => logger.warn(`history: a message could not be tracked: ${e.message}`));
+}
+
+/** The backfill: for each group with an anchor, history is asked for backwards until [fromDay]; then everything is read in time order. Returns the owner's report text. */
+async function backfillHistory(fromDay = config.monitorFrom) {
+  if (backfillRunning) return 'A history backfill is already running.';
+  backfillRunning = true;
+  const counts = { groups: 0, rounds: 0, fetched: 0, downloaded: 0, unavailable: 0, reasons: [], silent: [] };
+  const floor = Date.parse(`${fromDay < config.monitorFrom ? config.monitorFrom : fromDay}T00:00:00+04:00`);
+  const before = tracker.events.filter((e) => e.type === 'payment').length;
+  try {
+    for (const groupId of Object.keys(anchors)) {
+      const info = await groupInfo(groupId); counts.groups += 1;
+      const all = new Map();
+      let cur = { key: anchors[groupId].key, ts: anchors[groupId].ts };
+      let answered = false;
+      for (let round = 0; round < 80 && cur.ts * 1000 > floor; round++) {
+        counts.rounds += 1;
+        let got = [];
+        try { got = await requestHistory(groupId, cur); } catch (e) { logger.warn(`history: the request failed: ${e.message}`); break; }
+        const older = got.filter((m) => messageSeconds(m) < cur.ts).sort((a, b) => messageSeconds(a) - messageSeconds(b));
+        if (!older.length) break; // nothing older came back: the phone is offline, or WhatsApp has nothing (more) for this group
+        answered = true; counts.fetched += older.length;
+        for (const m of older) if (messageSeconds(m) * 1000 >= floor) all.set(m.key.id, m);
+        cur = { key: older[0].key, ts: messageSeconds(older[0]) };
+        anchors[groupId] = { ...anchors[groupId], key: cur.key, ts: cur.ts }; writeHistoryJson(path.join(historyDir, 'anchors.json'), anchors);
+        await napMs(1500);
+      }
+      if (!answered) counts.silent.push(info.subject);
+      const groupKey = anchors[groupId].groupKey || (config.confirmGroupName && String(info.subject).toLowerCase().includes(config.confirmGroupName) ? 'confirmation' : 'expenses');
+      for (const m of [...all.values()].sort((a, b) => messageSeconds(a) - messageSeconds(b))) await processHistoryMessage(m, groupId, info, groupKey, counts); // in time order
+    }
+    historyDone[config.monitorFrom] = Date.now(); writeHistoryJson(path.join(historyDir, 'done.json'), historyDone);
+  } finally { backfillRunning = false; }
+  const added = tracker.events.filter((e) => e.type === 'payment').length - before;
+  logger.info(`history: ${counts.groups} group(s), ${counts.rounds} request(s), ${counts.fetched} messages fetched, ${counts.downloaded} photos/PDFs downloaded, ${counts.unavailable} expired or unavailable, ${added} payment entries added`);
+  return [
+    `History backfill from ${fromDay.split('-').reverse().join('/')}: ${counts.groups} group${counts.groups === 1 ? '' : 's'}, ${counts.rounds} request${counts.rounds === 1 ? '' : 's'}.`,
+    `Messages fetched: ${counts.fetched}. Photos/PDFs downloaded: ${counts.downloaded}. Expired or unavailable: ${counts.unavailable}${counts.unavailable ? ` (${[...new Set(counts.reasons)].join('; ')})` : ''}.`,
+    `Payment entries added: ${added}.`,
+    ...(counts.silent.length ? [`⚠ No history came back for: ${counts.silent.join(', ')}. The owner's phone must be online, and WhatsApp may refuse an on-demand history request; nothing older than what the bot has already seen could be fetched.`] : []),
+    ...(!counts.groups ? ['No group has been seen yet: the first message in a group sets where the history request starts. Try again after one message there.'] : []),
+    'Nothing was posted to any group and nothing was recorded in QuickBooks.',
+  ].join('\n');
+}
+
+// once after the start (as soon as a group has been seen and the connection is up), then only on the owner's word
+setInterval(async () => {
+  try {
+    if (!sock?.user || botState.paused || backfillRunning || historyDone[config.monitorFrom] || !Object.keys(anchors).length) return;
+    const text = await backfillHistory();
+    await sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` });
+  } catch (e) { logger.warn(`history backfill failed: ${e.message}`); }
+}, 10 * 60 * 1000).unref();
 
 // ---------------------------------------------------------------------------------------------------------------- company expenses
 // A receipt photo with the amount as its caption in the EXPENSES group (see expenses.js). Kept on the server; read only towards QuickBooks (it is only compared with what the office recorded).
@@ -2752,17 +2868,17 @@ async function invoiceLookupFor(events) {
 }
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
 async function receivedReportText(kind) {
-  const r = rangeOf(kind, todayDubai());
+  const r = clampRange(rangeOf(kind, todayDubai()));
   const records = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
-  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups }); // the same list as «payments»: names, repeats, cheques
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() }); // the same list as «payments»: names, repeats, cheques
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   return receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
 }
 async function weeklyCheckReport() {
-  const r = rangeOf('week', todayDubai());
+  const r = clampRange(rangeOf('week', todayDubai()));
   const purchases = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
-  const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups });
+  const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() });
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label });
 }
@@ -2914,6 +3030,7 @@ async function start() {
     }
     const r = await guarded(...a); if (r && isJidGroup(a[0]) && groups.get(a[0]) && !quietContents.has(a[1])) experience.bot(groupLabel(groups.get(a[0]).subject)); if (r?.key?.id) { sent.add(r.key.id); if (sent.size > 500) sent.delete(sent.values().next().value); } return r; };
   sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('messaging-history.set', (h) => { try { onHistorySet(h); } catch (e) { logger.warn(`history event failed: ${e.message}`); } }); // the answer to an on-demand history request
   const onQr = pairingOnce({
     registered: () => !!state.creds.registered,
     phone: config.pairPhone,

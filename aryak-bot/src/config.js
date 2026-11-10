@@ -98,6 +98,7 @@ export function loadConfig(env = process.env) {
     // cost control in the tracked internal groups (cut, delivery, confirmation, goods): the free caption reader always runs, the model
     // fallback (a photo or an unreadable caption sent to the model) only when TRACK_MODEL is on; CUT_TRACKING=off stops the cut reading too
     trackModel: /^(1|true|on|yes)$/i.test(env.TRACK_MODEL || ''),
+    monitorFrom: (env.MONITOR_FROM || '2026-11-01').trim(), // nothing before this day (Dubai) is monitored: payments, money received, the weekly check, the photo receipts
     receiptVision: !/^(0|false|off|no)$/i.test(env.RECEIPT_VISION || ''), // reading receipts (expense photos, payment receipts) with the cheapest vision model: ON unless RECEIPT_VISION=off; TRACK_MODEL is only the cut/delivery tracker's switch
     cutTracking: !/^(0|false|off|no)$/i.test(env.CUT_TRACKING || 'on'),
     costModelUsd: Number(env.COST_MODEL_USD || 0.01),

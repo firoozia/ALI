@@ -94,7 +94,7 @@ test('expenses made in the TEST group are test data (never in a real report); th
   assert.deepEqual(parseInvoiceCommand('delete #E1'), { type: 'expense_delete', id: 'E1' }); assert.deepEqual(parseInvoiceCommand('حذف #E3'), { type: 'expense_delete', id: 'E3' }); assert.deepEqual(parseInvoiceCommand('remove expense E4'), { type: 'expense_delete', id: 'E4' });
   assert.match(index, /const testData = isTestSubject\(info\?\.subject\);/); assert.match(index, /test: testData \}\)\);/);
   assert.match(index, /case 'expense_delete': \{ const gone = expenseStore\.remove\(ic\.id\);/);
-  assert.match(index, /OWNER_CHAT_COMMANDS = new Set\(\['unbilled', 'payments', 'read_photos', 'expense_delete'/); // typed in a group: «use your own chat»
+  assert.match(index, /OWNER_CHAT_COMMANDS = new Set\(\['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete'/); // typed in a group: «use your own chat»
   // the new group replaces the old one
   assert.match(index, /the old group is no longer the expenses group/);
 });

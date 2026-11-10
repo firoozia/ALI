@@ -45,7 +45,7 @@ test('the source: media is left alone before any download, the model fallback is
   assert.ok(quiet < firstDownload && quiet < firstAudioDownload);
   // the tracker: the model fallback (and the photo download) come after the free reader and the TRACK_MODEL gate
   const tg = src.slice(src.indexOf('async function trackGroup'), src.indexOf('async function findGroupJid'));
-  assert.ok(tg.indexOf('mayTrackWithModel(config)') > 0 && tg.indexOf('mayTrackWithModel(config)') < tg.indexOf('downloadMediaMessage') && tg.indexOf('mayTrackWithModel(config)') < tg.indexOf('extractEvent('));
+  assert.ok(tg.indexOf('mayTrackWithModel(config)') > 0 && tg.indexOf('mayTrackWithModel(config)') < tg.indexOf('downloadMedia(') && tg.indexOf('mayTrackWithModel(config)') < tg.indexOf('extractEvent('));
   assert.match(src, /Please send the photo again with my name in the caption\./);
   assert.match(src, /trackRole !== 'cut' \|\| config\.cutTracking/); // CUT_TRACKING=off stops the cut reading
 });

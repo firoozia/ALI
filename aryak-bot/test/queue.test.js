@@ -58,6 +58,6 @@ test('the wiring: every kind of waiting item is listed and cancelled through the
   assert.match(index, /return `Cancelled \$\{done\.length\}: \$\{done\.join\(', '\)\}\. Nothing was created\.\$\{failed\.length/);
   assert.match(index, /case 'cancel_all': case 'queue_list': return \[await queueCommand\('owner', ic\.type\)\];/);
   assert.match(index, /await sock\.sendMessage\(chatId, \{ text: await queueCommand\(person, q\.type\) \}\); return true; \} \} \/\/ his own waiting items only/);
-  assert.match(index, /OWNER_CHAT_COMMANDS = new Set\(\['unbilled', 'payments', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list'/); // in a group: «use your own chat»
+  assert.match(index, /OWNER_CHAT_COMMANDS = new Set\(\['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list'/); // in a group: «use your own chat»
   assert.equal((index.match(/qboInvoices\.decide\(/g) || []).length, 1); // still one caller of the owner's yes
 });
