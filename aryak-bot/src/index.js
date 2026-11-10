@@ -47,6 +47,7 @@ import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups,
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
+import { driverEveningLines, isDriverQuestion, runDoneLine, whereText } from './driver.js';
 import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
@@ -379,7 +380,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: (() => { usage.save(); cost.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [cost.line() || usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })() }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: [...driverEveningLines(tracker.events, { day, timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n) }), ...(() => { usage.save(); cost.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [cost.line() || usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })()] }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -663,7 +664,7 @@ async function trackGroup(raw, groupId, role) {
       return;
     }
     for (const [i, ev] of det.events.entries()) {
-      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}) };
+      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'delivery' ? { msg: raw.key.id } : {}), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}) };
       const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
       if (role === 'payment' && !event.customer && pn && nowAt() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
       if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event })) continue;
@@ -679,6 +680,7 @@ async function trackGroup(raw, groupId, role) {
       if (role === 'delivery') {
         const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
         if (findings.length) trace(whereDet, 'tracker', `${findings.length} delivery note(s) kept for the digest only`);
+        await announceRunDone(tracker.events, event, (t) => sock.sendMessage(groupId, { text: t }));
         if (tracker.isHeld(event.customer)) await sock.sendMessage(groupId, { text: `⛔ ${tracker.isHeld(event.customer)}: تحویل تا تأیید نقدی نباید انجام شود. — ${config.displayName}` }, { quoted: raw });
       }
     }
@@ -1317,8 +1319,9 @@ async function simulatedPost({ raw, text, where, role, reply }) {
   if (!det?.events?.length) { await reply(`SIMULATION: that text was not read as a post of the ${kind} group (nothing recorded).`); return true; }
   const lines = [];
   for (const [i, ev] of det.events.entries()) {
-    const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`test|${raw.key.id}|${i}`).digest('hex').slice(0, 24), simulated: true };
+    const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`test|${raw.key.id}|${i}`).digest('hex').slice(0, 24), simulated: true, ...(asRole === 'delivery' ? { msg: raw.key.id } : {}) };
     if (!testTracker.add(event)) continue;
+    if (asRole === 'delivery') await announceRunDone(testTracker.events, event, (t) => reply(`SIMULATION: ${t}`));
     trace(where, role, `simulated ${kind} post recorded as test data`);
     lines.push(`${event.type}${event.internal ? ' (internal)' : ''}: ${event.customer || '-'} ${(event.lines || []).map((l) => `${l.code} ${l.quantity}${l.invoiceQuantity !== undefined ? ` (invoiced ${l.invoiceQuantity})` : ''}`).join(', ')}${event.amount ? ` ${event.amount}` : ''}`.trim());
   }
@@ -2123,6 +2126,12 @@ async function handleStaffChat(raw, chatId, group) {
   // Cost control: in the cut, delivery, confirmation, information and invoices groups a photo or a voice note is never read by itself
   // (no download, no vision, no speech); only a message that addresses her by name, or answers her, may be.
   if ((audio || image) && !mayReadMedia({ group, addressed, voiceFromPermitted: !!audio && !image && (ownerPerson || authorizedPerson || invoicePerson) })) { trace(where, role, 'media left alone (cost control): not addressed to the assistant'); return true; }
+  // «where is the driver» (owner's chat, any internal staff group, the delivery group, the test group): answered from today's dispatch and delivery posts, never «I cannot see».
+  if (text && !audio && !image && addressed && isDriverQuestion(text)) {
+    trace(where, role, 'the driver question, answered from the delivery posts');
+    await reply(whereText(trackerOf(group?.test).events, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n) }));
+    return true;
+  }
   // The pipeline commands of the owner: a hold on delivery until cash is confirmed, the balance of a customer, the open orders.
   if (admin && (!group || group.command)) {
     const tc = parseTrackerCommand(text);
@@ -2919,6 +2928,13 @@ async function invoiceLookupFor(events) {
   return lookup;
 }
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
+/** The one short line in the delivery group when the last stop of a run is delivered (never per stop, never from history, never to a customer). */
+async function announceRunDone(events, event, say) {
+  if (replayCtx.getStore()?.quiet || event.status !== 'delivered') return;
+  const line = runDoneLine(events, event, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n) });
+  if (line) await say(line);
+}
+
 /** For every received entry that QuickBooks does not have: one log line saying what was searched and what came nearest. */
 function logNotFound(items, records) {
   const got = matchReceipts(items.filter((i) => !i.foreign), records, (n) => cutAliases.resolve(n));

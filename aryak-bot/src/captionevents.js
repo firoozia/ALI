@@ -22,7 +22,7 @@ export function eventsFromCaption(role, text) {
     return {
       events: d.customers.map((x) => ({
         type: 'delivery', customer: x.customer, lines: [], ...(x.quantity ? { delivered: { quantity: x.quantity, unit: x.unit } } : {}),
-        ...(d.cod ? { cod: d.cod } : {}), ...(d.status ? { status: d.status } : {}),
+        ...(d.cod ? { cod: d.cod } : {}), ...(d.status ? { status: d.status } : {}), ...(d.by ? { by: d.by } : {}),
       })),
     };
   }

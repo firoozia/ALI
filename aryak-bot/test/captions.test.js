@@ -29,7 +29,7 @@ test('delivery captions: cash on delivery, several customers in one line, status
   const s = parseDeliveryCaption('MUNICH DOOR KITCHEN 1 ROLL, DESIGNER WOOD 1 ROLL, DANDY DOOR 1 ROLL & PVC WORKS 1 ROLL PICKED UP BY AHMED');
   assert.equal(s.status, 'picked-up');
   assert.deepEqual(s.customers.map((x) => [x.customer, x.quantity, x.unit]), [['MUNICH DOOR KITCHEN', 1, 'roll'], ['DESIGNER WOOD', 1, 'roll'], ['DANDY DOOR', 1, 'roll'], ['PVC WORKS', 1, 'roll']]);
-  assert.ok(!JSON.stringify(s).includes('AHMED'));
+  assert.equal(s.by, 'AHMED'); assert.ok(!s.customers.some((x) => JSON.stringify(x).includes('AHMED'))); // the courier is kept as the one it was handed to, never as a customer
   assert.equal(parseDeliveryCaption('AL AHLIA delivered').status, 'delivered');
   assert.equal(parseDeliveryCaption('GR DISPATCHED').status, 'dispatched');
   assert.equal(parseDeliveryCaption('PICKED UP BY CLIENT DRIVER').customers.length, 0);

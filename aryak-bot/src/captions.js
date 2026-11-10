@@ -80,12 +80,13 @@ export function parseDeliveryCaption(text) {
   if (!status) return null;
   const head = s.slice(0, cut).replace(/\bAND\b/gi, '&');
   const customers = head.split(/[,&]/).map((part) => {
-    const x = /^(.*?)\s*(\d+(?:\.\d+)?)\s*(ROLLS?|M|MTRS?|METERS?|PCS?|SMPL|SAMPLES?)\s*$/i.exec(title(part));
+    const x = /^(.*?)\s*(\d+(?:\.\d+)?)\s*(ROLLS?|M|MTRS?|METERS?|PCS?|SMPL|SAMPLES?)\b(?:\s+WITH\b.*)?\s*$/i.exec(title(part)); // «2 ROLLS WITH CATALOG»: what goes along is not part of the count
     if (x) return { customer: title(x[1]), quantity: num(x[2]), unit: /^roll/i.test(x[3]) ? 'roll' : /^(smpl|sample)/i.test(x[3]) ? 'sample' : /^pc/i.test(x[3]) ? 'pcs' : 'm' };
     const name = title(part);
     return name ? { customer: name } : null;
   }).filter(Boolean);
-  return { customers, cod: null, status };
+  const by = status === 'picked-up' ? s.slice(cut).replace(/^PICKED\s*UP\s*(?:BY\s*)?/i, '').replace(/[.\s]+$/, '').trim() : '';
+  return { customers, cod: null, status, ...(by ? { by } : {}) };
 }
 
 /**
