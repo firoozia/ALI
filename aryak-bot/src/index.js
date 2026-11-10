@@ -30,7 +30,7 @@ import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
 import { Qbo, looksLikeConnectLine, parseConnectLine, qboEscape } from './qbo.js';
 import { QboDesk, QboMap, parseQboCommand, pickTestGroup } from './qbodesk.js';
-import { Audit, AuthStore, InvoiceStore, ItemCodes, PERMISSIONS, QboInvoiceDesk, TaxChoices, looksLikeInvoiceRequest, parseInvoiceCommand } from './qboinvoice.js';
+import { Audit, AuthStore, InvoiceStore, ItemCodes, PERMISSIONS, QboInvoiceDesk, TaxChoices, invoiceIntent, looksLikeInvoiceRequest, parseInvoiceCommand } from './qboinvoice.js';
 import { extractInvoiceRequest } from './qboextract.js';
 import { NamePreviews, QboNameDesk } from './qbonames.js';
 import { BulkPreviews, PriceDraft, QboBulkDesk } from './qbobulk.js';
@@ -980,7 +980,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'price_list': return qboBulk.showDraft() || null;
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
-    case 'request': { const r = await qboInvoices.request({ text, requester: 'owner', origin: here.chatId ? { jid: here.chatId } : null }); return [r.owner || r.requester]; }
+    case 'request': case 'request_partial': { const r = await qboInvoices.request({ text, requester: 'owner', origin: here.chatId ? { jid: here.chatId } : null }); return [r.owner || r.requester]; }
     case 'yes': case 'no': {
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
@@ -1052,7 +1052,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
   }
   const ic = parseInvoiceCommand(text);
   const qc = ic ? null : parseQboCommand(text);
-  const isRequest = ic?.type === 'request';
+  const isRequest = ic?.type === 'request' || ic?.type === 'request_partial';
   const isStatement = qc?.type === 'statement';
   const nl = ic?.type === 'statement_nl' ? ic : null; // «صورت‌حساب شرکت … ماه ۱۰»: the same flow as the owner's, the PDF to this private chat
   if (!isRequest && !isStatement && !nl) return false;
@@ -1309,7 +1309,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
   const eff = effectiveRequest(text, quoted, config.botNames);
   { // an invoice request: the preview is built and shown HERE (an internal group); only the owner's yes creates it
     const ic = parseInvoiceCommand(eff);
-    if (ic?.type === 'request') {
+    if (ic?.type === 'request' || ic?.type === 'request_partial') {
       if (!(owner || canInvoice)) { logger.info(`not authorized: ${raw.key.participant || raw.key.remoteJid} (invoice)`); trace(where, role, 'an invoice request from a colleague without the invoice permission'); await sayIn(raw, chatId, where, 'برای درخواست فاکتور مجوز ندارید.'); return true; }
       trace(where, role, 'invoice request in an internal group');
       try {
@@ -2215,7 +2215,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   // A customer's request posted by a colleague on his behalf (not in the groups that only record: cut, delivery, money).
   if (text && !audio && !image && !pdf && !group?.tracked) {
-    const ob = parseOnBehalf(text);
+    const ob = invoiceIntent(text) ? null : parseOnBehalf(text); // a message that opens with «invoice» is never a customer's order and never reaches the stock or the sales manager
     if (ob) {
       try { await handleOnBehalf({ ob, raw, reply, role, where, lang: staffLang, test: !!group?.test }); } catch (e) {
         logger.error(`order on behalf failed: ${e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e.message}`);

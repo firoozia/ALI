@@ -146,8 +146,11 @@ export function parseInvoiceCommand(text) {
     const sr = parseStatementRequest(raw, new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10));
     if (sr) return { type: 'statement_nl', customer: sr.customer, period: sr.period, unsupported: sr.unsupported, style: sr.style || '' };
   }
+  const firstLine = String(raw).split(/\n/).map((x) => x.trim()).find(Boolean) || '';
+  const englishIntent = invoiceIntent(raw) && !/[؀-ۿ]/.test(firstLine); // Persian requests keep their own flows (the model reads, a send of an existing invoice stays a send)
+  if (englishIntent) { const strict = strictRequest(raw); if (strict.type !== 'request' || strict.lines.length) return strict; }
   if (looksLikeInvoiceRequest(raw)) return { type: 'request', customer: '', lines: [], free: true }; // any layout: the model only extracts, the matching stays exact
-  return null;
+  return englishIntent ? strictRequest(raw) : null; // a message that opens with «invoice» is never anything else
 }
 
 /** A message that asks to make an invoice, in any layout ("فاکتور بساز", "فاکتور بزن", "صادر کن", with or without the assistant's name). Not a question, not a send. */
@@ -161,10 +164,10 @@ export function looksLikeInvoiceRequest(text) {
   return (/فاکتور/u.test(s) && MAKE.test(s)) || /(?:create|make|issue|prepare)\s+(?:an?\s+)?invoice/iu.test(s) || !!parseEnglishInvoice(text);
 }
 
-const PRICE_PART = String.raw`(?:\s*[/@]\s*(\d+(?:\.\d+)?)\s*(?:aed|dhs?|dirhams?)?)?`; // «/10aed», «/10 aed», «@10»: the unit price asked for this line
-const QTY_LINE = new RegExp(String.raw`^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?${PRICE_PART}\s*$`, 'iu');
-const INLINE_ITEM = new RegExp(String.raw`(?:^|[\s,;])([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|x|×)\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|متر)?${PRICE_PART}(?=$|[\s,;])`, 'giu');
-const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?invoice\s+(?:for\s+|to\s+)?(.+?)\s*$/iu;
+const PRICE_PART = String.raw`(?:(?:\s*[/@]\s*|\s+(?=\d+(?:\.\d+)?\s*(?:aed|dhs?|dirhams?)\b))(\d+(?:\.\d+)?)\s*(?:aed|dhs?|dirhams?)?)?`; // «/10aed», «/10 aed», «@10», and «10aed» / «10 aed» right after the quantity: the unit price asked for this line
+const QTY_LINE = new RegExp(String.raw`^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}\s*$`, 'iu');
+const INLINE_ITEM = new RegExp(String.raw`(?:^|[\s,;])([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|x|×)\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}(?=$|[\s,;])`, 'giu');
+const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?(?:invoice|inv(?=\s+(?:for|to)\s))\s+(?:for\s+|to\s+)?(.+?)\s*$/iu;
 
 /**
  * An invoice asked for in plain English: «Atossa invoice for burtomani» then one line per item («603 = 30 mtr», «A603 30 m»). A one-letter prefix before a code
@@ -172,6 +175,12 @@ const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa
  * Returns { customer, lines: ['603 30', …] } or null.
  */
 export function parseEnglishInvoice(text) {
+  const r = readEnglishInvoice(text);
+  return r && !r.unread.length && r.lines.length ? { customer: r.customer, lines: r.lines } : null;
+}
+
+/** The same reading, but every line it cannot read is listed with its number: { customer, lines, unread: [{ n, text }] } or null when there is no «invoice <customer>» head. */
+export function readEnglishInvoice(text) {
   const rows = latin(String(text || '')).replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean);
   if (!rows.length || /[?؟]\s*$/u.test(rows[0])) return null;
   const head = EN_HEAD.exec(rows[0]);
@@ -185,12 +194,45 @@ export function parseEnglishInvoice(text) {
   if (!customer || customer.split(/\s+/).length > 6) return null;
   const lineOf = (m) => `${m[1].replace(/^[A-Za-z](?=\d)/, '')}${m[3] ? `, ${m[2]}, ${m[3]}` : ` ${m[2]}`}`; // a price given for the line makes it exact: code, quantity, price
   const lines = inline.map(lineOf);
-  for (const row of rows.slice(1)) {
+  const unread = [];
+  rows.slice(1).forEach((row, i) => {
     const m = QTY_LINE.exec(row);
-    if (!m) { if (extractPo(row)) continue; return null; } // a line that is not an item (other than the PO line): not this format
-    lines.push(lineOf(m));
+    if (m) { lines.push(lineOf(m)); return; }
+    if (!extractPo(row)) unread.push({ n: i + 2, text: row }); // not an item and not the PO line: said, never guessed
+  });
+  return { customer, lines, unread };
+}
+
+/**
+ * A message that opens with «invoice» («Atossa invoice …», «invoice for …», «inv for …», «فاکتور …», «اینویس …»): the invoice path and no other. It is never a stock or order request,
+ * and nothing about it goes to the sales manager. Not a question.
+ */
+export function invoiceIntent(text) {
+  const first = String(text || '').replace(/\r/g, '').split('\n').map((x) => x.trim()).find(Boolean) || '';
+  if (!first || /[?؟]\s*$/u.test(first)) return false;
+  return /^[\s*_~]*(?:(?:hey|hi|hello|سلام)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+|لطفا\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?(?:invoice|inv(?=\s+(?:for|to)\s)|فاکتور|اینویس)(?=\s|$)/iu.test(first);
+}
+
+/** An invoice request with lines that could not be read (or no readable head): what was read, which line was not understood, and that nothing was made. */
+function strictRequest(text) {
+  const r = readEnglishInvoice(text);
+  if (!r) {
+    const first = String(text || '').replace(/\r/g, '').split('\n').map((x) => x.trim()).find(Boolean) || '';
+    return { type: 'request_partial', customer: '', lines: [], unread: [{ n: 1, text: first }] };
   }
-  return lines.length ? { customer, lines } : null;
+  if (r.unread.length || !r.lines.length) return { type: 'request_partial', customer: r.customer, lines: r.lines, unread: r.unread, noItems: !r.lines.length && !r.unread.length };
+  return { type: 'request', customer: r.customer, lines: r.lines };
+}
+
+/** The reply to a request with unreadable lines: financial requests are exact, so nothing is made and nothing is guessed. */
+export function partialText(ic) {
+  const read = (ic.lines || []).map((l) => { const [code, qty, price] = String(l).split(/,\s*|\s+/).map((x) => x.trim()); return `• ${code} — ${qty}${price ? `, price ${Number(price).toFixed(2)} AED` : ', system price'}`; });
+  return [
+    `Invoice request${ic.customer ? ` for ${ic.customer}` : ''} was NOT made: ${ic.noItems ? 'no item line was found' : 'a line could not be read'}.`,
+    ...(read.length ? ['Read so far:', ...read] : []),
+    ...(ic.unread || []).map((u) => `⚠ line ${u.n} not understood: "${u.text}"`),
+    'Nothing was created, reserved or sent to anyone. Correct it and send the whole request again (customer on the first line, then one item per line: code = quantity, price optional).',
+  ].join('\n');
 }
 
 /** The customer's PO number written with the request or in the message it quotes («PN 1029», «PO: 1029», «شماره سفارش ۱۰۲۹»): the request's own text first. */
@@ -762,6 +804,7 @@ export class QboInvoiceDesk {
    */
   async request({ text, requester, quotedText = '', origin = null, test = false }) {
     const cmd = parseInvoiceCommand(text);
+    if (cmd?.type === 'request_partial') return { requester: partialText(cmd), owner: cmd.fromOwner ? partialText(cmd) : null }; // unreadable lines: said, nothing made, nobody else told
     if (cmd?.type !== 'request') return { requester: 'Write: فاکتور بساز <customer> and then one item per line: item, quantity, price (price optional).', owner: null };
     const stop = (msg) => ({ requester: msg, owner: null });
     const blocked = this.guard();
