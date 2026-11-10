@@ -938,11 +938,11 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'payment_dup': { const r = paymentDups.decide(ic.id, ic.verb); return [r.error ? `No open question #${ic.id} (it was answered or never asked).` : r.verb === 'dup' ? `Noted: the second payment is the same as the first; it will be counted once (#${ic.id}).` : `Noted: two separate payments (#${ic.id}); I will not ask again.`]; }
     case 'expense_delete': { const gone = expenseStore.remove(ic.id); return [gone ? `Expense #${gone.id} (${gone.amount ? `${gone.amount.toFixed(2)} AED` : 'no amount'}${gone.test ? ', test data' : ''}) was deleted.` : `No expense #${ic.id} was found.`]; }
     case 'backfill': {
-      if (backfillRunning) return ['A history backfill is already running; its report follows.'];
+      if (backfillRunning) return ['A history backfill is already running; wait for its report.'];
       const year = Number(localParts(Date.now(), config.timezone).day.slice(0, 4));
       const from = ic.day ? `${year}-${String(ic.month).padStart(2, '0')}-${String(ic.day).padStart(2, '0')}` : config.monitorFrom;
-      void backfillHistory(from).then((text) => sock.sendMessage(here.chatId || ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`history backfill failed: ${e.message}`));
-      return [`Asking WhatsApp for the history of the Confirmation and Expenses groups from ${from.split('-').reverse().join('/')} (the monitor day is ${config.monitorFrom.split('-').reverse().join('/')}). It can take a few minutes; the report follows here. Nothing is posted to any group.`];
+      void backfillStart(from).then((text) => sock.sendMessage(here.chatId || ownIds()[0], { text: `🤖 ${Array.isArray(text) ? text.join('\n') : text}` })).catch((e) => logger.warn(`history backfill failed: ${e.message}`));
+      return [`Asking WhatsApp for the message list of the Confirmation and Expenses groups from ${from.split('-').reverse().join('/')}. This only counts; the estimate follows here and nothing is downloaded or read until you say yes.`];
     }
     case 'read_photos': {
       if (photoTestRunning) return ['A photo reading test is already running; its messages are still coming.'];
@@ -1013,7 +1013,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'yes': case 'no': {
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
-        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds()];
+        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingBackfill ? [pendingBackfill.id] : [])];
         if (!open.length) return null;
         if (open.length > 1) {
           if (isEnglishOut()) return [`${open.length} previews are waiting: ${open.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the full code, for example: ${ic.type === 'yes' ? 'yes' : 'no'} #${open[0]}`];
@@ -1021,7 +1021,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
+      const out = await (id.startsWith('B') ? decideBackfill(ic.type, id) : id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said && out.length ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -1221,6 +1221,7 @@ function waitingItems(by) {
     for (const id of qboNames.openIds()) add(id, 'customer names', no(id));
     for (const id of qboBulk.openIds()) add(id, 'bulk job', no(id));
     for (const id of cutAliases.openIds()) add(id, 'aliases', no(id));
+    if (pendingBackfill) add(pendingBackfill.id, 'history backfill estimate', no(pendingBackfill.id));
     for (const id of availDrafts.openIds()) add(id, 'availability draft', no(id));
     for (const id of Object.keys(paymentDups.d.open)) add(id, 'duplicate payment question', () => { delete paymentDups.d.open[id]; paymentDups.save(); return []; });
   }
@@ -2695,6 +2696,7 @@ async function readPhotoTest(chatId, groupKey, days) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------- history backfill
+// (Nothing here starts by itself: the owner's «backfill» gives an estimate first, and his yes goes on.)
 // Messages of the Confirmation and Expenses groups from the monitor day (MONITOR_FROM, default 01/11/2026) onward that were posted before the bot kept them: WhatsApp's on-demand history is
 // asked for, starting at the oldest message the bot has seen in each group, again and again until the monitor day is reached. The answer arrives as «messaging-history.set» events; the
 // messages are then read exactly like live ones (photos and PDFs kept and downloaded, the payment parser run with the message's own time), silently: nothing is posted to any group, nothing
@@ -2740,57 +2742,100 @@ async function processHistoryMessage(m, groupId, info, groupKey, counts) {
   if (groupKey === 'confirmation') await replayCtx.run({ at: atMs, quiet: true }, () => trackGroup(m, groupId, 'payment')).catch((e) => logger.warn(`history: a message could not be tracked: ${e.message}`));
 }
 
-/** The backfill: for each group with an anchor, history is asked for backwards until [fromDay]; then everything is read in time order. Returns the owner's report text. */
-async function backfillHistory(fromDay = config.monitorFrom) {
-  if (backfillRunning) return 'A history backfill is already running.';
-  backfillRunning = true;
+// The backfill runs ONLY on the owner's word and in two steps. Step 1 («backfill 01/11») fetches the history's message list (no download, no model, nothing kept), counts the photos and PDFs and
+// answers with an ESTIMATE of the reading cost; step 2 is his «yes #B1»: only then are the media downloaded and read. His «no» drops it. Nothing starts by itself at the start of the bot.
+let pendingBackfill = null; // { id, at, fromDay, groups: [{ groupId, info, groupKey, messages }], counts }
+let backfillCount = 0;
+const PHOTO_TOKENS = { input: 1700, output: 150 }; // a photo read by the cheap model, as measured in the photo test
+const isMediaMessage = (m) => { const c = normalizeMessageContent(m.message); return !!(c?.imageMessage || (c?.documentMessage && /pdf/i.test(c.documentMessage.mimetype || ''))); };
+
+/** Step 1: the history of every group with an anchor, backwards to [fromDay]. Only the message list is fetched. */
+async function collectHistory(fromDay) {
   const counts = { groups: 0, rounds: 0, fetched: 0, downloaded: 0, unavailable: 0, reasons: [], silent: [] };
   const floor = Date.parse(`${fromDay < config.monitorFrom ? config.monitorFrom : fromDay}T00:00:00+04:00`);
+  const groups = [];
+  for (const groupId of Object.keys(anchors)) {
+    const info = await groupInfo(groupId); counts.groups += 1;
+    const all = new Map();
+    let cur = { key: anchors[groupId].key, ts: anchors[groupId].ts };
+    let answered = false;
+    for (let round = 0; round < 80 && cur.ts * 1000 > floor; round++) {
+      counts.rounds += 1;
+      let got = [];
+      try { got = await requestHistory(groupId, cur); } catch (e) { logger.warn(`history: the request failed: ${e.message}`); break; }
+      const older = got.filter((m) => messageSeconds(m) < cur.ts).sort((a, b) => messageSeconds(a) - messageSeconds(b));
+      if (!older.length) break; // nothing older came back: the phone is offline, or WhatsApp has nothing (more) for this group
+      answered = true; counts.fetched += older.length;
+      for (const m of older) if (messageSeconds(m) * 1000 >= floor) all.set(m.key.id, m);
+      cur = { key: older[0].key, ts: messageSeconds(older[0]) };
+      await napMs(1500);
+    }
+    if (!answered) counts.silent.push(info.subject);
+    const groupKey = anchors[groupId].groupKey || (config.confirmGroupName && String(info.subject).toLowerCase().includes(config.confirmGroupName) ? 'confirmation' : 'expenses');
+    groups.push({ groupId, info, groupKey, messages: [...all.values()].sort((a, b) => messageSeconds(a) - messageSeconds(b)), oldest: cur });
+  }
+  return { groups, counts, floor };
+}
+
+/** The estimate the owner reads before he answers: how many photos and PDFs, about what the reading costs. */
+function backfillEstimate(p) {
+  const media = p.groups.flatMap((g) => g.messages.filter((m) => isMediaMessage(m) && !fs.existsSync(photoFile(m.key.id))));
+  const photos = media.filter((m) => normalizeMessageContent(m.message)?.imageMessage).length;
+  const pdfs = media.length - photos;
+  const usd = (media.length * (PHOTO_TOKENS.input * 1 + PHOTO_TOKENS.output * 5)) / 1e6; // Haiku: 1 and 5 US dollars per million tokens
+  return { photos, pdfs, usd, tokensIn: media.length * PHOTO_TOKENS.input, tokensOut: media.length * PHOTO_TOKENS.output };
+}
+
+async function backfillStart(fromDay = config.monitorFrom) {
+  if (backfillRunning) return 'A history backfill is already running.';
+  backfillRunning = true;
+  try {
+    const got = await collectHistory(fromDay);
+    if (!got.counts.fetched) return [!got.counts.groups ? 'No group has been seen yet: the first message in a group sets where the history request starts. Try again after one message there.' : `⚠ No history came back for: ${got.counts.silent.join(', ')}. The owner's phone must be online, and WhatsApp may refuse an on-demand history request. Nothing was downloaded or read.`, 'Nothing was posted to any group and nothing was recorded in QuickBooks.'].join('\n');
+    backfillCount += 1;
+    pendingBackfill = { id: `B${backfillCount}`, at: Date.now(), fromDay, groups: got.groups, counts: got.counts };
+    const est = backfillEstimate(pendingBackfill);
+    return [
+      `*History backfill* #${pendingBackfill.id} — from ${(got.floor ? new Date(got.floor + 4 * 3600000).toISOString().slice(0, 10) : fromDay).split('-').reverse().join('/')}`,
+      `Messages found: ${got.counts.fetched} in ${got.counts.groups} group${got.counts.groups === 1 ? '' : 's'} (${got.counts.rounds} request${got.counts.rounds === 1 ? '' : 's'}).`,
+      `Photos: ${est.photos}. PDFs: ${est.pdfs}. They would be downloaded and read with the cheap model, and the payment messages read in time order, silently.`,
+      `Estimated cost: about $${est.usd.toFixed(2)} (≈ ${(est.usd * 3.6725).toFixed(2)} AED) — ${est.tokensIn.toLocaleString('en-US')} tokens in / ${est.tokensOut.toLocaleString('en-US')} out; a PDF with a text layer costs less.`,
+      ...(got.counts.silent.length ? [`⚠ No history came back for: ${got.counts.silent.join(', ')}.`] : []),
+      `Nothing was downloaded, read or kept yet. Reply yes #${pendingBackfill.id} to go on, or no #${pendingBackfill.id}.`,
+    ].join('\n');
+  } finally { backfillRunning = false; }
+}
+
+/** Step 2: the owner's yes downloads and reads (in the background; the report follows), his no drops it. */
+async function decideBackfill(verb, id) {
+  const p = pendingBackfill;
+  if (!p || p.id !== String(id).toUpperCase() || Date.now() - p.at > 60 * 60 * 1000) return [bi('That backfill was not found or its hour is over; ask again with «backfill».', 'این پر کردن تاریخچه پیدا نشد یا مهلتش (یک ساعت) تمام شده؛ دوباره «backfill» بنویسید.')];
+  pendingBackfill = null;
+  if (verb !== 'yes') return ['Cancelled. Nothing was downloaded, read or kept.'];
+  void runBackfill(p).then((text) => sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`history backfill failed: ${e.message}`));
+  return [`Reading ${backfillEstimate(p).photos + backfillEstimate(p).pdfs} photos and PDFs from the history now; the report follows. Nothing is posted to any group.`];
+}
+
+async function runBackfill(p) {
+  backfillRunning = true;
+  const counts = { ...p.counts, downloaded: 0, unavailable: 0, reasons: [] };
   const before = tracker.events.filter((e) => e.type === 'payment').length;
   try {
-    for (const groupId of Object.keys(anchors)) {
-      const info = await groupInfo(groupId); counts.groups += 1;
-      const all = new Map();
-      let cur = { key: anchors[groupId].key, ts: anchors[groupId].ts };
-      let answered = false;
-      for (let round = 0; round < 80 && cur.ts * 1000 > floor; round++) {
-        counts.rounds += 1;
-        let got = [];
-        try { got = await requestHistory(groupId, cur); } catch (e) { logger.warn(`history: the request failed: ${e.message}`); break; }
-        const older = got.filter((m) => messageSeconds(m) < cur.ts).sort((a, b) => messageSeconds(a) - messageSeconds(b));
-        if (!older.length) break; // nothing older came back: the phone is offline, or WhatsApp has nothing (more) for this group
-        answered = true; counts.fetched += older.length;
-        for (const m of older) if (messageSeconds(m) * 1000 >= floor) all.set(m.key.id, m);
-        cur = { key: older[0].key, ts: messageSeconds(older[0]) };
-        anchors[groupId] = { ...anchors[groupId], key: cur.key, ts: cur.ts }; writeHistoryJson(path.join(historyDir, 'anchors.json'), anchors);
-        await napMs(1500);
-      }
-      if (!answered) counts.silent.push(info.subject);
-      const groupKey = anchors[groupId].groupKey || (config.confirmGroupName && String(info.subject).toLowerCase().includes(config.confirmGroupName) ? 'confirmation' : 'expenses');
-      for (const m of [...all.values()].sort((a, b) => messageSeconds(a) - messageSeconds(b))) await processHistoryMessage(m, groupId, info, groupKey, counts); // in time order
+    for (const g of p.groups) {
+      anchors[g.groupId] = { ...anchors[g.groupId], key: g.oldest.key, ts: g.oldest.ts }; writeHistoryJson(path.join(historyDir, 'anchors.json'), anchors); // the next request continues from here
+      for (const m of g.messages) await processHistoryMessage(m, g.groupId, g.info, g.groupKey, counts); // in time order
     }
     historyDone[config.monitorFrom] = Date.now(); writeHistoryJson(path.join(historyDir, 'done.json'), historyDone);
   } finally { backfillRunning = false; }
   const added = tracker.events.filter((e) => e.type === 'payment').length - before;
   logger.info(`history: ${counts.groups} group(s), ${counts.rounds} request(s), ${counts.fetched} messages fetched, ${counts.downloaded} photos/PDFs downloaded, ${counts.unavailable} expired or unavailable, ${added} payment entries added`);
   return [
-    `History backfill from ${fromDay.split('-').reverse().join('/')}: ${counts.groups} group${counts.groups === 1 ? '' : 's'}, ${counts.rounds} request${counts.rounds === 1 ? '' : 's'}.`,
+    `History backfill #${p.id} done: ${counts.groups} group${counts.groups === 1 ? '' : 's'}, ${counts.rounds} request${counts.rounds === 1 ? '' : 's'}.`,
     `Messages fetched: ${counts.fetched}. Photos/PDFs downloaded: ${counts.downloaded}. Expired or unavailable: ${counts.unavailable}${counts.unavailable ? ` (${[...new Set(counts.reasons)].join('; ')})` : ''}.`,
     `Payment entries added: ${added}.`,
-    ...(counts.silent.length ? [`⚠ No history came back for: ${counts.silent.join(', ')}. The owner's phone must be online, and WhatsApp may refuse an on-demand history request; nothing older than what the bot has already seen could be fetched.`] : []),
-    ...(!counts.groups ? ['No group has been seen yet: the first message in a group sets where the history request starts. Try again after one message there.'] : []),
     'Nothing was posted to any group and nothing was recorded in QuickBooks.',
   ].join('\n');
 }
-
-// once after the start (as soon as a group has been seen and the connection is up), then only on the owner's word
-setInterval(async () => {
-  try {
-    if (!sock?.user || botState.paused || backfillRunning || historyDone[config.monitorFrom] || !Object.keys(anchors).length) return;
-    const text = await backfillHistory();
-    await sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` });
-  } catch (e) { logger.warn(`history backfill failed: ${e.message}`); }
-}, 10 * 60 * 1000).unref();
 
 // ---------------------------------------------------------------------------------------------------------------- company expenses
 // A receipt photo with the amount as its caption in the EXPENSES group (see expenses.js). Kept on the server; read only towards QuickBooks (it is only compared with what the office recorded).
