@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SEP, withSeparators } from './separator.js';
 import { sameCutCustomer } from './cuts.js';
-import { sameBrand } from './cutaliases.js';
+import { brandWords } from './cutaliases.js';
 import { localParts } from './morning.js';
 import { normalizeDigits } from './text.js';
 
@@ -160,7 +160,14 @@ export function expensesText(entries, title) {
 
 const near = (a, b, tol = 1) => Math.abs(Number(a) - Number(b)) <= tol;
 const closeDay = (isoA, isoB, tol = 3) => Math.abs(dayNum(isoA) - dayNum(isoB)) <= tol;
-const nameOk = (a, b, aliasOf = () => '') => !a || !b || sameCutCustomer(a, b) || (!!aliasOf(a) && sameCutCustomer(aliasOf(a), b)) || sameBrand(a, b); // «Akrasa lion» is «AKRASAA LIONS …»: a letter more or less, singular or plural
+/** The same brand written with a doubled letter or in the plural («Akrasa lion» / «AKRASAA LIONS …»): every brand word of the shorter name is a word of the other; a different letter at the end is another customer (AL AFEEFI / AL AFEEF). */
+const brandForm = (w) => w.toLowerCase().replace(/(.)\1+/g, '$1').replace(/s$/, '');
+const sameBrandForm = (a, b) => {
+  const x = brandWords(a).map(brandForm); const y = brandWords(b).map(brandForm);
+  const [few, many] = x.length <= y.length ? [x, y] : [y, x];
+  return few.length > 0 && few.every((w) => many.includes(w));
+};
+const nameOk = (a, b, aliasOf = () => '') => !a || !b || sameCutCustomer(a, b) || (!!aliasOf(a) && sameCutCustomer(aliasOf(a), b)) || sameBrandForm(a, b); // «Akrasa lion» is «AKRASAA LIONS …»: a letter more or less, singular or plural
 
 /** The QuickBooks records (Purchase / Bill: { TxnDate, TotalAmt, EntityRef|VendorRef }) that match each expense by amount (±1) and date (±3 days); the vendor when both are known. Each record is used once. */
 export function matchExpenses(entries, records) {

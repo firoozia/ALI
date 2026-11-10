@@ -48,14 +48,14 @@ test('a cheque is a cheque whatever the spelling, and the customer name carries 
 
 test('a foreign currency is read, never invented: «OMR = 567», «60 … OMR = 567» (60 OMR is 567 AED); the AED equivalent is shown, the AED total counts it', () => {
   const alone = eventsFromCaption('payment', 'AL AFEEFI KITCHEN OMR = 567').events[0];
-  assert.deepEqual([alone.customer, alone.amount, alone.currency], ['AL AFEEFI KITCHEN', 567, 'OMR']);
+  assert.deepEqual([alone.customer, alone.amount, alone.currency], ['AL AFEEFI KITCHEN', 567, 'AED']); // «OMR = 567» alone: the figure after the equals sign is dirhams (the office recorded 567.00 AED)
   const both = eventsFromCaption('payment', '60 AED AL AFEEFI KITCHEN OMR = 567').events[0];
   assert.deepEqual([both.customer, both.amount, both.currency, both.foreign], ['AL AFEEFI KITCHEN', 567, 'AED', { amount: 60, currency: 'OMR' }]);
   const items = receivedItems([pay({ ...alone, at: NOW }), pay({ ...both, at: NOW })], day);
-  assert.match(items[0].shown, /^\*567\.00 OMR\* \(≈ 5,41\d\.\d\d AED\)$/); assert.ok(items[0].amount > 5000 && items[0].foreign);
+  assert.equal(items[0].shown, '*567.00*'); assert.equal(items[0].amount, 567); assert.ok(!items[0].foreign);
   assert.equal(items[1].shown, '*567.00* (60.00 OMR)'); assert.equal(items[1].amount, 567);
   const gbp = receivedItems([pay({ currency: 'GBP', amount: 10, customer: 'X' })], day)[0]; assert.deepEqual([gbp.shown, gbp.amount, gbp.unconverted], ['*10.00 GBP*', 0, true]); // no known rate: shown as it is, not in the AED total
-  const text = receivedText(items, { title: 't' }); assert.match(text, /⚠ foreign currency: check in QuickBooks/); assert.ok(!/\bOMR =/.test(text) && !/CHEAQUE/.test(text));
+  const text = receivedText([...items, gbp], { title: 't' }); assert.match(text, /⚠ foreign currency: check in QuickBooks/); assert.ok(!/\bOMR =/.test(text) && !/CHEAQUE/.test(text));
   // an old row whose stored name still mentions the currency is flagged, not guessed
   assert.equal(receivedItems(sharedPaymentList({ events: [pay({ customer: 'AL AFEEFI KITCHEN OMR =', amount: 60 })] }), day)[0].note, 'check the amount: the message mentions OMR');
 });

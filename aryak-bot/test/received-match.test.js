@@ -40,3 +40,14 @@ test('the owner command «check received <name>» is parsed', () => {
   assert.deepEqual(parseInvoiceCommand('check received Delta lion'), { type: 'received_check', name: 'Delta lion' });
   assert.deepEqual(parseInvoiceCommand('بررسی دریافتی دلتا'), { type: 'received_check', name: 'دلتا' });
 });
+
+test('two customers with a different last letter stay apart (AL AFEEFI / AL AFEEF); «OMR = 567» alone is 567 dirhams; a pair keeps the dirham figure', async () => {
+  const { parsePaymentCaption } = await import('../src/captions.js');
+  const it = item('AL AFEEFI KITCHEN', 567, '2026-11-10');
+  assert.ok(!matchReceipts([it], [rec('AL AFEEF KITCHEN', 567, '2026-11-10')]).has(it));
+  assert.ok(matchReceipts([it], [rec('AL AFEEFI KITCHEN', 567, '2026-11-10')]).has(it));
+  assert.deepEqual(parsePaymentCaption('AL AFEEFI KITCHEN OMR = 567'), { kind: 'cash', amount: 567, customers: ['AL AFEEFI KITCHEN'] });
+  const pair = parsePaymentCaption('AL AFEEFI KITCHEN 60 OMR = 567');
+  assert.equal(pair.amount, 567); assert.deepEqual(pair.foreign, { amount: 60, currency: 'OMR' });
+  const only = parsePaymentCaption('AL AFEEFI KITCHEN 60 OMR'); assert.equal(only.currency, 'OMR'); assert.equal(only.amount, 60); // converted later at 9.55 and marked «≈»
+});

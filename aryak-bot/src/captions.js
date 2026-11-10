@@ -142,7 +142,7 @@ export function parsePaymentCaption(text) {
   const INV = /(?:\binv(?:oice)?s?\b|فاکتور)\.?\s*(?:no\.?|number|#|شماره)?\s*[-:#]?\s*(\d{3,6}(?:\s*[/,&]\s*\d{3,6})*)/gi;
   const noInv = s.replace(INV, (m, run) => { for (const n of run.split(/[\s/,&]+/).filter(Boolean)) invoices.push(`inv-${n}`); return ' '; }).replace(/\s+/g, ' ').trim();
   // a foreign currency («AL AFEEFI KITCHEN OMR = 567»): its amount is the one next to the code; an amount in AED written as well wins as the amount, the foreign one is kept beside it
-  let work = noInv; let currency = ''; let foreign = null; let eqPair = null;
+  let work = noInv; let currency = ''; let foreign = null; let eqPair = null; let aedAfterEquals = false;
   const fc = FOREIGN.exec(work);
   if (fc) {
     const code = fc[1].toUpperCase();
@@ -152,10 +152,11 @@ export function parsePaymentCaption(text) {
       const without = `${work.slice(0, eq.index)} ${work.slice(eq.index + eq[0].length)}`;
       const other = AMOUNT.exec(without);
       if (other) { eqPair = { aed: num(eq[1]), foreign: { amount: num(other[1]), currency: code } }; work = `${without.slice(0, other.index)} ${without.slice(other.index + other[0].length)}`; }
+      else { work = `${work.slice(0, eq.index)} ${eq[1]} ${work.slice(eq.index + eq[0].length)}`; aedAfterEquals = true; } // «OMR = 567» alone: the figure after the equals sign is the AED sum
     }
     const near = eqPair ? null : new RegExp(`(\\d[\\d,]*(?:\\.\\d+)?)\\s*${code}\\b`, 'i').exec(work) || new RegExp(`\\b${code}\\s*[=:]?\\s*(\\d[\\d,]*(?:\\.\\d+)?)`, 'i').exec(work);
     if (near) { foreign = { amount: num(near[1]), currency: code }; work = `${work.slice(0, near.index)} ${work.slice(near.index + near[0].length)}`; }
-    currency = code;
+    if (!aedAfterEquals) currency = code;
   }
   const cheque = CHEQUE_WORDS.test(work);
   const a = AMOUNT.exec(work);
