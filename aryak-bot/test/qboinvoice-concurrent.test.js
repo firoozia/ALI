@@ -23,6 +23,6 @@ test('a second yes that arrives while the first is still creating does not start
   assert.ok(second.join('').includes('در حال ساخته شدن'));
   release();
   const done = (await first).join('');
-  assert.ok(done.includes('ساخته شد'));
+  assert.ok(!done.includes('ساخته شد')); // the PDF (here: no test group to copy it to, said) is the answer: no second text with the invoice line
   assert.equal(posts, 1);
 });

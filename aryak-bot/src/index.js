@@ -793,7 +793,7 @@ async function paymentsReport(events, only = '') {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -960,6 +960,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       return [`ثبت شد: «${ic.persian}» برای ${r.name || ic.customer}. از این پس این نام فارسی را می‌شناسم.`];
     }
     case 'adjust': return qboInvoices.adjust(ic);
+    case 'cancel_all': case 'queue_list': return [await queueCommand('owner', ic.type)];
     case 'yes_all': case 'no_all': return qboInvoices.decideAll({ verb: ic.type === 'yes_all' ? 'yes' : 'no' });
     case 'statement_nl': {
       if (ic.unsupported) return ['ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'];
@@ -997,7 +998,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
       const out = await (id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
-      return said ? [said + out[0], ...out.slice(1)] : out;
+      return said && out.length ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
     case 'resume': qbo.setPaused(false); qboInvoices.audit.add({ event: 'resume', approver: 'owner' }); return ['کوییک‌بوکس ادامه یافت.'];
@@ -1021,6 +1022,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
  * statement for one customer (returned to that private chat only). Anything else from them is ignored as before. Replies are short English.
  */
 async function authorizedFlow({ chatId, text, canInvoice = false, canStatement = false, person = '' }) {
+  { const q = parseInvoiceCommand(text); if ((q?.type === 'cancel_all' || q?.type === 'queue_list') && (canInvoice || canStatement) && person) { qboChats.add(chatId); await sock.sendMessage(chatId, { text: await queueCommand(person, q.type) }); return true; } } // his own waiting items only
   if (person && canStatement && await styleReplyFlow({ text, by: person, say: (t) => sock.sendMessage(chatId, persianText(t)), choicePending: !!choiceDesk.get(`pc:${chatId}`) })) { qboChats.add(chatId); return true; }
   const pend = choiceDesk.get(`pc:${chatId}`); // the number for the customer question she just asked this person
   if (pend?.kind === 'statement' && !pend.by && canStatement) {
@@ -1184,6 +1186,37 @@ async function finishOwnerSend({ chatId, pending, reply, lang = 'en' }) {
 // ---------------------------------------------------------------------------------------------------------------- statements asked for in a group
 const groupStatements = new GroupStatements(); // built for a customer group, waiting for the owner's «بله #S1»
 const statementPreviews = new StatementPreviews({ nextId: () => groupStatements.nextId() }); // asked for, not built: waiting for «1» or «2»
+
+/** Everything that waits for an answer, as { id, kind, cancel }. [by]: 'owner' sees every kind; a person sees only what he asked for (invoice previews, statements and their layout questions, his expenses). */
+function waitingItems(by) {
+  const own = by === 'owner'; const items = [];
+  const add = (id, kind, cancel) => items.push({ id, kind, cancel });
+  const no = (id) => () => qboInvoiceCommand({ type: 'no', id }, '', {}); // the same «no #id» the owner's command runs: one place decides each kind
+  for (const id of qboInvoices.openIds()) { const p = Object.values(qboInvoices.store.d.previews).find((x) => x.id === id); if (own || p?.requester === by) add(id, 'invoice', no(id)); }
+  if (own) {
+    for (const id of qboNames.openIds()) add(id, 'customer names', no(id));
+    for (const id of qboBulk.openIds()) add(id, 'bulk job', no(id));
+    for (const id of cutAliases.openIds()) add(id, 'aliases', no(id));
+    for (const id of availDrafts.openIds()) add(id, 'availability draft', no(id));
+    for (const id of Object.keys(paymentDups.d.open)) add(id, 'duplicate payment question', () => { delete paymentDups.d.open[id]; paymentDups.save(); return []; });
+  }
+  for (const id of groupStatements.openIds(own ? '' : by)) add(id, 'statement', no(id));
+  for (const id of statementPreviews.openIds(by)) add(id, 'statement layout', () => { statementPreviews.clear(id); return []; });
+  for (const e of expenseStore.d.items) if (!['done', 'cancelled'].includes(e.state) && Date.now() - e.at < 24 * 3600 * 1000 && (own || e.by === by)) add(e.id, 'expense', () => { e.state = 'cancelled'; expenseStore.save(); return []; });
+  return items;
+}
+
+/** «no all» / «cancel all» / «لغو همه» drops everything that waits (the owner: all kinds; another person: only his own); «waiting» / «صف» only lists it. Nothing is ever created. */
+async function queueCommand(by, type) {
+  const items = waitingItems(by);
+  if (!items.length) return 'Nothing is waiting.';
+  const codes = items.map((i) => `#${i.id}`);
+  if (type === 'queue_list') return [`Waiting (${items.length}):`, ...items.map((i) => `• #${i.id} — ${i.kind}`), 'Reply "no all" to cancel them all.'].join('\n');
+  const done = [];
+  for (const i of items) { try { await i.cancel(); done.push(`#${i.id}`); } catch (e) { logger.warn(`cancel all: ${i.id} failed: ${e.message}`); } }
+  const failed = codes.filter((c) => !done.includes(c));
+  return `Cancelled ${done.length}: ${done.join(', ')}. Nothing was created.${failed.length ? ` Could not cancel: ${failed.join(', ')}.` : ''}`;
+}
 
 /** Remember a statement request as a preview and return the text to show (the customer, the exact period, the two layouts). [run(style)] builds it where the request came from. */
 function stylePreview(x, { by, run }) {

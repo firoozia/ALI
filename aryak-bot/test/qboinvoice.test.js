@@ -208,7 +208,7 @@ test('only the owner\'s yes creates: the invoice body, the request id, the read-
   assert.equal(minor, '75');
   assert.deepEqual([body.CustomerRef.value, body.TxnDate, body.GlobalTaxCalculation, body.PrivateNote], ['58', '2026-11-08', 'TaxExcluded', 'Atossa Q1']);
   assert.deepEqual(body.Line.map((l) => [l.DetailType, l.Amount, l.SalesItemLineDetail.ItemRef.value, l.SalesItemLineDetail.Qty, l.SalesItemLineDetail.UnitPrice, l.SalesItemLineDetail.TaxCodeRef.value]), [['SalesItemLineDetail', 25, '1', 10, 2.5, '11'], ['SalesItemLineDetail', 3.3, '2', 3, 1.1, '11']]);
-  assert.ok(out.includes('ساخته شد') && out.includes('2001') && out.includes('29.72 AED') && !out.includes('نمی‌خواند'));
+  assert.ok(out === '' && !out.includes('نمی‌خواند')); assert.ok(t.sent.some((x) => /2001/.test(x.caption || '') && /29\.72 AED/.test(x.caption || ''))); // only the PDF with its caption
   assert.deepEqual(t.sent.map((s) => s.jid).sort(), [OWNER_JID, 'test@g.us'].sort()); // his chat and the test group, never a customer group
   assert.ok(t.sent.every((s) => s.bytes.startsWith('%PDF') && s.caption.includes('2001') && s.fileName === 'invoice-2001.pdf'));
   assert.ok(!t.sent.some((s) => s.jid === 'orion@g.us'));
@@ -231,7 +231,7 @@ test('a second yes returns the same invoice and never makes a second one; after 
   assert.ok(failed.includes('ساخت فاکتور نشد') && failed.includes('دو فاکتور ساخته نمی‌شود'));
   assert.equal(f.store.get('Q1').status, 'pending'); // can be retried
   const ok = (await f.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
-  assert.ok(ok.includes('ساخته شد'));
+  assert.equal(ok, '');
   const ids = new Set(f.m.posts.map((p) => p.requestId));
   assert.equal(ids.size, 1); // every attempt, the failed ones and the good one, used the same id
   assert.equal(f.m.invoices.size, 1);
@@ -253,13 +253,13 @@ test('"no" cancels; a preview older than 24 hours expires; an unknown id is said
 test('the caps: ten creations an hour, forty a day; a refused yes is not lost', async () => {
   const t = mk();
   for (let i = 1; i <= CAP_HOUR + 1; i++) await t.inv.request({ text: REQ, requester: 'owner' });
-  for (let i = 1; i <= CAP_HOUR; i++) assert.ok((await t.inv.decide({ verb: 'yes', id: `Q${i}` })).join('').includes('ساخته شد'));
+  for (let i = 1; i <= CAP_HOUR; i++) assert.ok((await t.inv.decide({ verb: 'yes', id: `Q${i}` })).join('') === '');
   const over = (await t.inv.decide({ verb: 'yes', id: `Q${CAP_HOUR + 1}` })).join('');
   assert.ok(over.includes('سقف ساخت فاکتور پر است'));
   assert.equal(t.m.posts.length, CAP_HOUR);
   assert.equal(t.store.get(`Q${CAP_HOUR + 1}`).status, 'pending');
   t.clock.t += 61 * 60 * 1000;
-  assert.ok((await t.inv.decide({ verb: 'yes', id: `Q${CAP_HOUR + 1}` })).join('').includes('ساخته شد')); // an hour later
+  assert.ok((await t.inv.decide({ verb: 'yes', id: `Q${CAP_HOUR + 1}` })).join('') === ''); // an hour later
   // a day: forty already made in the last 24 hours, spread over many hours
   const d = mk();
   d.store.d.creates = Array.from({ length: CAP_DAY }, (_, i) => d.clock.t - (i + 1) * 30 * 60 * 1000);
@@ -284,7 +284,7 @@ test('the kill switch stops every call, survives a restart, and is lifted by the
   restarted.setPaused(false);
   assert.equal(new Qbo({ config: t.config, dir: t.dir, fetchFn: t.m.fetchFn }).paused, false);
   t.qbo.setPaused(false);
-  assert.ok((await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('ساخته شد'));
+  assert.ok((await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('') === '');
   // write off: the preview works (it only reads), the yes is refused and nothing is posted
   const off = mk({ write: false });
   await off.inv.request({ text: REQ, requester: 'owner' });
@@ -576,7 +576,7 @@ test('the invoice number is QuickBooks\': the preview reserves none; with hand n
   await t.inv.decide({ verb: 'no', id: 'Q1' }); // a cancelled preview takes no number
   const out = (await t.inv.decide({ verb: 'yes', id: 'Q2' })).join('\n');
   assert.equal(t.m.posts[0].body.DocNumber, 'inv-8997'); // the next after the latest invoice, read now
-  assert.ok(out.includes('inv-8997') && !out.includes('بی‌شماره'));
+  assert.equal(out, '');
   assert.deepEqual(t.m.posts[0].body.Line.map((l) => l.Description), ['35 mm soft-close hinge', undefined]); // only where QuickBooks has one
   assert.deepEqual([t.m.posts[0].body.SalesTermRef, t.m.posts[0].body.BillEmail], [{ value: '3' }, { Address: 'office@orion.test' }]);
 });
@@ -586,7 +586,7 @@ test('hand numbering at the create: leading zeros keep their width, another pref
   const t = mk({ customTxn: true, docNumbers });
   await t.inv.request({ text: REQ, requester: 'owner' });
   docNumbers.unshift('inv-8997'); // the office typed that number by hand after the preview
-  assert.ok((await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('').includes('ساخته شد'));
+  assert.ok((await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('') === '');
   assert.equal(t.m.posts[0].body.DocNumber, 'inv-8998'); // the number is read at the yes, after what the office did
   const z = mk({ customTxn: true, docNumbers: ['INV-0099', 'CN-500', 'INV-0098'] });
   await z.inv.request({ text: REQ, requester: 'owner' });
@@ -766,11 +766,11 @@ test('the owner\'s exact message: two customers, two previews, the codes and qua
   assert.deepEqual(stockAsked.sort(), ['215', '220']);
   assert.equal(t.m.posts.length, 0); // two previews, no invoice
   assert.equal(t.store.get('Q1').batch, t.store.get('Q2').batch);
-  assert.deepEqual(parseInvoiceCommand('بله همه'), { type: 'yes_all' }); assert.deepEqual(parseInvoiceCommand('نه همه'), { type: 'no_all' });
+  assert.deepEqual(parseInvoiceCommand('بله همه'), { type: 'yes_all' }); assert.deepEqual(parseInvoiceCommand('نه همه'), { type: 'cancel_all' });
   const done = (await t.inv.decideAll({ verb: 'yes' })).join('\n');
   assert.equal(t.m.posts.length, 2);
   assert.deepEqual(t.m.posts.map((p) => p.body.CustomerRef.value).sort(), ['81', '82']);
-  assert.ok(done.includes('Q1') || done.length > 0);
+  assert.ok(!done.includes('ساخته شد')); // the PDFs are the answers: no text line per invoice
   assert.equal(t.store.get('Q1').status, 'created'); assert.equal(t.store.get('Q2').status, 'created');
 });
 
@@ -1065,7 +1065,7 @@ test('the short preview: *Invoice* #Q1, the customer in bold, one line per item 
     assert.ok(full.includes('پیش‌نمایش فاکتور #Q2') && full.includes('جمع کل'));
     // the created message
     const done = await t.inv.decide({ verb: 'yes', id: 'Q1' });
-    assert.match(done[0], /^\*Invoice\* \S+ — \*Orion Furniture\* — \*29\.72 AED\*$/);
+    assert.deepEqual(done, []); // the PDF with its caption is the answer
   } finally { setOutLang('fa'); }
 });
 
@@ -1333,7 +1333,7 @@ test('no read-only or unknown property reaches an address: FreeFormAddress, coor
   assert.deepEqual(dry.BillAddr, { Line1: 'Orion Furniture', Line2: '+000 0000 000', Line3: '1 Sample Street', Line4: 'Sample City' });
   assert.deepEqual(dry.ShipAddr, { Line1: '2 Sample Yard', City: 'Sample City' });
   const out = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).join('\n');
-  assert.ok(out.includes('ساخته شد') || out.startsWith('*Invoice*'), out); assert.equal(t.m.posts.length, 1); // accepted at the first try
+  assert.equal(out, '', out); assert.equal(t.m.posts.length, 1); // accepted at the first try
   // the old body (with FreeFormAddress) is exactly what the fake refuses
   const refused = mk({ customers: [CUSTOMER_WITH_ADDRESS] });
   const r = await fetchLike(refused, { ...dry, BillAddr: { ...dry.BillAddr, FreeFormAddress: true } });
@@ -1386,7 +1386,7 @@ test('the dry run builds the very body the create sends (the same sanitising), s
   const text = (await t.inv.dryRun('Q1', 'inv-1')).join('\n');
   assert.ok(!text.includes('FreeFormAddress') && !text.includes('"Lat"'), text);
   const built = t.inv.invoiceBody(t.store.get('Q1'), await t.inv.salesDefaults('58'));
-  const sent = (await t.inv.decide({ verb: 'yes', id: 'Q1' })).length && t.m.posts[0].body;
+  await t.inv.decide({ verb: 'yes', id: 'Q1' }); const sent = t.m.posts[0].body;
   assert.deepEqual(Object.keys(built).sort(), Object.keys(sent).filter((k) => k !== 'DocNumber').sort());
 });
 

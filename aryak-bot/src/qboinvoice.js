@@ -91,7 +91,9 @@ export function parseInvoiceCommand(text) {
     if ((a = new RegExp(String.raw`^سطر\s*(\d+)\s*=\s*(\d+)${idPart}$`, 'iu').exec(s))) return { type: 'adjust', what: 'line', n: Number(a[1]), pick: Number(a[2]), id: a[3] ? `Q${a[3]}` : '' };
     if ((a = new RegExp(String.raw`^مالیات\s*(\d+)${idPart}$`, 'iu').exec(s))) return { type: 'adjust', what: 'tax', pick: Number(a[1]), id: a[2] ? `Q${a[2]}` : '' };
   }
-  if ((m = /^(بله|اره|آره|نه|خیر)\s+همه$/u.exec(s))) return { type: /^(?:بله|اره|آره)$/u.test(m[1]) ? 'yes_all' : 'no_all' }; // all the previews of the last message
+  if (/^(?:no|cancel|drop|clear)\s+(?:all|everything)$/iu.test(s) || /^(?:لغو|نه|خیر)\s+همه$/u.test(s)) return { type: 'cancel_all' }; // every waiting preview and job of every kind (his own, for a person who is not the owner); nothing is created
+  if (/^(?:waiting|queue|pending|صف)$/iu.test(s)) return { type: 'queue_list' };
+  if ((m = /^(بله|اره|آره)\s+همه$/u.exec(s))) return { type: 'yes_all' }; // all the previews of the last message
   if (/^دسته\s+و\s+کد\s+کالا(?:\s*ها)?$/u.test(s)) return { type: 'bulk_catalog' };
   if (/^دسته\s+و\s+کد\s+پی\s*وی\s*سی$/u.test(s)) return { type: 'bulk_catalog', edge: false }; // the PVC film part only: no edge banding change at all
   if (/^مالیات\s+کالاها(?:\s+دبی)?$/u.test(s)) return { type: 'bulk_tax' };
@@ -1247,7 +1249,9 @@ export class QboInvoiceDesk {
     this.store.save();
     this.audit.add({ event: 'create', requester: p.requester, approver: 'owner', previewId: p.id, qboId: p.qbo.id, docNumber: p.qbo.docNumber, total: p.qbo.total });
     if (dropped.length) this.audit.add({ event: 'created-lean', previewId: p.id, dropped });
-    const out = isEnglishOut() ? [`*Invoice* ${p.qbo.docNumber || '(no number)'} — *${p.customer.name}* — *${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}*`] : [`فاکتور ${p.id} در کوییک‌بوکس ساخته شد: شمارهٔ ${p.qbo.docNumber || '(بی‌شماره)'}، جمع ${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}.`];
+    const okParts = isEnglishOut() ? [`*Invoice* ${p.qbo.docNumber || '(no number)'} — *${p.customer.name}* — *${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}*`] : [`فاکتور ${p.id} در کوییک‌بوکس ساخته شد: شمارهٔ ${p.qbo.docNumber || '(بی‌شماره)'}، جمع ${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}.`];
+    const out = []; // the PDF with its caption is the result; the text line below is only for the case that no PDF could be sent
+    let posted = 0;
     if (dropped.length) out.push(`Note: QuickBooks refused some optional fields (${dropped.join(', ')}); the invoice was created without them.`);
     // read it back and compare the total with the preview
     try {
@@ -1260,13 +1264,14 @@ export class QboInvoiceDesk {
       const caption = `Invoice ${p.qbo.docNumber} - ${p.customer.name} - total ${money(p.qbo.total)}${p.currency ? ` ${p.currency}` : ''}`;
       const fileName = `invoice-${String(p.qbo.docNumber || p.qbo.id).replace(/[^\w.-]+/g, '_')}.pdf`;
       if (this.targets) { // the chat of the request, the chat of the yes, and the owner's copy when somebody else asked (never a customer group)
-        for (const jid of await this.targets(p, decidedIn)) await this.post(jid, pdf, fileName, caption);
+        for (const jid of await this.targets(p, decidedIn)) { await this.post(jid, pdf, fileName, caption); posted += 1; }
       } else {
-        await this.post(this.ownerJid(), pdf, fileName, caption);
+        await this.post(this.ownerJid(), pdf, fileName, caption); posted += 1;
         const tg = this.testGroup(await this.groups());
-        if (tg) await this.post(tg.id, pdf, fileName, caption); else out.push('گروه آزمایشی پیدا نشد؛ پی‌دی‌اف فقط به گفتگوی خودتان رفت.');
+        if (tg) { await this.post(tg.id, pdf, fileName, caption); posted += 1; } else out.push('گروه آزمایشی پیدا نشد؛ پی‌دی‌اف فقط به گفتگوی خودتان رفت.');
       }
     } catch (e) { out.push('پی‌دی‌اف فاکتور از کوییک‌بوکس گرفته یا فرستاده نشد؛ فاکتور ساخته شده است.'); }
+    if (!posted) out.unshift(...okParts); // no PDF went out: the result is said in text, never silent
     return out;
   }
 
