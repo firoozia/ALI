@@ -989,7 +989,7 @@ function weeklyBackup() { nightlyBackup(); }
  *   read   - every distinct name with the rows that hold it (Movements: only OUT and CUT rows). Changes nothing.
  *   backup - a full copy of the whole spreadsheet in the backup folder, named [req.name].
  *   apply  - [req.cells] = [{ tab, row, old, new }]: a cell is changed only if it still holds [old] exactly; nothing else is written (no other cell, no row or column added or removed,
- *            no format or formula, no stamp, no revision bump). It needs the script property ZINAX_NAMES_WRITE = on, which the owner sets by hand and removes again when done.
+ *            no format or formula) EXCEPT that a renamed Customers row gets its UpdatedAt and ServerAt stamped and the revision bumped, as a hand edit does, so the phones pull the new name. It needs the script property ZINAX_NAMES_WRITE = on, which the owner sets by hand and removes again when done.
  */
 const NAME_CELLS = { Customers: 'Name', Movements: 'Customer' };
 const NAMES_BATCH_MAX = 200;
@@ -1026,7 +1026,7 @@ function botNames_(req) {
       }
       const cells = Array.isArray(req.cells) ? req.cells : [];
       if (cells.length > NAMES_BATCH_MAX) return { ok: false, error: 'Too many cells in one request (max ' + NAMES_BATCH_MAX + ').' };
-      const applied = []; const skipped = [];
+      const applied = []; const skipped = []; let stamped = false;
       cells.forEach(function (c) {
         const tab = String(c.tab); const row = Number(c.row);
         if (!NAME_CELLS[tab] || !(row >= 2) || !String(c.new || '').trim()) { skipped.push({ tab: tab, row: row, why: 'not a name cell' }); return; }
@@ -1036,8 +1036,16 @@ function botNames_(req) {
         const now = String(cell.getValue());
         if (now !== String(c.old)) { skipped.push({ tab: tab, row: row, why: 'the cell now holds a different value', now: now }); return; }
         cell.setValue(String(c.new));
+        if (tab === 'Customers') { // exactly what a hand edit does (customersEdited_): the phones pull a customer only when its UpdatedAt / ServerAt are newer, else they never see the new name
+          const upAt = SHEETS.Customers.indexOf('UpdatedAt') + 1; const srvAt = SHEETS.Customers.indexOf('ServerAt') + 1;
+          const stamp = Date.now();
+          sh.getRange(row, upAt).setValue(Math.max(stamp, (Number(sh.getRange(row, upAt).getValue()) || 0) + 1));
+          sh.getRange(row, srvAt).setValue(stamp);
+          stamped = true;
+        }
         applied.push({ tab: tab, row: row });
       });
+      if (stamped) bump_();
       SpreadsheetApp.flush();
       return { ok: true, applied: applied, skipped: skipped };
     }

@@ -126,7 +126,9 @@ test('the sheet script: read lists the names with their rows (outgoing only); ba
     { tab: 'Items', row: 2, old: 'x', new: 'y' }, { tab: 'Customers', row: 1, old: 'Name', new: 'Z' }, // not a name cell / the header row
   ] });
   assert.equal(res.ok, true); assert.deepEqual(res.applied, [{ tab: 'Customers', row: 2 }, { tab: 'Movements', row: 2 }]); assert.equal(res.skipped.length, 3);
-  assert.deepEqual([...on.cust.writes, ...on.mov.writes], [['Customers', 2, 2, 'DELTAA LIONS'], ['Movements', 2, 13, 'DELTAA LIONS']]); // exactly two cells written, nothing else
+  const w = [...on.cust.writes, ...on.mov.writes].map((x) => x.slice(0, 3).join('#'));
+  assert.deepEqual(w, ['Customers#2#2', 'Customers#2#6', 'Customers#2#7', 'Movements#2#13']); // the name cells, and the renamed customer's UpdatedAt and ServerAt (as a hand edit does) so the phones pull it; nothing else
+  assert.equal(on.cust.writes[0][3], 'DELTAA LIONS'); assert.ok(on.cust.writes[2][3] > 1e12);
   assert.equal(on.mov.cells[3][12], 'Delta lion'); // the IN row untouched
   assert.equal(on.post({ mode: 'apply', cells: Array(201).fill({ tab: 'Customers', row: 2, old: 'a', new: 'b' }) }).ok, false); // a batch over 200
 });
