@@ -51,3 +51,14 @@ test('two customers with a different last letter stay apart (AL AFEEFI / AL AFEE
   assert.equal(pair.amount, 567); assert.deepEqual(pair.foreign, { amount: 60, currency: 'OMR' });
   const only = parsePaymentCaption('AL AFEEFI KITCHEN 60 OMR'); assert.equal(only.currency, 'OMR'); assert.equal(only.amount, 60); // converted later at 9.55 and marked «≈»
 });
+
+test('a post with the dirham figure («60 omr = 567 aed») is read as 567 dirhams even when an older reader stored 60; the currency warning stays only without a dirham figure', async () => {
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const ev = (extra) => ({ type: 'payment', kind: 'cash', at: Date.parse('2026-11-10T10:00:00Z'), ref: `r${extra.amount}${extra.text}`, currency: 'AED', ...extra });
+  const old = sharedPaymentList({ events: [ev({ customer: 'AL AFEEFI KITCHEN OMR =', amount: 60, text: 'AL AFEEFI KITCHEN 60 omr = 567 aed' })] });
+  assert.equal(old[0].amount, 567); assert.deepEqual(old[0].foreign, { amount: 60, currency: 'OMR' }); assert.ok(!old[0].currencyMentioned);
+  const omr = sharedPaymentList({ events: [ev({ customer: 'AL AFEEFI KITCHEN', amount: 567, currency: 'OMR', text: 'AL AFEEFI KITCHEN OMR = 567' })] });
+  assert.equal(omr[0].amount, 567); assert.equal(omr[0].currency, 'AED');
+  const bare = sharedPaymentList({ events: [ev({ customer: 'ZETA CO', amount: 60, text: 'ZETA CO 60 omr' })] });
+  assert.equal(bare[0].amount, 60); assert.equal(bare[0].currencyMentioned, 'OMR'); // no dirham figure: still flagged
+});

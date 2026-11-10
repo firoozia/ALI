@@ -30,7 +30,7 @@ const packages = (n) => `${n} package${n === 1 ? '' : 's'}`;
  * The day's driver picture: { runs: [{ at, ref, stops: [{ customer, quantity, unit, deliveredAt }] }], pickups: [{ at, customer, by }], strays: [{ at, customer }] }.
  * A run is one dispatch post (its events share a message id; an old event without one is grouped with the ones posted within a minute).
  */
-export function driverDay(events, { day, timeZone = 'Asia/Dubai', aliasOf = () => '' }) {
+export function driverDay(events, { day, timeZone = 'Asia/Dubai', aliasOf = () => '', display = (n) => n }) {
   const mine = events.filter((e) => e.type === 'delivery' && e.status && !e.internal && dayOf(e.at, timeZone) === day)
     .map((e, i) => ({ e, i })).sort((p, q) => p.e.at - q.e.at || p.i - q.i).map((p) => p.e);
   const runs = []; const pickups = []; const strays = [];
@@ -38,10 +38,10 @@ export function driverDay(events, { day, timeZone = 'Asia/Dubai', aliasOf = () =
     if (e.status === 'dispatched') {
       const last = runs[runs.length - 1];
       const same = last && (e.msg ? last.msg === e.msg : !last.msg && e.at - last.lastAt <= 60 * 1000);
-      const stop = { customer: nameOf(e), quantity: Number(e.delivered?.quantity) || 0, unit: e.delivered?.unit || '', deliveredAt: null };
+      const stop = { customer: display(nameOf(e)), raw: nameOf(e), quantity: Number(e.delivered?.quantity) || 0, unit: e.delivered?.unit || '', deliveredAt: null };
       if (same) { last.stops.push(stop); last.lastAt = e.at; } else runs.push({ at: e.at, lastAt: e.at, ref: e.ref, msg: e.msg || '', stops: [stop] });
     } else if (e.status === 'picked-up') {
-      pickups.push({ at: e.at, customer: nameOf(e), by: String(e.by || '').trim() });
+      pickups.push({ at: e.at, customer: display(nameOf(e)), by: String(e.by || '').trim() });
     }
   }
   for (const e of mine) {
@@ -50,10 +50,10 @@ export function driverDay(events, { day, timeZone = 'Asia/Dubai', aliasOf = () =
     let hit = null;
     for (const run of [...runs].reverse()) { // the newest dispatch that is already out and still waits for this customer
       if (run.at > e.at) continue;
-      hit = run.stops.find((s) => s.deliveredAt === null && sameStop(s.customer, who, aliasOf));
+      hit = run.stops.find((s) => s.deliveredAt === null && sameStop(s.raw, who, aliasOf));
       if (hit) break;
     }
-    if (hit) hit.deliveredAt = e.at; else strays.push({ at: e.at, customer: who });
+    if (hit) hit.deliveredAt = e.at; else strays.push({ at: e.at, customer: display(who) });
   }
   return { runs, pickups, strays };
 }
@@ -62,8 +62,8 @@ const stopsList = (stops, timeZone) => stops.map((s) => `${show(s.customer)}${s.
 const pickupLine = (pickups, timeZone) => `Courier pickups today: ${pickups.map((p) => `${show(p.customer)} (${p.by ? `${p.by.toUpperCase()} ` : ''}${hhmm(p.at, timeZone)})`).join(', ')}.`;
 
 /** The answer to «where is the driver»: from today's runs, the newest one that still has stops open (else the newest); never «I cannot see». */
-export function whereText(events, { now = Date.now(), timeZone = 'Asia/Dubai', aliasOf = () => '' } = {}) {
-  const d = driverDay(events, { day: dayOf(now, timeZone), timeZone, aliasOf });
+export function whereText(events, { now = Date.now(), timeZone = 'Asia/Dubai', aliasOf = () => '', display } = {}) {
+  const d = driverDay(events, { day: dayOf(now, timeZone), timeZone, aliasOf, display });
   if (!d.runs.length) return ['Nothing was dispatched with our driver today.', d.pickups.length ? pickupLine(d.pickups, timeZone) : ''].filter(Boolean).join('\n');
   const open = d.runs.filter((r) => r.stops.some((s) => !s.deliveredAt));
   const run = open.length ? open[open.length - 1] : d.runs[d.runs.length - 1];
@@ -90,11 +90,11 @@ export function isDriverQuestion(text) {
  * When [event] (a «delivered» post just recorded in [events]) closed the LAST open stop of a run: the one short line for the delivery group; else ''.
  * Compared with the picture before this post, so it is said once per run.
  */
-export function runDoneLine(events, event, { timeZone = 'Asia/Dubai', aliasOf = () => '' } = {}) {
+export function runDoneLine(events, event, { timeZone = 'Asia/Dubai', aliasOf = () => '', display } = {}) {
   if (event.status !== 'delivered') return '';
   const day = dayOf(event.at, timeZone);
-  const before = driverDay(events.filter((e) => e !== event), { day, timeZone, aliasOf });
-  const after = driverDay(events, { day, timeZone, aliasOf });
+  const before = driverDay(events.filter((e) => e !== event), { day, timeZone, aliasOf, display });
+  const after = driverDay(events, { day, timeZone, aliasOf, display });
   const wasOpen = before.runs.map((r) => r.stops.some((s) => !s.deliveredAt));
   for (const [i, run] of after.runs.entries()) {
     const complete = run.stops.every((s) => s.deliveredAt);
@@ -107,8 +107,8 @@ export function runDoneLine(events, event, { timeZone = 'Asia/Dubai', aliasOf = 
 }
 
 /** The evening report's lines for [day]: each dispatch with what was delivered and what is NOT confirmed, the courier pickups, deliveries that match no dispatch. */
-export function driverEveningLines(events, { day, timeZone = 'Asia/Dubai', aliasOf = () => '' }) {
-  const d = driverDay(events, { day, timeZone, aliasOf });
+export function driverEveningLines(events, { day, timeZone = 'Asia/Dubai', aliasOf = () => '', display }) {
+  const d = driverDay(events, { day, timeZone, aliasOf, display });
   if (!d.runs.length && !d.pickups.length && !d.strays.length) return [];
   const lines = ['Driver and couriers today:'];
   for (const run of d.runs) {

@@ -47,7 +47,7 @@ import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups,
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
-import { driverEveningLines, isDriverQuestion, runDoneLine, whereText } from './driver.js';
+import { driverEveningLines, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
 import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
@@ -380,7 +380,7 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: [...driverEveningLines(tracker.events, { day, timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n) }), ...(() => { usage.save(); cost.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [cost.line() || usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })()] }));
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: [...driverEveningLines(tracker.events, { day, timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: driverNamerNow() }), ...(() => { usage.save(); cost.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [cost.line() || usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })()] }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -2129,7 +2129,7 @@ async function handleStaffChat(raw, chatId, group) {
   // «where is the driver» (owner's chat, any internal staff group, the delivery group, the test group): answered from today's dispatch and delivery posts, never «I cannot see».
   if (text && !audio && !image && addressed && isDriverQuestion(text)) {
     trace(where, role, 'the driver question, answered from the delivery posts');
-    await reply(whereText(trackerOf(group?.test).events, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n) }));
+    await reply(whereText(trackerOf(group?.test).events, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: await driverNamer() }));
     return true;
   }
   // The pipeline commands of the owner: a hold on delivery until cash is confirmed, the balance of a customer, the open orders.
@@ -2928,10 +2928,24 @@ async function invoiceLookupFor(events) {
   return lookup;
 }
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
+/** A name as QuickBooks writes it (an old alias may still give a longer one): the exact QuickBooks name when the post's name fits exactly one customer there, else the name as posted. */
+function namerOver(names) {
+  return (n) => {
+    const exact = findQboName(names, n); if (exact) return exact;
+    const hit = names.filter((q) => sameStop(n, q, (x) => cutAliases.resolve(x)));
+    return hit.length === 1 ? hit[0] : n;
+  };
+}
+const driverNamerNow = () => namerOver((qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean)); // the list already read (the evening report is not a place to call QuickBooks)
+async function driverNamer() {
+  try { if (qbo.connected && !qbo.paused) await qboDesk.customers(); } catch { /* the posted names are shown */ }
+  return driverNamerNow();
+}
+
 /** The one short line in the delivery group when the last stop of a run is delivered (never per stop, never from history, never to a customer). */
 async function announceRunDone(events, event, say) {
   if (replayCtx.getStore()?.quiet || event.status !== 'delivered') return;
-  const line = runDoneLine(events, event, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n) });
+  const line = runDoneLine(events, event, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: await driverNamer() });
   if (line) await say(line);
 }
 

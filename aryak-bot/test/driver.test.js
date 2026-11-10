@@ -70,3 +70,12 @@ test('the wiring: the question is answered before the model, in the test group f
   const staff = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'staff.js'), 'utf8');
   assert.match(staff, /The delivery group: you DO follow it[\s\S]*never say you cannot see the driver/);
 });
+
+test('the names shown are the QuickBooks ones (an old alias may give a longer name); the matching still uses the posted names', () => {
+  const qbo = ['NOVA ART IND . LLC', 'HIGH TEST'];
+  const display = (n) => (/^nova/i.test(n) ? 'NOVA ART IND . LLC' : n);
+  const events = [...post('15:56', 'HIGH TEST 1 ROLL & NOVA ART 1 ROLL DISPATCHED'), ...post('16:10', 'Nova art delivered'), ...post('16:20', 'ZETA DOORS 1 ROLL PICKED UP BY SWIFT COURIER')];
+  assert.equal(whereText(events, { now: at('16:30'), timeZone: TZ, display }), 'Last delivery: NOVA ART IND . LLC at 16:10. Still to deliver: HIGH TEST (1 of 2 left from the 15:56 dispatch).');
+  assert.ok(driverEveningLines(events, { day: '2026-11-10', timeZone: TZ, display }).join('\n').includes('NOVA ART IND . LLC 16:10'));
+  assert.ok(qbo.length === 2);
+});

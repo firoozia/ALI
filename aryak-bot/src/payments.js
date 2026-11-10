@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { withEnd } from './separator.js';
-import { CHEQUE_WORDS, matchCod, stripPaymentWords } from './captions.js';
+import { CHEQUE_WORDS, matchCod, parsePaymentCaption, stripPaymentWords } from './captions.js';
 import { sameCutCustomer } from './cuts.js';
 
 const money = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -190,9 +190,12 @@ export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '
 export function sharedPaymentList({ events, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0 }) {
   const FOREIGN_WORD = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
   const list = events.filter((e) => e.type === 'payment' && !e.simulated && e.at >= since).sort((a, b) => a.at - b.at).map((e) => {
-    const c = cleaned(e);
+    // a post that gives the dirham figure («60 omr = 567 aed», «omr = 567») is read again from its stored text: 567 AED is the amount (an event kept by an older reader may hold 60 or 567 OMR)
+    const again = e.text && e.kind !== 'transfer' && FOREIGN_WORD.test(e.text) ? parsePaymentCaption(e.text) : null;
+    const aedFigure = again && again.kind === 'cash' && again.amount > 0 && !again.currency && (again.foreign || /=/.test(e.text)) ? again : null;
+    const c = cleaned(aedFigure ? { ...e, amount: aedFigure.amount, currency: 'AED', ...(aedFigure.foreign ? { foreign: aedFigure.foreign } : {}) } : e);
     const words = `${e.customer || ''} ${e.text || ''}`;
-    const asked = FOREIGN_WORD.exec(words);
+    const asked = aedFigure ? null : FOREIGN_WORD.exec(words);
     return { ...c, ...(c.kind === 'cash' && CHEQUE_WORDS.test(words) ? { kind: 'cheque' } : {}), ...(asked && !e.foreign && (e.currency || 'AED') === 'AED' ? { currencyMentioned: asked[1].toUpperCase() } : {}) };
   });
   const kept = [];
