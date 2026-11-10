@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { SEP } from './separator.js';
+import { SEP, withSeparators } from './separator.js';
 import { sameCutCustomer } from './cuts.js';
 import { localParts } from './morning.js';
 import { normalizeDigits } from './text.js';
@@ -88,7 +88,8 @@ export class ExpenseStore {
   /** The open entries of a person (not saved, not cancelled), newest last. */
   openFor(by) { return this.d.items.filter((e) => e.by === by && !['done', 'cancelled'].includes(e.state) && this.now() - e.at < 24 * 3600 * 1000); }
   latestFor(by, timeZone = 'Asia/Dubai') { const today = dayOf(this.now(), timeZone); return [...this.d.items].reverse().find((e) => e.by === by && e.state !== 'cancelled' && e.day === today) || null; }
-  done(range) { return this.d.items.filter((e) => e.state === 'done' && e.day >= range.from && e.day <= range.to); }
+  done(range) { return this.d.items.filter((e) => e.state === 'done' && !e.test && e.day >= range.from && e.day <= range.to); } // an expense made in the TEST group is test data: never in a real report
+  remove(id) { const i = this.d.items.findIndex((e) => e.id === String(id || '').toUpperCase()); if (i < 0) return null; const [gone] = this.d.items.splice(i, 1); this.save(); return gone; }
   setGroup(group) { this.d.group = group; this.save(); }
   mark(key, value) { this.d.sent[key] = value; this.save(); }
 }
@@ -100,10 +101,11 @@ const who = (e) => e.byName || e.by || '';
 export function entryText(e) {
   const head = `🧾 *Expense* #${e.id}`;
   const date = `Date: ${dmy(e.date || e.day)} — ${who(e)}`;
-  if (e.state === 'need_amount') return `${head}\n${e.hasReceipt ? 'I could not read the receipt.' : 'No amount was written.'} Please write the amount as a number.`;
+  if (e.state === 'need_amount') return `${head}\n${e.hasReceipt || e.hasPhoto ? 'I could not read the receipt.' : 'No amount was written.'} Please write the amount as a number.`;
   if (e.state === 'pick_amount') return `${head}\n⚠ Receipt says *${money(e.receiptAmount)} AED*, caption says *${money(e.captionAmount)}* — which is right?\n1. ${money(e.receiptAmount)}  2. ${money(e.captionAmount)}`;
   const amountLine = e.hasReceipt
     ? `Receipt: *${money(e.amount)} AED* — ${e.captionAmount === null || e.captionAmount === undefined ? 'no caption' : `caption ${e.captionAmount} ✔`}`
+    : e.hasPhoto ? `Amount: *${money(e.amount)} AED* — receipt not read — caption amount used`
     : `Amount: *${money(e.amount)} AED* — no receipt (caption only)`;
   return [head, amountLine, `Type: ${typeLine(e)}`, date, 'Paid by?  1. Card   2. Cash', '(wrong type? write: food / office / car / other)'].join('\n');
 }
@@ -132,11 +134,11 @@ export function handleReply(store, by, reply, timeZone = 'Asia/Dubai') {
 }
 
 /** An entry from a caption and what the receipt gave: { amount, vendor, date, type } of the reading (or null when it could not be read). */
-export function makeEntry({ caption = '', reading = null, hasReceipt = false, by = '', byName = '', ref = '', at = Date.now(), timeZone = 'Asia/Dubai' }) {
+export function makeEntry({ caption = '', reading = null, hasReceipt = false, hasPhoto = false, by = '', byName = '', ref = '', at = Date.now(), timeZone = 'Asia/Dubai', test = false }) {
   const cap = parseExpenseCaption(caption);
   const receiptAmount = reading && Number(reading.total) > 0 ? round2(reading.total) : null;
   const type = cap.type || (TYPES[reading?.category] ? reading.category : 'other');
-  const base = { by, byName, ref, day: dayOf(at, timeZone), date: reading?.date || dayOf(at, timeZone), type, vendor: reading?.vendor || '', hasReceipt, receiptAmount, captionAmount: cap.amount };
+  const base = { by, byName, ref, day: dayOf(at, timeZone), date: reading?.date || dayOf(at, timeZone), type, vendor: reading?.vendor || '', hasReceipt, hasPhoto: hasPhoto || hasReceipt, receiptAmount, captionAmount: cap.amount, ...(test ? { test: true } : {}) };
   if (receiptAmount && cap.amount !== null && Math.abs(receiptAmount - cap.amount) > 0.005) return { ...base, amount: null, state: 'pick_amount' };
   const amount = receiptAmount || cap.amount;
   if (!amount) return { ...base, amount: null, state: 'need_amount' };
@@ -179,9 +181,12 @@ export function matchReceipts(items, records, aliasOf = () => '') {
   return out;
 }
 
+const AED_PER = { OMR: 9.5516, USD: 3.6725, SAR: 0.97933 }; // the pegged currencies; another one is shown as it is and left out of the AED totals
+
 /**
- * The money entries of the Confirmation group in a period: { amount, day, customer, kind: 'cash' | 'cheque' | 'bank', invoices, cleared, due }. A message that only names an invoice
- * (no amount) takes the invoice total from [lookup] (lower-case number -> invoice). Simulated and zero entries are left out.
+ * The money entries of the Confirmation group in a period, from the ONE shared list (payments.js sharedPaymentList): { amount (AED), shown (the text of the amount), kind: 'cash' | 'cheque' | 'bank',
+ * customer, invoices, cleared, due, paid, foreign }. A message that only names an invoice (no amount) takes the invoice total from [lookup]. A foreign amount is read (OMR …) and shown with its AED
+ * equivalent; one with no known rate is shown as it is and not added to the AED totals. Zero entries are left out.
  */
 export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup = new Map() } = {}) {
   const out = [];
@@ -190,47 +195,52 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     const day = dayOf(e.at, timeZone);
     if (day < range.from || day > range.to) continue;
     const inv = (e.invoices || []).map((r) => lookup.get(String(r).toLowerCase())).find(Boolean);
-    const amount = Number(e.amount) > 0 ? Number(e.amount) : Number(inv?.TotalAmt) || 0;
+    const cur = e.currency || 'AED';
+    let amount = Number(e.amount) > 0 ? Number(e.amount) : Number(inv?.TotalAmt) || 0;
     if (!(amount > 0)) continue;
+    let shown = `*${money(amount)}*`; let foreign = false;
+    if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
+    else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
 
 /** The private «money received» report: cash, cheques, bank transfers, each numbered on, with the QuickBooks status, then the totals. */
 export function receivedText(items, { title, records = [], aliasOf = () => '' }) {
-  const matched = matchReceipts(items, records, aliasOf);
+  const matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   const inQb = (it) => matched.has(it) || it.paid === true;
   const groups = [['cash', '💵 Cash'], ['cheque', '🧾 Cheques'], ['bank', '🏦 Bank transfers']];
   let n = 0; const blocks = [];
   for (const [kind, label] of groups) {
     const list = items.filter((i) => i.kind === kind);
     if (!list.length) continue;
-    blocks.push([label, ...list.map((it) => {
+    const entries = list.map((it) => {
       n += 1;
-      const status = inQb(it) ? '✔ in QuickBooks' : '⚠ not in QuickBooks yet';
+      const status = it.foreign ? '⚠ foreign currency: check in QuickBooks' : inQb(it) ? '✔ in QuickBooks' : '⚠ not in QuickBooks yet';
       const cheque = kind === 'cheque' ? `${it.due ? ` — due ${dmy(it.due)}` : ''} — ${it.cleared ? 'cleared' : '⏳ not cleared'}` : '';
-      return `${n}. ${(it.customer || 'UNKNOWN').toUpperCase()} — *${money(it.amount)}*${it.invoices.length ? ` for ${it.invoices.join(', ')}` : ''}${cheque}${kind === 'cheque' ? (inQb(it) ? ' ✔ in QuickBooks' : '') : ` ${status}`}`;
-    })].join('\n'));
+      return `${n}. ${(it.customer || 'UNKNOWN').toUpperCase()} — ${it.shown}${it.invoices.length ? ` for ${it.invoices.join(', ')}` : ''}${cheque}${kind === 'cheque' ? (it.foreign ? ` ${status}` : inQb(it) ? ' ✔ in QuickBooks' : '') : ` ${status}`}${it.note ? `\n⚠ ${it.note}` : ''}`;
+    });
+    blocks.push([label, withSeparators(entries)].join('\n'));
   }
   if (!items.length) return `*Money received — ${title}*\nNo money was recorded.`;
   const sum = (k) => items.filter((i) => i.kind === k).reduce((x, i) => x + i.amount, 0);
   const total = items.reduce((x, i) => x + i.amount, 0);
-  const missing = items.filter((i) => !inQb(i)).length; const uncleared = items.filter((i) => i.kind === 'cheque' && !i.cleared).length;
-  const warn = [...(missing ? [`${missing} not in QuickBooks`] : []), ...(uncleared ? [`${uncleared} cheque${uncleared === 1 ? '' : 's'} not cleared`] : [])];
+  const missing = items.filter((i) => !i.foreign && !inQb(i)).length; const uncleared = items.filter((i) => i.kind === 'cheque' && !i.cleared).length; const foreign = items.filter((i) => i.unconverted).length;
+  const warn = [...(missing ? [`${missing} not in QuickBooks`] : []), ...(uncleared ? [`${uncleared} cheque${uncleared === 1 ? '' : 's'} not cleared`] : []), ...(foreign ? [`${foreign} in a currency with no rate (not in the total)`] : [])];
   return [`*Money received — ${title}*`, blocks.join(`\n${SEP}\n`), SEP, `Total received: *${money(total)} AED* (cash *${money(sum('cash'))}* / cheques *${money(sum('cheque'))}* / transfers *${money(sum('bank'))}*)`, ...(warn.length ? [`⚠ ${warn.join(', ')}`] : [])].join('\n');
 }
 
 /** The Thursday check: what the office has not recorded in QuickBooks yet (expenses and money received of the week). */
 export function weeklyCheckText({ expenses, purchases, items, payments, aliasOf = () => '', title }) {
   const exp = matchExpenses(expenses, purchases);
-  const got = matchReceipts(items, payments, aliasOf);
-  const lostMoney = items.filter((i) => !got.has(i) && i.paid !== true);
+  const got = matchReceipts(items.filter((i) => !i.foreign), payments, aliasOf);
+  const lostMoney = items.filter((i) => !i.foreign && !got.has(i) && i.paid !== true);
   if (!exp.missing.length && !lostMoney.length) return `*Weekly check — ${title}*\n✔ All recorded in QuickBooks this week.`;
   const blocks = [];
-  if (exp.missing.length) blocks.push(['Expenses not found in QuickBooks:', ...exp.missing.map((e, i) => `${i + 1}. ${dmy(e.date || e.day)} — ${who(e)} — *${money(e.amount)}* — ${typeLine(e)}`)].join('\n'));
-  if (lostMoney.length) blocks.push(['Money received not found in QuickBooks:', ...lostMoney.map((it, i) => `${i + 1}. ${dmy(it.day)} — ${(it.customer || 'UNKNOWN').toUpperCase()} — *${money(it.amount)}* (${it.kind === 'bank' ? 'transfer' : it.kind})`)].join('\n'));
+  if (exp.missing.length) blocks.push(['Expenses not found in QuickBooks:', withSeparators(exp.missing.map((e, i) => `${i + 1}. ${dmy(e.date || e.day)} — ${who(e)} — *${money(e.amount)}* — ${typeLine(e)}`))].join('\n'));
+  if (lostMoney.length) blocks.push(['Money received not found in QuickBooks:', withSeparators(lostMoney.map((it, i) => `${i + 1}. ${dmy(it.day)} — ${(it.customer || 'UNKNOWN').toUpperCase()} — *${money(it.amount)}* (${it.kind === 'bank' ? 'transfer' : it.kind})`))].join('\n'));
   return [`*Weekly check — ${title}*`, blocks.join(`\n${SEP}\n`)].join('\n');
 }
 

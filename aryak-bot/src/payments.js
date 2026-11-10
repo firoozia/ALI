@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { withEnd } from './separator.js';
-import { matchCod, stripPaymentWords } from './captions.js';
+import { CHEQUE_WORDS, matchCod, stripPaymentWords } from './captions.js';
 import { sameCutCustomer } from './cuts.js';
 
 const money = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -181,4 +181,25 @@ export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '
     skip(e, `read as the invoice ${inv.DocNumber} of "${name}"`);
   }
   return out;
+}
+
+/**
+ * The payment entries as ONE list for every report (payments, money received, the Thursday check): the same cleaned names (no «receipt + clear», «cheaque», «OMR =»), a cheque
+ * recognised by its word, the same repeats dropped (a repeat the owner answered «dup» is gone; one not yet answered counts once; «separate» keeps both). Simulated entries are left out.
+ */
+export function sharedPaymentList({ events, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups('') }) {
+  const FOREIGN_WORD = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
+  const list = events.filter((e) => e.type === 'payment' && !e.simulated).sort((a, b) => a.at - b.at).map((e) => {
+    const c = cleaned(e);
+    const words = `${e.customer || ''} ${e.text || ''}`;
+    const asked = FOREIGN_WORD.exec(words);
+    return { ...c, ...(c.kind === 'cash' && CHEQUE_WORDS.test(words) ? { kind: 'cheque' } : {}), ...(asked && !e.foreign && (e.currency || 'AED') === 'AED' ? { currencyMentioned: asked[1].toUpperCase() } : {}) };
+  });
+  const kept = [];
+  for (const e of list) {
+    const original = kept.find((o) => repeats(e, o, timeZone, payments, aliasOf));
+    if (original && dups.state(original, e) !== 'separate') { if (!original.customer && e.customer) { original.customer = e.customer; original.pendingName = false; } continue; } // counted once; the one that has a name keeps it
+    kept.push(e);
+  }
+  return kept;
 }

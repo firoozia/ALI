@@ -47,7 +47,7 @@ test('the wiring: a reply to a receipt (PDF, photo or text) and a «cleared» to
   assert.match(index, /const made = \{ \.\.\.merged, at: Date\.now\(\), ref: quotedRef \};/);
   // photos
   const part = index.slice(index.indexOf('async function replyToPayment'), index.indexOf('async function trackGroup'));
-  assert.ok(part.indexOf('imageOf(quoted)') > 0 && part.indexOf('mayTrackWithModel(config)') > part.indexOf('imageOf(quoted)') && part.indexOf('extractEvent({') > part.indexOf('mayTrackWithModel(config)')); // the model is asked only after the owner's permission is checked
+  assert.ok(part.indexOf('imageOf(quoted)') > 0 && part.indexOf('mayReadReceipts(config)') > part.indexOf('imageOf(quoted)') && part.indexOf('extractEvent({') > part.indexOf('mayReadReceipts(config)')); // the model is asked only after the owner's permission is checked
   assert.match(index, /source: 'photo', receipt: ev\.kind === 'cheque'/); // a photo posted on its own says where it came from
   // «Awab» as a reply
   assert.match(index, /if \(det\.name && role === 'payment' && quotedId && await replyToPayment\(\{ raw, groupId, content, quotedId, event: \{ customer: det\.name, amount: 0, invoices: \[\] \} \}\)\) return;/);

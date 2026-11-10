@@ -9,6 +9,11 @@ export function mayReadMedia({ group, addressed, voiceFromPermitted = false }) {
   return !!addressed || !!voiceFromPermitted; // a voice cannot say her name before it is heard: the owner's and a permitted person's voice is transcribed (cheap); it is acted on only if it names her
 }
 
+/** May a receipt (an expense photo, a payment receipt) be read by the vision model? Its own switch (RECEIPT_VISION, on by default), apart from the tracker's. */
+export function mayReadReceipts(config) {
+  return config.receiptVision !== false;
+}
+
 /** May the tracker send a photo or an unreadable caption to the model? Only when TRACK_MODEL is on. */
 export function mayTrackWithModel(config) {
   return !!config.trackModel;

@@ -133,6 +133,7 @@ export function parseInvoiceCommand(text) {
     let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
     em = /^(?:money\s+received|received|دریافتی(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
     if (/^(?:weekly\s+check|بررسی\s*هفتگی)$/iu.test(s)) return { type: 'weekly_check' };
+    em = /^(?:delete|remove|حذف)\s+(?:expense\s+|هزینه\s+)?#?\s*(E\d+)$/iu.exec(s); if (em) return { type: 'expense_delete', id: em[1].toUpperCase() };
   }
   if (/^(?:payments|payment matches|پرداخت\s*ها)$/iu.test(s)) return { type: 'payments' };
   if (/^(?:unbilled|not invoiced|گزارش فاکتور\s*نشده)$/iu.test(s)) return { type: 'unbilled' };

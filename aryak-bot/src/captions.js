@@ -117,8 +117,12 @@ const AMOUNT = /(?:^|[^\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d,
  */
 /** The words of a payment message that are never a customer («cash», «clear», «receipt», «inv», «pay» …) taken out of a name; '' when nothing is left. */
 export function stripPaymentWords(name) {
-  return String(name || '').replace(/\bBY\b.*$/i, ' ').replace(/\b(AED|DHS?|CASH|CHEQUE|CHECK|TRANSFER|RECEIVED?|PAID|FROM|PAYMENTS?|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ').replace(/[/.]+/g, ' ').replace(/^[\s+&-]+|[\s+&-]+$/g, '').replace(/\s*\+\s*(?=\+|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  return String(name || '').replace(/\bBY\b.*$/i, ' ').replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|TRANSFER|RECEIVED?|PAID|FROM|PAYMENTS?|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ').replace(/[=/.]+/g, ' ').replace(/^[\s+&-]+|[\s+&-]+$/g, '').replace(/\s*\+\s*(?=\+|$)/g, ' ').replace(/\s+/g, ' ').trim();
 }
+
+/** True when the words of a message say it is a cheque (cheque, cheaque, chq, check, شيك, چک). */
+export const CHEQUE_WORDS = /\bche+a?ques?\b|\bcheq\b|\bchqs?\b|\bchecks?\b|شيك|شیک|چک/i;
+const FOREIGN = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
 
 export function parsePaymentCaption(text) {
   const s = clean(text);
@@ -137,24 +141,43 @@ export function parsePaymentCaption(text) {
   const invoices = [];
   const INV = /(?:\binv(?:oice)?s?\b|فاکتور)\.?\s*(?:no\.?|number|#|شماره)?\s*[-:#]?\s*(\d{3,6}(?:\s*[/,&]\s*\d{3,6})*)/gi;
   const noInv = s.replace(INV, (m, run) => { for (const n of run.split(/[\s/,&]+/).filter(Boolean)) invoices.push(`inv-${n}`); return ' '; }).replace(/\s+/g, ' ').trim();
-  const a = AMOUNT.exec(noInv);
+  // a foreign currency («AL AFEEFI KITCHEN OMR = 567»): its amount is the one next to the code; an amount in AED written as well wins as the amount, the foreign one is kept beside it
+  let work = noInv; let currency = ''; let foreign = null; let eqPair = null;
+  const fc = FOREIGN.exec(work);
+  if (fc) {
+    const code = fc[1].toUpperCase();
+    // «60 ... OMR = 567»: the sum in the foreign currency and, after the equals sign, what it is in AED (the AED figure is the amount, the foreign one is kept beside it)
+    const eq = new RegExp(`\\b${code}\\s*=\\s*(\\d[\\d,]*(?:\\.\\d+)?)`, 'i').exec(work);
+    if (eq) {
+      const without = `${work.slice(0, eq.index)} ${work.slice(eq.index + eq[0].length)}`;
+      const other = AMOUNT.exec(without);
+      if (other) { eqPair = { aed: num(eq[1]), foreign: { amount: num(other[1]), currency: code } }; work = `${without.slice(0, other.index)} ${without.slice(other.index + other[0].length)}`; }
+    }
+    const near = eqPair ? null : new RegExp(`(\\d[\\d,]*(?:\\.\\d+)?)\\s*${code}\\b`, 'i').exec(work) || new RegExp(`\\b${code}\\s*[=:]?\\s*(\\d[\\d,]*(?:\\.\\d+)?)`, 'i').exec(work);
+    if (near) { foreign = { amount: num(near[1]), currency: code }; work = `${work.slice(0, near.index)} ${work.slice(near.index + near[0].length)}`; }
+    currency = code;
+  }
+  const cheque = CHEQUE_WORDS.test(work);
+  const a = AMOUNT.exec(work);
   if (invoices.length && !a) { // a message about an invoice only («Munich door kitchen inv 9940»): the customer and the invoice, the amount comes from the document it replies to
-    const rest0 = stripPaymentWords(noInv);
+    const rest0 = stripPaymentWords(work);
     const names = rest0.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
     return { kind: 'cash', amount: 0, customers: names, invoices, ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
   }
-  if (!a) { // no amount: a bare name (it may belong to the payment next to it); a message made only of payment words is no name
+  if (!a && !foreign && !eqPair) { // no amount: a bare name (it may belong to the payment next to it); a message made only of payment words is no name
     if (!/^[\p{L} &.'+-]{3,40}$/u.test(s)) return null;
     const bare = stripPaymentWords(s).replace(/(?:^|\s)(?:and|\+|&)(?=\s|$)/gi, ' ').replace(/\s+/g, ' ').trim();
     return /\p{L}{2,}/u.test(bare) ? { kind: 'name', customer: title(bare) } : null;
   }
-  const amount = num(a[1]);
-  let rest = (noInv.slice(0, a.index) + ' ' + noInv.slice(a.index + a[0].length))
+  const aed = eqPair ? eqPair.aed : a ? num(a[1]) : 0;
+  const amount = foreign && !a ? foreign.amount : aed;
+  if (!(amount > 0)) return null;
+  let rest = (work.slice(0, a ? a.index : 0) + ' ' + (a ? work.slice(a.index + a[0].length) : work))
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer
-    .replace(/\b(AED|DHS?|CASH|CHEQUE|CHECK|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
-    .replace(/[\/.]+/g, ' ');
+    .replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
+    .replace(/[=\/.]+/g, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
-  return { kind: 'cash', amount, customers, ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
+  return { kind: 'cash', amount, customers, ...(foreign && !a ? { currency: foreign.currency } : {}), ...(foreign && a ? { foreign } : {}), ...(eqPair ? { foreign: eqPair.foreign } : {}), ...(cheque ? { cheque: true } : {}), ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
 }
 
 // ---- goods groups (accessories, saw blades, glue) --------------------------------------------------------------------------

@@ -24,7 +24,7 @@ import { ShadowDesk, ShadowStore, dayLine, parseCardCorrection, parseShadowComma
 import { isEnglishSentence, placeLanguage, toEnglish } from './english.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { UsageMeter, hasVisual } from './usage.js';
-import { isQuietSubject, mayReadMedia, mayTrackWithModel } from './costpolicy.js';
+import { isQuietSubject, mayReadMedia, mayReadReceipts, mayTrackWithModel } from './costpolicy.js';
 import { MediaKeep, NameStore, meaninglessName, nameLineText, readableFileName, wantsRename } from './nameline.js';
 import { cleanOutgoing } from './outgoing.js';
 import { withFollowUp } from './followup.js';
@@ -67,7 +67,7 @@ import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases } from './cutaliases.js';
 import { unbilled, unbilledText } from './unbilled.js';
-import { PaymentDups, migrateOldPayments, paymentsText } from './payments.js';
+import { PaymentDups, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
 import { GroupStatements, StatementPreviews, askLine, effectiveRequest, parseStyleReply, previewText, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
@@ -598,7 +598,7 @@ async function replyToPayment({ raw, groupId, content, quotedId, event }) {
     if (quoted?.documentMessage && /pdf/i.test(quoted.documentMessage.mimetype || '')) {
       try { base = baseOfReceipt(receiptOfPdf(await downloadMediaMessage({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }, 'buffer', {}))); } catch (e) { logger.warn(`tracker: the quoted receipt could not be downloaded: ${e.message}`); }
     } else if (imageOf(quoted)) { // a photo of a receipt or cheque: the cheap model first (the same path as every photo), only when the owner allows model reading
-      if (mayTrackWithModel(config)) {
+      if (mayReadReceipts(config)) {
         try {
           const buf = await downloadMediaMessage({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }, 'buffer', {});
           const ev = await extractEvent({ client, config, role: 'payment', caption: imageOf(quoted).caption || '', images: [{ base64: buf.toString('base64'), mimeType: String(imageOf(quoted).mimetype || 'image/jpeg').split(';')[0] }] });
@@ -676,7 +676,7 @@ async function trackGroup(raw, groupId, role) {
   if (role === 'goods') return; // only the shapes above are read there
   if (!image && !/\d/.test(text) && text.length < 12) return; // a greeting or a thanks
   // The free caption reader is done. Anything else would be a paid call (and a photo download): only when the owner allows it.
-  if (!mayTrackWithModel(config)) { usage.count(groupLabel((await groupInfo(groupId)).subject), 'notRead'); return; }
+  if (!(role === 'payment' && image ? mayReadReceipts(config) : mayTrackWithModel(config))) { usage.count(groupLabel((await groupInfo(groupId)).subject), 'notRead'); return; }
   const images = [];
   if (image) {
     try { images.push({ base64: (await downloadMediaMessage(raw, 'buffer', {})).toString('base64'), mimeType: String(image.mimetype || 'image/jpeg').split(';')[0] }); } catch (e) { logger.warn(`tracker: photo download failed: ${e.message}`); }
@@ -793,7 +793,7 @@ async function paymentsReport(events, only = '') {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'expense_delete', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -926,6 +926,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       return [[`Proposed aliases #${p.id} (names the cutting and delivery groups use → the QuickBooks customer). Nothing is used until you say yes:`, withEnd(pairs.slice(0, 25).map((x, i) => `${i + 1}. ${x.post} → ${x.qbo} (${x.score}%)`), [...(pairs.length > 25 ? [`+${pairs.length - 25} more`] : []), `Reply: yes #${p.id} (all) / no #${p.id} / drop 2,3 #${p.id} (remove lines first)`])].join('\n')];
     }
     case 'payment_dup': { const r = paymentDups.decide(ic.id, ic.verb); return [r.error ? `No open question #${ic.id} (it was answered or never asked).` : r.verb === 'dup' ? `Noted: the second payment is the same as the first; it will be counted once (#${ic.id}).` : `Noted: two separate payments (#${ic.id}); I will not ask again.`]; }
+    case 'expense_delete': { const gone = expenseStore.remove(ic.id); return [gone ? `Expense #${gone.id} (${gone.amount ? `${gone.amount.toFixed(2)} AED` : 'no amount'}${gone.test ? ', test data' : ''}) was deleted.` : `No expense #${ic.id} was found.`]; }
     case 'expenses_report': return [expensesReportText(ic.range)];
     case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
     case 'weekly_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await weeklyCheckReport()]; }
@@ -2636,6 +2637,8 @@ async function maybeSetExpensesGroup(raw, groupId, info) {
   const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
   const owner = !!raw.key.fromMe || staffChecker(config.ownerNumbers, lids(info.lidToPhone))(who) === true;
   if (!owner) return false;
+  const before = String(expenseStore.d.group?.subject || '').toLowerCase();
+  if (before && before !== String(info.subject).toLowerCase()) { const at = config.expensesGroupNames.indexOf(before); if (at >= 0 && !(process.env.EXPENSES_GROUP_NAME || '').toLowerCase().includes(before)) config.expensesGroupNames.splice(at, 1); } // the old group is no longer the expenses group
   expenseStore.setGroup({ id: groupId, subject: info.subject });
   const word = String(info.subject).toLowerCase();
   if (!config.expensesGroupNames.includes(word)) config.expensesGroupNames.push(word);
@@ -2656,7 +2659,8 @@ async function readReceiptPhoto(buf, mimeType) {
 }
 
 /** A message in the expenses group: a receipt photo (with the amount as caption), the answers (1 / 2 / card / cash / a type word / an amount), or a caption-only expense. true = it was an expense message. */
-async function expensesTurn(raw, groupId) {
+async function expensesTurn(raw, groupId, info) {
+  const testData = isTestSubject(info?.subject); // expenses made in the TEST group are test data: kept, never counted in a real report
   if (sent.has(raw.key.id)) return true; // her own message
   const content = normalizeMessageContent(raw.message);
   const image = imageOf(content);
@@ -2665,10 +2669,10 @@ async function expensesTurn(raw, groupId) {
   const say = (t) => sock.sendMessage(groupId, { text: t }, { quoted: raw });
   if (image) {
     let reading = null;
-    if (mayTrackWithModel(config)) {
+    if (mayReadReceipts(config)) {
       try { reading = await readReceiptPhoto(await downloadMediaMessage(raw, 'buffer', {}), String(image.mimetype || 'image/jpeg').split(';')[0]); } catch (e) { logger.warn(`expenses: the receipt could not be read: ${e.message}`); }
-    } else logger.info('expenses: the receipt photo was not read (model reading is off); the caption amount is used');
-    const entry = expenseStore.add(makeEntry({ caption: text, reading, hasReceipt: !!reading, by, byName, ref: raw.key.id, timeZone: config.timezone }));
+    } else logger.info('expenses: the receipt photo was not read (RECEIPT_VISION is off); the caption amount is used');
+    const entry = expenseStore.add(makeEntry({ caption: text, reading, hasReceipt: !!reading, hasPhoto: true, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData }));
     await say(entryText(entry));
     return true;
   }
@@ -2677,7 +2681,7 @@ async function expensesTurn(raw, groupId) {
   if (done) { await say(done.text); return true; }
   const cap = parseExpenseCaption(text);
   if (cap.amount && /^[\s\d.,]+(?:aed|dhs?|درهم)?\s*[\p{L}]{0,12}\s*$/iu.test(normalizeDigits(text))) { // only an amount (and a type word): an expense with no receipt
-    await say(entryText(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone }))));
+    await say(entryText(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData }))));
     return true;
   }
   return false;
@@ -2696,15 +2700,17 @@ async function invoiceLookupFor(events) {
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
 async function receivedReportText(kind) {
   const r = rangeOf(kind, todayDubai());
-  const items = receivedItems(tracker.events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(tracker.events) });
   const records = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups }); // the same list as «payments»: names, repeats, cheques
+  const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   return receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
 }
 async function weeklyCheckReport() {
   const r = rangeOf('week', todayDubai());
-  const items = receivedItems(tracker.events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(tracker.events) });
   const purchases = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups });
+  const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label });
 }
 async function monthlyFullReport() {
@@ -2743,7 +2749,7 @@ async function onMessage(raw) {
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
   const store = usageCtx.getStore();
   if (store) store.group = groupLabel((await groupInfo(groupId)).subject);
-  { const info = await groupInfo(groupId); if (await maybeSetExpensesGroup(raw, groupId, info) || (isExpensesSubject(info.subject) && await expensesTurn(raw, groupId))) return; } // the expenses group: receipts, answers, the owner's «this is the expenses group»
+  { const info = await groupInfo(groupId); if (await maybeSetExpensesGroup(raw, groupId, info) || (isExpensesSubject(info.subject) && await expensesTurn(raw, groupId, info))) return; } // the expenses group: receipts, answers, the owner's «this is the expenses group»
   const isTest = isTestSubject((await groupInfo(groupId)).subject);
   if (isTest) {
     // A test group: the account's own messages run the real paths here; the reports stay in the group and the memory is separate.
