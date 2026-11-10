@@ -77,6 +77,7 @@ import { matchOption } from './choice.js';
 import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
+import { PHOTO_RULES, TEST_MODEL, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
 import { ExpenseStore, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, monthlyFullText, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
@@ -793,7 +794,7 @@ async function paymentsReport(events, only = '') {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'expense_delete', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -927,6 +928,12 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     }
     case 'payment_dup': { const r = paymentDups.decide(ic.id, ic.verb); return [r.error ? `No open question #${ic.id} (it was answered or never asked).` : r.verb === 'dup' ? `Noted: the second payment is the same as the first; it will be counted once (#${ic.id}).` : `Noted: two separate payments (#${ic.id}); I will not ask again.`]; }
     case 'expense_delete': { const gone = expenseStore.remove(ic.id); return [gone ? `Expense #${gone.id} (${gone.amount ? `${gone.amount.toFixed(2)} AED` : 'no amount'}${gone.test ? ', test data' : ''}) was deleted.` : `No expense #${ic.id} was found.`]; }
+    case 'read_photos': {
+      if (photoTestRunning) return ['A photo reading test is already running; its messages are still coming.'];
+      const count = photoKeep.list_.filter((e) => e.groupKey === ic.group && e.at >= Date.now() - ic.days * 86400000).length;
+      void readPhotoTest(here.chatId || ownIds()[0], ic.group, ic.days).catch((e) => logger.warn(`photo test failed: ${e.message}`));
+      return [`Reading ${count} kept photo${count === 1 ? '' : 's'} of the ${photoGroupLabel(ic.group)} from the last ${ic.days} day${ic.days === 1 ? '' : 's'} with ${TEST_MODEL} only. One message per photo follows, then a summary. Nothing is stored or recorded.`];
+    }
     case 'expenses_report': return [expensesReportText(ic.range)];
     case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
     case 'weekly_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await weeklyCheckReport()]; }
@@ -2623,6 +2630,52 @@ setInterval(async () => {
   } catch (e) { logger.warn(`shadow summary failed: ${e.message}`); }
 }, 5 * 60 * 1000).unref();
 
+// ---------------------------------------------------------------------------------------------------------------- photo reading test
+// The photos (and PDFs) posted in the Confirmation and Expenses groups are KEPT (the message reference only, on the server) so that the owner's one-off test can read them later; the bot has no message history.
+const photoKeep = new MediaKeep(path.join(config.authDir, 'photo-media'), { replacer: BufferJSON.replacer, reviver: BufferJSON.reviver, max: 600 });
+const photoStartFile = path.join(config.authDir, 'photo-media', 'started.txt');
+const photoSince = () => { try { return Number(fs.readFileSync(photoStartFile, 'utf8')) || 0; } catch { return 0; } };
+function keepPhotoMessage(raw, groupId, info) {
+  const content = normalizeMessageContent(raw.message);
+  if (!content) return;
+  const subject = String(info.subject || '').toLowerCase();
+  const groupKey = config.confirmGroupName && subject.includes(config.confirmGroupName) ? 'confirmation' : isExpensesSubject(subject) ? 'expenses' : '';
+  if (!groupKey) return;
+  const text = String(textOf(content) || '');
+  const quoted = content.extendedTextMessage?.contextInfo?.stanzaId;
+  if (text && quoted) { const e = photoKeep.list_.find((x) => x.id === quoted); if (e && !(e.replies || []).includes(text)) { (e.replies ||= []).push(text.slice(0, 200)); photoKeep.save(); } } // «Awab» as a reply to a photo
+  const image = content.imageMessage; const doc = content.documentMessage && /pdf/i.test(content.documentMessage.mimetype || '') ? content.documentMessage : null;
+  if (!image && !doc) return;
+  if (!photoSince()) { try { fs.mkdirSync(path.dirname(photoStartFile), { recursive: true }); fs.writeFileSync(photoStartFile, String(Date.now())); } catch { /* best effort */ } }
+  photoKeep.add({ id: raw.key.id, groupId, groupKey, key: raw.key, message: image ? { imageMessage: image } : { documentMessage: doc }, caption: (image || doc).caption || '', fileName: doc?.fileName || '', mimetype: (image || doc).mimetype || '', at: Date.now(), sender: raw.pushName || '', replies: [] });
+}
+let photoTestRunning = false;
+/** The one-off test: every kept photo of a group in the last days read by the test model only, one message per photo (with the photo attached) to the owner, then one summary. */
+async function readPhotoTest(chatId, groupKey, days) {
+  photoTestRunning = true;
+  try {
+    const entries = photoKeep.list_.filter((e) => e.groupKey === groupKey && e.at >= Date.now() - days * 86400000).sort((a, b) => a.at - b.at);
+    let read = 0; let unreadable = 0; let skipped = 0; let inTokens = 0; let outTokens = 0; const reasons = [];
+    for (const [i, e] of entries.entries()) {
+      let buf;
+      try { buf = await downloadMediaMessage({ key: e.key, message: e.message }, 'buffer', {}); } catch (err) { skipped += 1; reasons.push(String(err.message || 'download failed').slice(0, 60)); continue; }
+      const isPdf = !!e.message.documentMessage;
+      const block = isPdf ? documentBlock({ base64: buf.toString('base64'), mimeType: 'application/pdf', fileName: e.fileName }) : { type: 'image', source: { type: 'base64', media_type: String(e.mimetype || 'image/jpeg').split(';')[0], data: buf.toString('base64') } };
+      let reading = null; let usage = null;
+      try {
+        const res = await client.beta.messages.create({ model: TEST_MODEL, max_tokens: 500, system: PHOTO_RULES, output_config: { effort: 'low' }, messages: [{ role: 'user', content: [block, { type: 'text', text: e.caption ? `Message text: ${e.caption}` : 'No text.' }] }] }); // this model only: no fallback behind it
+        usage = { input: res.usage?.input_tokens || 0, output: res.usage?.output_tokens || 0 }; inTokens += usage.input; outTokens += usage.output;
+        reading = parseReading(res.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'));
+      } catch (err) { logger.warn(`photo test: the read failed: ${err.message}`); }
+      if (reading) read += 1; else unreadable += 1;
+      const text = photoMessage({ n: i + 1, total: entries.length, entry: e, reading, usage, timeZone: config.timezone });
+      await sock.sendMessage(chatId, isPdf ? { document: buf, mimetype: 'application/pdf', fileName: e.fileName || 'receipt.pdf', caption: text } : { image: buf, caption: text });
+      await new Promise((r) => setTimeout(r, 1500)); // paced: one message every second and a half
+    }
+    await sock.sendMessage(chatId, { text: summaryText({ groupKey, days, kept: entries.length, read, unreadable, skipped, reasons, inTokens, outTokens, since: photoSince(), timeZone: config.timezone }) });
+  } finally { photoTestRunning = false; }
+}
+
 // ---------------------------------------------------------------------------------------------------------------- company expenses
 // A receipt photo with the amount as its caption in the EXPENSES group (see expenses.js). Kept on the server; read only towards QuickBooks (it is only compared with what the office recorded).
 const expenseStore = new ExpenseStore(path.join(config.authDir, 'expenses'));
@@ -2749,7 +2802,7 @@ async function onMessage(raw) {
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
   const store = usageCtx.getStore();
   if (store) store.group = groupLabel((await groupInfo(groupId)).subject);
-  { const info = await groupInfo(groupId); if (await maybeSetExpensesGroup(raw, groupId, info) || (isExpensesSubject(info.subject) && await expensesTurn(raw, groupId, info))) return; } // the expenses group: receipts, answers, the owner's «this is the expenses group»
+  { const info = await groupInfo(groupId); try { keepPhotoMessage(raw, groupId, info); } catch (e) { logger.warn(`photo keep failed: ${e.message}`); } if (await maybeSetExpensesGroup(raw, groupId, info) || (isExpensesSubject(info.subject) && await expensesTurn(raw, groupId, info))) return; } // the expenses group: receipts, answers, the owner's «this is the expenses group»
   const isTest = isTestSubject((await groupInfo(groupId)).subject);
   if (isTest) {
     // A test group: the account's own messages run the real paths here; the reports stay in the group and the memory is separate.

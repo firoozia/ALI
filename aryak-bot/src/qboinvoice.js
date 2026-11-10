@@ -133,6 +133,10 @@ export function parseInvoiceCommand(text) {
     let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
     em = /^(?:money\s+received|received|دریافتی(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
     if (/^(?:weekly\s+check|بررسی\s*هفتگی)$/iu.test(s)) return { type: 'weekly_check' };
+    { // a one-off, owner-only test of photo reading: «read photos confirmation 7», «خواندن عکس‌ها گروه تأیید ۷»
+      const pm = /^(?:read\s+photos?|خواندن\s+عکس(?:[\s\u200c]*ها)?)\s+(?:group\s+|گروه\s+)?(confirmation|expenses?|تأیید|تاییید|تایید|تأييد|هزینه(?:[\s\u200c]*ها)?)\s+([0-9۰-۹]{1,3})$/iu.exec(s);
+      if (pm) { const days = Number(String(pm[2]).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))); if (days >= 1 && days <= 60) return { type: 'read_photos', group: /^(?:confirmation|تأیید|تایید)$/i.test(pm[1]) ? 'confirmation' : 'expenses', days }; }
+    }
     em = /^(?:delete|remove|حذف)\s+(?:expense\s+|هزینه\s+)?#?\s*(E\d+)$/iu.exec(s); if (em) return { type: 'expense_delete', id: em[1].toUpperCase() };
   }
   if (/^(?:payments|payment matches|پرداخت\s*ها)$/iu.test(s)) return { type: 'payments' };
