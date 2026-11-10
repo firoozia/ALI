@@ -73,7 +73,7 @@ export function parseInvoiceCommand(text) {
     const W = 'بله|اره|آره|اوکی|نه|خیر|yes|no|ok|okay';
     const isYes = (w) => /^(?:بله|اره|آره|اوکی|yes|ok|okay)$/iu.test(w);
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
-    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLAVB])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLAVBH])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
@@ -133,6 +133,11 @@ export function parseInvoiceCommand(text) {
     let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
     em = /^(?:money\s+received|received|دریافتی(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
     if (/^(?:weekly\s+check|بررسی\s*هفتگی)$/iu.test(s)) return { type: 'weekly_check' };
+    { // the sheet's customer names: «sheet names», «name OLD → QuickBooks name», «undo names #H1»
+      let sn = /^(?:sheet\s+names?|sheet\s+customers?|اسامی\s+جدول|نام‌?های\s+جدول)$/iu.exec(s); if (sn) return { type: 'sheet_names' };
+      sn = /^name\s+(.{1,80}?)\s*(?:→|->|=>)\s*(.{2,120})$/iu.exec(s); if (sn) return { type: 'sheet_name_set', from: sn[1].trim(), to: sn[2].trim() };
+      sn = /^undo\s+names?\s+#?\s*(H\d+)$/iu.exec(s); if (sn) return { type: 'sheet_names_undo', id: sn[1].toUpperCase() };
+    }
     { const rc = /^(?:check\s+received|received\s+check|بررسی\s+دریافتی)\s+(.{2,60})$/iu.exec(s); if (rc) return { type: 'received_check', name: rc[1].trim() }; } // why a received entry is not found in QuickBooks
     { // «backfill» / «backfill 01/11» / «پر کردن تاریخچه ۰۱/۱۱»: the history of the groups from that day (owner only)
       const bm = /^(?:backfill|پر\s*کردن\s*تاریخچه)(?:\s+([0-9۰-۹]{1,2})[/.-]([0-9۰-۹]{1,2}))?$/iu.exec(s);

@@ -165,7 +165,7 @@ export async function fetchReport(config, params, fetchImpl = fetch, opts = {}) 
 }
 
 /** One question to the sheet with the tries, timeouts and logging described at fetchStock. */
-async function askSheet(config, body, name, fetchImpl, {
+export async function askSheet(config, body, name, fetchImpl, {
   log = config.log || (() => {}), info = config.logInfo || log, timeoutMs = [45000, 30000, 30000], retryDelayMs = 1500, tries = 3, now = Date.now,
 } = {}) {
   let lastError;

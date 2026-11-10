@@ -161,8 +161,8 @@ export function expensesText(entries, title) {
 const near = (a, b, tol = 1) => Math.abs(Number(a) - Number(b)) <= tol;
 const closeDay = (isoA, isoB, tol = 3) => Math.abs(dayNum(isoA) - dayNum(isoB)) <= tol;
 /** The same brand written with a doubled letter or in the plural («Akrasa lion» / «AKRASAA LIONS …»): every brand word of the shorter name is a word of the other; a different letter at the end is another customer (AL AFEEFI / AL AFEEF). */
-const brandForm = (w) => w.toLowerCase().replace(/(.)\1+/g, '$1').replace(/s$/, '');
-const sameBrandForm = (a, b) => {
+export const brandForm = (w) => w.toLowerCase().replace(/(.)\1+/g, '$1').replace(/s$/, '');
+export const sameBrandForm = (a, b) => {
   const x = brandWords(a).map(brandForm); const y = brandWords(b).map(brandForm);
   const [few, many] = x.length <= y.length ? [x, y] : [y, x];
   return few.length > 0 && few.every((w) => many.includes(w));

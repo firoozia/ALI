@@ -108,9 +108,10 @@ function doPost(e) {
   }
   const props = PropertiesService.getScriptProperties();
   // The AI assistant has its own token and can only read: stock and the report of goods sent out.
-  if (req.action === 'botStock' || req.action === 'botReport') {
+  if (req.action === 'botStock' || req.action === 'botReport' || req.action === 'botNames') {
     const botToken = props.getProperty('ZINAX_BOT_TOKEN');
     if (!botToken || req.token !== botToken) return json_({ ok: false, error: 'Wrong bot token' });
+    if (req.action === 'botNames') return json_(botNames_(req));
     return json_(req.action === 'botReport' ? botReport_(req) : botStock_(req));
   }
   const token = props.getProperty('ZINAX_TOKEN');
@@ -981,6 +982,72 @@ function nightlyBackup() {
 
 /** Old installs still have a weekly trigger calling this until `setup` runs again. */
 function weeklyBackup() { nightlyBackup(); }
+
+/**
+ * Customer names, for the assistant (owner's explicit exception to «the assistant only reads»). The only cells it can ever touch are the ones in NAME_CELLS:
+ * the Name of the Customers tab and the Customer of the Movements tab. Modes:
+ *   read   - every distinct name with the rows that hold it (Movements: only OUT and CUT rows). Changes nothing.
+ *   backup - a full copy of the whole spreadsheet in the backup folder, named [req.name].
+ *   apply  - [req.cells] = [{ tab, row, old, new }]: a cell is changed only if it still holds [old] exactly; nothing else is written (no other cell, no row or column added or removed,
+ *            no format or formula, no stamp, no revision bump). It needs the script property ZINAX_NAMES_WRITE = on, which the owner sets by hand and removes again when done.
+ */
+const NAME_CELLS = { Customers: 'Name', Movements: 'Customer' };
+const NAMES_BATCH_MAX = 200;
+function botNames_(req) {
+  const ss = SpreadsheetApp.getActive();
+  const col = function (tab) { return SHEETS[tab].indexOf(NAME_CELLS[tab]); };
+  if (req.mode === 'read') {
+    const out = [];
+    ['Customers', 'Movements'].forEach(function (tab) {
+      const byName = {};
+      readAll_(tab).forEach(function (r, i) {
+        if (tab === 'Movements' && r[2] !== 'OUT' && r[2] !== 'CUT') return;
+        const name = String(r[col(tab)]);
+        if (!name.trim()) return;
+        (byName[name] = byName[name] || []).push(i + 2);
+      });
+      Object.keys(byName).forEach(function (name) { out.push({ tab: tab, column: NAME_CELLS[tab], name: name, rows: byName[name] }); });
+    });
+    return { ok: true, names: out };
+  }
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+    if (req.mode === 'backup') {
+      const folders = DriveApp.getFoldersByName(BACKUP_FOLDER);
+      const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(BACKUP_FOLDER);
+      const name = String(req.name || '').trim() || (ss.getName() + ' backup before names');
+      const file = DriveApp.getFileById(ss.getId()).makeCopy(name, folder);
+      return { ok: true, name: file.getName(), url: file.getUrl(), folder: BACKUP_FOLDER };
+    }
+    if (req.mode === 'apply') {
+      if (PropertiesService.getScriptProperties().getProperty('ZINAX_NAMES_WRITE') !== 'on') {
+        return { ok: false, error: 'Name changes are off. In Apps Script > Project Settings > Script properties add ZINAX_NAMES_WRITE = on (and remove it when done).' };
+      }
+      const cells = Array.isArray(req.cells) ? req.cells : [];
+      if (cells.length > NAMES_BATCH_MAX) return { ok: false, error: 'Too many cells in one request (max ' + NAMES_BATCH_MAX + ').' };
+      const applied = []; const skipped = [];
+      cells.forEach(function (c) {
+        const tab = String(c.tab); const row = Number(c.row);
+        if (!NAME_CELLS[tab] || !(row >= 2) || !String(c.new || '').trim()) { skipped.push({ tab: tab, row: row, why: 'not a name cell' }); return; }
+        const sh = ss.getSheetByName(tab);
+        const cell = sh ? sh.getRange(row, col(tab) + 1) : null;
+        if (!cell) { skipped.push({ tab: tab, row: row, why: 'no such tab' }); return; }
+        const now = String(cell.getValue());
+        if (now !== String(c.old)) { skipped.push({ tab: tab, row: row, why: 'the cell now holds a different value', now: now }); return; }
+        cell.setValue(String(c.new));
+        applied.push({ tab: tab, row: row });
+      });
+      SpreadsheetApp.flush();
+      return { ok: true, applied: applied, skipped: skipped };
+    }
+    return { ok: false, error: 'Unknown names mode' };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  } finally {
+    try { lock.releaseLock(); } catch (ignored) {}
+  }
+}
 
 /** Makes a backup now, e.g. before a big change in the sheet. */
 function backupNow() { nightlyBackup(); }

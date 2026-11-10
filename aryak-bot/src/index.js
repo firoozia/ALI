@@ -66,6 +66,7 @@ import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
+import { SheetNameStore, applyCells, backupName, cellsOf, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
 import { unbilled, unbilledText } from './unbilled.js';
 import { PaymentDups, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
@@ -803,7 +804,7 @@ async function paymentsReport(events, only = '') {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_names_undo', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
@@ -950,6 +951,9 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       void readPhotoTest(here.chatId || ownIds()[0], ic.group, ic.days).catch((e) => logger.warn(`photo test failed: ${e.message}`));
       return [`Reading ${count} kept photo${count === 1 ? '' : 's'} of the ${photoGroupLabel(ic.group)} from the last ${ic.days} day${ic.days === 1 ? '' : 's'} with ${TEST_MODEL} only. One message per photo follows, then a summary. Nothing is stored or recorded.`];
     }
+    case 'sheet_names': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNamesPreview(); }
+    case 'sheet_name_set': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNameSet(ic.from, ic.to); }
+    case 'sheet_names_undo': return sheetNamesUndo(ic.id);
     case 'received_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedCheck(ic.name)]; }
     case 'expenses_report': return [expensesReportText(ic.range)];
     case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
@@ -1014,7 +1018,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'yes': case 'no': {
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
-        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingBackfill ? [pendingBackfill.id] : [])];
+        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...(pendingBackfill ? [pendingBackfill.id] : [])];
         if (!open.length) return null;
         if (open.length > 1) {
           if (isEnglishOut()) return [`${open.length} previews are waiting: ${open.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the full code, for example: ${ic.type === 'yes' ? 'yes' : 'no'} #${open[0]}`];
@@ -1022,7 +1026,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('B') ? decideBackfill(ic.type, id) : id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
+      const out = await (id.startsWith('H') ? decideSheetNames(ic.type, id) : id.startsWith('B') ? decideBackfill(ic.type, id) : id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said && out.length ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -1223,6 +1227,7 @@ function waitingItems(by) {
     for (const id of qboBulk.openIds()) add(id, 'bulk job', no(id));
     for (const id of cutAliases.openIds()) add(id, 'aliases', no(id));
     if (pendingBackfill) add(pendingBackfill.id, 'history backfill estimate', no(pendingBackfill.id));
+    if (pendingSheetNames) add(pendingSheetNames.id, 'sheet customer names', no(pendingSheetNames.id));
     for (const id of availDrafts.openIds()) add(id, 'availability draft', no(id));
     for (const id of Object.keys(paymentDups.d.open)) add(id, 'duplicate payment question', () => { delete paymentDups.d.open[id]; paymentDups.save(); return []; });
   }
@@ -2931,6 +2936,76 @@ async function receivedCheck(name) {
   return [`*Received check — ${name}*`, withSeparators(lines)].join('\n');
 }
 const sameBrandName = (a, b) => !a || sameBrand(a, b || '');
+
+// ---------------------------------------------------------------------------------------------------------------- sheet customer names
+// The owner's explicit exception (2026-11-10): the customer names of the stock sheet are made EXACTLY the QuickBooks names. Preview (read only), then «yes #H1»: a full backup copy first, then only the name cells, logged for the undo.
+const sheetNameStore = new SheetNameStore(path.join(config.authDir, 'qbo'));
+let pendingSheetNames = null; // { id, at, plan, cells }
+let sheetNamesRunning = false;
+
+async function sheetNamesPreview() {
+  let read;
+  try { read = await sheetCall(config, { mode: 'read' }); } catch (e) { return [sheetProblem(e)]; }
+  const qboNames = [...new Set((await qboDesk.customers()).map((r) => r.DisplayName).filter(Boolean))];
+  const plan = planSheetNames({ sheetNames: read.names || [], qboNames, aliasOf: (n) => cutAliases.resolve(n), overrides: sheetNameStore.d.overrides });
+  const cells = cellsOf(plan);
+  const id = sheetNameStore.nextId();
+  pendingSheetNames = cells.length ? { id, at: Date.now(), plan, cells } : null;
+  const tabs = ['Customers', 'Movements'].map((t) => `${t} ${new Set((read.names || []).filter((x) => x.tab === t).map((x) => x.name)).size} names`);
+  for (const u of plan.unclear) logger.info(`sheet names: unclear "${u.name}" (${u.rows} rows): ${u.candidates.length ? u.candidates.join(' | ') : 'no QuickBooks customer fits'}`);
+  return [sheetPreviewText(plan, id, { namesIn: tabs })];
+}
+
+async function sheetNameSet(from, to) {
+  const names = (await qboDesk.customers()).map((r) => r.DisplayName).filter(Boolean);
+  const found = names.find((n) => n.toLowerCase() === to.toLowerCase());
+  if (!found) return [`No QuickBooks customer is named exactly "${to}". Nothing was noted.`];
+  sheetNameStore.tell(from, found);
+  return [`Noted: ${from} → ${found}. A fresh preview follows; nothing is changed in the sheet before your yes.`, ...await sheetNamesPreview()];
+}
+
+async function decideSheetNames(verb, id) {
+  const p = pendingSheetNames;
+  if (!p || p.id !== id) return [`#${id} is not waiting any more. Say "sheet names" for a fresh preview.`];
+  if (verb !== 'yes') { pendingSheetNames = null; return ['Cancelled. The sheet was not touched.']; }
+  if (Date.now() - p.at > 60 * 60 * 1000) { pendingSheetNames = null; return ['This preview is more than an hour old. Say "sheet names" for a fresh one. Nothing was changed.']; }
+  if (sheetNamesRunning) return ['A rename is already running.'];
+  sheetNamesRunning = true; pendingSheetNames = null;
+  try {
+    let backup;
+    try { backup = await sheetCall(config, { mode: 'backup', name: backupName() }); } catch (e) { return [`The backup copy of the sheet failed, so NOTHING was changed. ${sheetProblem(e)}`]; }
+    sheetNameStore.openRun(id, Date.now(), backup.url || backup.name);
+    logger.info(`sheet names ${id}: backup "${backup.name}" made; ${p.cells.length} cells to change`);
+    let result;
+    try { result = await applyCells(config, p.cells, { onApplied: (done) => { sheetNameStore.logApplied(id, done); for (const c of done) logger.info(`sheet names ${id}: ${c.tab} row ${c.row}: "${c.old}" -> "${c.new}"`); } }); } catch (e) {
+      const run = sheetNameStore.run(id);
+      return [`Stopped: ${sheetProblem(e)}
+Backup copy: ${backup.name} (${backup.folder || 'Drive'}) ${backup.url || ''}
+Changed so far: ${run.applied.length} cells (they can be undone: undo names #${id}).`];
+    }
+    return [[`*Sheet names — #${id} done*`, `Backup copy first: "${backup.name}" in the Drive folder ${backup.folder || ''} ${backup.url || ''}`.trim(), `Changed: ${result.applied} name cells (only those; nothing else in the sheet).`,
+      ...(result.skipped.length ? [`Left alone: ${result.skipped.length} cells whose value had changed meanwhile.`] : []), `Undo with: undo names #${id}`].join('\n')];
+  } finally { sheetNamesRunning = false; }
+}
+
+async function sheetNamesUndo(id) {
+  const run = sheetNameStore.run(id);
+  if (!run) return [`No sheet-names change #${id} is logged.`];
+  if (run.undone) return [`#${id} was already undone.`];
+  if (sheetNamesRunning) return ['A rename is already running.'];
+  sheetNamesRunning = true;
+  try {
+    const back = run.applied.map((c) => ({ tab: c.tab, row: c.row, old: c.new, new: c.old }));
+    if (!back.length) return [`#${id} changed no cell; nothing to undo.`];
+    const done = [];
+    let result;
+    try { result = await applyCells(config, back, { onApplied: (d) => done.push(...d) }); } catch (e) { return [`Undo stopped: ${sheetProblem(e)}`]; }
+    run.undone = done.length === back.length; sheetNameStore.save();
+    logger.info(`sheet names undo ${id}: ${result.applied} cells restored, ${result.skipped.length} left alone`);
+    const left = result.skipped.length ? ' ' + result.skipped.length + ' were left alone because they changed meanwhile.' : '';
+    return [`Undone #${id}: ${result.applied} name cells restored to their old names.${left}`];
+  } finally { sheetNamesRunning = false; }
+}
 
 async function receivedReportText(kind) {
   const r = clampRange(rangeOf(kind, todayDubai()));
