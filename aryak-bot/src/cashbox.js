@@ -117,3 +117,108 @@ export function cashBoxReport({ month, opening, cashIn, expenses, outs, transfer
   ].join('\n');
   return { text, remaining };
 }
+
+// ---- QuickBooks as the source (owner decision): the Petty Cash account, cash payments only, read only ----------------------------------------------------------------------------------------
+
+const walkRows = (rows, fn) => { for (const r of rows || []) { fn(r); if (r.Rows?.Row) walkRows(r.Rows.Row, fn); } };
+/** The balance of an account in a QuickBooks BalanceSheet report ("Petty Cash" -> 116742.13), or null when the report has no such line. */
+export function balanceFromReport(report, accountName) {
+  let found = null;
+  const want = String(accountName).toLowerCase();
+  walkRows(report?.Rows?.Row, (r) => {
+    const cols = r.ColData || r.Summary?.ColData || r.Header?.ColData;
+    if (found === null && cols && String(cols[0]?.value || '').toLowerCase() === want && cols[1]?.value !== undefined && cols[1].value !== '') found = Number(String(cols[1].value).replace(/,/g, ''));
+  });
+  return found;
+}
+
+/** What QuickBooks has for the cash box between two days: the Petty Cash opening and closing balance, the CASH payments deposited there, the transfers in and out, the purchases paid from it. */
+export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash' }) {
+  const accounts = await qbo.query("select * from Account where Name = '" + String(accountName).replace(/'/g, '') + "'");
+  const acc = accounts[0];
+  if (!acc) return null;
+  const id = String(acc.Id);
+  const range = "TxnDate >= '" + from + "' and TxnDate <= '" + to + "'";
+  const methods = new Map((await qbo.query('select * from PaymentMethod').catch(() => [])).map((m) => [String(m.Id), String(m.Name || '')]));
+  const isCash = (r) => String(r.DepositToAccountRef?.value) === id && /cash/i.test(methods.get(String(r.PaymentMethodRef?.value)) || '');
+  const received = [...await qbo.query('select * from Payment where ' + range), ...await qbo.query('select * from SalesReceipt where ' + range)].filter(isCash)
+    .map((r) => ({ amount: Number(r.TotalAmt), date: r.TxnDate, name: r.CustomerRef?.name || '' }));
+  const transfers = (await qbo.query('select * from Transfer where ' + range)).filter((t) => String(t.FromAccountRef?.value) === id || String(t.ToAccountRef?.value) === id);
+  const purchases = (await qbo.query('select * from Purchase where ' + range)).filter((p) => String(p.AccountRef?.value) === id)
+    .map((p) => ({ amount: Number(p.TotalAmt), date: p.TxnDate, vendor: p.EntityRef?.name || '', category: p.Line?.find((l) => l.AccountBasedExpenseLineDetail)?.AccountBasedExpenseLineDetail?.AccountRef?.name || 'Other' }));
+  const before = new Date(Date.parse(from + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+  const balance = async (day) => balanceFromReport(await qbo.get('reports/BalanceSheet', { start_date: day, end_date: day, accounting_method: 'Accrual' }), accountName);
+  return {
+    id, opening: await balance(before).catch(() => null), closing: await balance(to).catch(() => null), received, purchases,
+    transfersOut: transfers.filter((t) => String(t.FromAccountRef?.value) === id).map((t) => ({ amount: Number(t.Amount), date: t.TxnDate, to: t.ToAccountRef?.name || '', note: t.PrivateNote || '' })),
+    transfersIn: transfers.filter((t) => String(t.ToAccountRef?.value) === id).map((t) => ({ amount: Number(t.Amount), date: t.TxnDate, from: t.FromAccountRef?.name || '' })),
+  };
+}
+
+/**
+ * The cash box report with QuickBooks as the source. Every QBO line is compared with the WhatsApp posts (amount +-1 AED, date +-3 days): 🟢 posted and in QuickBooks; ⚪ in QuickBooks with no post;
+ * 🔴 posted and not in QuickBooks. [posts]: { cashIn: [{ amount, at }], outs: [{ kind, amount, at, employee }], expenses: [{ amount, at, vendor }] }.
+ */
+export function cashBoxReportQbo({ month, data, posts, openingOverride = null, timeZone = 'Asia/Dubai' }) {
+  const label = month.slice(5, 7) + '/' + month.slice(0, 4); const first = '01/' + month.slice(5, 7);
+  const dayOfIso = (iso) => Math.floor(Date.parse(iso + 'T00:00:00Z') / 86400000);
+  const isoOf = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+  const claim = (pool, amount, iso) => { // one post for one QuickBooks line
+    const at = pool.findIndex((p) => !p.used && Math.abs(Number(p.amount) - Number(amount)) <= 1 && Math.abs(dayNum(p.at, timeZone) - dayOfIso(iso)) <= 3);
+    if (at < 0) return null;
+    pool[at].used = true; return pool[at];
+  };
+  const bossPosts = posts.outs.filter((o) => o.kind === 'cash_to_boss').map((o) => ({ ...o }));
+  const advPosts = posts.outs.filter((o) => o.kind === 'salary_advance').map((o) => ({ ...o }));
+  const expPosts = posts.expenses.map((o) => ({ ...o }));
+  const inPosts = posts.cashIn.map((o) => ({ ...o }));
+  const lineDate = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  const dline = (icon, iso, amount, tail) => icon + ' ' + lineDate(iso) + money(amount).padStart(12) + (tail || '');
+  let green = 0; let red = 0; let white = 0;
+  const mark = (icon) => { if (icon === '🟢') green += 1; else if (icon === '🔴') red += 1; else white += 1; return icon; };
+  const unmatchedLines = (pool, tailOf) => pool.filter((p) => !p.used).map((p) => dline(mark('🔴'), isoOf(p.at), p.amount, tailOf(p) + '  (posted, not in QuickBooks)'));
+  // cash in
+  const cashFromCustomers = data.received.reduce((n, r) => n + r.amount, 0);
+  const transfersInTotal = data.transfersIn.reduce((n, r) => n + r.amount, 0);
+  const noPost = [];
+  for (const r of data.received) { if (claim(inPosts, r.amount, r.date)) green += 1; else noPost.push(r); }
+  const inExtra = [];
+  if (noPost.length) { white += noPost.length; inExtra.push('     ↳ ⚪ ' + noPost.length + ' receipt' + (noPost.length === 1 ? '' : 's') + ' (' + money(noPost.reduce((n, r) => n + r.amount, 0)) + ') with no post in the group'); }
+  inExtra.push(...unmatchedLines(inPosts, () => ''));
+  // cash out
+  const expTotal = data.purchases.reduce((n, p) => n + p.amount, 0);
+  const byCat = {};
+  for (const p of data.purchases) byCat[p.category] = (byCat[p.category] || 0) + p.amount;
+  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? '' : '  (no post in the group)')); });
+  expLines.push(...unmatchedLines(expPosts, (p) => '   ' + (p.vendor || '')));
+  const bossT = data.transfersOut.filter((t) => /owner/i.test(t.to));
+  const advT = data.transfersOut.filter((t) => /advance/i.test(t.to));
+  const otherT = data.transfersOut.filter((t) => !bossT.includes(t) && !advT.includes(t));
+  const tLines = (list, pool, who) => {
+    const lines = list.map((t) => { const post = claim(pool, t.amount, t.date); return dline(mark(post ? '🟢' : '⚪'), t.date, t.amount, (who ? '   ' + ((post && post.employee) || t.note || '') : '') + (post ? '' : '  (no post in the group)')); });
+    lines.push(...unmatchedLines(pool, (p) => (who && p.employee ? '   ' + p.employee : '')));
+    return lines;
+  };
+  const sum = (l) => l.reduce((n, t) => n + t.amount, 0);
+  const blocks = [];
+  if (data.purchases.length || expPosts.some((p) => !p.used)) blocks.push([cell('🧾 *Company expenses (cash)*', expTotal), ...(data.purchases.length ? ['     ↳ ' + Object.keys(byCat).map((k) => k + ' ' + money(byCat[k])).join(' | ')] : []), ...expLines].join('\n'));
+  const bossL = tLines(bossT, bossPosts, false);
+  if (bossT.length || bossPosts.some((p) => !p.used)) blocks.push([cell('👔 *Cash to boss*', sum(bossT)), ...bossL].join('\n'));
+  const advL = tLines(advT, advPosts, true);
+  if (advT.length || advPosts.some((p) => !p.used)) blocks.push([cell('👷 *Salary advances*', sum(advT)), ...advL].join('\n'));
+  for (const n of [...new Set(otherT.map((t) => t.to))]) { const l = otherT.filter((t) => t.to === n); blocks.push([cell('↔️ *' + n + '*', sum(l)), ...l.map((t) => dline(mark('⚪'), t.date, t.amount, ''))].join('\n')); }
+  const opening = openingOverride !== null ? openingOverride : data.opening;
+  const totalIn = (opening || 0) + cashFromCustomers + transfersInTotal;
+  const totalOut = expTotal + sum(data.transfersOut);
+  const remaining = Math.round((totalIn - totalOut) * 100) / 100;
+  const diff = data.closing === null || data.closing === undefined ? null : Math.round((remaining - data.closing) * 100) / 100;
+  const text = [
+    '📦 *Cash box — ' + label + '*', SEP, SEP,
+    '💵 *Cash in*', cell('Opening balance (' + first + ')', opening || 0), cell('Cash from customers', cashFromCustomers), ...(transfersInTotal ? [cell('Transfers in', transfersInTotal)] : []), ...inExtra, SEP, SEP,
+    '💸 *Cash out*', '', blocks.length ? blocks.join('\n' + SEP + '\n') : 'Nothing left the cash box.', SEP, SEP,
+    '*Total in:  ' + money(totalIn) + ' AED*', '*Total out: ' + money(totalOut) + ' AED*', '*Remaining in cash box: ' + money(remaining) + ' AED*',
+    ...(diff !== null && Math.abs(diff) > 0.004 ? ['Computed remaining vs QuickBooks Petty Cash balance: difference ' + money(diff)] : []),
+    '🟢 Posted and in QuickBooks: ' + green + '    🔴 Not in QuickBooks: ' + red + '    ⚪ No post: ' + white,
+  ].join('\n');
+  return { text, remaining };
+}

@@ -72,7 +72,7 @@ import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
-import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, rederiveCashOut } from './cashbox.js';
+import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, rederiveCashOut } from './cashbox.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
@@ -3181,7 +3181,14 @@ async function cashBoxMonth(month, depth = 0) {
     if (outs.some((o) => o.kind === e.kind && o.amount === Number(e.amount) && Math.abs(o.at - e.at) <= 30 * 60 * 1000)) continue;
     outs.push({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '' });
   }
-  const expenses = expenseStore.done(r).filter((e) => e.method === 'cash').map((e) => ({ amount: e.amount, type: e.type }));
+  const expenses = expenseStore.done(r).filter((e) => e.method === 'cash').map((e) => ({ amount: e.amount, type: e.type, at: e.at, vendor: e.vendor || '' }));
+  if (qbo.connected && !qbo.paused) { // QuickBooks is the source (owner decision): the Petty Cash account, cash payments only; the WhatsApp posts are only compared
+    try {
+      const data = await fetchCashBoxQbo(qbo, { from, to });
+      if (data) return cashBoxReportQbo({ month, data, openingOverride: cashBoxStore.d.opening[month] ?? null, timeZone: config.timezone,
+        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at })), outs, expenses: expenses.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor })) } });
+    } catch (e) { logger.warn('cash box: QuickBooks did not answer, the posts are shown instead: ' + e.message); }
+  }
   const transfers = await qbRows('Transfer', dayPlus(from, -3), dayPlus(to, 3));
   return cashBoxReport({ month, opening, cashIn, expenses, outs, transfers, timeZone: config.timezone, typeLabel: (t) => (TYPES[t]?.label || 'Other') });
 }

@@ -874,3 +874,35 @@ test('old stored rows are re-read: «deposit to boss» is cash to the boss (out 
   assert.ok(!/\[expensesReportText\(/.test(index)); assert.ok(index.includes('[await expensesReportText(ic.range)]')); // the async report is awaited
   assert.equal((index.match(/expensesReportText\(/g) || []).length, (index.match(/await expensesReportText\(/g) || []).length); // every call is awaited
 });
+
+test('the cash box from QuickBooks: the Petty Cash account, cash payments only, transfers out by target, purchases from it; each line compared with the posts; the difference to the QuickBooks balance', async () => {
+  const { balanceFromReport, fetchCashBoxQbo, cashBoxReportQbo } = await import('../src/cashbox.js');
+  assert.equal(balanceFromReport({ Rows: { Row: [{ Rows: { Row: [{ ColData: [{ value: 'Petty Cash' }, { value: '1,116.50' }] }] } }] } }, 'petty cash'), 1116.5);
+  const rows = {
+    "select * from Account where Name = 'Petty Cash'": [{ Id: '100' }],
+    'select * from PaymentMethod': [{ Id: '1', Name: 'Cash' }, { Id: '2', Name: 'Cheque' }],
+    Payment: [{ TxnDate: '2026-11-05', TotalAmt: 750, DepositToAccountRef: { value: '100' }, PaymentMethodRef: { value: '1' }, CustomerRef: { name: 'ZETA CO' } }, { TxnDate: '2026-11-06', TotalAmt: 3500, DepositToAccountRef: { value: '7' }, PaymentMethodRef: { value: '2' } }, { TxnDate: '2026-11-07', TotalAmt: 90, DepositToAccountRef: { value: '100' }, PaymentMethodRef: { value: '1' }, CustomerRef: { name: 'NOVA CO' } }],
+    SalesReceipt: [], Transfer: [{ TxnDate: '2026-11-04', Amount: 18000, FromAccountRef: { value: '100' }, ToAccountRef: { value: '9', name: 'OWNER CASH AMOUNT' } }, { TxnDate: '2026-11-06', Amount: 500, FromAccountRef: { value: '100' }, ToAccountRef: { value: '8', name: 'EMPLOYEE ADVANCE' }, PrivateNote: 'RAJU' }, { TxnDate: '2026-11-08', Amount: 40, FromAccountRef: { value: '100' }, ToAccountRef: { value: '5', name: 'Bank Charges' } }],
+    Purchase: [{ TxnDate: '2026-11-09', TotalAmt: 85.5, AccountRef: { value: '100' }, EntityRef: { name: 'ADNOC' }, Line: [{ AccountBasedExpenseLineDetail: { AccountRef: { name: 'Fuel' } } }] }, { TxnDate: '2026-11-09', TotalAmt: 12, AccountRef: { value: '3' } }],
+  };
+  const sheet = (n) => ({ Rows: { Row: [{ ColData: [{ value: 'Petty Cash' }, { value: String(n) }] }] } });
+  const qbo = { query: async (sql) => rows[sql] || rows[/from (\w+)/.exec(sql)[1]] || [], get: async (path, q) => sheet(q.end_date === '2026-10-31' ? 2000 : 7200) };
+  const data = await fetchCashBoxQbo(qbo, { from: '2026-11-01', to: '2026-11-30' });
+  assert.deepEqual([data.opening, data.closing, data.received.map((r) => r.amount), data.purchases.length, data.transfersOut.length], [2000, 7200, [750, 90], 1, 3]); // the cheque and the other account are out
+  const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
+  const { text, remaining } = cashBoxReportQbo({ month: '2026-11', data, timeZone: 'Asia/Dubai', posts: {
+    cashIn: [{ amount: 750, at: day('05') }, { amount: 300, at: day('10') }],
+    outs: [{ kind: 'cash_to_boss', amount: 18000, at: day('04') }, { kind: 'salary_advance', amount: 500, at: day('06'), employee: 'RAJU' }, { kind: 'salary_advance', amount: 1000, at: day('09'), employee: 'AHMED' }],
+    expenses: [{ amount: 85.5, at: day('09'), vendor: 'ADNOC' }],
+  } });
+  assert.equal(remaining, 2000 + 840 - (18000 + 500 + 40 + 85.5));
+  assert.match(text, /Cash from customers\s+840\.00\n     ↳ ⚪ 1 receipt \(90\.00\) with no post in the group\n🔴 10\/11\s+300\.00  \(posted, not in QuickBooks\)/);
+  assert.match(text, /🧾 \*Company expenses \(cash\)\*\s+85\.50\n     ↳ Fuel 85\.50\n🟢 09\/11\s+85\.50   ADNOC/);
+  assert.match(text, /👔 \*Cash to boss\*\s+18,000\.00\n🟢 04\/11\s+18,000\.00/);
+  assert.match(text, /👷 \*Salary advances\*\s+500\.00\n🟢 06\/11\s+500\.00   RAJU\n🔴 09\/11\s+1,000\.00   AHMED  \(posted, not in QuickBooks\)/);
+  assert.match(text, /↔️ \*Bank Charges\*\s+40\.00\n⚪ 08\/11\s+40\.00/);
+  assert.match(text, /Computed remaining vs QuickBooks Petty Cash balance: difference -?[\d,]+\.\d\d/); // the computed remaining differs from the QuickBooks balance
+  assert.match(text, /🟢 Posted and in QuickBooks: 4 {4}🔴 Not in QuickBooks: 2 {4}⚪ No post: 2/);
+  const override = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [], outs: [], expenses: [] }, openingOverride: 500 });
+  assert.match(override.text, /Opening balance \(01\/11\)\s+500\.00/); // the owner's override
+});
