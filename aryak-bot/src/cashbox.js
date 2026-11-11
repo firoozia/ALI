@@ -38,7 +38,7 @@ export function cashOutKind(text) {
 export function rederiveCashOut(e) {
   if (!e || e.type !== 'payment' || CASH_OUT_KINDS.includes(e.kind) || e.kind === 'cheque' || e.kind === 'transfer') return e;
   const words = [e.text, e.customerTyped, e.customer].filter(Boolean).join(' ');
-  if (!/(?:^|[^a-z])to\s+boss(?![a-z])|^\s*boss(?![a-z])/i.test(words) && !ADVANCE.test(words) && !(PAYFOR.test(e.text || '') && !NOT_EXPENSE.test(e.text || ''))) return e;
+  if (!/(?:^|[^a-z])to\s+boss(?![a-z])|^\s*boss(?![a-z])/i.test(words) && !ADVANCE.test(words) && !(PAYFOR.test(words) && !NOT_EXPENSE.test(words))) return e;
   const amount = Number(e.amount) > 0 ? Number(e.amount) : null;
   const out = cashOutKind(e.text ? e.text : words + ' ' + (amount || '')); // the posted words as they are; with none, the name and the amount
   if (!out || out.kind === 'cash_unclear') return e;
@@ -167,7 +167,7 @@ export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash
  * The cash box report with QuickBooks as the source. Every QBO line is compared with the WhatsApp posts (amount +-1 AED, date +-3 days): 🟢 posted and in QuickBooks; ⚪ in QuickBooks with no post;
  * 🔴 posted and not in QuickBooks. [posts]: { cashIn: [{ amount, at }], outs: [{ kind, amount, at, employee }], expenses: [{ amount, at, vendor }] }.
  */
-export function cashBoxReportQbo({ month, data, posts, openingOverride = null, timeZone = 'Asia/Dubai', swapCodeOf = () => '', accountName = 'Petty Cash' }) {
+export function cashBoxReportQbo({ month, data, posts, openingOverride = null, timeZone = 'Asia/Dubai', swapCodeOf = () => '', accountName = 'Petty Cash', swapInfoOf = () => null }) {
   const label = month.slice(5, 7) + '/' + month.slice(0, 4); const first = '01/' + month.slice(5, 7);
   const dayOfIso = (iso) => Math.floor(Date.parse(iso + 'T00:00:00Z') / 86400000);
   const isoOf = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
@@ -211,15 +211,16 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
     const iso = isoOf(p.at);
     const elsewhere = (data.elsewhere || []).find((r) => !r.used && Math.abs(r.amount - p.amount) <= 1 && Math.abs(dayOfIso(r.date) - dayNum(p.at, timeZone)) <= 3 && sameName(r.name, p.customer));
     if (elsewhere) { elsewhere.used = true; yellow += 1; inExtra.push(dline('🟡', iso, p.amount, '  (in QuickBooks, deposited to ' + elsewhere.account + ', not ' + accountName + ')')); }
-    else if (swapCodeOf(p.ref)) { red += 1; inExtra.push(dline('❓', iso, p.amount, '  (digits swapped? answer #' + swapCodeOf(p.ref) + ')')); }
+    else if (p.accepted) { green += 1; inExtra.push(dline('🟢', iso, p.amount, '  (accepted by you: ' + p.accepted.text + ')')); }
+    else if (swapInfoOf(p.ref) || swapCodeOf(p.ref)) { red += 1; const si = swapInfoOf(p.ref) || { code: swapCodeOf(p.ref) }; inExtra.push(dline('❓', iso, p.amount, '  (digits swapped? QuickBooks has ' + (si.qboAmount ? money(si.qboAmount) : 'another amount') + (si.name ? ' for ' + si.name : '') + ': answer 1 = same payment, 2 = different, with #' + si.code + ')')); }
     else inExtra.push(dline(mark('🔴'), iso, p.amount, '  (posted, not in QuickBooks)'));
   }
   // cash out
   const expTotal = data.purchases.reduce((n, p) => n + p.amount, 0);
   const byCat = {};
   for (const p of data.purchases) byCat[p.category] = (byCat[p.category] || 0) + p.amount;
-  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? '' : '  (no post in the group)')); });
-  expLines.push(...unmatchedLines(expPosts, (p) => '   ' + (p.vendor || '')));
+  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') : '  (no post in the group)')); });
+  expLines.push(...unmatchedLines(expPosts.filter((p) => p.method !== 'card'), (p) => '   ' + (p.vendor || '')));
   const bossT = data.transfersOut.filter((t) => /owner/i.test(t.to));
   const advT = data.transfersOut.filter((t) => /advance/i.test(t.to));
   const otherT = data.transfersOut.filter((t) => !bossT.includes(t) && !advT.includes(t));
@@ -230,7 +231,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   };
   const sum = (l) => l.reduce((n, t) => n + t.amount, 0);
   const blocks = [];
-  if (data.purchases.length || expPosts.some((p) => !p.used)) blocks.push([cell('🧾 *Company expenses (cash)*', expTotal), ...(data.purchases.length ? ['     ↳ ' + Object.keys(byCat).map((k) => k + ' ' + money(byCat[k])).join(' | ')] : []), ...expLines].join('\n'));
+  if (data.purchases.length || expPosts.some((p) => !p.used && p.method !== 'card')) blocks.push([cell('🧾 *Company expenses (cash)*', expTotal), ...(data.purchases.length ? ['     ↳ ' + Object.keys(byCat).map((k) => k + ' ' + money(byCat[k])).join(' | ')] : []), ...expLines].join('\n'));
   const bossL = tLines(bossT, bossPosts, false);
   if (bossT.length || bossPosts.length) blocks.push([bossT.length ? cell('👔 *Cash to boss*', sum(bossT)) : '👔 *Cash to boss*: none recorded in QuickBooks this month', ...bossL].join('\n')); // kept visible when a post says it happened
   const advL = tLines(advT, advPosts, true);

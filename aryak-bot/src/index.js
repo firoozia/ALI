@@ -3182,13 +3182,22 @@ async function cashBoxMonth(month, depth = 0) {
     outs.push({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '' });
   }
   const cashPays = tracker.events.map(rederiveCashOut).filter((e) => e.type === 'payment' && e.kind === 'cash_expense' && !e.simulated && e.at >= startMs && e.at <= endMs).map((e) => ({ amount: Number(e.amount), at: e.at, vendor: e.employee || '' })); // «Pay by cash 157 for garbage box» in the Confirmation group: a cash expense, matched within 7 days
-  const expenses = expenseStore.done(r).filter((e) => e.method === 'cash').map((e) => ({ amount: e.amount, type: e.type, at: e.at, vendor: e.vendor || '' }));
+  const expenseRows = expenseStore.done(r).map((e) => ({ amount: e.amount, type: e.type, at: e.at, vendor: e.vendor || '', method: e.method })); // card ones too: QuickBooks may have paid them from the cash box
+  const expenses = expenseRows.filter((e) => e.method === 'cash');
   if (qbo.connected && !qbo.paused) { // QuickBooks is the source (owner decision): the Petty Cash account, cash payments only; the WhatsApp posts are only compared
     try {
       const data = await fetchCashBoxQbo(qbo, { from, to });
+      const swapRows = await qbRows('Payment', dayPlus(from, -7), dayPlus(to, 7));
       if (data) return cashBoxReportQbo({ month, data, openingOverride: cashBoxStore.d.opening[month] ?? null, timeZone: config.timezone,
-        swapCodeOf: (ref) => payChecks.openIds().find((i) => payChecks.get(i)?.action === 'swap' && payChecks.get(i)?.ref === ref) || '',
-        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref })), outs, expenses: [...expenses.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
+        swapInfoOf: (ref) => { // a post whose digits look swapped against a QuickBooks payment of the same customer: its #G question (made now when none was asked yet)
+          const known = payChecks.openIds().find((i) => payChecks.get(i)?.action === 'swap' && payChecks.get(i)?.ref === ref);
+          if (known) return { code: known, qboAmount: payChecks.get(known).qboAmount, name: '' };
+          const ev = tracker.events.find((x) => x.ref === ref); if (!ev) return null;
+          const rec = swapCandidate({ ...ev, swapAsked: false }, swapRows, nameAlias, config.timezone); if (!rec) return null;
+          const text = 'payment ' + rec.TxnDate.slice(8, 10) + '/' + rec.TxnDate.slice(5, 7) + ' ' + Number(rec.TotalAmt).toFixed(2);
+          return { code: payChecks.codeFor(ref, text, 'swap', { qboAmount: Number(rec.TotalAmt), posted: Number(ev.amount) }), qboAmount: Number(rec.TotalAmt), name: rec.CustomerRef?.name || '' };
+        },
+        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref, accepted: i.accepted || null })), outs, expenses: [...expenseRows.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, method: e.method })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
     } catch (e) { logger.warn('cash box: QuickBooks did not answer, the posts are shown instead: ' + e.message); }
   }
   const transfers = await qbRows('Transfer', dayPlus(from, -3), dayPlus(to, 3));

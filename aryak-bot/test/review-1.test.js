@@ -923,7 +923,7 @@ test('the cash box matching: a receipt in another account is 🟡, a swapped-dig
     expenses: [{ amount: 157, at: day('05'), vendor: 'GARBAGE BOX', days: 7 }],
   } });
   assert.match(text, /🟡 11\/11\s+176\.40 {2}\(in QuickBooks, deposited to Cash and cash equivalents, not Petty Cash\)/);
-  assert.match(text, /❓ 10\/11\s+576\.00 {2}\(digits swapped\? answer #G5\)/);
+  assert.match(text, /❓ 10\/11\s+576\.00 {2}\(digits swapped\? QuickBooks has another amount: answer 1 = same payment, 2 = different, with #G5\)/);
   assert.match(text, /🔴 12\/11\s+90\.00 {2}\(posted, not in QuickBooks\)/);
   assert.match(text, /🟢 10\/11\s+157\.50 {3}CITY CLEAN/); // 5 days apart: matched with the 7-day window
   assert.match(text, /👔 \*Cash to boss\*: none recorded in QuickBooks this month\n🔴 04\/11\s+18,000\.00 {2}\(posted, not in QuickBooks\)/);
@@ -949,4 +949,23 @@ test('one cash payment for two posts of one customer (926.10 = 749.70 + 176.40):
   assert.equal(matched.size, 2); assert.ok(matched.get(items[0]) === matched.get(items[1]));
   assert.match(receivedText(items, { title: 't', records: [one], now: day('11') }), /\*ZETA WOOD PRESSING\*\n🟢 176\.40\n🟢 749\.70/);
   assert.equal(matchReceipts([item(100, 'c'), { ...item(826.1, 'd'), customer: 'OTHER CO' }], [one]).size, 0); // two customers do not make one payment
+});
+
+test('the cash box: expenses-group entries match the Petty Cash purchases (card posts too, with a method warning), an old «pay … for …» row leaves the cash in, and a swapped-digit post shows the QuickBooks amount with its question', async () => {
+  const { cashBoxReportQbo, rederiveCashOut } = await import('../src/cashbox.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
+  const data = { opening: 500, closing: null, received: [], elsewhere: [], transfersIn: [], transfersOut: [],
+    purchases: [{ amount: 22.48, date: '2026-11-11', vendor: 'DAY TO DAY', category: 'Office' }, { amount: 157.5, date: '2026-11-10', vendor: 'CITY CLEAN', category: 'Cleaning' }] };
+  const { text } = cashBoxReportQbo({ month: '2026-11', data, swapInfoOf: (ref) => (ref === 'sw' ? { code: 'G5', qboAmount: 567, name: 'NOVA KITCHEN' } : null), posts: {
+    cashIn: [{ amount: 576, at: day('10'), customer: 'NOVA KITCHEN', ref: 'sw' }],
+    outs: [],
+    expenses: [{ amount: 22.48, at: day('11'), vendor: 'Day to Day', method: 'card' }, { amount: 157, at: day('05'), vendor: 'GARBAGE BOX', method: 'cash', days: 7 }, { amount: 40, at: day('12'), vendor: 'FUEL STOP', method: 'card' }],
+  } });
+  assert.match(text, /🟢 11\/11\s+22\.48 {3}DAY TO DAY {2}⚠ method differs: posted card, QuickBooks Petty Cash \(cash\)/); // not «no post in the group»
+  assert.match(text, /🟢 10\/11\s+157\.50 {3}CITY CLEAN\n/); // the cash expense of the Confirmation group, 5 days apart
+  assert.doesNotMatch(text, /no post in the group|FUEL STOP/); // a card post not paid from the cash box is not expected there
+  assert.match(text, /❓ 10\/11\s+576\.00 {2}\(digits swapped\? QuickBooks has 567\.00 for NOVA KITCHEN: answer 1 = same payment, 2 = different, with #G5\)/);
+  const old = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'x', at: day('05'), customer: 'PAY BY CASH FOR GARBAGE BOX', amount: 157 }; // an old row that kept the words only in its name
+  assert.equal(rederiveCashOut(old).kind, 'cash_expense'); assert.equal(sharedPaymentList({ events: [old] }).length, 0);
 });
