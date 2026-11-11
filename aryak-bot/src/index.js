@@ -2984,7 +2984,8 @@ async function invoiceLookupFor(events) {
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
 /** A name as QuickBooks writes it (an old alias may still give a longer one): the exact QuickBooks name when the post's name fits exactly one customer there, else the name as posted. */
 function namerOver(names) {
-  return (n) => qboNameFor(n, names, (x) => cutAliases.resolve(x)) || n;
+  const memo = new Map(); // each distinct name is matched once
+  return (n) => { if (!memo.has(n)) memo.set(n, qboNameFor(n, names, (x) => cutAliases.resolve(x)) || n); return memo.get(n); };
 }
 const driverNamerNow = () => namerOver((qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean)); // the list already read (the evening report is not a place to call QuickBooks)
 async function driverNamer() {

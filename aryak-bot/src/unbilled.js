@@ -7,7 +7,8 @@ import { sameCutCustomer } from './cuts.js';
 import { qboNameFor } from './qboname.js';
 
 const DAY = 24 * 3600 * 1000;
-const dm = (ms, timeZone) => { const [, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)).split('-'); return `${d}/${m}`; };
+const dayFormats = new Map(); // one formatter per time zone (building one per call was slow)
+const dm = (ms, timeZone) => { if (!dayFormats.has(timeZone)) dayFormats.set(timeZone, new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })); const [, m, d] = dayFormats.get(timeZone).format(new Date(ms)).split('-'); return `${d}/${m}`; };
 const digits = (c) => (String(c || '').match(/\d{2,5}/g) || []).join('-');
 
 /**
@@ -23,9 +24,17 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
       lines.push({ customer: inv.CustomerRef?.name || '', codes: itemCodes(l.SalesItemLineDetail?.ItemRef?.value, l.SalesItemLineDetail?.ItemRef?.name), at });
     }
   }
-  const nameOf = (post) => qboNameFor(post, qboNames, aliasOf) || aliasOf(post) || post; // every posted spelling of a customer is its QuickBooks name
+  // The matching is done ONCE per distinct posted name and once per distinct invoice customer (never per event x invoice line x QuickBooks name: that froze the bot).
+  const nameMemo = new Map();
+  const nameOf = (post) => { if (!nameMemo.has(post)) nameMemo.set(post, qboNameFor(post, qboNames, aliasOf) || aliasOf(post) || post); return nameMemo.get(post); }; // every posted spelling of a customer is its QuickBooks name
   const same = (post, qboName) => nameOf(post) === qboName || sameCutCustomer(post, qboName) || (!!aliasOf(post) && sameCutCustomer(aliasOf(post), qboName));
-  const invoicesOf = (post) => lines.filter((x) => same(post, x.customer));
+  const linesByCustomer = new Map();
+  for (const x of lines) { if (!linesByCustomer.has(x.customer)) linesByCustomer.set(x.customer, []); linesByCustomer.get(x.customer).push(x); }
+  const ofMemo = new Map();
+  const invoicesOf = (post) => {
+    if (!ofMemo.has(post)) ofMemo.set(post, [...linesByCustomer].filter(([customer]) => same(post, customer)).flatMap(([, list]) => list));
+    return ofMemo.get(post);
+  };
   const byCustomer = new Map();
   const trace = [];
   const add = (customer, text, ref = '', post = '') => { const name = nameOf(customer); byCustomer.set(name, [...(byCustomer.get(name) || []), text]); trace.push(`unbilled: "${name}" <- "${post || customer}": ${text}${ref ? ` (post ${String(ref).slice(0, 8)})` : ''}`); }; // one QuickBooks name for the spellings of one customer name

@@ -5,10 +5,11 @@ const DIGITS = { '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5
   '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9' };
 
 /** ۲۲۹ and ٢٢٩ become 229; the Arabic decimal sign between digits becomes ".". Nothing else changes. */
+import { memoString } from './memo.js';
 export const normalizeDigits = (s) => String(s ?? '').replace(/[۰-۹٠-٩]/g, (d) => DIGITS[d]).replace(/(?<=\d)٫(?=\d)/g, '.').replace(/(?<=\d)٬(?=\d)/g, ',');
 
 /** For matching only: digits, ي/ك/ى to ی/ک, no diacritics, tatweel or ZWNJ, "؟" to "?", lower case. */
-export const normalizeLetters = (s) => normalizeDigits(String(s ?? '').normalize('NFKC'))
+export const normalizeLetters = memoString((s) => normalizeDigits(String(s ?? '').normalize('NFKC'))
   .replace(/[يى]/g, 'ی').replace(/ك/g, 'ک').replace(/؟/g, '?')
   .replace(/[ً-ٰٟـ‌‍‎‏]/g, '')
-  .toLowerCase();
+  .toLowerCase());

@@ -22,8 +22,18 @@ const distinctive = (name) => looseWords(name).filter((w) => w.length >= 4 && !G
  * The same customer. The names are alike (sameCustomer), or they share their FIRST distinctive word (the caption says «NUQOOSH», the books say «NUQOOSH IND . LLC»; «Munich door»
  * is «MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C»), or every distinctive word of the shorter name (two or more) is in the longer one. A trade or place word alone never makes two customers one.
  */
+const sameMemo = new Map(); // pure and called for every pair of names in the reports
 export function sameCutCustomer(a, b) {
   if (!a || !b) return false;
+  const k = a + '' + b;
+  if (sameMemo.has(k)) return sameMemo.get(k);
+  const made = sameCutOnce(a, b);
+  if (sameMemo.size > 100000) sameMemo.clear();
+  sameMemo.set(k, made);
+  return made;
+}
+
+function sameCutOnce(a, b) {
   // short names written with other punctuation or spaces: «AR RAD», «AR-RAD», «ARRAD» are one name; two or more brand words that open the longer name are the same customer
   const ca = looseWords(a).filter((w) => !GENERIC.has(w)); const cb = looseWords(b).filter((w) => !GENERIC.has(w));
   const [shortWords, longWords] = ca.length <= cb.length ? [ca, cb] : [cb, ca];

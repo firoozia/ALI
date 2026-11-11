@@ -15,7 +15,8 @@ const DAY = 24 * 3600 * 1000;
  * (sameCutCustomer) and that one customer fits clearly by sound and spelling. [skip](key) -> true for a name already settled. Returns [{ post, qbo, score }].
  */
 /** The words that say WHICH company (not what it does or where): «AILA WOOD PRESSING» -> aila, pressing. */
-export const brandWords = (name) => nameKey(name).split(/\s+/).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
+const brandMemo = new Map();
+export const brandWords = (name) => { const k = String(name ?? ''); if (!brandMemo.has(k)) { if (brandMemo.size > 20000) brandMemo.clear(); brandMemo.set(k, nameKey(name).split(/\s+/).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w))); } return brandMemo.get(k); }; // a shared array: callers only read it
 /** One letter wrong, missing, extra or swapped (Aila / Alia, Hamid / Hamed, Wahadan / Wahdan). */
 export function nearWord(a, b) {
   if (a === b) return true;
