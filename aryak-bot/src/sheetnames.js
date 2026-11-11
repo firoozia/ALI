@@ -116,3 +116,6 @@ export async function applyCells(config, cells, opts = {}) {
 }
 
 export const backupName = (now = Date.now()) => `ZINAX stock backup ${day(now)} before names`;
+
+/** The owner's «name OLD -> NEW» answers as an alias table: the QuickBooks name he told for a posted spelling, or ''. */
+export const overrideFor = (store, name) => store.d.overrides[key(name)] || '';

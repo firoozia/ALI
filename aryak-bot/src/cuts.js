@@ -48,7 +48,7 @@ function sameCutOnce(a, b) {
   const [short, long] = da.length <= db.length ? [da, db] : [db, da];
   return short.length >= 2 && short.every((w) => long.includes(w));
 }
-const unitOf = (u) => ({ m: 'm', mtr: 'm', meter: 'm', متر: 'm', roll: 'roll', رول: 'roll' }[String(u || '').trim().toLowerCase()] || String(u || '').trim().toLowerCase());
+const unitOf = (u) => ({ m: 'm', mtr: 'm', meter: 'm', متر: 'm', roll: 'roll', رول: 'roll', pcs: 'pcs', pc: 'pcs', piece: 'pcs', pieces: 'pcs' }[String(u || '').trim().toLowerCase()] || String(u || '').trim().toLowerCase());
 
 /** The cut lines of [customer] for [codes] that no invoice has taken yet, newest first: [{ ref, index, qty, unit, at }]. */
 export function cutRecords(tracker, customer, codes, { now = Date.now(), windowDays = 30, log = null } = {}) {

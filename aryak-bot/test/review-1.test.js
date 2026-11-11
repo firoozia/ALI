@@ -188,3 +188,23 @@ test('a bare yes or no in a GROUP counts only what was made in that group: the d
   assert.match(block, /\? \[\.\.\.qboInvoices\.openIds\(\)\.filter\(\(id\) => Object\.values\(qboInvoices\.store\.d\.previews\)\.find\(\(p\) => p\.id === id\)\?\.origin\?\.jid === here\.chatId\), \.\.\.groupStatements\.openIds\(\)\]/);
   assert.doesNotMatch(block.slice(0, block.indexOf(': [...qboInvoices')), /availDrafts|qboNames|pendingBackfill|cutAliases/); // none of those count in a group
 });
+
+// ---- leftovers of 11/11
+import { SheetNameStore, overrideFor } from '../src/sheetnames.js';
+
+test('the owner\'s sheet-name answers are approved aliases before any fuzzy match; pieces stay pieces; the lost plus works with decimals; the kept caption shows in the trace', () => {
+  const names = ['ALAFEEFI KITCHEN', 'AL AFEEF KITCHEN'];
+  const store = new SheetNameStore(''); store.tell('AL AFFEFI KITCHEN', 'ALAFEEFI KITCHEN'); store.tell('AL AFFEF KITCHEN', 'AL AFEEF KITCHEN');
+  const alias = (n) => overrideFor(store, n);
+  assert.equal(qboNameFor('Al AFFEFI KITCHEN', names, alias), 'ALAFEEFI KITCHEN'); assert.equal(qboNameFor('AL AFFEF KITCHEN', names, alias), 'AL AFEEF KITCHEN');
+  const pcs = parseCutCaption('ART NO 18 ZETA WOOD INDUSTRIES 2 PCS'); assert.deepEqual([pcs.quantity, pcs.unit, pcs.customer], [2, 'pcs', 'ZETA WOOD INDUSTRIES']);
+  assert.equal(parseCutCaption('ART NO 215 NOVA 5M').unit, 'm');
+  const lost = parseCutCaption('ART NO 215 NOVA IND 2572.6=97.6M'); assert.deepEqual([lost.quantity, lost.pieces], [97.6, [25, 72.6]]);
+  assert.deepEqual(parseCutCaption('ART NO 215 NOVA IND 25+72.6=97.6M').pieces, [25, 72.6]);
+  const NOW = Date.parse('2026-11-11T08:00:00Z');
+  const r = unbilled({ events: [{ type: 'cut', at: NOW - 3600000, customer: 'ZETA', customerTyped: 'ZETA', ref: 'abcdefgh12', text: 'ART NO 18 ZETA 2 PCS', lines: [{ code: '18', quantity: 2, unit: 'pcs' }] }], invoices: [], now: NOW });
+  assert.match(r.groups[0].parts[0], /^18 2 pcs \d\d\/\d\d$/); assert.match(r.trace[0], /\(post abcdefgh: "ART NO 18 ZETA 2 PCS"\)$/);
+  // 72.6 and 25+72.6=97.6 on one day: one cut of 97.6, not 170.2
+  const day = [{ type: 'cut', at: NOW - 7200000, customer: 'NOVA IND', ref: 'a', lines: [{ code: '215', quantity: 72.6, unit: 'm' }] }, { type: 'cut', at: NOW - 3600000, customer: 'NOVA IND', ref: 'b', lines: [{ code: '215', quantity: 97.6, unit: 'm' }], pieces: [25, 72.6] }];
+  assert.deepEqual(settleCuts(day).map((e) => e.ref), ['b']);
+});

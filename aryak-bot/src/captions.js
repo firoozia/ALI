@@ -15,7 +15,7 @@ const UNIT = String.raw`(?:M|MTRS?|METERS?|METRES?)`;
 // pieces added up: «18+12 = 30M», «6+3.5+3.2+2.7= INVOICE 14.5M» (the number after INVOICE is what was invoiced); the total after «=» and the unit are optional
 const QTY_PIECES = new RegExp(String.raw`(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+)\s*(?:=\s*(INVOICED?\s*)?(\d+(?:\.\d+)?)\s*)?(?:${UNIT}\b)?`, 'i');
 const QTY_TIMES = new RegExp(String.raw`(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+)\s*(?:${UNIT}\b)?`, 'i'); // «1.8×2»: two pieces of 1.8
-const QTY_ONE = /(\d+(?:\.\d+)?)\s*(M|MTRS?|METERS?|METRES?|ROLLS?)\b/i;
+const QTY_ONE = /(\d+(?:\.\d+)?)\s*(M|MTRS?|METERS?|METRES?|ROLLS?|PCS?|PIECES?)\b/i;
 const round3 = (n) => Math.round(n * 1000) / 1000;
 
 /**
@@ -35,9 +35,13 @@ export function parseCutCaption(text) {
   let pieces;
   let unit = 'm';
   let invoiceQuantity;
-  // WhatsApp text can lose the plus: «1510=25M» is 15+10=25M (a split of the digits whose parts add up to the total)
-  rest = rest.replace(/(?<![0-9.])(\d{2,8})\s*=\s*(INVOICED?\s*)?(\d+(?:\.\d+)?)(?![0-9])/i, (all, digits, inv, total) => {
-    for (let k = 1; k < digits.length; k++) { const a = digits.slice(0, k); const b = digits.slice(k); if (a[0] !== '0' && b[0] !== '0' && Number(a) + Number(b) === Number(total)) return a + '+' + b + '=' + (inv || '') + total; }
+  // WhatsApp text can lose the plus: «1510=25M» is 15+10=25M, «2572.6=97.6M» is 25+72.6=97.6M (a split of the digits whose parts add up to the total)
+  rest = rest.replace(/(?<![0-9.])(\d[0-9.]{1,12}\d)\s*=\s*(INVOICED?\s*)?(\d+(?:\.\d+)?)(?![0-9])/i, (all, digits, inv, total) => {
+    for (let k = 1; k < digits.length; k++) {
+      const a = digits.slice(0, k); const b = digits.slice(k);
+      if (a.endsWith('.') || b.startsWith('.') || a[0] === '0' && !a.startsWith('0.') || b[0] === '0' && !b.startsWith('0.') || (a.match(/\./g) || []).length > 1 || (b.match(/\./g) || []).length > 1) continue;
+      if (Math.abs(Number(a) + Number(b) - Number(total)) < 0.0005) return a + '+' + b + '=' + (inv || '') + total;
+    }
     return all;
   });
   const p = QTY_PIECES.exec(rest);
@@ -54,7 +58,7 @@ export function parseCutCaption(text) {
     rest = rest.replace(t[0], ' ');
   } else {
     const q = QTY_ONE.exec(rest);
-    if (q) { quantity = num(q[1]); unit = /^roll/i.test(q[2]) ? 'roll' : 'm'; rest = rest.replace(q[0], ' '); }
+    if (q) { quantity = num(q[1]); unit = /^roll/i.test(q[2]) ? 'roll' : /^(pc|piece)/i.test(q[2]) ? 'pcs' : 'm'; rest = rest.replace(q[0], ' '); } // «2 PCS» is two pieces, never two metres
   }
   const internal = /\bFOR\s+CUT(?:TING)?\b/i.test(rest);
   const damaged = /\bDAMAG\w*/i.test(rest);

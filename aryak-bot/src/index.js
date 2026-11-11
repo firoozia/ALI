@@ -69,7 +69,7 @@ import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
-import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
+import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, overrideFor, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
 import { unbilled, unbilledText } from './unbilled.js';
 import { PaymentDups, groupPaymentNotices, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
@@ -688,7 +688,7 @@ async function trackGroup(raw, groupId, role) {
       return;
     }
     for (const [i, ev] of det.events.entries()) {
-      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'delivery' ? { msg: raw.key.id } : {}), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}) };
+      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'delivery' ? { msg: raw.key.id } : {}), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}), ...(role === 'cut' ? { text: String(text).slice(0, 160) } : {}) };
       const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
       if (role === 'payment' && !event.customer && pn && nowAt() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
       if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event })) continue;
@@ -800,7 +800,7 @@ async function unbilledReport(events = tracker.events) {
   const invoices = await qbo.query(`select * from Invoice where TxnDate >= '${since}'`);
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
-  const result = unbilled({ events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: (n) => cutAliases.resolve(n), qboNames, timeZone: config.timezone });
+  const result = unbilled({ events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: nameAlias, qboNames, timeZone: config.timezone });
   for (const l of result.trace || []) logger.info(l); // what each line came from: the post name, the QuickBooks name it was grouped under, the post
   return unbilledText(result);
 }
@@ -2986,10 +2986,13 @@ async function invoiceLookupFor(events) {
   return lookup;
 }
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
+/** The approved aliases for a posted name: the cutting-group aliases, then the QuickBooks names the owner told for the sheet (sheet names), before any fuzzy match. */
+const nameAlias = (n) => cutAliases.resolve(n) || overrideFor(sheetNameStore, n);
+
 /** A name as QuickBooks writes it (an old alias may still give a longer one): the exact QuickBooks name when the post's name fits exactly one customer there, else the name as posted. */
 function namerOver(names) {
   const memo = new Map(); // each distinct name is matched once
-  return (n) => { if (!memo.has(n)) memo.set(n, qboNameFor(n, names, (x) => cutAliases.resolve(x)) || n); return memo.get(n); };
+  return (n) => { if (!memo.has(n)) memo.set(n, qboNameFor(n, names, nameAlias) || n); return memo.get(n); };
 }
 const driverNamerNow = () => namerOver((qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean)); // the list already read (the evening report is not a place to call QuickBooks)
 async function driverNamer() {

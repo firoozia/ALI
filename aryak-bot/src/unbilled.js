@@ -37,7 +37,7 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
   };
   const byCustomer = new Map();
   const trace = [];
-  const add = (customer, text, ref = '', post = '') => { const name = nameOf(customer); byCustomer.set(name, [...(byCustomer.get(name) || []), text]); trace.push(`unbilled: "${name}" <- "${post || customer}": ${text}${ref ? ` (post ${String(ref).slice(0, 8)})` : ''}`); }; // one QuickBooks name for the spellings of one customer name
+  const add = (customer, text, ref = '', post = '', said = '') => { const name = nameOf(customer); byCustomer.set(name, [...(byCustomer.get(name) || []), text]); trace.push(`unbilled: "${name}" <- "${post || customer}": ${text}${ref ? ` (post ${String(ref).slice(0, 8)}${said ? `: "${said}"` : ''})` : ''}`); }; // one QuickBooks name for the spellings of one customer name
   for (const e of events) {
     if (e.at < now - days * DAY || e.internal || e.simulated) continue;
     const post = e.customerTyped || e.customer;
@@ -48,7 +48,7 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
         if (!(Number(l.quantity) > 0) || l.invoiced) continue; // an invoice the program itself recorded takes the cut
         const k = digits(l.code);
         const covered = his.some((x) => x.at >= e.at - DAY && x.codes.some((c) => digits(c) === k));
-        if (!covered) add(e.customer || post, `${String(l.code).replace(/^ART\.?\s*NO\.?\s*/i, '')} ${Number(l.invoiceQuantity) > 0 ? l.invoiceQuantity : l.quantity}${l.unit === 'roll' ? ' roll' : 'm'} ${dm(e.at, timeZone)}`, e.ref, post);
+        if (!covered) add(e.customer || post, `${String(l.code).replace(/^ART\.?\s*NO\.?\s*/i, '')} ${Number(l.invoiceQuantity) > 0 ? l.invoiceQuantity : l.quantity}${l.unit === 'roll' ? ' roll' : l.unit === 'pcs' ? ' pcs' : 'm'} ${dm(e.at, timeZone)}`, e.ref, post, e.text);
       }
     } else if (e.type === 'delivery' && e.delivered) {
       if (!his.some((x) => x.at >= e.at - DAY)) add(e.customer || post, `delivered ${dm(e.at, timeZone)}, no invoice since`, e.ref, post);
