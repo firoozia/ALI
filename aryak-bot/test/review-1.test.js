@@ -717,3 +717,21 @@ test('old cut rows: the shared-group name is repaired on read from the sheet OUT
   requestCutEdit(store, tracker, { op: 'cancel', row: 'Z2' }, {}); decideCutEdit(store, tracker, 'yes', 'X3');
   assert.ok(tracker.events[1].cancelled && tracker.events[1].internal);
 });
+
+test('credit customers who pay in parts: a found payment says how QuickBooks applied it; a payment on account says the open balance; a mistyped amount (digits swapped) of the same customer asks the owner', async () => {
+  const { receivedText } = await import('../src/expenses.js');
+  const dubai = (d) => `2026-11-${d}`;
+  const item = (extra) => ({ amount: 567, shown: '*567.00*', foreign: false, unconverted: false, note: '', day: dubai('10'), customer: 'ZETA KITCHEN', typed: '', kind: 'cash', invoices: [], cleared: false, due: '', drawer: '', at: Date.parse('2026-11-10T10:00:00Z'), ref: 'r1', paid: null, ...extra });
+  const open = [{ Id: '70', DocNumber: '9925', Balance: 939.83, CustomerRef: { name: 'ZETA KITCHEN' }, TxnDate: dubai('01') }, { Id: '71', DocNumber: '9930', Balance: 500, CustomerRef: { name: 'OMEGA SHOP' }, TxnDate: dubai('02') }];
+  const pay = { _type: 'Payment', TxnDate: dubai('10'), TotalAmt: 567, CustomerRef: { name: 'ZETA KITCHEN' }, Line: [{ Amount: 567, LinkedTxn: [{ TxnId: '70', TxnType: 'Invoice' }] }] };
+  const now = Date.parse('2026-11-11T09:00:00Z');
+  const found = receivedText([item({})], { title: 't', records: [pay], openInvoices: open, now });
+  assert.match(found, /✔ in QuickBooks \(payment 10\/11\/2026, applied to inv-9925 part\)/);
+  const onAccount = receivedText([item({ amount: 300, shown: '*300.00*' })], { title: 't', records: [], openInvoices: open, now });
+  assert.match(onAccount, /⚠ not recorded in QuickBooks yet — on account; open balance 939\.83/);
+  assert.doesNotMatch(onAccount, /Needs your OK/);
+  // 576 posted for the customer the program chose (OMEGA SHOP); the typed name is the customer who paid 567 two lines above
+  const swapped = receivedText([item({ amount: 576, shown: '*576.00*', customer: 'OMEGA SHOP', typed: 'ZETA KITCHEN' })], { title: 't', records: [pay], openInvoices: open, now, checks: { codeFor: () => 'G5' } });
+  assert.match(swapped, /\*Needs your OK\*\n#G5: OMEGA SHOP 576\.00 vs Payment of 10\/11\/2026 567\.00 \(−9\.00, digits swapped\?\)\nyes #G5 \/ no #G5/);
+  assert.doesNotMatch(swapped, /on account/);
+});

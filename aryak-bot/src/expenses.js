@@ -267,7 +267,7 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, at: e.at, drawerAsk: e.drawerAsk || null, name: e.customer || '', pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', typed: e.customerTyped && !e.pendingName ? e.customerTyped : '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, at: e.at, drawerAsk: e.drawerAsk || null, name: e.customer || '', pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
@@ -279,8 +279,8 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
  * Read only: nothing is recorded anywhere.
  */
 export function closestMatch(item, records, openInvoices, aliasOf = () => '') {
-  const who = (name) => nameOk(item.customer, name || '', aliasOf);
-  if (!item.customer) return null;
+  const who = (name) => nameOk(item.customer, name || '', aliasOf) || (!!item.typed && nameOk(item.typed, name || '', aliasOf)); // the name as posted too: «Al afeefi» is not always the customer the program chose
+  if (!item.customer && !item.typed) return null;
   const options = [];
   for (const r of expandRecords(records)) if (who(r.CustomerRef?.name) && closeDay(r.TxnDate, item.day, 7)) options.push({ kind: 'payment', amount: Number(r.TotalAmt), count: 1, label: `${r._type || 'payment'} of ${dmy(r.TxnDate)}` });
   const open = openInvoices.filter((i) => Number(i.Balance) > 0 && who(i.CustomerRef?.name)).sort((a, b) => String(b.TxnDate).localeCompare(String(a.TxnDate))).slice(0, 10);
@@ -292,8 +292,19 @@ export function closestMatch(item, records, openInvoices, aliasOf = () => '') {
       for (let k = b + 1; k < open.length; k++) options.push({ kind: 'invoices', amount: Number(open[a].Balance) + Number(open[b].Balance) + Number(open[k].Balance), count: 3, label: name(open[a]) + ' + ' + name(open[b]) + ' + ' + name(open[k]) });
     }
   }
+  // a near miss (the same digits in another order, or within 2 %) of a payment of this customer in the last week beats every other candidate: it is most likely this very payment, mistyped
+  const digitsOf = (n) => String(Math.round(Number(n) * 100)).split('').sort().join('');
+  const near2 = options.filter((o) => o.kind === 'payment' && Math.abs(o.amount - item.amount) > 1 && (digitsOf(o.amount) === digitsOf(item.amount) || Math.abs(o.amount - item.amount) <= 0.02 * item.amount)).sort((x, y) => Math.abs(x.amount - item.amount) - Math.abs(y.amount - item.amount))[0];
+  if (near2) return { ...near2, amount: Math.round(near2.amount * 100) / 100, diff: Math.round((near2.amount - item.amount) * 100) / 100, swapped: digitsOf(near2.amount) === digitsOf(item.amount) };
   const best = options.sort((x, y) => Math.abs(x.amount - item.amount) - Math.abs(y.amount - item.amount) || x.count - y.count || (x.kind === 'payment' ? -1 : 1))[0];
   return best ? { ...best, amount: Math.round(best.amount * 100) / 100, diff: Math.round((best.amount - item.amount) * 100) / 100 } : null;
+}
+
+/** What the customer still owes (the open invoices of this name, as posted or as chosen). */
+export function openBalanceOf(item, openInvoices, aliasOf = () => '') {
+  const who = (name) => nameOk(item.customer, name || '', aliasOf) || (!!item.typed && nameOk(item.typed, name || '', aliasOf));
+  if (!item.customer && !item.typed) return 0;
+  return Math.round(openInvoices.filter((i) => Number(i.Balance) > 0 && who(i.CustomerRef?.name)).reduce((x, i) => x + Number(i.Balance), 0) * 100) / 100;
 }
 
 const signed = (d) => (d > 0 ? '+' : d < 0 ? '−' : '') + money(Math.abs(d));
@@ -302,6 +313,13 @@ export function receivedText(items, options) {
   const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
   const matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   const inQb = (it) => matched.has(it) || it.paid === true;
+  const invName = new Map(openInvoices.map((i) => [String(i.Id), i]));
+  const appliedText = (rec) => { // «payment 10/11, applied to inv-9925 part»: however QuickBooks spread it
+    if (!rec || rec._type !== 'Payment') return '';
+    const parts = [];
+    for (const l of rec.Line || []) for (const t of l.LinkedTxn || []) if (t.TxnType === 'Invoice') { const inv = invName.get(String(t.TxnId)); parts.push((inv ? 'inv-' + (inv.DocNumber || inv.Id) : 'inv #' + t.TxnId) + (inv && Number(inv.Balance) > 0 ? ' part' : '')); }
+    return ' (payment ' + dmy(rec.TxnDate) + (parts.length ? ', applied to ' + parts.join(', ') : '') + ')';
+  };
   const groups = [['cash', '💵 Cash'], ['cheque', '🧾 Cheques'], ['bank', '🏦 Bank transfers']];
   let n = 0; const blocks = []; const needsOk = [];
   for (const [kind, label] of groups) {
@@ -312,13 +330,15 @@ export function receivedText(items, options) {
       const rec = matched.get(it); let status;
       if (it.foreign) status = '⚠ foreign currency: check in QuickBooks';
       else if (it.accepted) status = '✔ accepted by you: ' + it.accepted.text;
-      else if (inQb(it)) status = '✔ in QuickBooks' + (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004 ? ' (' + money(rec.TotalAmt) + ', posted ' + money(it.amount) + ')' : '');
+      else if (inQb(it)) status = '✔ in QuickBooks' + (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004 ? ' (' + money(rec.TotalAmt) + ', posted ' + money(it.amount) + ')' : appliedText(rec));
       else {
         const best = it.rejected ? null : closestMatch(it, records, openInvoices, aliasOf);
         if (best && Math.abs(best.diff) <= 1 && best.kind === 'invoices') status = '⚠ not in QuickBooks yet — pays ' + best.label + ' (' + money(best.amount) + ', posted ' + money(it.amount) + ')';
+        else if (best && Math.abs(best.diff) > 1 && (best.swapped || best.kind === 'payment')) { status = '⚠ not in QuickBooks yet'; needsOk.push({ it, best }); }
         else {
-          status = '⚠ not in QuickBooks yet';
-          if (best && Math.abs(best.diff) > 1) needsOk.push({ it, best });
+          const owed = openBalanceOf(it, openInvoices, aliasOf);
+          if (!it.foreign && owed > 0 && owed + 1 >= it.amount) status = '⚠ not recorded in QuickBooks yet — on account; open balance ' + money(owed);
+          else { status = '⚠ not in QuickBooks yet'; if (best && Math.abs(best.diff) > 1) needsOk.push({ it, best }); }
         }
       }
       const dueText = it.due ? ' — due ' + dmy(it.due) : ''; const drawerText = it.drawer ? ' — drawer ' + it.drawer : '';
@@ -347,7 +367,7 @@ export function receivedText(items, options) {
   }), ...needsOk.map(({ it, best }) => {
     const text = best.label + ' ' + money(best.amount);
     const code = checks ? checks.codeFor(it.ref, text) : '';
-    return (code ? '#' + code + ': ' : '') + (it.customer || 'UNKNOWN').toUpperCase() + ' ' + money(it.amount) + ' vs ' + text + ' (' + signed(best.diff) + ')' + (code ? '\nyes #' + code + ' / no #' + code : '');
+    return (code ? '#' + code + ': ' : '') + (it.customer || 'UNKNOWN').toUpperCase() + ' ' + money(it.amount) + ' vs ' + text + ' (' + signed(best.diff) + (best.swapped ? ', digits swapped?' : '') + ')' + (code ? '\nyes #' + code + ' / no #' + code : '');
   })].join('\n')] : [];
   return [`*Money received — ${title}*`, blocks.join(`\n${SEP}\n`), SEP, `Total received: *${money(total)} AED* (cash *${money(sum('cash'))}* / cheques *${money(sum('cheque'))}* / transfers *${money(sum('bank'))}*)`, ...(warn.length ? [`⚠ ${warn.join(', ')}`] : []), ...okBlock].join('\n');
 }
