@@ -209,7 +209,14 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
       if (real.some((o) => Math.round(Number(o.amount) * 100) === Math.round(Number(e.amount) * 100) && Math.abs(o.at - e.at) < 3 * 24 * 3600 * 1000)) continue;
       fixed.push({ ...e, customer: '', customerTyped: '', pendingName: true, ...(/clear|done|confirm/i.test(e.text) ? { cleared: true } : {}) }); continue;
     }
-    if (e.customer && isReplyFiller(e.customer) && !e.text) { fixed.push({ ...e, customer: '', customerTyped: '', pendingName: true }); continue; }
+    if (e.customer && isReplyFiller(e.customer)) {
+      // an older row made from a quote-reply: the customer is the REPLY's words («plz it») and the text is the QUOTED caption («cash from X 789.5 aed»). If the original post stands in the list (the same
+      // amount that day) this row is a duplicate and goes; else it takes the customer named in the caption.
+      const original = events.some((o) => o !== e && o.type === 'payment' && !o.simulated && o.customer && !isReplyFiller(o.customer) && Math.abs(Number(o.amount) - Number(e.amount)) < 0.005 && Math.abs(o.at - e.at) < 3 * 24 * 3600 * 1000);
+      if (original) continue;
+      const named = e.text && !isEstimateText(e.text) ? parsePaymentCaption(e.text)?.customers?.[0] || '' : '';
+      fixed.push({ ...e, customer: named, customerTyped: named, pendingName: !named }); continue;
+    }
     fixed.push(e);
   }
   const list = fixed.sort((a, b) => a.at - b.at).map((e) => {
@@ -222,13 +229,14 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
     return { ...c, ...(c.kind === 'cash' && CHEQUE_WORDS.test(words) ? { kind: 'cheque' } : {}), ...(asked && !e.foreign && (e.currency || 'AED') === 'AED' ? { currencyMentioned: asked[1].toUpperCase() } : {}) };
   });
   // the same cheque seen twice under two names (the customer and the drawer: «AL MALTA» wrote the cheque for «AL AHLIA»): one row for the customer who is ours, the drawer beside it
+  const chequeLike = (e) => e.kind === 'cheque' || e.source === 'photo' || CHEQUE_WORDS.test(e.text || ''); // a photo of a cheque has no word in it
   for (const e of list) {
-    if (e.kind !== 'cheque' || e.merged || !e.customer || e.pendingName) continue;
-    const twin = list.find((o) => o !== e && !o.merged && o.kind === 'cheque' && o.customer && !o.pendingName && Math.round(Number(o.amount) * 100) === Math.round(Number(e.amount) * 100) && Math.abs(o.at - e.at) < 3 * 24 * 3600 * 1000
+    if (e.merged || !e.customer || e.pendingName || !chequeLike(e)) continue;
+    const twin = list.find((o) => o !== e && !o.merged && o.customer && !o.pendingName && chequeLike(o) && (e.kind === 'cheque' || o.kind === 'cheque') && Math.round(Number(o.amount) * 100) === Math.round(Number(e.amount) * 100) && Math.abs(o.at - e.at) < 3 * 24 * 3600 * 1000
       && !sameCutCustomer(o.customer, e.customer) && isKnown(o.customer) !== isKnown(e.customer));
     if (!twin) continue;
     const keep = isKnown(e.customer) ? e : twin; const drop = keep === e ? twin : e;
-    keep.drawer = drop.customer; drop.merged = true;
+    keep.drawer = drop.customer; if (drop.kind === 'cheque') keep.kind = 'cheque'; drop.merged = true;
   }
   for (let i = list.length - 1; i >= 0; i--) if (list[i].merged) list.splice(i, 1);
   return list;

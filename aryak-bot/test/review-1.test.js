@@ -596,3 +596,19 @@ test('a rounded post is matched by CUSTOMER first, then by amount: within 1 AED 
   assert.deepEqual(codes, [['r2500', 'inv-9994 2,497.50']]); assert.equal(closestMatch(item('omega co', 100), [], openInvoices).kind, 'invoices');
   const store = new PayChecks(''); const g1 = store.codeFor('r1', 'inv-1 5.00'); assert.equal(g1, 'G1'); assert.equal(store.codeFor('r1', 'inv-1 5.00'), 'G1'); assert.equal(store.codeFor('r2', 'inv-2 7.00'), 'G2'); assert.deepEqual(store.openIds(), ['G1', 'G2']); store.close('G1', 'accepted'); assert.deepEqual(store.openIds(), ['G2']);
 });
+
+test('the real stored rows of 11/11 (made-up names): a row made by a reply («plz it») with the quoted caption as text is dropped when the original stands, else it takes the caption\'s customer; a photo of a cheque and a cheque row are one', () => {
+  const at = Date.parse('2026-11-11T09:13:00Z');
+  const events = [
+    { type: 'payment', kind: 'cash', currency: 'AED', customer: 'zeta work', customerTyped: 'zeta work', amount: 789.5, at, ref: 'o1', text: 'Cash from zeta work 789.5 aed' },
+    { type: 'payment', kind: 'cash', currency: 'AED', customer: 'Plz it', customerTyped: 'Plz it', amount: 789.5, at: at + 3 * 3600000, ref: 'f1', text: 'Cash from zeta work \n789.5 aed' }, // the reply's words, the quoted caption
+    { type: 'payment', kind: 'cash', currency: 'AED', customer: 'Also this', customerTyped: 'Also this', amount: 164, at: at + 3 * 3600000, ref: 'f2', text: 'Cash from nova lions for kitchens \n164 aed' }, // no original in the list
+    { type: 'payment', customer: 'AL MALTA TEST LLC', amount: 3500, at, ref: 'c1', source: 'photo' }, // a photo of the cheque: the drawer
+    { type: 'payment', kind: 'cheque', currency: 'AED', customer: 'AL AHLIA TEST', amount: 3500, at: at + 3600000, ref: 'c2', text: 'AL AHLIA TEST 3,500 cheque' },
+  ];
+  const list = cleanPaymentEvents({ events, isKnown: (n) => /AHLIA|zeta|nova/i.test(n) });
+  const by = Object.fromEntries(list.map((e) => [e.ref, e]));
+  assert.deepEqual(Object.keys(by).sort(), ['c2', 'f2', 'o1']); // f1 is the original's duplicate, c1 is the cheque's drawer
+  assert.ok(by.f2.customer.toLowerCase().includes('nova')); assert.equal(by.c2.drawer, 'AL MALTA TEST LLC'); assert.equal(by.c2.kind, 'cheque');
+  assert.deepEqual(list.map((e) => e.amount).reduce((a, b) => a + b, 0), 789.5 + 164 + 3500);
+});
