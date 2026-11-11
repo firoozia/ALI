@@ -906,3 +906,26 @@ test('the cash box from QuickBooks: the Petty Cash account, cash payments only, 
   const override = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [], outs: [], expenses: [] }, openingOverride: 500 });
   assert.match(override.text, /Opening balance \(01\/11\)\s+500\.00/); // the owner's override
 });
+
+test('the cash box matching: a receipt in another account is 🟡, a swapped-digit one asks with its code, «pay … for …» is a cash expense matched within 7 days, an empty boss section stays visible when a post exists', async () => {
+  const { cashBoxReportQbo, cashOutKind, rederiveCashOut } = await import('../src/cashbox.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  assert.deepEqual(cashOutKind('Pay by cash 157 aed for garbage box'), { kind: 'cash_expense', amount: 157, employee: 'GARBAGE BOX' });
+  assert.equal(cashOutKind('paid 500 cash for invoice 9925'), null); assert.equal(cashOutKind('cash received from ZETA CO 750'), null); // a customer's payment stays one
+  const old = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'x', at: Date.parse('2026-11-05T09:00:00Z'), customer: 'GARBAGE BOX', amount: 157, text: 'Pay by cash 157 aed for garbage box' };
+  assert.equal(rederiveCashOut(old).kind, 'cash_expense'); assert.equal(sharedPaymentList({ events: [old] }).length, 0);
+  const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
+  const data = { opening: 1000, closing: 800, received: [], elsewhere: [{ amount: 176.4, date: '2026-11-11', name: 'ZETA WOOD', account: 'Cash and cash equivalents' }],
+    transfersIn: [], transfersOut: [], purchases: [{ amount: 157.5, date: '2026-11-10', vendor: 'CITY CLEAN', category: 'Cleaning' }] };
+  const { text } = cashBoxReportQbo({ month: '2026-11', data, swapCodeOf: (ref) => (ref === 'sw' ? 'G5' : ''), posts: {
+    cashIn: [{ amount: 176.4, at: day('11'), customer: 'ZETA WOOD', ref: 'z' }, { amount: 576, at: day('10'), customer: 'NOVA KITCHEN', ref: 'sw' }, { amount: 90, at: day('12'), customer: 'OMEGA', ref: 'o' }],
+    outs: [{ kind: 'cash_to_boss', amount: 18000, at: day('04') }],
+    expenses: [{ amount: 157, at: day('05'), vendor: 'GARBAGE BOX', days: 7 }],
+  } });
+  assert.match(text, /🟡 11\/11\s+176\.40 {2}\(in QuickBooks, deposited to Cash and cash equivalents, not Petty Cash\)/);
+  assert.match(text, /❓ 10\/11\s+576\.00 {2}\(digits swapped\? answer #G5\)/);
+  assert.match(text, /🔴 12\/11\s+90\.00 {2}\(posted, not in QuickBooks\)/);
+  assert.match(text, /🟢 10\/11\s+157\.50 {3}CITY CLEAN/); // 5 days apart: matched with the 7-day window
+  assert.match(text, /👔 \*Cash to boss\*: none recorded in QuickBooks this month\n🔴 04\/11\s+18,000\.00 {2}\(posted, not in QuickBooks\)/);
+  assert.match(text, /🟡 Other account: 1/);
+});
