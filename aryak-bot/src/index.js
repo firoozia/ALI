@@ -3275,11 +3275,7 @@ async function receivedReportText(kind) {
   logNotFound(items, records);
   const openInvoices = kind === 'today' ? await qbo.query("select * from Invoice where Balance > '0'").catch(() => []) : [];
   const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, checks: kind === 'today' ? payChecks : null });
-  if (kind !== 'today' || /No money was recorded/.test(text)) return text;
-  // the day's end: the findings of «payments to match» and the possible duplicates (marked, never a question), after the double rule
-  let match = '';
-  try { match = await paymentsReport(tracker.events, '', { days: 1, questions: false }); } catch (e) { logger.warn('received report: the payments to match failed: ' + e.message); }
-  return match && !/^No payment was seen/.test(match) ? text + '\n' + SEP + '\n' + SEP + '\n' + match : text;
+  return text; // the «payments to match» list is gone: its information is inside each line of the report
 }
 async function weeklyCheckReport() {
   const r = clampRange(rangeOf('week', todayDubai()));

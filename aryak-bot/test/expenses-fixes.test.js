@@ -71,15 +71,15 @@ test('ONE parsed list for payments, money received and the weekly check: the sam
   assert.equal(sharedPaymentList({ events, payments: qb, dups }).length, 3); // the owner said these two are separate payments: both kept
   const items = receivedItems(list, day);
   const text = receivedText(items, { title: '10/11/2026', records: qb });
-  assert.ok(text.includes('1. ALWAN ALSHAM — *115.00* ✔ in QuickBooks')); // the nameless 115 is the recorded ALWAN payment, as «payments» says
+  assert.ok(text.includes('*ALWAN ALSHAM*\n🟢 115.00')); // the nameless 115 is the recorded ALWAN payment, as «payments» says
   const week = weeklyCheckText({ expenses: [], purchases: [], items, payments: qb, title: 'w' });
-  assert.ok(!/RECEIPT|CLEAR|PAY\b/.test(week)); assert.match(week, /UNKNOWN — \*157\.00\*/); assert.ok(!/115\.00/.test(week)); // 115 is recorded; only 157 is missing, with no junk name
+  assert.ok(!/RECEIPT|CLEAR|PAY\b/.test(week)); assert.match(week, /\*UNKNOWN\*\n🔴 157\.00/); assert.ok(!/115\.00/.test(week)); // 115 is recorded; only 157 is missing, with no junk name
 });
 
 test('a separator between every entry in the money received and the weekly check, not only before the total', () => {
   const items = receivedItems([pay({ customer: 'A', amount: 10 }), pay({ customer: 'B', amount: 20 }), pay({ customer: 'C', amount: 30 })], day);
   const lines = receivedText(items, { title: 't' }).split('\n');
-  assert.equal(lines.filter((l) => l === SEP).length, 2 + 1); // two between the three cash entries and one before the total
+  assert.equal(lines.filter((l) => l === SEP).length, 2 + 2 + 2); // two rules after the title, one between each pair of customers, two before the totals
   const week = weeklyCheckText({ expenses: [], purchases: [], items, payments: [], title: 'w' }).split('\n');
   assert.equal(week.filter((l) => l === SEP).length, 2); // between the three missing entries
   assert.ok(!week.includes('1. ' ) && week[0] === '*Weekly check — w*');

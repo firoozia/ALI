@@ -561,7 +561,7 @@ test('the fake rows made by filler replies and the estimates leave the lists; th
   // the received report: counted once, the drawer named
   const items = receivedItems(list, { from: '2026-11-11', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
   const text = receivedText(items, { title: '11/11', records: [] });
-  assert.match(text, /AL AHLIA KITCHEN — \*3,500\.00\*[^\n]* — drawer AL MALTA KITCHENS LLC/); assert.doesNotMatch(text, /PLZ|ALSO THIS|WAHDAN/); assert.equal((text.match(/3,500\.00/g) || []).length >= 1, true);
+  assert.match(text, /\*AL AHLIA KITCHEN\*\n⏳ 3,500\.00  cheque not cleared \(0 days\) \(drawer AL MALTA KITCHENS LLC\)/); assert.doesNotMatch(text, /PLZ|ALSO THIS|WAHDAN/); assert.equal((text.match(/3,500\.00/g) || []).length >= 1, true);
 });
 
 test('one answer for a row in both reports: a payment recorded under a near spelling or as a line of a bigger payment is found by «payments to match» as well', () => {
@@ -588,11 +588,11 @@ test('a rounded post is matched by CUSTOMER first, then by amount: within 1 AED 
   const openInvoices = [inv('NOVA LIONS FOR KITCHENS', 'inv-9990', 163.8), inv('TAU CO', 'inv-9991', 1500), inv('TAU CO', 'inv-9992', 1499.1), inv('OMEGA CO', 'inv-9993', 500), inv('PHI CO', 'inv-9994', 2497.5)];
   const codes = []; const checks = { codeFor: (ref, text) => { codes.push([ref, text]); return 'G' + codes.length; } };
   const text = receivedText(items, { title: '11/11', records, openInvoices, checks });
-  assert.match(text, /ZETA WORK — \*789\.50\* ✔ in QuickBooks \(789\.60, posted 789\.50\)/); // 0.10 apart: the same payment
-  assert.match(text, /NOVA LIONS FOR KITCHENS — \*164\.00\* ⚠ not in QuickBooks yet — pays inv-9990 \(163\.80, posted 164\.00\)/); // the open invoice, 0.20 apart
-  assert.match(text, /SIGMA CO — \*500\.00\* ⚠ not in QuickBooks yet(?! — pays)/); // OMEGA's invoice of 500 is another customer: the customer comes first
-  assert.match(text, /TAU CO — \*3000\.00\* ⚠ not in QuickBooks yet — pays inv-9991 \+ inv-9992 \(2,999\.10, posted 3,000\.00\)/); // 0.90 apart: still the same payment, as a proposal
-  assert.match(text, /\*Needs your OK\*\n#G1: PHI CO 2,500\.00 vs inv-9994 2,497\.50 \(−2\.50\)\nyes #G1 \/ no #G1/); // beyond 1.00: never matched by itself
+  assert.match(text, /\*ZETA WORK\*\n🟢 789\.50  \(QuickBooks 789\.60\)/); // 0.10 apart: the same payment
+  assert.match(text, /\*NOVA LIONS FOR KITCHENS\*\n🔴 164\.00  not in QuickBooks yet \(pays inv-9990, 163\.80\)/); // the open invoice, 0.20 apart
+  assert.match(text, /\*SIGMA CO\*\n🔴 500\.00  not in QuickBooks yet(?! \(pays)/); // OMEGA's invoice of 500 is another customer: the customer comes first
+  assert.match(text, /\*TAU CO\*\n🔴 3000\.00  not in QuickBooks yet \(pays inv-9991 \+ inv-9992, 2,999\.10\)/); // 0.90 apart: still the same payment, as a proposal
+  assert.match(text, /❓ \*Needs your OK\*\n#G1: PHI CO 2,500\.00 vs inv-9994 2,497\.50 \(−2\.50\) — yes #G1 \/ no #G1/); // beyond 1.00: never matched by itself
   assert.deepEqual(codes, [['r2500', 'inv-9994 2,497.50']]); assert.equal(closestMatch(item('omega co', 100), [], openInvoices).kind, 'invoices');
   const store = new PayChecks(''); const g1 = store.codeFor('r1', 'inv-1 5.00'); assert.equal(g1, 'G1'); assert.equal(store.codeFor('r1', 'inv-1 5.00'), 'G1'); assert.equal(store.codeFor('r2', 'inv-2 7.00'), 'G2'); assert.deepEqual(store.openIds(), ['G1', 'G2']); store.close('G1', 'accepted'); assert.deepEqual(store.openIds(), ['G2']);
 });
@@ -626,7 +626,7 @@ test('one cheque seen three ways (the post with «cheaque» in the name, the pho
   const items = receivedItems(list, { from: '2026-11-11', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
   assert.equal(items.length, 1); assert.equal(items[0].kind, 'cheque'); // listed on the clearing day, under cheques, once
   const text = receivedText(items, { title: '11/11', records: [{ TxnDate: '2026-11-11', TotalAmt: 3500, CustomerRef: { name: 'AL AHLIA TEST' } }] });
-  assert.match(text, /🧾 Cheques\n1\. AL AHLIA — \*3,500\.00\* — drawer AL MALTA TEST LLC — received 10\/11 — cleared 11\/11 ✔ in QuickBooks/); assert.match(text, /Total received: \*3,500\.00 AED\* \(cash \*0\.00\* \/ cheques \*3,500\.00\*/);
+  assert.match(text, /🧾 \*Cheques\*\n\n\*AL AHLIA\*\n🟢 3,500\.00  cleared 11\/11 \(drawer AL MALTA TEST LLC\) received 10\/11/); assert.match(text, /\*Total: 3,500\.00 AED\*\nCash 0\.00 \| Cheques 3,500\.00 \| Transfers 0\.00/);
   // a clearing message with no cheque known is still a cheque, never cash
   const lone = cleanPaymentEvents({ events: [events[2]] }); assert.deepEqual([lone[0].kind, lone[0].cleared], ['cheque', true]);
   // the oldest open cheque of the amount is cleared, the one with the customer's name first
@@ -643,14 +643,14 @@ test('the owner\'s cheque process: the bank message quote-replied on the cheque 
   assert.deepEqual(two.map((e) => [e.ref, !!e.cleared, e.pendingClearing?.count]), [['a', false, 2], ['b', false, 2]]);
   const items = receivedItems(two, { from: '2026-11-05', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
   const codes = []; const text = receivedText(items, { title: 't', now: t('11', '09:00'), checks: { codeFor: (ref, tx, action) => { codes.push([ref, action]); return 'G' + codes.length; } } });
-  assert.match(text, /\*Needs your OK\*\n#G1: ZETA CO cheque 3,500\.00 — a bank clearing of 3,500\.00 arrived 11\/11 and 2 open cheques fit it: is it this one\?\nyes #G1 \(cleared\) \/ no #G1/); assert.deepEqual(codes, [['a', 'clear'], ['b', 'clear']]);
-  assert.match(text, /⏳ not cleared \(6 days\)/); // the age of an open cheque
+  assert.match(text, /❓ \*Needs your OK\*\n#G1: ZETA CO cheque 3,500\.00 — a bank clearing of 3,500\.00 arrived 11\/11 and 2 open cheques fit it: is it this one\? — yes #G1 \(cleared\) \/ no #G1/); assert.deepEqual(codes, [['a', 'clear'], ['b', 'clear']]);
+  assert.match(text, /🔴 3,500\.00  cheque not cleared \(6 days\)/); // the age of an open cheque
   // one cheque by that name among two: that one
   assert.deepEqual(cleanPaymentEvents({ events: [cheque('a', 'ZETA CO', '05'), cheque('b', 'NOVA CO', '07'), { ...sms('s', '11'), customer: 'NOVA CO', pendingName: false }], isKnown: () => true }).map((e) => [e.ref, !!e.cleared]), [['a', false], ['b', true]]);
   // a quoted clearing with another amount: the cheque stays open and shows the question
   const mismatch = cleanPaymentEvents({ events: [{ ...cheque('m', 'ZETA CO', '05'), clearingMismatch: { amount: 3200, at: t('11', '08:00') } }], isKnown: () => true });
   const text2 = receivedText(receivedItems(mismatch, { from: '2026-11-05', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() }), { title: 't', now: t('11', '09:00'), checks: { codeFor: () => 'G9' } });
-  assert.match(text2, /the bank cleared 3,200\.00 for this cheque of 3,500\.00 \(−300\.00\)\nyes #G9 \(cleared\) \/ no #G9/);
+  assert.match(text2, /the bank cleared 3,200\.00 for this cheque of 3,500\.00 \(−300\.00\) — yes #G9 \(cleared\) \/ no #G9/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(index, /if \(role === 'payment' && quotedId && text && isClearingText\(text\)\) \{[\s\S]*?if \(same\) tracker\.update\(cheque\.ref, \{ kind: 'cheque', cleared: true, clearedAt: nowAt\(\)[\s\S]*?return;\n    \}\n  \}/); // silent, never a payment
   assert.match(index, /if \(x\.action === 'clear'\) \{[\s\S]*?cleared: true, clearedAt: x\.clearedAt/);
@@ -726,13 +726,13 @@ test('credit customers who pay in parts: a found payment says how QuickBooks app
   const pay = { _type: 'Payment', TxnDate: dubai('10'), TotalAmt: 567, CustomerRef: { name: 'ZETA KITCHEN' }, Line: [{ Amount: 567, LinkedTxn: [{ TxnId: '70', TxnType: 'Invoice' }] }] };
   const now = Date.parse('2026-11-11T09:00:00Z');
   const found = receivedText([item({})], { title: 't', records: [pay], openInvoices: open, now });
-  assert.match(found, /✔ in QuickBooks \(payment 10\/11\/2026, applied to inv-9925 part\)/);
+  assert.match(found, /\*ZETA KITCHEN\*\n🟢 567\.00  \(applied to inv-9925 part\)/);
   const onAccount = receivedText([item({ amount: 300, shown: '*300.00*' })], { title: 't', records: [], openInvoices: open, now });
-  assert.match(onAccount, /⚠ not recorded in QuickBooks yet — on account; open balance 939\.83/);
+  assert.match(onAccount, /🔴 300\.00  not in QuickBooks yet \(open balance 939\.83\)/);
   assert.doesNotMatch(onAccount, /Needs your OK/);
   // 576 posted for the customer the program chose (OMEGA SHOP); the typed name is the customer who paid 567 two lines above
   const swapped = receivedText([item({ amount: 576, shown: '*576.00*', customer: 'OMEGA SHOP', typed: 'ZETA KITCHEN' })], { title: 't', records: [pay], openInvoices: open, now, checks: { codeFor: () => 'G5' } });
-  assert.match(swapped, /not in QuickBooks yet — digits swapped\? 567\.00 was recorded; the question is in your chat/); assert.doesNotMatch(swapped, /Needs your OK/); // asked at once in the owner's chat, not in the list
+  assert.match(swapped, /not in QuickBooks yet \(digits swapped\? 567\.00 was recorded; asked in your chat\)/); assert.doesNotMatch(swapped, /Needs your OK/); // asked at once in the owner's chat, not in the list
   const { swapCandidate } = await import('../src/expenses.js');
   const ev = { amount: 576, customer: 'OMEGA SHOP', customerTyped: 'ZETA KITCHEN', at: Date.parse('2026-11-10T15:00:00Z') };
   assert.equal(swapCandidate(ev, [pay], () => '', 'Asia/Dubai'), pay);
@@ -746,4 +746,18 @@ test('credit customers who pay in parts: a found payment says how QuickBooks app
   assert.match(idx, /if \(x\.action === 'swap'\) \{[\s\S]*?acceptedMatch[\s\S]*?rejectedMatch/); // 1 = same payment (shows the tick), 2 = stays not recorded
   assert.ok(idx.includes("await sock.sendMessage(ownIds()[0], { text: ['🤖 Payment check #'")); // the owner's own chat, never a group
   assert.doesNotMatch(swapped, /on account/);
+});
+
+test('the approved money received layout: bold name per customer, a line per receipt with 🟢/🔴, one rule between customers, two between sections, bold totals only, no payments-to-match list', async () => {
+  const { receivedText } = await import('../src/expenses.js');
+  const { SEP } = await import('../src/separator.js');
+  const now = Date.parse('2026-11-11T16:00:00Z');
+  const it = (customer, amount, kind = 'cash', extra = {}) => ({ amount, shown: '*' + amount.toFixed(2) + '*', foreign: false, unconverted: false, note: '', day: '2026-11-11', customer, typed: '', kind, invoices: [], cleared: false, due: '', drawer: '', at: now - 3600000, ref: customer + amount, paid: null, ...extra });
+  const recs = [{ _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 789.6, CustomerRef: { name: 'PVC WORK LLC' } }, { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 176.4, CustomerRef: { name: 'ZETA WOOD' } }, { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 749.7, CustomerRef: { name: 'ZETA WOOD' } }];
+  const open = [{ Id: '1', DocNumber: '9925', Balance: 939.83, CustomerRef: { name: 'NOVA KITCHEN' } }];
+  const text = receivedText([it('PVC WORK LLC', 789.5), it('ZETA WOOD', 176.4), it('ZETA WOOD', 749.7), it('NOVA KITCHEN', 576), it('OMEGA CO', 3500, 'cheque', { cleared: true, clearedDay: '2026-11-11', drawer: 'DRAWER LLC' })], { title: '11/11/2026', records: recs, openInvoices: open, now });
+  assert.equal(text, ['💰 *Money received — 11/11/2026*', SEP, SEP, '💵 *Cash*', '', '*PVC WORK LLC*', '🟢 789.50  (QuickBooks 789.60)', SEP, '*ZETA WOOD*', '🟢 176.40', '🟢 749.70', SEP, '*NOVA KITCHEN*', '🔴 576.00  not in QuickBooks yet (open balance 939.83)', SEP, SEP, '🧾 *Cheques*', '', '*OMEGA CO*', '🟢 3500.00  cleared 11/11 (drawer DRAWER LLC)', SEP, SEP, '*Total: 5,791.60 AED*', 'Cash 2,291.60 | Cheques 3,500.00 | Transfers 0.00', '🟢 Recorded: 4    🔴 Not recorded: 1'].join('\n'));
+  assert.doesNotMatch(text, /Payments to match/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.doesNotMatch(index, /paymentsReport\(tracker\.events, '', \{ days: 1, questions: false \}\)/); // the separate list is gone from the day's report
 });
