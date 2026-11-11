@@ -117,7 +117,7 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
 }
 
 /** The report: [events] with an amount, newest first, at most [max] proposals; the footer says nothing was recorded. */
-export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map(), since = 0 }) {
+export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map(), since = 0, questions = true }) {
   const recent = events.filter((e) => e.type === 'payment' && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
@@ -126,7 +126,7 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
     const original = recent.slice(idx + 1).find((o) => repeats(e, o, timeZone, payments, aliasOf));
     if (!original) return;
     const answer = dups.state(original, e);
-    if (answer === 'dup') dropped.add(e); else if (answer !== 'separate') marked.set(e, { original, id: dups.ask(original, e) });
+    if (answer === 'dup') dropped.add(e); else if (answer !== 'separate') marked.set(e, { original, id: questions ? dups.ask(original, e) : '' }); // in the end-of-day report no question is opened: the repeat is only marked
   });
   const visible = recent.filter((e) => !dropped.has(e));
   const ordered = [];
@@ -142,7 +142,8 @@ export function paymentsText({ events, invoices, payments = [], aliasOf, timeZon
     if (!mark) return `${i + 1}. ${proposePayment({ event, invoices, payments, aliasOf, timeZone, lookup }).join('\n   ')}`;
     const at = shown.indexOf(mark.original);
     const same = `${at >= 0 && at < max ? `#${at + 1}` : 'an earlier payment'} (${dm(mark.original.at, timeZone)})`;
-    return `${i + 1}. ${[proposePayment({ event, invoices, payments, aliasOf, timeZone, lookup })[0], `⚠ Duplicate? same amount and customer as ${same}`, `Reply: dup #${mark.id} (count once) / separate #${mark.id} (two payments)`].join('\n   ')}`;
+    const lines = questions ? [`⚠ Duplicate? same amount and customer as ${same}`, `Reply: dup #${mark.id} (count once) / separate #${mark.id} (two payments)`] : [`⚠ Possible duplicate of ${same}, check`];
+    return `${i + 1}. ${[proposePayment({ event, invoices, payments, aliasOf, timeZone, lookup })[0], ...lines].join('\n   ')}`;
   });
   return [`Payments to match (${shown.length}):`, withEnd(blocks, [...(shown.length > max ? [`and ${shown.length - max} more payments`] : []), 'Proposal only — nothing was recorded in QuickBooks.'])].join('\n');
 }

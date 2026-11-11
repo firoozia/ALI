@@ -1,6 +1,6 @@
 // ARYAK Assistant: WhatsApp (Baileys) + Claude + Zinax Stock.
 
-import { withEnd, withSeparators } from './separator.js';
+import { SEP, withEnd, withSeparators } from './separator.js';
 import { markAmounts } from './amount.js';
 import makeWASocket, { BufferJSON, DisconnectReason, downloadMediaMessage, isJidGroup, jidNormalizedUser, normalizeMessageContent, useMultiFileAuthState } from 'baileys';
 import Anthropic from '@anthropic-ai/sdk';
@@ -587,7 +587,7 @@ const clampRange = (r) => (r.from < config.monitorFrom ? { ...r, from: config.mo
 /** The owner is told what a new payment entry looks like (a proposal; nothing is recorded in QuickBooks). */
 function tellPayment(event) {
   if (replayCtx.getStore()?.quiet) return; // a message read from the history is never announced
-  if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf')) payPending.set(event.ref, { at: Date.now() }); // held a few minutes: the messages about one payment become ONE notice
+  if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf') && config.paymentNotices) payPending.set(event.ref, { at: Date.now() }); // held a few minutes: the messages about one payment become ONE notice
 }
 
 // One notice per payment: an entry waits 3 minutes (8 while its amount is still unread), then the entries of one amount are announced together, once.
@@ -845,7 +845,7 @@ async function migrateStoredPayments(events) {
   return moves.length;
 }
 
-async function paymentsReport(events, only = '') {
+async function paymentsReport(events, only = '', opts = {}) {
   const invoices = await qbo.query("select * from Invoice where Balance > '0'");
   const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const payments = await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => []); // what the office already recorded
@@ -853,7 +853,7 @@ async function paymentsReport(events, only = '') {
   const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20); // the invoice numbers the messages give: paid or open
   const lookup = new Map();
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
-  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup, since: monitorStartMs() });
+  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup, since: monitorStartMs(), ...(opts.days ? { days: opts.days } : {}), ...(opts.questions === false ? { questions: false } : {}) });
 }
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
@@ -3042,7 +3042,7 @@ async function driverNamer() {
 
 /** The one short line in the delivery group when the last stop of a run is delivered (never per stop, never from history, never to a customer). */
 async function announceRunDone(events, event, say) {
-  if (replayCtx.getStore()?.quiet || event.status !== 'delivered') return;
+  if (replayCtx.getStore()?.quiet || event.status !== 'delivered' || (!config.deliveryRunLine && !event.simulated)) return; // silent by default; the test group's simulation still shows it
   const line = runDoneLine(events, event, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: await driverNamer() });
   if (line) await say(line);
 }
@@ -3150,7 +3150,12 @@ async function receivedReportText(kind) {
   const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() }); // the same list as «payments»: names, repeats, cheques
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   logNotFound(items, records);
-  return receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
+  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
+  if (kind !== 'today' || /No money was recorded/.test(text)) return text;
+  // the day's end: the findings of «payments to match» and the possible duplicates (marked, never a question), after the double rule
+  let match = '';
+  try { match = await paymentsReport(tracker.events, '', { days: 1, questions: false }); } catch (e) { logger.warn('received report: the payments to match failed: ' + e.message); }
+  return match && !/^No payment was seen/.test(match) ? text + '\n' + SEP + '\n' + SEP + '\n' + match : text;
 }
 async function weeklyCheckReport() {
   const r = clampRange(rangeOf('week', todayDubai()));

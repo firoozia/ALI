@@ -99,6 +99,8 @@ export function loadConfig(env = process.env) {
     // fallback (a photo or an unreadable caption sent to the model) only when TRACK_MODEL is on; CUT_TRACKING=off stops the cut reading too
     trackModel: /^(1|true|on|yes)$/i.test(env.TRACK_MODEL || ''),
     outTrackedSince: (env.OUT_TRACKED_SINCE ?? '2026-11-01').trim(), // a Gregorian day (YYYY-MM-DD) from which every outgoing is recorded in the phone app (the owner, 2026-11-11): invoices before it are never listed as «invoiced, not left yet» (they may still cover a later cut or OUT); set it empty to use the start of the sheet's current continuous use
+    paymentNotices: /^(on|1|true|yes)$/i.test(env.PAYMENT_NOTICES || ''), // OFF by default (owner 2026-11-11): the Confirmation group is recorded silently; the day's findings come once, in the 19:00 report. ON = a notice in the owner's chat after each post
+    deliveryRunLine: /^(on|1|true|yes)$/i.test(env.DELIVERY_RUN_LINE || ''), // OFF by default: no automatic line in the delivery group when a run is delivered; it is in the evening report
     monitorFrom: (env.MONITOR_FROM || '2026-11-01').trim(), // nothing before this day (Dubai) is monitored: payments, money received, the weekly check, the photo receipts
     receiptVision: !/^(0|false|off|no)$/i.test(env.RECEIPT_VISION || ''), // reading receipts (expense photos, payment receipts) with the cheapest vision model: ON unless RECEIPT_VISION=off; TRACK_MODEL is only the cut/delivery tracker's switch
     cutTracking: !/^(0|false|off|no)$/i.test(env.CUT_TRACKING || 'on'),

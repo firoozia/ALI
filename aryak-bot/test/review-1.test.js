@@ -443,3 +443,24 @@ test('the default OUT tracking start is 01/11/2026 and a setting: invoices befor
   assert.deepEqual(r.sections.invoicedNotLeft.map((g) => g.customer), ['NEW CO']); // 31/10 is before the day; 01/11 is the day itself
   assert.deepEqual(r.sections.leftNotInvoiced, []); // the 20/10 invoice (16 days earlier) covers the 05/11 OUT
 });
+
+// ---- silent during the day
+import { paymentsText } from '../src/payments.js';
+
+test('the Confirmation group is recorded silently: no per-post notice, no #D question, one end-of-day report with the findings and the possible duplicates; the double rule has no blank line', async () => {
+  const { loadConfig } = await import('../src/config.js');
+  const env = { ANTHROPIC_API_KEY: 'k', SHEET_URL: 'u', ZINAX_BOT_TOKEN: 't' };
+  assert.equal(loadConfig(env).config.paymentNotices, false); assert.equal(loadConfig(env).config.deliveryRunLine, false);
+  assert.equal(loadConfig({ ...env, PAYMENT_NOTICES: 'on' }).config.paymentNotices, true); assert.equal(loadConfig({ ...env, DELIVERY_RUN_LINE: 'on' }).config.deliveryRunLine, true);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(index, /event\.source === 'pdf'\) && config\.paymentNotices\) payPending\.set/); // no notice unless the setting is on
+  assert.match(index, /\(!config\.deliveryRunLine && !event\.simulated\)\) return;/); // no automatic line in the delivery group
+  const NOW = Date.parse('2026-11-11T12:00:00Z');
+  const ev = (ref, hh) => ({ type: 'payment', kind: 'cash', currency: 'AED', ref, at: Date.parse(`2026-11-11T${hh}:00Z`), customer: 'ZETA KITCHEN', amount: 500, lines: [] });
+  const dups = { state: () => '', ask: () => { throw new Error('a question was opened'); } };
+  const text = paymentsText({ events: [ev('a', '06:00'), ev('b', '07:00')], invoices: [], payments: [], aliasOf: () => '', timeZone: 'Asia/Dubai', now: NOW, days: 1, dups, questions: false, lookup: new Map() });
+  assert.match(text, /⚠ Possible duplicate of #1 \(\d\d\/11\), check/); assert.doesNotMatch(text, /Reply: dup|separate #/);
+  const lines = threeWayText({ outKnown: true, trackedSince: 0, sections: { leftNotInvoiced: [{ customer: 'A', parts: ['1 5m'], ages: [1] }], invoicedNotLeft: [{ customer: 'C', parts: ['3 5m'], ages: [1] }] } }).split('\n');
+  const at = lines.findIndex((l, i) => /^━+$/.test(l) && /^━+$/.test(lines[i + 1] || ''));
+  assert.ok(at >= 0 && lines[at + 2] !== '' && lines[at - 1] !== ''); // two rules on consecutive lines, no blank line around or between them
+});
