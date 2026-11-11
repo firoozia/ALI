@@ -612,3 +612,24 @@ test('the real stored rows of 11/11 (made-up names): a row made by a reply («pl
   assert.ok(by.f2.customer.toLowerCase().includes('nova')); assert.equal(by.c2.drawer, 'AL MALTA TEST LLC'); assert.equal(by.c2.kind, 'cheque');
   assert.deepEqual(list.map((e) => e.amount).reduce((a, b) => a + b, 0), 789.5 + 164 + 3500);
 });
+
+test('one cheque seen three ways (the post with «cheaque» in the name, the photo with the drawer, the bank\'s clearing message) is ONE row under cheques: received 10/11, cleared 11/11, drawer named, counted once', () => {
+  const t = (d, hh) => Date.parse(`2026-11-${d}T${hh}:00Z`);
+  const events = [
+    { type: 'payment', kind: 'cash', currency: 'AED', ref: 'p1', at: t('10', '05:06'), customer: 'Al ahlia cheaque', text: 'Al ahlia cheaque 3500 aed', amount: 3500 },
+    { type: 'payment', kind: 'cheque', currency: 'AED', ref: 'p2', at: t('11', '06:11'), customer: 'AL MALTA TEST LLC', source: 'photo', amount: 3500 },
+    { type: 'payment', kind: 'cash', currency: 'AED', ref: 'p3', at: t('11', '06:37'), customer: 'AL AHLIA TEST', text: 'Your account is credited with AED 3500.00 for Outward Cheque Clearing', amount: 3500 },
+  ];
+  const list = cleanPaymentEvents({ events, isKnown: (n) => /AHLIA/i.test(n) });
+  assert.equal(list.length, 1); const e = list[0];
+  assert.deepEqual([e.kind, e.cleared, e.drawer, e.customer.toLowerCase()], ['cheque', true, 'AL MALTA TEST LLC', 'al ahlia']);
+  const items = receivedItems(list, { from: '2026-11-11', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  assert.equal(items.length, 1); assert.equal(items[0].kind, 'cheque'); // listed on the clearing day, under cheques, once
+  const text = receivedText(items, { title: '11/11', records: [{ TxnDate: '2026-11-11', TotalAmt: 3500, CustomerRef: { name: 'AL AHLIA TEST' } }] });
+  assert.match(text, /🧾 Cheques\n1\. AL AHLIA — \*3,500\.00\* — drawer AL MALTA TEST LLC — received 10\/11 — cleared 11\/11 ✔ in QuickBooks/); assert.match(text, /Total received: \*3,500\.00 AED\* \(cash \*0\.00\* \/ cheques \*3,500\.00\*/);
+  // a clearing message with no cheque known is still a cheque, never cash
+  const lone = cleanPaymentEvents({ events: [events[2]] }); assert.deepEqual([lone[0].kind, lone[0].cleared], ['cheque', true]);
+  // the oldest open cheque of the amount is cleared, the one with the customer's name first
+  const two = cleanPaymentEvents({ events: [{ ...events[0], ref: 'a', customer: 'OMEGA CO', text: 'OMEGA CO cheque 3500', at: t('05', '05:00') }, { ...events[0], ref: 'b', at: t('08', '05:00') }, events[2]], isKnown: () => true });
+  assert.deepEqual(two.map((x) => [x.ref, !!x.cleared]).sort(), [['a', false], ['b', true]]);
+});

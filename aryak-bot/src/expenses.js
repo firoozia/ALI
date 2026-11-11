@@ -257,8 +257,8 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
   const out = [];
   for (const e of events) {
     if (e.type !== 'payment' || e.simulated) continue;
-    const day = dayOf(e.at, timeZone);
-    if (day < range.from || day > range.to) continue;
+    const day = dayOf(e.at, timeZone); const clearedDay = e.clearedAt ? dayOf(e.clearedAt, timeZone) : '';
+    if ((day < range.from || day > range.to) && !(clearedDay && clearedDay >= range.from && clearedDay <= range.to)) continue; // a cheque cleared in the period is listed too
     const inv = (e.invoices || []).map((r) => lookup.get(String(r).toLowerCase())).find(Boolean);
     const cur = e.currency || 'AED';
     let amount = Number(e.amount) > 0 ? Number(e.amount) : Number(inv?.TotalAmt) || 0;
@@ -267,7 +267,7 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
@@ -322,7 +322,8 @@ export function receivedText(items, options) {
         }
       }
       const dueText = it.due ? ' — due ' + dmy(it.due) : ''; const drawerText = it.drawer ? ' — drawer ' + it.drawer : '';
-      const cheque = kind === 'cheque' ? dueText + drawerText + ' — ' + (it.cleared ? 'cleared' : '⏳ not cleared') : '';
+      const recvText = it.clearedDay && it.clearedDay !== it.day ? ' — received ' + it.day.slice(8, 10) + '/' + it.day.slice(5, 7) : '';
+      const cheque = kind === 'cheque' ? dueText + drawerText + recvText + ' — ' + (it.cleared ? 'cleared' + (it.clearedDay ? ' ' + it.clearedDay.slice(8, 10) + '/' + it.clearedDay.slice(5, 7) : '') : '⏳ not cleared') : '';
       return `${n}. ${(it.customer || 'UNKNOWN').toUpperCase()} — ${it.shown}${it.invoices.length ? ` for ${it.invoices.join(', ')}` : ''}${cheque}${kind === 'cheque' ? (it.foreign || it.accepted || inQb(it) ? ` ${status}` : '') : ` ${status}`}${it.note ? `\n⚠ ${it.note}` : ''}`;
     });
     blocks.push([label, withSeparators(entries)].join('\n'));

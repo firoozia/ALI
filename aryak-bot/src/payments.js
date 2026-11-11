@@ -195,6 +195,9 @@ export function sharedPaymentList({ events, payments = [], aliasOf = () => '', t
   return dedupePayments(list, { payments, aliasOf, timeZone, dups });
 }
 
+/** A bank message about the CLEARING of a cheque («credited with AED 3500.00 for Outward Cheque Clearing»): not new money, the end of a cheque already received. */
+export const isClearingText = (t) => /(?:cheque|chq|check)s?\s+clearance|(?:cheque|chq|check)s?\s+clearing/i.test(String(t || ''));
+
 /** The entries as they really are, before the repeats are dropped: no estimates, no rows made by filler replies, one row for a cheque seen under its customer and its drawer. */
 export function cleanPaymentEvents({ events, since = 0, isKnown = () => false }) {
   const FOREIGN_WORD = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
@@ -226,7 +229,7 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
     const c = cleaned(aedFigure ? { ...e, amount: aedFigure.amount, currency: 'AED', ...(aedFigure.foreign ? { foreign: aedFigure.foreign } : {}) } : e);
     const words = `${e.customer || ''} ${e.text || ''}`;
     const asked = aedFigure ? null : FOREIGN_WORD.exec(words);
-    return { ...c, ...(c.kind === 'cash' && CHEQUE_WORDS.test(words) ? { kind: 'cheque' } : {}), ...(asked && !e.foreign && (e.currency || 'AED') === 'AED' ? { currencyMentioned: asked[1].toUpperCase() } : {}) };
+    return { ...c, ...(c.kind === 'cash' && CHEQUE_WORDS.test(words) && !isClearingText(e.text) ? { kind: 'cheque' } : {}), ...(asked && !e.foreign && (e.currency || 'AED') === 'AED' ? { currencyMentioned: asked[1].toUpperCase() } : {}) };
   });
   // the same cheque seen twice under two names (the customer and the drawer: «AL MALTA» wrote the cheque for «AL AHLIA»): one row for the customer who is ours, the drawer beside it
   const chequeLike = (e) => e.kind === 'cheque' || e.source === 'photo' || CHEQUE_WORDS.test(e.text || ''); // a photo of a cheque has no word in it
@@ -239,6 +242,14 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
     keep.drawer = drop.customer; if (drop.kind === 'cheque') keep.kind = 'cheque'; drop.merged = true;
   }
   for (let i = list.length - 1; i >= 0; i--) if (list[i].merged) list.splice(i, 1);
+  // the bank's clearing messages end cheques already received: the OLDEST open cheque of that amount (±1) in the last 30 days, the one with the customer's name first; never a cash row
+  const DAYMS = 24 * 3600 * 1000;
+  for (const e of [...list]) {
+    if (!isClearingText(e.text)) continue;
+    const open = list.filter((o) => o !== e && o.kind === 'cheque' && !o.cleared && !isClearingText(o.text) && Math.abs(Number(o.amount) - Number(e.amount)) <= 1 && e.at - o.at <= 30 * DAYMS && o.at - e.at <= DAYMS).sort((a, b) => a.at - b.at);
+    const pick = open.find((o) => e.customer && o.customer && !e.pendingName && sameCutCustomer(o.customer, e.customer)) || open[0];
+    if (pick) { pick.cleared = true; pick.clearedAt = e.at; list.splice(list.indexOf(e), 1); } else { e.kind = 'cheque'; e.cleared = true; e.clearedAt = e.at; } // no open cheque known: still a cheque, never cash
+  }
   return list;
 }
 
