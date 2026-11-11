@@ -31,6 +31,7 @@ const dm = (ms, timeZone) => {
   const [, m, d] = dayFormats.get(timeZone).format(new Date(ms)).split('-');
   return `${d}/${m}`;
 };
+const dmy = (ms) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dubai', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(ms)); // 05/11/2026
 const dayKey = (ms, timeZone) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 const unitText = (u) => (u === 'roll' ? ' roll' : u === 'pcs' ? ' pcs' : 'm');
 const round1 = (n) => Math.round(n * 10) / 10;
@@ -63,7 +64,7 @@ export const isFilmItem = (it) => itemCodesOf(it).length > 0;
  * (then nothing is claimed about what left). [invoices]: QuickBooks invoice records with Line, TxnDate, CustomerRef. [itemCodes](itemId, name) -> the codes of an item.
  * Returns { sections: { leftNotInvoiced, stillInWarehouse, invoicedNotLeft, leftWithoutPost, delivered }, outKnown, trace } where a section is [{ customer, parts: [text] }].
  */
-export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf = () => '', qboNames = [], now = Date.now(), days = 45, timeZone = 'Asia/Dubai' }) {
+export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf = () => '', qboNames = [], now = Date.now(), days = 45, timeZone = 'Asia/Dubai', trackedSince = 0 }) {
   const outKnown = Array.isArray(outs);
   const since = now - days * DAY;
   const firstPost = Math.min(Infinity, ...events.filter((e) => e.type === 'cut' && !e.internal && !e.simulated).map((e) => e.at)); // the orders-group history the tracker has begins here
@@ -140,12 +141,11 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   // an open item is a follow-up, not an error: it is listed every day with its age in days (from its oldest date) until it closes; older than a week gets ⚠
   const add = (list, customer, text, from = null) => {
     let shown = text; let age = 0;
-    if (from) { age = Math.max(0, Math.floor((now - from) / DAY)); shown = `${age > WARN_DAYS ? '⚠ ' : ''}${text} — ${age === 0 ? 'today' : `${age} day${age === 1 ? '' : 's'}`}`; }
+    if (from) { age = Math.max(0, Math.floor((now - from) / DAY)); shown = `${age > WARN_DAYS ? '⚠️ ' : ''}${text} — ${age === 0 ? 'today' : `${age} day${age === 1 ? '' : 's'}`}`; }
     const hit = list.find((g) => g.customer === customer);
     if (hit) { hit.parts.push(shown); hit.ages.push(age); } else list.push({ customer, parts: [shown], ages: [age] });
   };
   const pickups = events.filter((e) => e.type === 'delivery' && e.status === 'picked-up' && !e.internal && !e.simulated).map((e) => ({ customer: nameOf(e.customerTyped || e.customer), at: e.at }));
-  const courier = (customer, from) => { const hit = pickups.find((q) => q.customer === customer && q.at >= from - DAY); return hit ? `, courier pickup ${dm(hit.at, timeZone)}` : ''; }; // supporting evidence only
   const trace = [];
   const note = (section, customer, code, text, extra = '') => { trace.push(`three-way: ${section} "${customer}" ${code}: ${text}${extra}`); };
   const postText = (cuts2) => (cuts2.find((c) => c.text)?.text ? ` — post: "${cuts2.find((c) => c.text).text}"` : '');
@@ -191,6 +191,13 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
       add(out.leftWithoutPost, p.customer, text, p.at); note('leftWithoutPost', p.customer, p.code, text);
     }
   }
+  // The sheet's OUT coverage: invoices before it say nothing about what left. The owner gives the day (OUT_TRACKED_SINCE); until then it is the start of the sheet's current continuous
+  // use: the first OUT day after the last gap of more than a week.
+  const outDays = [...new Set([...pools.values()].map((q) => Math.floor(q.at / DAY)))].sort((x, y) => x - y);
+  let runStart = outDays[0];
+  for (let i = 1; i < outDays.length; i++) if (outDays[i] - outDays[i - 1] > 7) runStart = outDays[i];
+  const coverageStart = trackedSince > 0 ? trackedSince : (outDays.length ? runStart * DAY : since); // the sheet answered with no OUT row at all: the window we asked for
+  const inl = []; // invoiced, not left yet: the courier evidence is attached after all of them are known
   // C) cut posts that have no OUT row
   for (const c of cuts.filter((x) => !x.pool).sort((a, b) => a.at - b.at)) {
     if (!outKnown) { // the sheet gave nothing: the old question, cut and not invoiced
@@ -198,16 +205,31 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
       continue;
     }
     const inv = cover(c.customer, c.code, c.at, c.qty);
-    if (inv) { if (c.qty <= MIN_LISTED && inv.qty <= MIN_LISTED + 1e-9) continue; /* a 1 m or 2 m line is not worth a report line, with a post or without */ const text = `${c.code} ${round1(inv.qty)}${unitText('m')} (orders ${dm(c.at, timeZone)}, invoice ${dm(inv.at, timeZone)}, no OUT${courier(c.customer, inv.at)})`; add(out.invoicedNotLeft, c.customer, text, inv.at); note('invoicedNotLeft', c.customer, c.code, text, postText([c])); }
-    else { const text = `${c.code} ${round1(c.qty)}${unitText(c.unit)} (orders ${dm(c.at, timeZone)}, no invoice)`; add(out.stillInWarehouse, c.customer, text, c.at); note('stillInWarehouse', c.customer, c.code, text, postText([c])); }
+    if (inv) {
+      if ((c.qty <= MIN_LISTED && inv.qty <= MIN_LISTED + 1e-9) || inv.at < coverageStart - DAY) continue; // a 1 m or 2 m line is not worth a report line; an invoice before the OUT coverage says nothing about what left
+      inl.push({ customer: c.customer, code: c.code, from: inv.at, post: postText([c]), build: (ev) => `${c.code} ${round1(inv.qty)}${unitText('m')} (orders ${dm(c.at, timeZone)}, invoice ${dm(inv.at, timeZone)}, no OUT${ev})` });
+    } else {
+      if (c.qty <= MIN_LISTED) continue; // a 1 m or 2 m (or pcs) cut with no invoice yet is not worth a line either
+      const text = `${c.code} ${round1(c.qty)}${unitText(c.unit)} (orders ${dm(c.at, timeZone)}, no invoice)`; add(out.stillInWarehouse, c.customer, text, c.at); note('stillInWarehouse', c.customer, c.code, text, postText([c]));
+    }
   }
   // D) recent invoice lines that neither a cut nor an OUT used up: invoiced, not left yet
   if (outKnown) {
-    const coverageStart = pools.size ? Math.min(...[...pools.values()].map((p) => p.at)) : Infinity; // the invoices before the first OUT row we have say nothing about what left
     for (const l of lines.filter((x) => !x.used && x.customer && x.at >= Math.max(since, coverageStart - DAY) && x.qty > MIN_LISTED).sort((a, b) => a.at - b.at)) {
-      const text = `${l.code} ${round1(l.qty)}m (invoice ${dm(l.at, timeZone)}, no OUT${courier(l.customer, l.at)})`;
-      add(out.invoicedNotLeft, l.customer, text, l.at); note('invoicedNotLeft', l.customer, l.code, text);
+      inl.push({ customer: l.customer, code: l.code, from: l.at, post: '', build: (ev) => `${l.code} ${round1(l.qty)}m (invoice ${dm(l.at, timeZone)}, no OUT${ev})` });
     }
+  }
+  // a courier pickup is evidence only for the open item of that customer closest in time to it (within 3 days); otherwise it is not attached
+  const evidence = new Map();
+  for (const q of pickups) {
+    const mine = inl.filter((x) => x.customer === q.customer && Math.abs(x.from - q.at) <= 3 * DAY);
+    if (!mine.length) continue;
+    const best = Math.min(...mine.map((x) => Math.abs(x.from - q.at)));
+    for (const x of mine) if (Math.abs(x.from - q.at) === best && !evidence.has(x)) evidence.set(x, q);
+  }
+  for (const x of inl) {
+    const q = evidence.get(x); const text = x.build(q ? `, courier pickup ${dm(q.at, timeZone)}` : '');
+    add(out.invoicedNotLeft, x.customer, text, x.from); note('invoicedNotLeft', x.customer, x.code, text, x.post);
   }
   // a delivery post has no code: a customer-level note when nothing at all was invoiced for him since
   const lastInvoice = new Map();
@@ -224,7 +246,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
     return { ...g, parts, ages, age: ages[0] || 0 };
   }).sort((a, b) => b.age - a.age || b.parts.length - a.parts.length || a.customer.localeCompare(b.customer)); // the customer with the oldest item first
   for (const k of Object.keys(out)) out[k] = order(out[k]);
-  return { sections: out, outKnown, trace };
+  return { sections: out, outKnown, trace, trackedSince: Number.isFinite(coverageStart) ? coverageStart : 0 };
 }
 
 const TITLES = {
@@ -255,6 +277,7 @@ export function threeWayText(result, { max = 8, days = 45, details = false } = {
   if (!details) hidden = (result.sections.leftWithoutPost || []).length + (result.sections.delivered || []).length;
   if (!result.outKnown) blocks.unshift('⚠ The stock sheet gave no OUT rows, so what left the warehouse is unknown: only «cut, not invoiced» is shown.');
   if (!blocks.length || (blocks.length === 1 && !result.outKnown)) blocks.push(`✔ Everything cut, left and invoiced in the last ${days} days agrees.`);
+  if (result.outKnown && result.trackedSince) blocks.push(`Invoices before ${dmy(result.trackedSince)} are not checked for «not left yet»: the sheet's OUT rows are tracked from then.`);
   if (!details && (hidden || blocks.length)) blocks.push('Say "unbilled details" for every customer' + (hidden ? ', the OUT rows nobody posted and the deliveries' : '') + '.');
   return blocks.join(`\n${SEP}\n`);
 }

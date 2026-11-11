@@ -798,7 +798,10 @@ setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); 
 const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = await sock.sendMessage(jid, { document: buf, mimetype, fileName, caption }); if (!r) throw new Error('the document was not sent'); };
 /** The text of the report «cut or delivered, not invoiced»: the posts against ALL of the customers' QuickBooks invoices of the last 40 days. Read only. */
 /** The OUT rows of the stock sheet for the last [days] days (read only): [{ customer, code, qty, unit, at }], or null when the sheet could not give them all (then nothing is claimed about what left). */
+const sheetPages = { at: 0, key: '', rows: null }; // the OUT rows read for the last report: a second «unbilled» or the evening report within ten minutes does not read them again
 async function sheetOutRows(days) {
+  const key = `${todayDubai()}|${days}`;
+  if (sheetPages.rows && sheetPages.key === key && Date.now() - sheetPages.at < 10 * 60 * 1000) return sheetPages.rows;
   try {
     const to = todayDubai(); const rows = [];
     for (let back = days; back > 0; back -= 10) { // ten days at a time: a page is at most 500 rows
@@ -807,7 +810,9 @@ async function sheetOutRows(days) {
       if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back for ' + from + ': what left the warehouse is not claimed'); return null; }
       rows.push(...(rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT')); // edge banding is recorded under the colour code of the film: all rows count
     }
-    return rows.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }));
+    const mapped = rows.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }));
+    Object.assign(sheetPages, { at: Date.now(), key, rows: mapped });
+    return mapped;
   } catch (e) { logger.warn('three-way: the sheet gave no OUT rows (' + e.message + ')'); return null; }
 }
 
@@ -820,7 +825,7 @@ async function unbilledReport(events = tracker.events, opts = {}) {
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), itemCodesOf(it)])); // film by its code, edge banding by its colour, nothing else
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
   const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet
-  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone });
+  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone, trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') || 0 : 0 });
   for (const l of result.trace || []) logger.info(l); // what each line came from
   return threeWayText(result, { days, details: !!opts.details });
 }
@@ -1012,7 +1017,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
     case 'weekly_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await weeklyCheckReport()]; }
     case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
-    case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport(undefined, { details: !!ic.details })]; }
+    case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; const chat = here.chatId || ownIds()[0]; const wait = setTimeout(() => { void sock.sendMessage(chat, { text: '🤖 Reading the sheet… this can take a minute.' }).catch(() => {}); }, 10000); try { return [await unbilledReport(undefined, { details: !!ic.details })]; } finally { clearTimeout(wait); } }
     case 'alias_drop': { const n = cutAliases.drop(ic.id, ic.numbers); return [n ? `Removed ${n} line(s) from #${ic.id}; reply yes #${ic.id} to approve the rest.` : `Nothing removed from #${ic.id}.`]; }
     case 'tax_inclusive': return await qboBulk.planTaxInclusive();
     case 'tax_inclusive_undo': return await qboBulk.planUndoTaxInclusive(ic.source);
