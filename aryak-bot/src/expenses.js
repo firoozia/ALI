@@ -329,13 +329,24 @@ export function receivedText(items, options) {
   const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
   const matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   const inQb = (it) => matched.has(it) || it.paid === true;
+  const invById = new Map([...(options.linkedInvoices || []), ...openInvoices].map((i) => [String(i.Id), i]));
+  const docOf = (inv) => (/^inv-/i.test(String(inv.DocNumber)) ? String(inv.DocNumber) : 'inv-' + inv.DocNumber);
+  /** THIS payment's own invoices, from its linked lines (never another payment's): [{ inv, paid }]. A matched LINE of a bigger payment gives only that line's invoices. */
+  const ownInvoices = (rec, it) => {
+    if (!rec || rec._type !== 'Payment') return [];
+    let lines = (rec.Line || []).filter((l) => (l.LinkedTxn || []).some((t) => t.TxnType === 'Invoice'));
+    if (rec._part) lines = lines.filter((l) => Math.abs(Number(l.Amount) - it.amount) <= 0.02).slice(0, 1);
+    const out = [];
+    for (const l of lines) for (const t of l.LinkedTxn || []) { const inv = t.TxnType === 'Invoice' ? invById.get(String(t.TxnId)) : null; if (inv && inv.DocNumber && !out.some((x) => x.inv === inv)) out.push({ inv, paid: Number(l.Amount) }); }
+    return out;
+  };
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
   if (!items.length) return `💰 *Money received — ${title}*\nNo money was recorded.`;
   const needsOk = []; let green = 0; let red = 0;
   const plain = (it) => String(it.shown || money(it.amount)).replace(/\*/g, '');
   const ddmm = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
   const lineOf = (it) => {
-    const kind = it.kind; const rec = matched.get(it); let ok = false; let tail = '';
+    const kind = it.kind; const rec = matched.get(it); let ok = false; let tail = ''; let extra = [];
     const days = Math.max(0, Math.floor((nowMs - it.at) / 86400000));
     if (it.foreign) tail = '  ⚠ foreign currency: check in QuickBooks';
     else if (it.accepted) { ok = true; tail = '  accepted by you: ' + it.accepted.text; }
@@ -348,7 +359,17 @@ export function receivedText(items, options) {
       }
       if (it.drawer) tail += ' (drawer ' + it.drawer + ')';
       if (it.clearedDay && it.clearedDay !== it.day) tail += ' received ' + ddmm(it.day);
-    } else if (inQb(it)) { ok = true; tail = rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004 ? '  (QuickBooks ' + money(rec.TotalAmt) + ')' : ''; }
+    } else if (inQb(it)) {
+      ok = true;
+      const own = ownInvoices(rec, it);
+      if (own.length === 1) tail = '     ' + docOf(own[0].inv); // one invoice: its number on the same line, after the amount
+      if (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004) extra.push('      ↳ (QuickBooks ' + money(rec.TotalAmt) + ')');
+      if (own.length > 1) { // a payment spread over several invoices (credit customers): no number on the amount line
+        const closed = own.filter((x) => Number(x.inv.Balance) <= 0.004);
+        if (closed.length) extra.push('     _↳ closed: ' + closed.map((x) => docOf(x.inv)).join(', ') + '_');
+        for (const x of own.filter((y) => Number(y.inv.Balance) > 0.004)) extra.push('     _↳ ' + docOf(x.inv) + ': ' + money(Number(x.inv.TotalAmt) - Number(x.inv.Balance)) + ' of ' + money(x.inv.TotalAmt) + ' paid_ *' + money(x.inv.Balance) + ' open*');
+      }
+    }
     else {
       const best = it.rejected ? null : closestMatch(it, records, openInvoices, aliasOf);
       if (best && Math.abs(best.diff) <= 1 && best.kind === 'invoices') tail = '  not in QuickBooks yet (pays ' + best.label + ', ' + money(best.amount) + ')';
@@ -362,7 +383,7 @@ export function receivedText(items, options) {
     }
     const icon = ok ? '🟢' : it._inTime ? '⏳' : '🔴';
     if (ok) green += 1; else red += 1;
-    return icon + ' ' + plain(it) + (it.invoices.length ? ' for ' + it.invoices.join(', ') : '') + tail + (it.note ? '\n⚠ ' + it.note : '');
+    return icon + ' ' + plain(it) + (it.invoices.length && !tail.trim().startsWith('inv-') ? ' for ' + it.invoices.join(', ') : '') + tail + (extra.length ? '\n' + extra.join('\n') : '') + (it.note ? '\n⚠ ' + it.note : '');
   };
   const sections = [];
   for (const [kind, label] of groups) {

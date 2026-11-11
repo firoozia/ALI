@@ -3274,7 +3274,9 @@ async function receivedReportText(kind) {
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   logNotFound(items, records);
   const openInvoices = kind === 'today' ? await qbo.query("select * from Invoice where Balance > '0'").catch(() => []) : [];
-  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, checks: kind === 'today' ? payChecks : null });
+  const linkedIds = [...new Set(records.filter((x) => x._type === 'Payment').flatMap((x) => (x.Line || []).flatMap((l) => (l.LinkedTxn || []).filter((t) => t.TxnType === 'Invoice').map((t) => String(t.TxnId)))))].filter((id) => /^[0-9]+$/.test(id) && !openInvoices.some((i) => String(i.Id) === id)).slice(0, 60);
+  const linkedInvoices = linkedIds.length ? await qbo.query("select * from Invoice where Id in ('" + linkedIds.join("','") + "')").catch(() => []) : []; // the number of every invoice a payment of the day is linked to (fully paid ones too)
+  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, linkedInvoices, checks: kind === 'today' ? payChecks : null });
   return text; // the «payments to match» list is gone: its information is inside each line of the report
 }
 async function weeklyCheckReport() {

@@ -588,7 +588,7 @@ test('a rounded post is matched by CUSTOMER first, then by amount: within 1 AED 
   const openInvoices = [inv('NOVA LIONS FOR KITCHENS', 'inv-9990', 163.8), inv('TAU CO', 'inv-9991', 1500), inv('TAU CO', 'inv-9992', 1499.1), inv('OMEGA CO', 'inv-9993', 500), inv('PHI CO', 'inv-9994', 2497.5)];
   const codes = []; const checks = { codeFor: (ref, text) => { codes.push([ref, text]); return 'G' + codes.length; } };
   const text = receivedText(items, { title: '11/11', records, openInvoices, checks });
-  assert.match(text, /\*ZETA WORK\*\n🟢 789\.50  \(QuickBooks 789\.60\)/); // 0.10 apart: the same payment
+  assert.match(text, /\*ZETA WORK\*\n🟢 789\.50\n      ↳ \(QuickBooks 789\.60\)/); // 0.10 apart: the same payment
   assert.match(text, /\*NOVA LIONS FOR KITCHENS\*\n🔴 164\.00  not in QuickBooks yet \(pays inv-9990, 163\.80\)/); // the open invoice, 0.20 apart
   assert.match(text, /\*SIGMA CO\*\n🔴 500\.00  not in QuickBooks yet(?! \(pays)/); // OMEGA's invoice of 500 is another customer: the customer comes first
   assert.match(text, /\*TAU CO\*\n🔴 3000\.00  not in QuickBooks yet \(pays inv-9991 \+ inv-9992, 2,999\.10\)/); // 0.90 apart: still the same payment, as a proposal
@@ -756,17 +756,22 @@ test('the approved money received layout: bold name per customer, a line per rec
   const recs = [{ _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 789.6, CustomerRef: { name: 'PVC WORK LLC' } }, { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 176.4, CustomerRef: { name: 'ZETA WOOD' } }, { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 749.7, CustomerRef: { name: 'ZETA WOOD' } }];
   const open = [{ Id: '1', DocNumber: '9925', Balance: 939.83, CustomerRef: { name: 'NOVA KITCHEN' } }];
   const text = receivedText([it('PVC WORK LLC', 789.5), it('ZETA WOOD', 176.4), it('ZETA WOOD', 749.7), it('NOVA KITCHEN', 576), it('OMEGA CO', 3500, 'cheque', { cleared: true, clearedDay: '2026-11-11', drawer: 'DRAWER LLC' })], { title: '11/11/2026', records: recs, openInvoices: open, now });
-  assert.equal(text, ['💰 *Money received — 11/11/2026*', SEP, SEP, '💵 *Cash*', '', '*PVC WORK LLC*', '🟢 789.50  (QuickBooks 789.60)', SEP, '*ZETA WOOD*', '🟢 176.40', '🟢 749.70', SEP, '*NOVA KITCHEN*', '🔴 576.00  not in QuickBooks yet (open balance 939.83)', SEP, SEP, '🧾 *Cheques*', '', '*OMEGA CO*', '🟢 3500.00  cleared 11/11 (drawer DRAWER LLC)', SEP, SEP, '*Total: 5,791.60 AED*', 'Cash 2,291.60 | Cheques 3,500.00 | Transfers 0.00', '🟢 Recorded: 4    🔴 Not recorded: 1'].join('\n'));
+  assert.equal(text, ['💰 *Money received — 11/11/2026*', SEP, SEP, '💵 *Cash*', '', '*PVC WORK LLC*', '🟢 789.50', '      ↳ (QuickBooks 789.60)', SEP, '*ZETA WOOD*', '🟢 176.40', '🟢 749.70', SEP, '*NOVA KITCHEN*', '🔴 576.00  not in QuickBooks yet (open balance 939.83)', SEP, SEP, '🧾 *Cheques*', '', '*OMEGA CO*', '🟢 3500.00  cleared 11/11 (drawer DRAWER LLC)', SEP, SEP, '*Total: 5,791.60 AED*', 'Cash 2,291.60 | Cheques 3,500.00 | Transfers 0.00', '🟢 Recorded: 4    🔴 Not recorded: 1'].join('\n'));
   assert.doesNotMatch(text, /Payments to match/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.doesNotMatch(index, /paymentsReport\(tracker\.events, '', \{ days: 1, questions: false \}\)/); // the separate list is gone from the day's report
 });
 
-test('a green line is the amount only (plus the QuickBooks amount when it differs): no "applied to" text, no invoice numbers', async () => {
+test('the approved invoice lines: one invoice after the amount on the same line (each payment its own), the QuickBooks amount on the next line, a payment over several invoices has no number on its amount line and the closed/partly paid lines', async () => {
   const { receivedText } = await import('../src/expenses.js');
   const now = Date.parse('2026-11-11T16:00:00Z');
-  const item = (amount, ref) => ({ amount, shown: '*' + amount.toFixed(2) + '*', foreign: false, unconverted: false, note: '', day: '2026-11-11', customer: 'ZETA KITCHEN', typed: '', kind: 'cash', invoices: [], cleared: false, due: '', drawer: '', at: now - 3600000, ref, paid: null });
-  const pay = (amount) => ({ _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: amount, CustomerRef: { name: 'ZETA KITCHEN' }, Line: [{ Amount: amount, LinkedTxn: [{ TxnId: '1', TxnType: 'Invoice' }] }] });
-  const text = receivedText([item(176.4, 'a'), item(749.7, 'b')], { title: 't', records: [pay(176.4), pay(749.7)], now });
-  assert.match(text, /\*ZETA KITCHEN\*\n🟢 176\.40\n🟢 749\.70\n/); assert.doesNotMatch(text, /applied|inv-/);
+  const item = (customer, amount, ref) => ({ amount, shown: '*' + amount.toFixed(2) + '*', foreign: false, unconverted: false, note: '', day: '2026-11-11', customer, typed: '', kind: 'cash', invoices: [], cleared: false, due: '', drawer: '', at: now - 3600000, ref, paid: null });
+  const pay = (customer, amount, lines) => ({ _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: amount, CustomerRef: { name: customer }, Line: lines.map((x) => ({ Amount: x[1], LinkedTxn: [{ TxnId: x[0], TxnType: 'Invoice' }] })) });
+  const linkedInvoices = [{ Id: '1', DocNumber: 'inv-10005', TotalAmt: 176.4, Balance: 0 }, { Id: '2', DocNumber: '9966', TotalAmt: 749.7, Balance: 0 }, { Id: '3', DocNumber: '10012', TotalAmt: 789.6, Balance: 0 }, { Id: '4', DocNumber: '9880', TotalAmt: 900, Balance: 0 }, { Id: '5', DocNumber: '9901', TotalAmt: 300, Balance: 0 }, { Id: '6', DocNumber: '9940', TotalAmt: 800, Balance: 500 }];
+  const records = [pay('ALIA', 176.4, [['1', 176.4]]), pay('ALIA', 749.7, [['2', 749.7]]), pay('PVC', 789.6, [['3', 789.6]]), pay('CREDIT', 1500, [['4', 900], ['5', 300], ['6', 300]])];
+  const text = receivedText([item('ALIA', 176.4, 'a'), item('ALIA', 749.7, 'b'), item('PVC', 789.5, 'c'), item('CREDIT', 1500, 'd')], { title: 't', records, linkedInvoices, now });
+  assert.match(text, /\*ALIA\*\n🟢 176\.40     inv-10005\n🟢 749\.70     inv-9966\n/); // each payment its own invoice, no double prefix
+  assert.match(text, /\*PVC\*\n🟢 789\.50     inv-10012\n      ↳ \(QuickBooks 789\.60\)\n/);
+  assert.match(text, /\*CREDIT\*\n🟢 1500\.00\n     _↳ closed: inv-9880, inv-9901_\n     _↳ inv-9940: 300\.00 of 800\.00 paid_ \*500\.00 open\*/);
+  assert.doesNotMatch(text, /applied|inv-inv-|inv #/);
 });
