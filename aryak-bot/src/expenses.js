@@ -267,7 +267,7 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
@@ -284,7 +284,8 @@ export function receivedText(items, { title, records = [], aliasOf = () => '' })
     const entries = list.map((it) => {
       n += 1;
       const status = it.foreign ? '⚠ foreign currency: check in QuickBooks' : inQb(it) ? '✔ in QuickBooks' : '⚠ not in QuickBooks yet';
-      const cheque = kind === 'cheque' ? `${it.due ? ` — due ${dmy(it.due)}` : ''} — ${it.cleared ? 'cleared' : '⏳ not cleared'}` : '';
+      const dueText = it.due ? ' — due ' + dmy(it.due) : ''; const drawerText = it.drawer ? ' — drawer ' + it.drawer : '';
+      const cheque = kind === 'cheque' ? dueText + drawerText + ' — ' + (it.cleared ? 'cleared' : '⏳ not cleared') : '';
       return `${n}. ${(it.customer || 'UNKNOWN').toUpperCase()} — ${it.shown}${it.invoices.length ? ` for ${it.invoices.join(', ')}` : ''}${cheque}${kind === 'cheque' ? (it.foreign ? ` ${status}` : inQb(it) ? ' ✔ in QuickBooks' : '') : ` ${status}`}${it.note ? `\n⚠ ${it.note}` : ''}`;
     });
     blocks.push([label, withSeparators(entries)].join('\n'));

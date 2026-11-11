@@ -526,3 +526,51 @@ test('a cancelled cut is never «cut, not invoiced»: closed when it never left 
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(index, /if \(role === 'cut' && quotedId && text && isCancelText\(text\)\) \{[\s\S]*?tracker\.update\(e\.ref, \{ internal: true, cancelled: \{ at: nowAt\(\)[\s\S]*?return;\n  \}/); // silent: no reply
 });
+
+// ---- the wrong "received today" of 11/11 (made-up names)
+import { cleanPaymentEvents, findRecorded } from '../src/payments.js';
+import { isClearReply, isEstimateText, isReplyFiller, looksLikeName, parsePaymentCaption } from '../src/captions.js';
+import { matchReceipts, receivedItems, receivedText } from '../src/expenses.js';
+
+test('replies of filler are no payment and no name; an estimate is no payment; 4PC is no amount', () => {
+  for (const t of ['Plz clear it', 'Also this', 'done', 'Please clear this', 'ok']) assert.ok(isReplyFiller(t), t);
+  for (const t of ['ZETA KITCHEN', 'Awab', 'cash from zeta 789.5', 'clear ZETA inv 9940']) assert.ok(!isReplyFiller(t), t);
+  assert.ok(isClearReply('Plz clear it') && isClearReply('cleared') && !isClearReply('Also this'));
+  assert.ok(!looksLikeName('Also this') && looksLikeName('Awab'));
+  for (const t of ['OMEGA ESTIMATE FOR DUST COLLECTOR 3,000.00', 'estimate SAW BLADE PC 300 96 MDF 4PC 120 24 MDF 4.00', 'quotation 500', 'offer 1200 aed', 'proforma 900']) { assert.ok(isEstimateText(t), t); assert.equal(parsePaymentCaption(t), null, t); }
+  assert.notEqual(parsePaymentCaption('cash from zeta 789.5 aed'), null);
+  const pc = parsePaymentCaption('ZETA 4PC 250'); assert.equal(pc.amount, 250); // pieces are not money
+});
+
+test('the fake rows made by filler replies and the estimates leave the lists; the originals stay; the same cheque under its customer and its drawer is one row', () => {
+  const at = Date.parse('2026-11-11T12:00:00Z');
+  const ev = (ref, extra) => ({ type: 'payment', kind: 'cash', currency: 'AED', ref, at, lines: [], ...extra });
+  const events = [
+    ev('o1', { customer: 'PVC WORK', amount: 789.5, text: 'Cash from pvc work 789.5 aed' }), ev('f1', { customer: 'PLZ IT', amount: 789.5, text: 'Plz clear it', at: at + 3600000 }), // the fake of a reply
+    ev('o2', { customer: 'AKRASAA LIONS FOR KITCHENS', amount: 164, text: 'Cash from akrasaa lions for kitchens 164 aed' }), ev('f2', { customer: 'ALSO THIS', amount: 164, text: 'Also this', at: at + 3600000 }),
+    ev('e1', { customer: 'WAHDAN', amount: 3000, text: 'WAHDAN ESTIMATE FOR DUST COLLECTOR 3,000.00', invoices: ['inv-10002'] }),
+    ev('c1', { kind: 'cheque', customer: 'AL MALTA KITCHENS LLC', amount: 3500, text: 'AL MALTA KITCHENS LLC 3,500 cheque' }), ev('c2', { kind: 'cheque', customer: 'AL AHLIA KITCHEN', amount: 3500, text: 'AL AHLIA KITCHEN 3,500 cheque' }),
+  ];
+  const known = (n) => /AHLIA|PVC WORK|AKRASAA/.test(n);
+  const list = cleanPaymentEvents({ events, isKnown: known });
+  assert.deepEqual(list.map((e) => [e.customer, e.amount]).sort(), [['AKRASAA LIONS FOR KITCHENS', 164], ['AL AHLIA KITCHEN', 3500], ['PVC WORK', 789.5]]);
+  assert.equal(list.find((e) => e.customer === 'AL AHLIA KITCHEN').drawer, 'AL MALTA KITCHENS LLC');
+  // a reply row with no original stays, nameless, and cleared when the reply said so
+  const lone = cleanPaymentEvents({ events: [ev('f3', { customer: 'PLZ IT', amount: 500, text: 'Plz clear it' })] });
+  assert.deepEqual([lone[0].customer, lone[0].cleared, lone[0].pendingName], ['', true, true]);
+  // the received report: counted once, the drawer named
+  const items = receivedItems(list, { from: '2026-11-11', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  const text = receivedText(items, { title: '11/11', records: [] });
+  assert.match(text, /AL AHLIA KITCHEN — \*3,500\.00\*[^\n]* — drawer AL MALTA KITCHENS LLC/); assert.doesNotMatch(text, /PLZ|ALSO THIS|WAHDAN/); assert.equal((text.match(/3,500\.00/g) || []).length >= 1, true);
+});
+
+test('one answer for a row in both reports: a payment recorded under a near spelling or as a line of a bigger payment is found by «payments to match» as well', () => {
+  const at = Date.parse('2026-11-11T12:00:00Z');
+  const event = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'x', at, customer: 'Alia wood', amount: 749.7, lines: [] };
+  const record = { Id: '1', TxnDate: '2026-11-11', TotalAmt: 749.7, CustomerRef: { name: 'ALIAA WOODS' } };
+  assert.ok(findRecorded(event, [record])); // the doubled letter and the plural, as in the received report
+  assert.ok(matchReceipts([{ customer: 'Alia wood', amount: 749.7, day: '2026-11-11' }], [record]).size === 1);
+  const inLine = { Id: '2', TxnDate: '2026-11-11', TotalAmt: 2000, CustomerRef: { name: 'ALIAA WOODS' }, Line: [{ Amount: 749.7 }, { Amount: 1250.3 }] };
+  assert.ok(findRecorded(event, [inLine])); // a line of a bigger payment
+  assert.equal(findRecorded(event, [{ ...record, CustomerRef: { name: 'OMEGA CO' } }]), null);
+});

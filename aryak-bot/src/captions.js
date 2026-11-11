@@ -138,8 +138,10 @@ export const CHEQUE_WORDS = /\bche+a?ques?\b|\bcheq\b|\bchqs?\b|\bchecks?\b|شي
 const FOREIGN = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
 
 export function parsePaymentCaption(text) {
-  const s = clean(text);
-  if (!s) return null;
+  const s0 = clean(text);
+  if (!s0) return null;
+  if (isEstimateText(s0)) return null; // an estimate, a quotation or an offer is never a payment
+  const s = s0.replace(/(?<![A-Za-z0-9])\d+(?:\.d+)?\s*(?:PCS?|PIECES?)\b/gi, ' ').replace(/\s+/g, ' ').trim(); // «4PC» is a count of pieces, never an amount
   const INV_NO = /(?:\binv(?:oice)?s?\b|فاکتور)\.?\s*(?:no\.?|number|#|شماره)?\s*[-:#]?\s*\d{3,6}/i;
   if (/^cleared?\b(?!\s+inv)/i.test(s) && !INV_NO.test(s)) return { kind: 'cleared' }; // with an invoice number it is a payment message («clear MUNICH DOOR KITCHEN inv 9940»), below
   const ci = /^clear\s+inv(?:oices?)?\.?\s*([\d\s/,&-]+)$/i.exec(s);
@@ -270,3 +272,18 @@ export function isCancelText(text) {
   if (!t || t.length > 60) return false;
   return /(?:^|[\s,.:;!؟?()-])(?:cancel(?:l?ed)?(?:\s+order)?|[كک]نسل(?:\s*(?:شد|شده))?|لغو(?:\s*(?:شد|شده))?|إلغاء|الغاء)(?=$|[\s,.:;!؟?()-])/iu.test(t);
 }
+
+/** A text that is an estimate / quotation / offer / proforma (never a payment). */
+export const isEstimateText = (text) => /(?:^|[^A-Za-z])(?:estimates?|quotations?|quote|offer|pro-?forma)(?![A-Za-z])|پیش‌?فاکتور|پیشنهاد قیمت|برآورد/i.test(String(text || ''));
+
+const FILLER = new Set(['plz', 'pls', 'please', 'kindly', 'also', 'this', 'that', 'these', 'those', 'it', 'them', 'same', 'too', 'one', 'the', 'and', 'clear', 'cleared', 'clearing', 'done', 'ok', 'okay', 'yes', 'thanks', 'thank', 'you', 'confirm', 'confirmed', 'received', 'noted']);
+/** A reply that only says «please clear it», «also this», «done»: filler words, no name, no figure. Never a customer name and never a payment. */
+export function isReplyFiller(text) {
+  const words = String(text || '').toLowerCase().replace(/[^a-z\u0600-\u06ff ]+/g, ' ').split(/\s+/).filter(Boolean);
+  if (!words.length || /[0-9۰-۹٠-٩]/.test(String(text || ''))) return false;
+  return words.every((w) => FILLER.has(w));
+}
+/** True when the reply asks for the quoted payment to be cleared («plz clear it», «cleared», «done»). */
+export const isClearReply = (text) => isReplyFiller(text) && /(?:^|[^a-z])(?:clear|cleared|clearing|done|confirmed?)(?![a-z])/i.test(String(text || ''));
+/** A customer name as opposed to filler: it has a letter word outside the filler list. */
+export const looksLikeName = (text) => !isReplyFiller(text) && /[A-Za-z\u0600-\u06ff]{2,}/.test(String(text || ''));

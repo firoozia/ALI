@@ -49,7 +49,7 @@ import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { qboNameFor } from './qboname.js';
 import { itemCodesOf, threeWay, threeWayText } from './threeway.js';
-import { isCancelText } from './captions.js';
+import { isCancelText, isClearReply, isReplyFiller, looksLikeName } from './captions.js';
 import { EditStore, InvoiceEdits } from './invoiceedit.js';
 import { officeNote, parseOfficeRequest } from './officerequest.js';
 import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
@@ -74,7 +74,7 @@ import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
 import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, overrideFor, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
 import { unbilled, unbilledText } from './unbilled.js';
-import { PaymentDups, groupPaymentNotices, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
+import { PaymentDups, cleanPaymentEvents, groupPaymentNotices, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
 import { GroupStatements, StatementPreviews, askLine, effectiveRequest, parseStyleReply, previewText, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
@@ -636,6 +636,8 @@ async function replyToPayment({ raw, groupId, content, quotedId, event }) {
     const quoted = normalizeMessageContent(ctx.quotedMessage);
     if (quoted?.documentMessage && /pdf/i.test(quoted.documentMessage.mimetype || '')) {
       try { base = baseOfReceipt(receiptOfPdf(await downloadMedia({ key: { remoteJid: groupId, id: quotedId, participant: ctx.participant }, message: ctx.quotedMessage }))); } catch (e) { logger.warn(`tracker: the quoted receipt could not be downloaded: ${e.message}`); }
+    } else if (imageOf(quoted) && imageOf(quoted).caption && Number(parsePaymentCaption(imageOf(quoted).caption)?.amount) > 0) { // a photo WITH a caption «cash from X 789.5 aed»: the caption is the post (no model)
+      const qp = parsePaymentCaption(imageOf(quoted).caption); base = { amount: qp.amount, payer: qp.customers?.[0] || '', source: 'caption' };
     } else if (imageOf(quoted)) { // a photo of a receipt or cheque: the cheap model first (the same path as every photo), only when the owner allows model reading
       if (mayReadReceipts(config)) {
         try {
@@ -647,6 +649,7 @@ async function replyToPayment({ raw, groupId, content, quotedId, event }) {
     } else { const qt = textOf(quoted); const qp = qt ? parsePaymentCaption(qt) : null; if (qp && Number(qp.amount) > 0) base = { amount: qp.amount, source: 'text' }; }
   }
   if (!base) return false; // an ordinary caption: its own entry
+  if (base.payer || !looksLikeName(event.customerTyped || event.customer || '')) event = { ...event, customer: '', customerTyped: '', pendingName: !base.payer }; // the reply text is never a customer name over the post's own, and filler is never one
   if (Number(event.amount) > 0 && Number(base.amount) > 0 && Math.abs(Number(event.amount) - Number(base.amount)) > 1) return false; // the reply names another amount: it is another payment
   const merged = withCustomer(mergePayment(base, event));
   if (existing) {
@@ -669,6 +672,14 @@ async function trackGroup(raw, groupId, role) {
   if (!text && !image) return;
   const quotedId = (content.extendedTextMessage || image)?.contextInfo?.stanzaId || '';
   const refOf = (id, i = 0) => createHash('sha256').update(`${groupId}|${id}${i ? `|${i}` : ''}`).digest('hex').slice(0, 24);
+  // A quote-reply of filler to a payment («plz clear it», «also this», «done»): never a payment of its own and never a customer name; «clear» sets the status of the quoted payment.
+  if (role === 'payment' && quotedId && text && isReplyFiller(text)) {
+    const refs = new Set([payRef(groupId, quotedId), ...Array.from({ length: 12 }, (_, i) => refOf(quotedId, i))]);
+    const hit = tracker.events.filter((e) => e.type === 'payment' && refs.has(e.ref));
+    if (isClearReply(text)) for (const e of hit) if (!e.cleared) tracker.update(e.ref, { cleared: true });
+    trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', hit.length ? (isClearReply(text) ? 'a reply cleared the payment it quotes' : 'a filler reply to a payment: nothing recorded') : 'a filler reply to a message that is no recorded payment: nothing recorded');
+    return;
+  }
   // A quote-reply that says «cancel» to a cut post of the orders group: that post (customer, code, quantity) is marked CANCELLED, silently. It is no cut any more; the three-way check follows it up.
   if (role === 'cut' && quotedId && text && isCancelText(text)) {
     const refs = new Set(Array.from({ length: 12 }, (_, i) => refOf(quotedId, i)));
@@ -691,6 +702,7 @@ async function trackGroup(raw, groupId, role) {
     }
     if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    if (det.name && !looksLikeName(det.name)) { trace(whereDet, 'tracker', 'a filler word is no customer name'); return; }
     if (det.name && role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event: { customer: det.name, amount: 0, invoices: [] } })) return; // «Awab» as a reply to a receipt photo or PDF: the name belongs to that receipt
     if (det.name) { // a bare name: it belongs to the nameless payment just before it (ten minutes), or to the one that comes just after
       lastPayName.set(groupId, { customer: det.name, at: nowAt() });
@@ -860,12 +872,12 @@ async function migrateStoredPayments(events) {
 async function paymentsReport(events, only = '', opts = {}) {
   const invoices = await qbo.query("select * from Invoice where Balance > '0'");
   const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-  const payments = await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => []); // what the office already recorded
+  const payments = [...(await qbo.query(`select * from Payment where TxnDate >= '${since}'`).catch(() => [])), ...(await qbo.query(`select * from SalesReceipt where TxnDate >= '${since}'`).catch(() => [])), ...(await qbo.query(`select * from Deposit where TxnDate >= '${since}'`).catch(() => []))]; // what the office already recorded: the same three kinds of record the received report reads
   await migrateStoredPayments(events);
   const named = [...new Set(events.filter((e) => e.type === 'payment').flatMap((e) => e.invoices || []))].slice(0, 20); // the invoice numbers the messages give: paid or open
   const lookup = new Map();
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
-  return paymentsText({ events, invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup, since: monitorStartMs(), ...(opts.days ? { days: opts.days } : {}), ...(opts.questions === false ? { questions: false } : {}) });
+  return paymentsText({ events: cleanPaymentEvents({ events, since: monitorStartMs(), isKnown: isOurCustomer }), invoices, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, only, lookup, since: monitorStartMs(), ...(opts.days ? { days: opts.days } : {}), ...(opts.questions === false ? { questions: false } : {}) });
 }
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
@@ -3060,6 +3072,9 @@ async function driverNamer() {
   return driverNamerNow();
 }
 
+/** Is this name one of our customers (a QuickBooks name it fits)? Used to tell the customer of a cheque from its drawer. */
+const isOurCustomer = (n) => !!n && (qboDesk.cache?.customers || []).some((r) => r.DisplayName && sameStop(n, r.DisplayName, nameAlias));
+
 /** The one short line in the delivery group when the last stop of a run is delivered (never per stop, never from history, never to a customer). */
 async function announceRunDone(events, event, say) {
   if (replayCtx.getStore()?.quiet || event.status !== 'delivered' || (!config.deliveryRunLine && !event.simulated)) return; // silent by default; the test group's simulation still shows it
@@ -3077,7 +3092,7 @@ function logNotFound(items, records) {
 async function receivedCheck(name) {
   const to = todayDubai(); const from = clampRange({ from: dayPlus(to, -14), to }).from;
   const records = [...await qbRows('Payment', dayPlus(from, -5), dayPlus(to, 5)), ...await qbRows('SalesReceipt', dayPlus(from, -5), dayPlus(to, 5)), ...await qbRows('Deposit', dayPlus(from, -5), dayPlus(to, 5))];
-  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() });
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
   const items = receivedItems(events, { from, to }, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) }).filter((i) => sameBrandName(name, i.customer));
   if (!items.length) return `No received entry of "${name}" was found from ${from.split('-').reverse().join('/')} on.`;
   const got = matchReceipts(items, records, (n) => cutAliases.resolve(n));
@@ -3167,7 +3182,7 @@ async function sheetNamesUndo(id) {
 async function receivedReportText(kind) {
   const r = clampRange(rangeOf(kind, todayDubai()));
   const records = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
-  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() }); // the same list as «payments»: names, repeats, cheques
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer }); // the same list as «payments»: names, repeats, cheques
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   logNotFound(items, records);
   const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
@@ -3181,7 +3196,7 @@ async function weeklyCheckReport() {
   const r = clampRange(rangeOf('week', todayDubai()));
   const purchases = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
-  const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs() });
+  const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label });
 }

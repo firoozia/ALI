@@ -5,7 +5,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { withEnd } from './separator.js';
-import { CHEQUE_WORDS, matchCod, parsePaymentCaption, stripPaymentWords } from './captions.js';
+import { CHEQUE_WORDS, isEstimateText, isReplyFiller, matchCod, parsePaymentCaption, stripPaymentWords } from './captions.js';
+import { expandRecords, sameBrandForm } from './expenses.js';
 import { sameCutCustomer } from './cuts.js';
 
 const money = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -46,8 +47,9 @@ const recordedId = (x) => String(x.Id || `${x.TxnDate}|${x.CustomerRef?.name || 
 /** The QuickBooks payment the office already recorded for this message: about this amount (within 1) within 7 days before or after it, of this customer when he is named; or null. */
 export function findRecorded(raw, payments, aliasOf = () => '', { unique = false } = {}) {
   const event = cleaned(raw); const amount = Number(event.amount) || 0;
-  const hits = payments.filter((x) => Math.abs(Number(x.TotalAmt) - amount) <= 1 && Math.abs(Date.parse(`${x.TxnDate}T00:00:00Z`) - event.at) <= 7 * 24 * 3600 * 1000
-    && (!event.customer || event.pendingName || event.customer.split(' + ').some((one) => sameCutCustomer(one, x.CustomerRef?.name || '') || (!!aliasOf(one) && sameCutCustomer(aliasOf(one), x.CustomerRef?.name || '')))));
+  const like = (one, name) => sameCutCustomer(one, name) || sameBrandForm(one, name) || (!!aliasOf(one) && (sameCutCustomer(aliasOf(one), name) || sameBrandForm(aliasOf(one), name))); // the same rules as the received report
+  const hits = expandRecords(payments).filter((x) => Math.abs(Number(x.TotalAmt) - amount) <= 1 && Math.abs(Date.parse(`${x.TxnDate}T00:00:00Z`) - event.at) <= 7 * 24 * 3600 * 1000
+    && (!event.customer || event.pendingName || event.customer.split(' + ').some((one) => like(one, x.CustomerRef?.name || ''))));
   return unique && hits.length > 1 && (!event.customer || event.pendingName) ? null : hits[0] || null; // for the duplicate rule a nameless message must fit ONE payment, not several
 }
 
@@ -188,9 +190,29 @@ export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '
  * The payment entries as ONE list for every report (payments, money received, the Thursday check): the same cleaned names (no «receipt + clear», «cheaque», «OMR =»), a cheque
  * recognised by its word, the same repeats dropped (a repeat the owner answered «dup» is gone; one not yet answered counts once; «separate» keeps both). Simulated entries are left out.
  */
-export function sharedPaymentList({ events, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0 }) {
+export function sharedPaymentList({ events, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0, isKnown = () => false }) {
+  const list = cleanPaymentEvents({ events, since, isKnown });
+  return dedupePayments(list, { payments, aliasOf, timeZone, dups });
+}
+
+/** The entries as they really are, before the repeats are dropped: no estimates, no rows made by filler replies, one row for a cheque seen under its customer and its drawer. */
+export function cleanPaymentEvents({ events, since = 0, isKnown = () => false }) {
   const FOREIGN_WORD = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
-  const list = events.filter((e) => e.type === 'payment' && !e.simulated && e.at >= since).sort((a, b) => a.at - b.at).map((e) => {
+  // Re-derived on every read: an estimate or a quotation was never a payment; a row made from a reply of filler («plz clear it», «also this») is no payment of its own — it goes when the same
+  // amount stands in the list under its real post, else it stays with no customer, cleared when the reply said so.
+  const real = events.filter((e) => e.type === 'payment' && !e.simulated && e.at >= since && !(e.text && (isEstimateText(e.text) || isReplyFiller(e.text))));
+  const fixed = [];
+  for (const e of events) {
+    if (e.type !== 'payment' || e.simulated || e.at < since) continue;
+    if (e.text && isEstimateText(e.text)) continue;
+    if (e.text && isReplyFiller(e.text)) {
+      if (real.some((o) => Math.round(Number(o.amount) * 100) === Math.round(Number(e.amount) * 100) && Math.abs(o.at - e.at) < 3 * 24 * 3600 * 1000)) continue;
+      fixed.push({ ...e, customer: '', customerTyped: '', pendingName: true, ...(/clear|done|confirm/i.test(e.text) ? { cleared: true } : {}) }); continue;
+    }
+    if (e.customer && isReplyFiller(e.customer) && !e.text) { fixed.push({ ...e, customer: '', customerTyped: '', pendingName: true }); continue; }
+    fixed.push(e);
+  }
+  const list = fixed.sort((a, b) => a.at - b.at).map((e) => {
     // a post that gives the dirham figure («60 omr = 567 aed», «omr = 567») is read again from its stored text: 567 AED is the amount (an event kept by an older reader may hold 60 or 567 OMR)
     const again = e.text && e.kind !== 'transfer' && FOREIGN_WORD.test(e.text) ? parsePaymentCaption(e.text) : null;
     const aedFigure = again && again.kind === 'cash' && again.amount > 0 && !again.currency && (again.foreign || /=/.test(e.text)) ? again : null;
@@ -199,6 +221,20 @@ export function sharedPaymentList({ events, payments = [], aliasOf = () => '', t
     const asked = aedFigure ? null : FOREIGN_WORD.exec(words);
     return { ...c, ...(c.kind === 'cash' && CHEQUE_WORDS.test(words) ? { kind: 'cheque' } : {}), ...(asked && !e.foreign && (e.currency || 'AED') === 'AED' ? { currencyMentioned: asked[1].toUpperCase() } : {}) };
   });
+  // the same cheque seen twice under two names (the customer and the drawer: «AL MALTA» wrote the cheque for «AL AHLIA»): one row for the customer who is ours, the drawer beside it
+  for (const e of list) {
+    if (e.kind !== 'cheque' || e.merged || !e.customer || e.pendingName) continue;
+    const twin = list.find((o) => o !== e && !o.merged && o.kind === 'cheque' && o.customer && !o.pendingName && Math.round(Number(o.amount) * 100) === Math.round(Number(e.amount) * 100) && Math.abs(o.at - e.at) < 3 * 24 * 3600 * 1000
+      && !sameCutCustomer(o.customer, e.customer) && isKnown(o.customer) !== isKnown(e.customer));
+    if (!twin) continue;
+    const keep = isKnown(e.customer) ? e : twin; const drop = keep === e ? twin : e;
+    keep.drawer = drop.customer; drop.merged = true;
+  }
+  for (let i = list.length - 1; i >= 0; i--) if (list[i].merged) list.splice(i, 1);
+  return list;
+}
+
+function dedupePayments(list, { payments, aliasOf, timeZone, dups }) {
   const kept = [];
   for (const e of list) {
     const original = kept.find((o) => repeats(e, o, timeZone, payments, aliasOf));
