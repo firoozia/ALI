@@ -574,3 +574,25 @@ test('one answer for a row in both reports: a payment recorded under a near spel
   assert.ok(findRecorded(event, [inLine])); // a line of a bigger payment
   assert.equal(findRecorded(event, [{ ...record, CustomerRef: { name: 'OMEGA CO' } }]), null);
 });
+
+// ---- the customer first, then the amount
+import { closestMatch } from '../src/expenses.js';
+import { PayChecks } from '../src/paychecks.js';
+
+test('a rounded post is matched by CUSTOMER first, then by amount: within 1 AED it is the same payment (shown with both figures), beyond it it needs the owner\'s OK with a code; nothing is recorded', () => {
+  const item = (customer, amount) => ({ customer, amount, day: '2026-11-11', kind: 'cash', shown: '*' + amount.toFixed(2) + '*', invoices: [], ref: 'r' + amount, cleared: false, due: '', drawer: '', accepted: null, rejected: null, foreign: false });
+  const rec = (name, total, extra = {}) => ({ Id: String(total), TxnDate: '2026-11-11', TotalAmt: total, CustomerRef: { name }, _type: 'Payment', ...extra });
+  const inv = (name, doc, balance) => ({ Id: doc, DocNumber: doc, TxnDate: '2026-11-05', Balance: balance, CustomerRef: { name } });
+  const items = [item('zeta work', 789.5), item('nova lions for kitchens', 164), item('tau co', 3000), item('sigma co', 500), item('phi co', 2500)];
+  const records = [rec('ZETA WORK CARPENTER LLC', 789.6)];
+  const openInvoices = [inv('NOVA LIONS FOR KITCHENS', 'inv-9990', 163.8), inv('TAU CO', 'inv-9991', 1500), inv('TAU CO', 'inv-9992', 1499.1), inv('OMEGA CO', 'inv-9993', 500), inv('PHI CO', 'inv-9994', 2497.5)];
+  const codes = []; const checks = { codeFor: (ref, text) => { codes.push([ref, text]); return 'G' + codes.length; } };
+  const text = receivedText(items, { title: '11/11', records, openInvoices, checks });
+  assert.match(text, /ZETA WORK — \*789\.50\* ✔ in QuickBooks \(789\.60, posted 789\.50\)/); // 0.10 apart: the same payment
+  assert.match(text, /NOVA LIONS FOR KITCHENS — \*164\.00\* ⚠ not in QuickBooks yet — pays inv-9990 \(163\.80, posted 164\.00\)/); // the open invoice, 0.20 apart
+  assert.match(text, /SIGMA CO — \*500\.00\* ⚠ not in QuickBooks yet(?! — pays)/); // OMEGA's invoice of 500 is another customer: the customer comes first
+  assert.match(text, /TAU CO — \*3000\.00\* ⚠ not in QuickBooks yet — pays inv-9991 \+ inv-9992 \(2,999\.10, posted 3,000\.00\)/); // 0.90 apart: still the same payment, as a proposal
+  assert.match(text, /\*Needs your OK\*\n#G1: PHI CO 2,500\.00 vs inv-9994 2,497\.50 \(−2\.50\)\nyes #G1 \/ no #G1/); // beyond 1.00: never matched by itself
+  assert.deepEqual(codes, [['r2500', 'inv-9994 2,497.50']]); assert.equal(closestMatch(item('omega co', 100), [], openInvoices).kind, 'invoices');
+  const store = new PayChecks(''); const g1 = store.codeFor('r1', 'inv-1 5.00'); assert.equal(g1, 'G1'); assert.equal(store.codeFor('r1', 'inv-1 5.00'), 'G1'); assert.equal(store.codeFor('r2', 'inv-2 7.00'), 'G2'); assert.deepEqual(store.openIds(), ['G1', 'G2']); store.close('G1', 'accepted'); assert.deepEqual(store.openIds(), ['G2']);
+});

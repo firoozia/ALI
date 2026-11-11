@@ -49,6 +49,7 @@ import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { qboNameFor } from './qboname.js';
 import { itemCodesOf, threeWay, threeWayText } from './threeway.js';
+import { PayChecks } from './paychecks.js';
 import { isCancelText, isClearReply, isReplyFiller, looksLikeName } from './captions.js';
 import { EditStore, InvoiceEdits } from './invoiceedit.js';
 import { officeNote, parseOfficeRequest } from './officerequest.js';
@@ -1101,7 +1102,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'request': case 'request_partial': { const r = await qboInvoices.request({ text, requester: 'owner', origin: here.chatId ? { jid: here.chatId } : null }); return [r.owner || r.requester]; }
     case 'yes': case 'no': {
       if (/^[0-9]+$/.test(ic.id || '')) { // «yes #36»: the number alone fits the ONE waiting item with it; several or none is said, never silence
-        const ids = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...invoiceEdits.store.openIds(), ...(pendingBackfill ? [pendingBackfill.id] : [])];
+        const ids = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...invoiceEdits.store.openIds(), ...payChecks.openIds(), ...(pendingBackfill ? [pendingBackfill.id] : [])];
         const hits = ids.filter((x) => x.replace(/^[A-Za-z]+/, '') === ic.id);
         const word = ic.type === 'yes' ? 'yes' : 'no';
         if (hits.length !== 1) return [hits.length ? 'Several items wait under the number ' + ic.id + ': ' + hits.map((h) => '#' + h).join(', ') + '. Nothing was done. Reply with the full code, for example: ' + word + ' #' + hits[0] : 'Nothing is waiting under the number ' + ic.id + '. Nothing was done. Say "waiting" to see what is open.'];
@@ -1121,7 +1122,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('H') ? decideSheetNames(ic.type, id) : id.startsWith('W') ? invoiceEdits.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }) : id.startsWith('B') ? decideBackfill(ic.type, id) : id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
+      const out = await (id.startsWith('G') ? decidePayCheck(ic.type, id) : id.startsWith('H') ? decideSheetNames(ic.type, id) : id.startsWith('W') ? invoiceEdits.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }) : id.startsWith('B') ? decideBackfill(ic.type, id) : id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said && out.length ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -1320,6 +1321,7 @@ function waitingItems(by) {
   if (own) {
     for (const id of qboNames.openIds()) add(id, 'customer names', no(id));
     for (const id of invoiceEdits.store.openIds()) add(id, 'invoice edit', no(id));
+    for (const id of payChecks.openIds()) add(id, 'payment pairing to confirm', no(id));
     for (const id of qboBulk.openIds()) add(id, 'bulk job', no(id));
     for (const id of cutAliases.openIds()) add(id, 'aliases', no(id));
     if (pendingBackfill) add(pendingBackfill.id, 'history backfill estimate', no(pendingBackfill.id));
@@ -3104,6 +3106,7 @@ const sameBrandName = (a, b) => !a || sameBrand(a, b || '');
 // ---------------------------------------------------------------------------------------------------------------- sheet customer names
 // The owner's explicit exception (2026-11-10): the customer names of the stock sheet are made EXACTLY the QuickBooks names. Preview (read only), then «yes #H1»: a full backup copy first, then only the name cells, logged for the undo.
 const sheetNameStore = new SheetNameStore(path.join(config.authDir, 'qbo'));
+const payChecks = new PayChecks(path.join(config.authDir, 'qbo')); // «Needs your OK»: #G1 …
 let pendingSheetNames = null; // { id, at, plan, cells }
 let sheetNamesRunning = false;
 
@@ -3135,6 +3138,15 @@ async function sheetNameSetMany(pairs) {
 }
 
 async function sheetNameSet(from, to) { return sheetNameSetMany([{ from, to, leave: false }]); }
+
+/** The owner's yes or no on a «Needs your OK» pairing: remembered on the payment entry, nothing is recorded in QuickBooks. */
+function decidePayCheck(verb, id) {
+  const x = payChecks.get(id);
+  if (!x || x.status !== 'open') return [`#${id} is not waiting any more.`];
+  if (verb === 'yes') { tracker.update(x.ref, { acceptedMatch: { text: x.text, at: Date.now() } }); payChecks.close(id, 'accepted'); return [`Accepted #${id}: that payment is matched to ${x.text}. Nothing was recorded in QuickBooks.`]; }
+  tracker.update(x.ref, { rejectedMatch: { text: x.text, at: Date.now() } }); payChecks.close(id, 'refused');
+  return [`Refused #${id}: that pairing is dropped and will not be asked again. Nothing was recorded in QuickBooks.`];
+}
 
 async function decideSheetNames(verb, id) {
   const p = pendingSheetNames;
@@ -3185,7 +3197,8 @@ async function receivedReportText(kind) {
   const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer }); // the same list as «payments»: names, repeats, cheques
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   logNotFound(items, records);
-  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n) });
+  const openInvoices = kind === 'today' ? await qbo.query("select * from Invoice where Balance > '0'").catch(() => []) : [];
+  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, checks: kind === 'today' ? payChecks : null });
   if (kind !== 'today' || /No money was recorded/.test(text)) return text;
   // the day's end: the findings of «payments to match» and the possible duplicates (marked, never a question), after the double rule
   let match = '';

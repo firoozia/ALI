@@ -267,26 +267,63 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
 
 /** The private «money received» report: cash, cheques, bank transfers, each numbered on, with the QuickBooks status, then the totals. */
-export function receivedText(items, { title, records = [], aliasOf = () => '' }) {
+/**
+ * The closest QuickBooks answer for one posted payment, CUSTOMER first: among that customer's payments within 7 days (a line of a bigger payment too) and his open invoices (one, or the sum
+ * of two or three), the one nearest to the posted amount. Posts give rounded amounts («789.5» is 789.60). Returns { kind: 'payment' | 'invoices', amount, diff (candidate minus posted), label } or null.
+ * Read only: nothing is recorded anywhere.
+ */
+export function closestMatch(item, records, openInvoices, aliasOf = () => '') {
+  const who = (name) => nameOk(item.customer, name || '', aliasOf);
+  if (!item.customer) return null;
+  const options = [];
+  for (const r of expandRecords(records)) if (who(r.CustomerRef?.name) && closeDay(r.TxnDate, item.day, 7)) options.push({ kind: 'payment', amount: Number(r.TotalAmt), count: 1, label: `${r._type || 'payment'} of ${dmy(r.TxnDate)}` });
+  const open = openInvoices.filter((i) => Number(i.Balance) > 0 && who(i.CustomerRef?.name)).sort((a, b) => String(b.TxnDate).localeCompare(String(a.TxnDate))).slice(0, 10);
+  const name = (i) => i.DocNumber || ('#' + i.Id);
+  for (let a = 0; a < open.length; a++) {
+    options.push({ kind: 'invoices', amount: Number(open[a].Balance), count: 1, label: name(open[a]) });
+    for (let b = a + 1; b < open.length; b++) {
+      options.push({ kind: 'invoices', amount: Number(open[a].Balance) + Number(open[b].Balance), count: 2, label: name(open[a]) + ' + ' + name(open[b]) });
+      for (let k = b + 1; k < open.length; k++) options.push({ kind: 'invoices', amount: Number(open[a].Balance) + Number(open[b].Balance) + Number(open[k].Balance), count: 3, label: name(open[a]) + ' + ' + name(open[b]) + ' + ' + name(open[k]) });
+    }
+  }
+  const best = options.sort((x, y) => Math.abs(x.amount - item.amount) - Math.abs(y.amount - item.amount) || x.count - y.count || (x.kind === 'payment' ? -1 : 1))[0];
+  return best ? { ...best, amount: Math.round(best.amount * 100) / 100, diff: Math.round((best.amount - item.amount) * 100) / 100 } : null;
+}
+
+const signed = (d) => (d > 0 ? '+' : d < 0 ? '−' : '') + money(Math.abs(d));
+
+export function receivedText(items, options) {
+  const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null;
   const matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   const inQb = (it) => matched.has(it) || it.paid === true;
   const groups = [['cash', '💵 Cash'], ['cheque', '🧾 Cheques'], ['bank', '🏦 Bank transfers']];
-  let n = 0; const blocks = [];
+  let n = 0; const blocks = []; const needsOk = [];
   for (const [kind, label] of groups) {
     const list = items.filter((i) => i.kind === kind);
     if (!list.length) continue;
     const entries = list.map((it) => {
       n += 1;
-      const status = it.foreign ? '⚠ foreign currency: check in QuickBooks' : inQb(it) ? '✔ in QuickBooks' : '⚠ not in QuickBooks yet';
+      const rec = matched.get(it); let status;
+      if (it.foreign) status = '⚠ foreign currency: check in QuickBooks';
+      else if (it.accepted) status = '✔ accepted by you: ' + it.accepted.text;
+      else if (inQb(it)) status = '✔ in QuickBooks' + (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004 ? ' (' + money(rec.TotalAmt) + ', posted ' + money(it.amount) + ')' : '');
+      else {
+        const best = it.rejected ? null : closestMatch(it, records, openInvoices, aliasOf);
+        if (best && Math.abs(best.diff) <= 1 && best.kind === 'invoices') status = '⚠ not in QuickBooks yet — pays ' + best.label + ' (' + money(best.amount) + ', posted ' + money(it.amount) + ')';
+        else {
+          status = '⚠ not in QuickBooks yet';
+          if (best && Math.abs(best.diff) > 1) needsOk.push({ it, best });
+        }
+      }
       const dueText = it.due ? ' — due ' + dmy(it.due) : ''; const drawerText = it.drawer ? ' — drawer ' + it.drawer : '';
       const cheque = kind === 'cheque' ? dueText + drawerText + ' — ' + (it.cleared ? 'cleared' : '⏳ not cleared') : '';
-      return `${n}. ${(it.customer || 'UNKNOWN').toUpperCase()} — ${it.shown}${it.invoices.length ? ` for ${it.invoices.join(', ')}` : ''}${cheque}${kind === 'cheque' ? (it.foreign ? ` ${status}` : inQb(it) ? ' ✔ in QuickBooks' : '') : ` ${status}`}${it.note ? `\n⚠ ${it.note}` : ''}`;
+      return `${n}. ${(it.customer || 'UNKNOWN').toUpperCase()} — ${it.shown}${it.invoices.length ? ` for ${it.invoices.join(', ')}` : ''}${cheque}${kind === 'cheque' ? (it.foreign || it.accepted || inQb(it) ? ` ${status}` : '') : ` ${status}`}${it.note ? `\n⚠ ${it.note}` : ''}`;
     });
     blocks.push([label, withSeparators(entries)].join('\n'));
   }
@@ -295,7 +332,12 @@ export function receivedText(items, { title, records = [], aliasOf = () => '' })
   const total = items.reduce((x, i) => x + i.amount, 0);
   const missing = items.filter((i) => !i.foreign && !inQb(i)).length; const uncleared = items.filter((i) => i.kind === 'cheque' && !i.cleared).length; const foreign = items.filter((i) => i.unconverted).length;
   const warn = [...(missing ? [`${missing} not in QuickBooks`] : []), ...(uncleared ? [`${uncleared} cheque${uncleared === 1 ? '' : 's'} not cleared`] : []), ...(foreign ? [`${foreign} in a currency with no rate (not in the total)`] : [])];
-  return [`*Money received — ${title}*`, blocks.join(`\n${SEP}\n`), SEP, `Total received: *${money(total)} AED* (cash *${money(sum('cash'))}* / cheques *${money(sum('cheque'))}* / transfers *${money(sum('bank'))}*)`, ...(warn.length ? [`⚠ ${warn.join(', ')}`] : [])].join('\n');
+  const okBlock = needsOk.length ? [SEP, SEP, ['*Needs your OK*', ...needsOk.map(({ it, best }) => {
+    const text = best.label + ' ' + money(best.amount);
+    const code = checks ? checks.codeFor(it.ref, text) : '';
+    return (code ? '#' + code + ': ' : '') + (it.customer || 'UNKNOWN').toUpperCase() + ' ' + money(it.amount) + ' vs ' + text + ' (' + signed(best.diff) + ')' + (code ? '\nyes #' + code + ' / no #' + code : '');
+  })].join('\n')] : [];
+  return [`*Money received — ${title}*`, blocks.join(`\n${SEP}\n`), SEP, `Total received: *${money(total)} AED* (cash *${money(sum('cash'))}* / cheques *${money(sum('cheque'))}* / transfers *${money(sum('bank'))}*)`, ...(warn.length ? [`⚠ ${warn.join(', ')}`] : []), ...okBlock].join('\n');
 }
 
 /** The Thursday check: what the office has not recorded in QuickBooks yet (expenses and money received of the week). */
