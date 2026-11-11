@@ -167,7 +167,7 @@ export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash
  * The cash box report with QuickBooks as the source. Every QBO line is compared with the WhatsApp posts (amount +-1 AED, date +-3 days): 🟢 posted and in QuickBooks; ⚪ in QuickBooks with no post;
  * 🔴 posted and not in QuickBooks. [posts]: { cashIn: [{ amount, at }], outs: [{ kind, amount, at, employee }], expenses: [{ amount, at, vendor }] }.
  */
-export function cashBoxReportQbo({ month, data, posts, openingOverride = null, timeZone = 'Asia/Dubai', swapCodeOf = () => '', accountName = 'Petty Cash', swapInfoOf = () => null }) {
+export function cashBoxReportQbo({ month, data, posts, openingOverride = null, timeZone = 'Asia/Dubai', swapCodeOf = () => '', accountName = 'Petty Cash', swapInfoOf = () => null, isCustomer = null }) {
   const label = month.slice(5, 7) + '/' + month.slice(0, 4); const first = '01/' + month.slice(5, 7);
   const dayOfIso = (iso) => Math.floor(Date.parse(iso + 'T00:00:00Z') / 86400000);
   const isoOf = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
@@ -190,6 +190,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const transfersInTotal = data.transfersIn.reduce((n, r) => n + r.amount, 0);
   const noPost = [];
   const sameName0 = (a, b) => !a || !b || sameCutCustomer(a, b);
+  const purchaseTaken = new Set();
   for (const r of data.received) {
     // one QuickBooks payment can stand for several posts: the post of the same amount; else posts of ONE customer within a day whose SUM is the payment; else the posts of its invoice lines (each line its own)
     if (claim(inPosts, r.amount, r.date)) { green += 1; continue; }
@@ -203,6 +204,16 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
     let hit = 0;
     for (const a of r.lines || []) if (claim(inPosts, a, r.date)) hit += 1;
     if (hit) green += hit; else noPost.push(r);
+  }
+  // A post left over whose name is NOT a customer («garbage box») but that fits a Petty Cash purchase (+-1 AED, +-7 days) is a cash EXPENSE posted in the Confirmation group, whatever its stored kind:
+  // it moves to the expense posts and is matched with that purchase there (also for an old row whose «pay … for …» words were not kept).
+  if (isCustomer) {
+    for (const p of inPosts.filter((x) => !x.used && x.customer)) {
+      if (isCustomer(p.customer)) continue;
+      const hit = data.purchases.find((pu) => !purchaseTaken.has(pu) && Math.abs(pu.amount - p.amount) <= 1 && Math.abs(dayOfIso(pu.date) - dayNum(p.at, timeZone)) <= 7);
+      if (!hit) continue;
+      purchaseTaken.add(hit); p.used = true; expPosts.push({ amount: p.amount, at: p.at, vendor: p.customer, method: 'cash', days: 7 });
+    }
   }
   const inExtra = [];
   if (noPost.length) { white += noPost.length; inExtra.push('     ↳ ⚪ ' + noPost.length + ' receipt' + (noPost.length === 1 ? '' : 's') + ' (' + money(noPost.reduce((n, r) => n + r.amount, 0)) + ') with no post in the group'); }

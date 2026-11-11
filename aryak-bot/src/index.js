@@ -3189,6 +3189,7 @@ async function cashBoxMonth(month, depth = 0) {
       const data = await fetchCashBoxQbo(qbo, { from, to });
       const swapRows = await qbRows('Payment', dayPlus(from, -7), dayPlus(to, 7));
       if (data) return cashBoxReportQbo({ month, data, openingOverride: cashBoxStore.d.opening[month] ?? null, timeZone: config.timezone,
+        isCustomer: isOurCustomer,
         swapInfoOf: (ref) => { // a post whose digits look swapped against a QuickBooks payment of the same customer: its #G question (made now when none was asked yet)
           const known = payChecks.openIds().find((i) => payChecks.get(i)?.action === 'swap' && payChecks.get(i)?.ref === ref);
           if (known) return { code: known, qboAmount: payChecks.get(known).qboAmount, name: '' };

@@ -969,3 +969,13 @@ test('the cash box: expenses-group entries match the Petty Cash purchases (card 
   const old = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'x', at: day('05'), customer: 'PAY BY CASH FOR GARBAGE BOX', amount: 157 }; // an old row that kept the words only in its name
   assert.equal(rederiveCashOut(old).kind, 'cash_expense'); assert.equal(sharedPaymentList({ events: [old] }).length, 0);
 });
+
+test('a cash post whose name is no customer and that fits a Petty Cash purchase (+-1 AED, +-7 days) is an expense: out of the cash in, matched to the purchase', async () => {
+  const { cashBoxReportQbo } = await import('../src/cashbox.js');
+  const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
+  const data = { opening: 0, closing: null, received: [], elsewhere: [], transfersIn: [], transfersOut: [], purchases: [{ amount: 157.5, date: '2026-11-10', vendor: 'CITY CLEAN', category: 'Cleaning' }] };
+  const posts = { cashIn: [{ amount: 157, at: day('05'), customer: 'GARBAGE BOX', ref: 'g' }, { amount: 90, at: day('06'), customer: 'ZETA CO', ref: 'z' }], outs: [], expenses: [] };
+  const { text } = cashBoxReportQbo({ month: '2026-11', data, posts, isCustomer: (n) => n === 'ZETA CO' });
+  assert.match(text, /🟢 10\/11\s+157\.50 {3}CITY CLEAN\n/); assert.doesNotMatch(text, /157\.00 {2}\(posted/); // the garbage box is an expense, matched to the purchase
+  assert.match(text, /🔴 06\/11\s+90\.00 {2}\(posted, not in QuickBooks\)/); // a real customer stays cash in
+});
