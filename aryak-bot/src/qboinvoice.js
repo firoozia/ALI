@@ -17,6 +17,7 @@ import { staffChecker } from './gate.js';
 import { isEnglishOut } from './outlang.js';
 import { nameKey } from './customergroups.js';
 import { qboEscape } from './qbo.js';
+import { normalizeDigits } from './text.js';
 
 const latin = (s) => String(s).replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[٫]/g, '.');
 const plain = (s) => latin(String(s || '')).replace(/[‌‎‏ً-ٟ]/g, ' ').replace(/[أإ]/g, 'ا').replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/\s+/g, ' ').trim();
@@ -60,10 +61,31 @@ export function englishCommand(text) {
   return null;
 }
 
+/**
+ * «edit invoice 10003» and one change per line: «add 102 5m», «add 102=5m /13aed», «remove 303 5m», «remove 303» (the whole line). Returns { number, ops, bad } or null when the first line is no edit.
+ * ops: [{ kind: 'add' | 'remove', code, qty (null = the whole line), price (null = the system price) }]; bad: the lines that could not be read.
+ */
+export function parseEditRequest(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n').map((l) => normalizeDigits(l).trim()).filter(Boolean);
+  if (!lines.length) return null;
+  const head = /^(?:(?:atossa|atosa|آتوسا)[ ,:]+)?(?:edit|modify|change|amend|ویرایش)\s+(?:invoice|inv|فاکتور)\s*[-#:]?\s*(?:inv-?)?(\d{2,8})\s*$/i.exec(lines[0]);
+  if (!head) return null;
+  const ops = []; const bad = [];
+  for (const line of lines.slice(1)) {
+    const whole = /^(?:remove|delete|del)\s+([A-Za-z0-9][\w.-]*)$/i.exec(line);
+    if (whole) { ops.push({ kind: 'remove', code: whole[1], qty: null, price: null }); continue; }
+    const m = /^(add|remove|delete|del)\s+([A-Za-z0-9][\w.-]*?)\s*(?:[=x*:]\s*|\s+)(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meters?|metres?|rolls?|pcs?|pieces?)?\s*(?:[/@]\s*(\d+(?:\.\d+)?)\s*(?:aed|dhs?)?)?$/i.exec(line);
+    if (!m || !(Number(m[3]) > 0)) { bad.push(line); continue; }
+    ops.push({ kind: m[1].toLowerCase() === 'add' ? 'add' : 'remove', code: m[2], qty: Number(m[3]), price: m[4] === undefined ? null : Number(m[4]) });
+  }
+  return { number: head[1], ops, bad };
+}
+
 export function parseInvoiceCommand(text) {
   const asPersian = englishCommand(text);
   if (asPersian) return parseInvoiceCommand(asPersian);
   const raw = String(text || '').replace(/\r/g, '');
+  { const ed = parseEditRequest(raw); if (ed) return { type: 'invoice_edit', ...ed }; } // «edit invoice 10003» + one change per line
   const first = plain(raw.split('\n')[0]).replace(/^(?:آتوسا|اتوسا)[ ,،:]*/u, '');
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);
   if (m) return { type: 'request', customer: m[1].trim(), lines: raw.split('\n').slice(1).map((l) => l.trim()).filter(Boolean) };
@@ -75,7 +97,7 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
     // the number alone («yes #36», «yes 36», «36 yes»): the desk looks for the ONE waiting item with that number; no letter is needed
     if ((m = new RegExp(String.raw`^(?:(${W})\s*#?\s*(\d{1,4})|#?\s*(\d{1,4})\s*#?\s*(${W}))$`, 'iu').exec(s))) { const word = m[1] || m[4]; return { type: isYes(word) ? 'yes' : 'no', id: m[2] || m[3] }; }
-    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLAVBH])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLAVBHW])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };

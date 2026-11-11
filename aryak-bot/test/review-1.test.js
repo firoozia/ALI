@@ -124,7 +124,7 @@ test('«yes #36» / «yes 36» / «36 yes» name the number only; the desk resol
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   const block = index.slice(index.indexOf("case 'yes': case 'no': {"), index.indexOf("case 'yes': case 'no': {") + 1500);
   assert.match(block, /hits\.length !== 1\) return \[hits\.length \? 'Several items wait under the number '/); assert.match(block, /'Nothing is waiting under the number '/); // never silent
-  assert.match(index, /\/\^\(\?:\[QSA\]\[0-9\]\+\|\[0-9\]\+\)\$\/\.test\(dec\.id \|\| ''\)/); // the internal groups take the number too
+  assert.match(index, /\/\^\(\?:\[QSA\]\[0-9\]\+\|W\[0-9\]\+\|\[0-9\]\+\)\$\/\.test\(dec\.id \|\| ''\)/); // the internal groups take the number too
 });
 
 // ---- item 8
@@ -185,7 +185,7 @@ test('a bare yes or no in a GROUP counts only what was made in that group: the d
   const at = index.indexOf("const inGroup = String(here.chatId || '').endsWith('@g.us');");
   const block = index.slice(at, at + 900);
   assert.ok(at > 0);
-  assert.match(block, /\? \[\.\.\.qboInvoices\.openIds\(\)\.filter\(\(id\) => Object\.values\(qboInvoices\.store\.d\.previews\)\.find\(\(p\) => p\.id === id\)\?\.origin\?\.jid === here\.chatId\), \.\.\.groupStatements\.openIds\(\)\]/);
+  assert.match(block, /\? \[\.\.\.qboInvoices\.openIds\(\)\.filter\(\(id\) => Object\.values\(qboInvoices\.store\.d\.previews\)\.find\(\(p\) => p\.id === id\)\?\.origin\?\.jid === here\.chatId\), \.\.\.invoiceEdits\.store\.openIds\(\)\.filter\(\(id\) => invoiceEdits\.store\.get\(id\)\?\.origin\?\.jid === here\.chatId\), \.\.\.groupStatements\.openIds\(\)\]/);
   assert.doesNotMatch(block.slice(0, block.indexOf(': [...qboInvoices')), /availDrafts|qboNames|pendingBackfill|cutAliases/); // none of those count in a group
 });
 
