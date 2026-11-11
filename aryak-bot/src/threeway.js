@@ -167,7 +167,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
       continue;
     }
     const inv = cover(c.customer, c.code, c.at, c.qty);
-    if (inv) { const text = `${c.code} ${round1(inv.qty)}${unitText('m')} (orders ${dm(c.at, timeZone)}, invoice ${dm(inv.at, timeZone)}, no OUT)`; add(out.invoicedNotLeft, c.customer, text); note('invoicedNotLeft', c.customer, c.code, text, postText([c])); }
+    if (inv) { if (c.qty <= MIN_LISTED && inv.qty <= MIN_LISTED + 1e-9) continue; /* a 1 m or 2 m line is not worth a report line, with a post or without */ const text = `${c.code} ${round1(inv.qty)}${unitText('m')} (orders ${dm(c.at, timeZone)}, invoice ${dm(inv.at, timeZone)}, no OUT)`; add(out.invoicedNotLeft, c.customer, text); note('invoicedNotLeft', c.customer, c.code, text, postText([c])); }
     else { const text = `${c.code} ${round1(c.qty)}${unitText(c.unit)} (orders ${dm(c.at, timeZone)}, no invoice)`; add(out.stillInWarehouse, c.customer, text); note('stillInWarehouse', c.customer, c.code, text, postText([c])); }
   }
   // D) recent invoice lines that neither a cut nor an OUT used up: invoiced, not left yet

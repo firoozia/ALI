@@ -329,3 +329,12 @@ test('one OUT with an invoice of another quantity is ONE line «quantity differs
   const text = threeWayText(r);
   assert.match(text, /^Quantity differs \(OUT vs invoice\) \(1 customer\):\n• SIGMA HOUSE: 1819: OUT 350m[\s\S]*Possible wrong code \(same day, same quantity\) \(1 customer\):/);
 });
+
+test('a small cut (2 m or less) that is invoiced and not left is not listed, with an orders post too', () => {
+  const NOW = Date.parse('2026-11-11T08:00:00Z'); const at = (d) => Date.parse(`2026-11-${d}T10:00:00Z`);
+  const line = (code, qty) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { Qty: qty, ItemRef: { value: code, name: 'PVC ' + code } } });
+  const mk = (q) => threeWay({ events: [{ type: 'cut', at: at('05'), customer: 'HIGH LLC', ref: 'a', lines: [{ code: '405', quantity: q, unit: 'm' }] }], outs: [], invoices: [{ TxnDate: '2026-11-05', DocNumber: 'inv-1', CustomerRef: { name: 'HIGH LLC' }, Line: [line('405', q)] }],
+    itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['HIGH LLC'], now: NOW });
+  assert.deepEqual(mk(1).sections.invoicedNotLeft, []); assert.deepEqual(mk(2).sections.invoicedNotLeft, []);
+  assert.equal(mk(30).sections.invoicedNotLeft.length, 1);
+});
