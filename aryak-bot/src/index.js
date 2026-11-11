@@ -69,8 +69,9 @@ import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
-import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, stockAsk, withoutBotNames } from './staff.js';
+import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
+import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
@@ -90,7 +91,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, swapCandidate, weeklyCheckText } from './expenses.js';
+import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -928,7 +929,7 @@ async function paymentsReport(events, only = '', opts = {}) {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_name_set_many', 'sheet_names_undo', 'name_explain', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_name_set_many', 'sheet_names_undo', 'name_explain', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details', 'expense_edit']);
 const asked = new Set(); // customer messages already answered with a draft
 const officeAsked = new Set(); // customer messages already surfaced to the owner as an invoice request or an order
 /**
@@ -1144,7 +1145,9 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'price_list': return qboBulk.showDraft() || null;
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
+    case 'expense_edit': return [await expenseEditReply(ic.cmd, here.chatId || 'owner', 'owner')];
     case 'swap_answer': {
+      { const xa = answerExpenseEdit(expenseStore, here.chatId || 'owner', 'owner', String(ic.choice)); if (xa) return [xa]; } // the 1 / 2 of an expense edit preview
       const waiting = payChecks.openIds().filter((i) => payChecks.get(i)?.action === 'swap');
       const id = ic.id ? ic.id.toUpperCase() : waiting.length === 1 ? waiting[0] : '';
       if (!id && !waiting.length) return null; // no payment check waits: the digit is not ours
@@ -3067,6 +3070,24 @@ async function readReceiptPhoto(buf, mimeType) {
   return r?.value?.relevant ? r.value : null;
 }
 
+/** After an entry is made: a complete one is recorded silently (unless it repeats an earlier expense: ask ONCE, 1 same / 2 different); an incomplete one asks its one question. */
+async function afterExpenseEntry(entry, say, silentDone = false) {
+  if (entry.state === 'done') {
+    const twin = findExpenseDuplicate(expenseStore, entry);
+    if (twin) { entry.state = 'dup_ask'; entry.dupAsk = twin.id; expenseStore.save(); await say(entryText(entry)); }
+    else if (!silentDone) logger.info('expenses: ' + entry.id + ' recorded silently');
+    return;
+  }
+  await say(entryText(entry));
+}
+
+/** The preview (or the undo) of an expense edit / delete command. */
+async function expenseEditReply(ex, chat, sender) {
+  if (ex.op === 'undo') return undoExpense(expenseStore, ex.id);
+  const e = expenseStore.get(ex.id);
+  return requestExpenseEdit(expenseStore, ex, { chat, sender, inQb: e ? await expenseInQb(e) : false });
+}
+
 /** A message in the expenses group: a receipt photo (with the amount as caption), the answers (1 / 2 / card / cash / a type word / an amount), or a caption-only expense. true = it was an expense message. */
 async function expensesTurn(raw, groupId, info) {
   const testData = isTestSubject(info?.subject); // expenses made in the TEST group are test data: kept, never counted in a real report
@@ -3082,22 +3103,28 @@ async function expensesTurn(raw, groupId, info) {
       try { reading = await readReceiptPhoto(await downloadMediaMessage(raw, 'buffer', {}), String(image.mimetype || 'image/jpeg').split(';')[0]); } catch (e) { logger.warn(`expenses: the receipt could not be read: ${e.message}`); }
     } else logger.info('expenses: the receipt photo was not read (RECEIPT_VISION is off); the caption amount is used');
     const entry = expenseStore.add(makeEntry({ caption: text, reading, hasReceipt: !!reading, hasPhoto: true, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData }));
-    await say(entryText(entry));
+    await afterExpenseEntry(entry, say);
     return true;
   }
   if (!text) return false;
+  // editing / deleting by number and the 1 / 2 on its preview: only a message that starts with her name, only the owner and the people he authorized
+  {
+    const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+    const mayEdit = !!raw.key.fromMe || staffChecker(config.ownerNumbers, lids(info.lidToPhone))(who) === true || qboAuth.has(who, 'invoice', lids(info.lidToPhone)) || qboAuth.has(who, 'statement', lids(info.lidToPhone));
+    const ex = parseExpenseEdit(text);
+    if (ex && startsWithName(text, config.botNames) && mayEdit) { await say(await expenseEditReply(ex, groupId, by)); return true; }
+    if (/^\s*[12]\s*$/.test(text) && mayEdit) { const answer = answerExpenseEdit(expenseStore, groupId, by, text.trim()); if (answer) { await say(answer); return true; } }
+  }
   const done = handleReply(expenseStore, by, parseExpenseReply(text), config.timezone);
-  if (done) { await say(done.text); return true; }
+  if (done) { await say(done.text); if (done.dupCheck) await afterExpenseEntry(done.entry, say, true); return true; }
   const asked = expenseAsk(text); // «Atossa check all expenses in this group» / only her name: the list, in the group
   if (asked) {
-    const today = todayDubai();
-    const r = asked === 'all' ? { from: config.monitorFrom, to: today, label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(today) } : rangeOf(asked, today);
-    await say(expensesText(expenseStore.done(r), r.label));
+    await say(await expensesReportText(asked));
     return true;
   }
   const cap = parseExpenseCaption(text);
   if (cap.amount && /^[\s\d.,]+(?:aed|dhs?|درهم)?\s*[\p{L}]{0,12}\s*$/iu.test(normalizeDigits(text))) { // only an amount (and a type word): an expense with no receipt
-    await say(entryText(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData }))));
+    await afterExpenseEntry(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData })), say);
     return true;
   }
   return false;
@@ -3114,7 +3141,9 @@ async function invoiceLookupFor(events) {
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
   return lookup;
 }
-const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
+const expensesReportText = async (kind) => { const r = kind === 'all' ? { from: config.monitorFrom, to: todayDubai(), label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(todayDubai()) } : rangeOf(kind, todayDubai()); return expensesReport(expenseStore.done(r), qbo.connected && !qbo.paused ? await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)) : [], r.label); };
+/** Is this expense already recorded in QuickBooks (vendor + amount ±1 + date ±3 days)? */
+const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return false; return matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -3), dayPlus(e.day, 3))).found.length > 0; };
 /** The approved aliases for a posted name: the cutting-group aliases, then the QuickBooks names the owner told for the sheet (sheet names), before any fuzzy match. */
 const nameAlias = (n) => cutAliases.resolve(n) || overrideFor(sheetNameStore, n);
 
@@ -3304,14 +3333,14 @@ setInterval(async () => {
     const toGroup = async (text) => { const jid = await expensesGroupJid(); if (jid) await sock.sendMessage(jid, { text }); };
     const toOwner = (text) => sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` });
     const steps = [];
-    if (once(`daily:${now.day}`)) steps.push(['daily expenses', async () => { if (expenseStore.done(rangeOf('today', now.day)).length) await toGroup(expensesReportText('today')); }]);
+    if (once(`daily:${now.day}`)) steps.push(['daily expenses', async () => { if (expenseStore.done(rangeOf('today', now.day)).length) await toGroup(await expensesReportText('today')); }]);
     if (qbo.connected && !qbo.paused && once(`received:${now.day}`)) steps.push(['money received', async () => { const t = await receivedReportText('today'); if (!/No money was recorded/.test(t)) await toOwner(t); }]);
     if (now.weekday === 4 && once(`weekly:${now.day}`)) {
-      steps.push(['weekly expenses', async () => { if (expenseStore.done(rangeOf('week', now.day)).length) await toGroup(expensesReportText('week')); }]);
+      steps.push(['weekly expenses', async () => { if (expenseStore.done(rangeOf('week', now.day)).length) await toGroup(await expensesReportText('week')); }]);
       if (qbo.connected && !qbo.paused) steps.push(['weekly check', async () => toOwner(await weeklyCheckReport())]);
     }
     if (dayPlus(now.day, 1).endsWith('-01') && once(`monthly:${now.day}`)) {
-      steps.push(['monthly expenses', async () => { if (expenseStore.done(rangeOf('month', now.day)).length) await toGroup(expensesReportText('month')); }]);
+      steps.push(['monthly expenses', async () => { if (expenseStore.done(rangeOf('month', now.day)).length) await toGroup(await expensesReportText('month')); }]);
       if (qbo.connected && !qbo.paused) steps.push(['monthly full report', async () => toOwner(await monthlyFullReport())]);
     }
     for (const [name, run] of steps) { try { await run(); logger.info(`expenses: ${name} sent for ${now.day}`); } catch (e) { logger.warn(`expenses: ${name} failed: ${e.message}`); } }

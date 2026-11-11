@@ -81,7 +81,7 @@ const E = (day, amount, type, method, extra = {}) => ({ id: `E${amount}`, day, d
 
 test('the daily, weekly and monthly report: a line per type, one separator, the total with card and cash; a quiet day says so', () => {
   const list = [E('2026-11-10', 120, 'fuel', 'card'), E('2026-11-10', 65, 'food', 'cash'), E('2026-11-10', 45, 'office', 'cash'), E('2026-11-10', 310, 'vehicles', 'card'), E('2026-11-10', 30, 'other', 'cash')];
-  assert.equal(expensesText(list, '10/11/2026'), ['*Expenses — 10/11/2026*', '⛽ Fuel: *120.00*', '🍞 Food: *65.00*', '🖇 Office supplies: *45.00*', '🚚 Vehicles: *310.00*', '📦 Other: *30.00*', SEP, 'Total: *570.00 AED* (card *430.00* / cash *140.00*)'].join('\n'));
+  assert.equal(expensesText(list, '10/11/2026'), ['*Expenses — 10/11/2026*', '⛽ Fuel: *120.00*', '🍞 Food: *65.00*', '📎 Office supplies: *45.00*', '🚗 Car: *310.00*', '📦 Other: *30.00*', SEP, 'Total: *570.00 AED* (card *430.00* / cash *140.00*)'].join('\n'));
   assert.equal(expensesText([], '10/11/2026'), '*Expenses — 10/11/2026*\nNo expense was recorded.');
   assert.deepEqual(rangeOf('today', '2026-11-10'), { from: '2026-11-10', to: '2026-11-10', label: '10/11/2026' }); assert.deepEqual(rangeOf('week', '2026-11-10'), { from: '2026-11-04', to: '2026-11-10', label: '04/11/2026 – 10/11/2026' }); assert.deepEqual(rangeOf('month', '2026-11-10'), { from: '2026-11-01', to: '2026-11-10', label: '11/2026' });
   const st = store(); st.add({ by: '1', amount: 5, type: 'food', day: '2026-11-09', state: 'done', method: 'cash' }); st.add({ by: '1', amount: 7, type: 'food', day: '2026-11-10', state: 'ask_method' });
@@ -139,6 +139,6 @@ test('the wiring: the group is set by the owner inside it or by a setting; the g
   assert.match(index, /const toOwner = \(text\) => sock\.sendMessage\(ownIds\(\)\[0\], \{ text: `🤖 \$\{text\}` \}\);/); // the money received report is private
   const block = index.slice(index.indexOf('// ---------------------------------------------------------------------------------------------------------------- company expenses'), index.indexOf('async function onMessage'));
   assert.doesNotMatch(block, /qbo\.(write|create|post|send)|\.write\(|postDocument/); assert.doesNotMatch(src('expenses.js'), /qbo\.|\.write\(|POST/);
-  assert.ok(block.indexOf("toGroup(expensesReportText('today'))") > 0 && !/toGroup\([^)]*(?:monthlyFullReport|weeklyCheckReport|receivedReportText)/.test(block)); // salaries, rent, QuickBooks figures and the money received never go to the group
+  assert.ok(block.indexOf("toGroup(await expensesReportText('today'))") > 0 && !/toGroup\([^)]*(?:monthlyFullReport|weeklyCheckReport|receivedReportText)/.test(block)); // salaries, rent, QuickBooks figures and the money received never go to the group
   assert.match(fs.readFileSync(path.join(import.meta.dirname, '..', 'deploy', 'gcp-startup.sh'), 'utf8'), /EXPENSES_GROUP_NAME EXPENSES_REPORT_HOUR/);
 });

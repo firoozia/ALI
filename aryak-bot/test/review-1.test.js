@@ -788,3 +788,39 @@ test('a cleared cheque gets the same invoice lines as cash: closed invoices and 
   const one = receivedText([item], { title: 't', records: [{ ...pay, Line: [pay.Line[0]], TotalAmt: 3500 }], linkedInvoices, now });
   assert.match(one, /cleared 11\/11 \(drawer AL MALTA KITCHENS LLC\)     inv-9679/); // one invoice: its number after the line
 });
+
+test('expenses: a complete one-message entry is recorded silently; a missing card/cash or a different receipt amount asks once; the 19:00 report in the new style; edit/delete by number with a preview, 1/2, undo; a repeat asks once', async () => {
+  const { ExpenseStore, makeEntry, handleReply, findExpenseDuplicate, entryText } = await import('../src/expenses.js');
+  const { expensesReport, parseExpenseEdit, requestExpenseEdit, answerExpenseEdit, undoExpense } = await import('../src/expenseedit.js');
+  const { SEP } = await import('../src/separator.js');
+  const now = Date.parse('2026-11-11T10:00:00Z');
+  const store = new ExpenseStore('', () => now);
+  const make = (caption, reading) => store.add(makeEntry({ caption, reading, hasReceipt: !!reading, hasPhoto: true, by: 'u1', byName: 'Sam', ref: caption, at: now }));
+  const a = make('85.5 fuel card', { total: 85.5, vendor: 'ADNOC', date: '2026-11-11' });
+  assert.equal(a.state, 'done'); assert.equal(a.method, 'card'); assert.equal(a.type, 'fuel'); // silent: no question
+  const b = make('40 fuel', { total: 40, vendor: 'ENOC', date: '2026-11-11' });
+  assert.equal(b.state, 'ask_method'); assert.match(entryText(b), /1\. Card {3}2\. Cash/);
+  assert.equal(handleReply(store, 'u1', { pick: '2' }).text.includes('saved'), true); assert.equal(store.get(b.id).method, 'cash');
+  const c = make('50 car card', { total: 47, vendor: 'GARAGE', date: '2026-11-11' }); // the receipt differs from the caption
+  assert.equal(c.state, 'pick_amount'); handleReply(store, 'u1', { pick: '2' }); assert.equal(store.get(c.id).state, 'done'); assert.equal(store.get(c.id).amount, 50); // the method was in the caption: no second question
+  const d = make('85.5 fuel card', { total: 85.5, vendor: 'ADNOC', date: '2026-11-11' });
+  assert.equal(findExpenseDuplicate(store, d).id, a.id); d.state = 'dup_ask'; d.dupAsk = a.id; // same amount, vendor and day: asked once
+  assert.match(handleReply(store, 'u1', { pick: '1' }).text, /counted once/); assert.equal(store.get(d.id).state, 'cancelled');
+  const text = expensesReport(store.done({ from: '2026-11-11', to: '2026-11-11' }), [{ TxnDate: '2026-11-11', TotalAmt: 85.5, EntityRef: { name: 'ADNOC STATION' } }], '11/11/2026');
+  assert.match(text, /^🧾 \*Expenses — 11\/11\/2026\*\n━+\n━+\n⛽ \*Fuel\*\n🟢 85\.50 {3}card {3}ADNOC {5}#E1\n🔴 40\.00 {3}cash {3}ENOC {6}#E2\n━+\n🚗 \*Car\*\n🔴 50\.00 {3}card {3}GARAGE {4}#E3\n━+\n━+\n\*Total: 175\.50 AED\*\nCash box 40\.00 \| Bank card 135\.50\n🟢 In QuickBooks: 1 {4}🔴 Not yet: 2$/);
+  const ex = parseExpenseEdit('Atossa edit #E2\ncard\namount 42.50\ntype car');
+  assert.deepEqual(ex, { op: 'edit', id: 'E2', changes: { method: 'card', amount: 42.5, type: 'vehicles' }, bad: [] });
+  assert.deepEqual(parseExpenseEdit('Atossa edit #E2 cash'), { op: 'edit', id: 'E2', changes: { method: 'cash' }, bad: [] });
+  assert.deepEqual(parseExpenseEdit('Atossa delete #E2'), { op: 'delete', id: 'E2' }); assert.equal(parseExpenseEdit('delete #E2'), null); // a bare delete is the owner's old hard delete
+  const preview = requestExpenseEdit(store, ex, { chat: 'g', sender: 'u1', inQb: true });
+  assert.match(preview, /✏️ Edit expense #E2 — 11\/11\/2026, ENOC\nPayment: {2}cash → \*card\*\nAmount: {3}40\.00 → \*42\.50\*\nType: {5}Fuel → \*Car\*\nNothing is changed in QuickBooks\.\nThis expense is already 🟢 in QuickBooks: also fix it in QuickBooks\.\n1\. Yes, change it\n2\. No, keep it/);
+  assert.equal(store.get('E2').amount, 40); // nothing before the answer
+  assert.equal(answerExpenseEdit(store, 'g', 'u2', '1'), null); // another person's digit is not ours
+  assert.match(answerExpenseEdit(store, 'g', 'u1', '1'), /^Changed #E2/); assert.equal(store.get('E2').amount, 42.5); assert.equal(store.get('E2').type, 'vehicles');
+  assert.match(undoExpense(store, 'E2'), /^Undone/); assert.equal(store.get('E2').amount, 40); assert.equal(store.get('E2').method, 'cash');
+  requestExpenseEdit(store, { op: 'delete', id: 'E2' }, { chat: 'g', sender: 'u1' }); assert.match(answerExpenseEdit(store, 'g', 'u1', '1'), /^Deleted #E2/); assert.equal(store.get('E2').state, 'cancelled');
+  assert.match(undoExpense(store, 'E2'), /^Undone/); assert.equal(store.get('E2').state, 'done');
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes('startsWithName(text, config.botNames) && mayEdit')); // only a message that starts with her name, only the owner and the authorized
+  assert.ok(index.includes('async function afterExpenseEntry')); void SEP;
+});

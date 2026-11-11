@@ -11,8 +11,8 @@ import { localParts } from './morning.js';
 import { normalizeDigits } from './text.js';
 
 export const TYPES = {
-  fuel: { emoji: '⛽', label: 'Fuel' }, food: { emoji: '🍞', label: 'Food' }, office: { emoji: '🖇', label: 'Office supplies' },
-  vehicles: { emoji: '🚚', label: 'Vehicles' }, other: { emoji: '📦', label: 'Other' },
+  fuel: { emoji: '⛽', label: 'Fuel' }, food: { emoji: '🍞', label: 'Food' }, office: { emoji: '📎', label: 'Office supplies' },
+  vehicles: { emoji: '🚗', label: 'Car' }, other: { emoji: '📦', label: 'Other' },
 };
 const WORDS = {
   fuel: ['fuel', 'petrol', 'diesel', 'gas', 'enoc', 'adnoc', 'eppco', 'بنزین', 'بنزين', 'بترول', 'گازوئیل', 'وقود', 'دیزل'],
@@ -126,6 +126,7 @@ const who = (e) => e.byName || e.by || '';
 export function entryText(e) {
   const head = `🧾 *Expense* #${e.id}`;
   const date = `Date: ${dmy(e.date || e.day)} — ${who(e)}`;
+  if (e.state === 'dup_ask') return `${head}\n⚠ Looks like #${e.dupAsk} (same amount, vendor and day). Same expense?\n1. Same — count it once   2. Different`;
   if (e.state === 'need_amount') return `${head}\n${e.hasReceipt || e.hasPhoto ? 'I could not read the receipt.' : 'No amount was written.'} Please write the amount as a number.`;
   if (e.state === 'pick_amount') return `${head}\n⚠ Receipt says *${money(e.receiptAmount)} AED*, caption says *${money(e.captionAmount)}* — which is right?\n1. ${money(e.receiptAmount)}  2. ${money(e.captionAmount)}`;
   const amountLine = e.hasReceipt
@@ -150,11 +151,15 @@ export function handleReply(store, by, reply, timeZone = 'Asia/Dubai') {
   if (reply.cancel) { e.state = 'cancelled'; store.save(); return { text: `Expense #${e.id} cancelled.` }; }
   if (reply.type) { e.type = reply.type; store.save(); return { text: e.state === 'done' ? savedText(e) : entryText(e) }; }
   if (e.state === 'pick_amount' && (reply.pick || reply.amount)) {
-    e.amount = reply.amount || (reply.pick === '1' ? e.receiptAmount : e.captionAmount); e.state = 'ask_method'; store.save();
-    return { text: entryText(e) };
+    e.amount = reply.amount || (reply.pick === '1' ? e.receiptAmount : e.captionAmount); e.state = e.method ? 'done' : 'ask_method'; store.save();
+    return { text: e.state === 'done' ? savedText(e) : entryText(e), dupCheck: e.state === 'done', entry: e };
   }
-  if (e.state === 'need_amount' && reply.amount) { e.amount = reply.amount; e.state = 'ask_method'; store.save(); return { text: entryText(e) }; }
-  if (e.state === 'ask_method' && (reply.pick || reply.method)) { e.method = reply.method || (reply.pick === '1' ? 'card' : 'cash'); e.state = 'done'; store.save(); return { text: savedText(e) }; }
+  if (e.state === 'need_amount' && reply.amount) { e.amount = reply.amount; e.state = e.method ? 'done' : 'ask_method'; store.save(); return { text: e.state === 'done' ? savedText(e) : entryText(e), dupCheck: e.state === 'done', entry: e }; }
+  if (e.state === 'ask_method' && (reply.pick || reply.method)) { e.method = reply.method || (reply.pick === '1' ? 'card' : 'cash'); e.state = 'done'; store.save(); return { text: savedText(e), dupCheck: true, entry: e }; }
+  if (e.state === 'dup_ask' && reply.pick) { // 1 = the same expense (this one is dropped, never counted twice), 2 = a different one (kept, never asked again)
+    if (reply.pick === '1') { e.state = 'cancelled'; e.dupOf = e.dupAsk; store.save(); return { text: 'Noted: ' + e.id + ' is the same expense as ' + e.dupAsk + '; it is counted once.' }; }
+    e.state = 'done'; e.dupAsk = null; e.dupChecked = true; store.save(); return { text: 'Noted: two different expenses. ' + savedText(e) };
+  }
   return null;
 }
 
@@ -163,11 +168,20 @@ export function makeEntry({ caption = '', reading = null, hasReceipt = false, ha
   const cap = parseExpenseCaption(caption);
   const receiptAmount = reading && Number(reading.total) > 0 ? round2(reading.total) : null;
   const type = cap.type || (TYPES[reading?.category] ? reading.category : 'other');
-  const base = { by, byName, ref, day: dayOf(at, timeZone), date: reading?.date || dayOf(at, timeZone), type, vendor: reading?.vendor || '', hasReceipt, hasPhoto: hasPhoto || hasReceipt, receiptAmount, captionAmount: cap.amount, ...(test ? { test: true } : {}) };
+  const method = methodFromWords(caption);
+  const note = type === 'vehicles' ? String(caption || '').replace(/\d[\d.,]*/g, ' ').split(/\s+/).filter((w) => w && !typeFromWords(w) && !methodFromWords(w) && !/^(?:aed|dhs?|درهم)$/i.test(w)).join(' ').slice(0, 60) : ''; // a car: the plate or the driver, as written
+  const base = { by, byName, ref, day: dayOf(at, timeZone), date: reading?.date || dayOf(at, timeZone), type, vendor: reading?.vendor || '', hasReceipt, hasPhoto: hasPhoto || hasReceipt, receiptAmount, captionAmount: cap.amount, ...(method ? { method } : {}), ...(note ? { note } : {}), ...(test ? { test: true } : {}) };
   if (receiptAmount && cap.amount !== null && Math.abs(receiptAmount - cap.amount) > 0.005) return { ...base, amount: null, state: 'pick_amount' };
   const amount = receiptAmount || cap.amount;
   if (!amount) return { ...base, amount: null, state: 'need_amount' };
-  return { ...base, amount, state: 'ask_method' };
+  return { ...base, amount, state: method ? 'done' : 'ask_method' }; // amount and card/cash all there: recorded silently, no question
+}
+
+/** The same amount, vendor and day as an expense already recorded: that earlier entry, or null (an entry with no vendor read cannot be told from another). */
+export function findExpenseDuplicate(store, e) {
+  const vendor = String(e.vendor || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  if (!vendor || !(Number(e.amount) > 0) || e.dupChecked) return null;
+  return store.d.items.find((o) => o !== e && o.state === 'done' && !o.test === !e.test && o.day === e.day && Math.abs(Number(o.amount) - Number(e.amount)) < 0.005 && String(o.vendor || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === vendor) || null;
 }
 
 // ---- reports ---------------------------------------------------------------------------------------------------------------
