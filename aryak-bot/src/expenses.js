@@ -243,6 +243,18 @@ export function matchReceipts(items, records, aliasOf = () => '') {
     const at = all.findIndex((r, i) => !used.has(i) && near(r.TotalAmt, it.amount) && closeDay(r.TxnDate, it.day) && nameOk(it.customer, r.CustomerRef?.name || '', aliasOf));
     if (at >= 0) { used.add(at); out.set(it, all[at]); }
   }
+  // several posts of ONE customer within a day whose SUM is one QuickBooks payment (+-1): they match that payment together (the payment is used once)
+  const left = items.filter((it) => !out.has(it));
+  for (let ri = 0; ri < records.length; ri++) {
+    const rec = records[ri]; if (used.has(all.indexOf(rec))) continue;
+    const mine = left.filter((it) => !out.has(it) && it.customer && closeDay(rec.TxnDate, it.day, 1) && nameOk(it.customer, rec.CustomerRef?.name || '', aliasOf));
+    let group = null;
+    for (let i = 0; i < mine.length && !group; i++) for (let j = i + 1; j < mine.length && !group; j++) {
+      if (near(mine[i].amount + mine[j].amount, rec.TotalAmt)) group = [mine[i], mine[j]];
+      else for (let k = j + 1; k < mine.length && !group; k++) if (near(mine[i].amount + mine[j].amount + mine[k].amount, rec.TotalAmt)) group = [mine[i], mine[j], mine[k]];
+    }
+    if (group) { used.add(all.indexOf(rec)); for (const it of group) out.set(it, rec); }
+  }
   return out;
 }
 
@@ -393,7 +405,7 @@ export function receivedText(items, options) {
       ok = true;
       const inv = invoiceLines(rec, it);
       tail = inv.inline; // one invoice: its number on the same line, after the amount
-      if (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004) extra.push('      ↳ (QuickBooks ' + money(rec.TotalAmt) + ')');
+      if (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004 && ![...matched.values()].some((r, i, all) => r === rec && all.indexOf(r) !== i)) extra.push('      ↳ (QuickBooks ' + money(rec.TotalAmt) + ')'); // not when one payment stands for several posts
       extra.push(...inv.extra); // a payment spread over several invoices: no number on the amount line
     }
     else {

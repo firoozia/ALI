@@ -929,3 +929,24 @@ test('the cash box matching: a receipt in another account is 🟡, a swapped-dig
   assert.match(text, /👔 \*Cash to boss\*: none recorded in QuickBooks this month\n🔴 04\/11\s+18,000\.00 {2}\(posted, not in QuickBooks\)/);
   assert.match(text, /🟡 Other account: 1/);
 });
+
+test('one cash payment for two posts of one customer (926.10 = 749.70 + 176.40): both posts match it, in the cash box and in the money report; the payment is counted once', async () => {
+  const { cashBoxReportQbo } = await import('../src/cashbox.js');
+  const { matchReceipts, receivedText } = await import('../src/expenses.js');
+  const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
+  const withLines = { opening: 1000, closing: null, received: [{ amount: 926.1, date: '2026-11-11', name: 'ZETA WOOD PRESSING', lines: [749.7, 176.4] }], elsewhere: [], transfersIn: [], transfersOut: [], purchases: [] };
+  const posts = { cashIn: [{ amount: 176.4, at: day('11'), customer: 'ZETA WOOD PRESSING', ref: 'a' }, { amount: 749.7, at: day('11'), customer: 'ZETA WOOD PRESSING', ref: 'b' }], outs: [], expenses: [] };
+  for (const data of [withLines, { ...withLines, received: [{ ...withLines.received[0], lines: [] }] }]) { // with the invoice lines, and with only the total
+    const { text, remaining } = cashBoxReportQbo({ month: '2026-11', data, posts });
+    assert.doesNotMatch(text, /posted, not in QuickBooks|🟡|⚪ 1 receipt/);
+    assert.match(text, /Cash from customers\s+926\.10/); assert.equal(remaining, 1926.1); // counted once
+    assert.match(text, /🟢 Posted and in QuickBooks: 2 /);
+  }
+  const item = (amount, ref) => ({ amount, shown: '*' + amount.toFixed(2) + '*', foreign: false, unconverted: false, note: '', day: '2026-11-11', customer: 'ZETA WOOD PRESSING', typed: '', kind: 'cash', invoices: [], cleared: false, due: '', drawer: '', at: day('11'), ref, paid: null });
+  const items = [item(176.4, 'a'), item(749.7, 'b')];
+  const one = { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 926.1, CustomerRef: { name: 'ZETA WOOD PRESSING L.L.C' }, Line: [] }; // no line to pair with: only the sum
+  const matched = matchReceipts(items, [one]);
+  assert.equal(matched.size, 2); assert.ok(matched.get(items[0]) === matched.get(items[1]));
+  assert.match(receivedText(items, { title: 't', records: [one], now: day('11') }), /\*ZETA WOOD PRESSING\*\n🟢 176\.40\n🟢 749\.70/);
+  assert.equal(matchReceipts([item(100, 'c'), { ...item(826.1, 'd'), customer: 'OTHER CO' }], [one]).size, 0); // two customers do not make one payment
+});

@@ -148,7 +148,7 @@ export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash
   const methods = new Map((await qbo.query('select * from PaymentMethod').catch(() => [])).map((m) => [String(m.Id), String(m.Name || '')]));
   const isCash = (r) => String(r.DepositToAccountRef?.value) === id && /cash/i.test(methods.get(String(r.PaymentMethodRef?.value)) || '');
   const every = [...await qbo.query('select * from Payment where ' + range), ...await qbo.query('select * from SalesReceipt where ' + range)];
-  const received = every.filter(isCash).map((r) => ({ amount: Number(r.TotalAmt), date: r.TxnDate, name: r.CustomerRef?.name || '' }));
+  const received = every.filter(isCash).map((r) => ({ amount: Number(r.TotalAmt), date: r.TxnDate, name: r.CustomerRef?.name || '', lines: (r.Line || []).filter((l) => Number(l.Amount) > 0 && (l.LinkedTxn || []).length).map((l) => Number(l.Amount)) })); // the lines: what the payment paid on each invoice
   const accountNames = new Map((await qbo.query('select * from Account').catch(() => [])).map((a) => [String(a.Id), String(a.Name || '')]));
   const elsewhere = every.filter((r) => !isCash(r)).map((r) => ({ amount: Number(r.TotalAmt), date: r.TxnDate, name: r.CustomerRef?.name || '', account: accountNames.get(String(r.DepositToAccountRef?.value)) || 'another account' })); // recorded, but not in this account
   const transfers = (await qbo.query('select * from Transfer where ' + range)).filter((t) => String(t.FromAccountRef?.value) === id || String(t.ToAccountRef?.value) === id);
@@ -189,7 +189,21 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const cashFromCustomers = data.received.reduce((n, r) => n + r.amount, 0);
   const transfersInTotal = data.transfersIn.reduce((n, r) => n + r.amount, 0);
   const noPost = [];
-  for (const r of data.received) { if (claim(inPosts, r.amount, r.date)) green += 1; else noPost.push(r); }
+  const sameName0 = (a, b) => !a || !b || sameCutCustomer(a, b);
+  for (const r of data.received) {
+    // one QuickBooks payment can stand for several posts: the post of the same amount; else posts of ONE customer within a day whose SUM is the payment; else the posts of its invoice lines (each line its own)
+    if (claim(inPosts, r.amount, r.date)) { green += 1; continue; }
+    const near = inPosts.filter((p) => !p.used && p.customer && Math.abs(dayNum(p.at, timeZone) - dayOfIso(r.date)) <= 1 && sameName0(r.name, p.customer));
+    let group = null;
+    for (let i = 0; i < near.length && !group; i++) for (let j = i + 1; j < near.length && !group; j++) {
+      if (Math.abs(near[i].amount + near[j].amount - r.amount) <= 1) group = [near[i], near[j]];
+      else for (let k = j + 1; k < near.length && !group; k++) if (Math.abs(near[i].amount + near[j].amount + near[k].amount - r.amount) <= 1) group = [near[i], near[j], near[k]];
+    }
+    if (group) { for (const p of group) p.used = true; green += group.length; continue; }
+    let hit = 0;
+    for (const a of r.lines || []) if (claim(inPosts, a, r.date)) hit += 1;
+    if (hit) green += hit; else noPost.push(r);
+  }
   const inExtra = [];
   if (noPost.length) { white += noPost.length; inExtra.push('     ↳ ⚪ ' + noPost.length + ' receipt' + (noPost.length === 1 ? '' : 's') + ' (' + money(noPost.reduce((n, r) => n + r.amount, 0)) + ') with no post in the group'); }
   const sameName = (a, b) => !a || !b || sameCutCustomer(a, b);
