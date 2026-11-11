@@ -314,3 +314,18 @@ test('the live false findings of 11/11 (made-up names): invoice lines add up, ed
   assert.match(threeWayText(many, { details: true }), /\(12 customers\):(\n• C\d+: 1 5m \(x\)){12}[\s\S]*Left without an order-group post/);
   assert.deepEqual(parseInvoiceCommand('unbilled details'), { type: 'unbilled', details: true }); assert.deepEqual(parseInvoiceCommand('unbilled'), { type: 'unbilled' });
 });
+
+test('one OUT with an invoice of another quantity is ONE line «quantity differs»; the same day and quantity under another code is «check the code»; neither is listed twice', () => {
+  const NOW = Date.parse('2026-11-11T08:00:00Z'); const at = (d) => Date.parse(`2026-11-${d}T10:00:00Z`);
+  const out = (customer, code, qty, d) => ({ customer, code, qty, unit: 'm', at: at(d) });
+  const line = (code, qty, name = 'PVC ' + code) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { Qty: qty, ItemRef: { value: code, name } } });
+  const inv = (customer, d, doc, lines) => ({ TxnDate: `2026-11-${d}`, DocNumber: doc, CustomerRef: { name: customer }, Line: lines });
+  const cut = { type: 'cut', at: at('04'), customer: 'SOMEONE', ref: 'first', lines: [{ code: '1', quantity: 1, unit: 'm' }] }; // the tracked history begins on 04/11
+  const r = threeWay({ events: [cut], outs: [out('SIGMA HOUSE', '1819', 350, '09'), out('CARPENTER CO', '201', 20.2, '11')],
+    invoices: [inv('SIGMA HOUSE', '09', 'inv-9989', [line('1819', 153)]), inv('CARPENTER CO', '11', 'inv-10010', [line('220', 20)])], itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['SIGMA HOUSE', 'CARPENTER CO'], now: NOW });
+  assert.deepEqual(r.sections.quantityDiffers, [{ customer: 'SIGMA HOUSE', parts: ['1819: OUT 350m (09/11) vs invoiced 153m (inv-9989) → 197m not invoiced'] }]);
+  assert.deepEqual(r.sections.checkCode, [{ customer: 'CARPENTER CO', parts: ['OUT 201 20.2m vs invoice 220 20m on 11/11 — check the code'] }]);
+  for (const k of ['leftNotInvoiced', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost']) assert.deepEqual(r.sections[k], [], k); // not listed again
+  const text = threeWayText(r);
+  assert.match(text, /^Quantity differs \(OUT vs invoice\) \(1 customer\):\n• SIGMA HOUSE: 1819: OUT 350m[\s\S]*Possible wrong code \(same day, same quantity\) \(1 customer\):/);
+});
