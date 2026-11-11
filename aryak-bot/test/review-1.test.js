@@ -773,3 +773,12 @@ test('a payment shows the invoice NUMBER it was applied to (also a fully paid in
   assert.doesNotMatch(text, /inv #|74736|74738|99999/);
   assert.ok(!text.split('\n').filter((l) => /^[🟢🔴⏳]/u.test(l)).some((l) => l.includes('*'))); // no bold inside a receipt line
 });
+
+test('an invoice number that already starts with inv- is never given the prefix twice', async () => {
+  const { receivedText } = await import('../src/expenses.js');
+  const now = Date.parse('2026-11-11T16:00:00Z');
+  const item = { amount: 400, shown: '*400.00*', foreign: false, unconverted: false, note: '', day: '2026-11-11', customer: 'ZETA KITCHEN', typed: '', kind: 'cash', invoices: [], cleared: false, due: '', drawer: '', at: now - 3600000, ref: 'r', paid: null };
+  const pay = { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 400, CustomerRef: { name: 'ZETA KITCHEN' }, Line: [{ Amount: 400, LinkedTxn: [{ TxnId: '1', TxnType: 'Invoice' }] }] };
+  const text = receivedText([item], { title: 't', records: [pay], linkedInvoices: [{ Id: '1', DocNumber: 'inv-10004', TotalAmt: 400, Balance: 0 }], now });
+  assert.match(text, /\(applied to inv-10004\)/); assert.doesNotMatch(text, /inv-inv-/);
+});
