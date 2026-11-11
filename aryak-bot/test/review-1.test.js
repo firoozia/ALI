@@ -858,3 +858,19 @@ test('the cash box: cash to the boss and salary advances are their own kinds (ne
   assert.ok(index.includes("cashBoxStore.d.opening[prev] !== undefined) opening = (await cashBoxMonth(prev, depth + 1)).remaining")); // the month-end remaining is the next month's opening
   assert.ok(index.includes("once(`cashbox:${now.day.slice(0, 7)}`)")); // the last day of the month at 19:00, to the owner only
 });
+
+test('old stored rows are re-read: «deposit to boss» is cash to the boss (out of the customer cash, counted once), «advance NAME» a salary advance; every expenses report reply is awaited text', async () => {
+  const { rederiveCashOut } = await import('../src/cashbox.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const at = Date.parse('2026-11-04T12:00:00Z');
+  const old = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'a', at, customer: 'DEPOSIT TO BOSS', amount: 18000, text: '18000 deposit to boss' };
+  const echo = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'b', at: at + 60000, customer: '', amount: 18000, text: 'You 18000 deposit to boss 4/11' };
+  const adv = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'c', at, customer: 'RAJU', amount: 500, text: 'advance 500 RAJU' };
+  const real = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'd', at, customer: 'BOSS KITCHEN', amount: 700, text: 'cash from BOSS KITCHEN 700' };
+  assert.deepEqual([rederiveCashOut(old).kind, rederiveCashOut(echo).kind, rederiveCashOut(adv).kind, rederiveCashOut(adv).employee], ['cash_to_boss', 'cash_to_boss', 'salary_advance', 'RAJU']);
+  assert.equal(rederiveCashOut(real), real); // a customer whose name holds «boss» stays a customer
+  assert.deepEqual(sharedPaymentList({ events: [old, echo, adv, real] }).map((e) => e.ref), ['d']); // none of the three is customer cash
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(!/\[expensesReportText\(/.test(index)); assert.ok(index.includes('[await expensesReportText(ic.range)]')); // the async report is awaited
+  assert.equal((index.match(/expensesReportText\(/g) || []).length, (index.match(/await expensesReportText\(/g) || []).length); // every call is awaited
+});

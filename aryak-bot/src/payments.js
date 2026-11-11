@@ -2,7 +2,7 @@
 // A PROPOSAL only, read only: nothing is ever recorded in QuickBooks from here (recording a payment would be its own owner-approved job). The account numbers of the bank messages are
 // never kept: only the amount.
 
-import { CASH_OUT_KINDS } from './cashbox.js';
+import { CASH_OUT_KINDS, rederiveCashOut } from './cashbox.js';
 const CASH_OUT = CASH_OUT_KINDS; // cash to the boss and salary advances are no customer payments
 import fs from 'node:fs';
 import path from 'node:path';
@@ -122,7 +122,7 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
 
 /** The report: [events] with an amount, newest first, at most [max] proposals; the footer says nothing was recorded. */
 export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map(), since = 0, questions = true }) {
-  const recent = events.filter((e) => e.type === 'payment' && !CASH_OUT.includes(e.kind) && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
+  const recent = events.map(rederiveCashOut).filter((e) => e.type === 'payment' && !CASH_OUT.includes(e.kind) && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
   const marked = new Map(); const dropped = new Set();
@@ -192,8 +192,8 @@ export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '
  * The payment entries as ONE list for every report (payments, money received, the Thursday check): the same cleaned names (no «receipt + clear», «cheaque», «OMR =»), a cheque
  * recognised by its word, the same repeats dropped (a repeat the owner answered «dup» is gone; one not yet answered counts once; «separate» keeps both). Simulated entries are left out.
  */
-export function sharedPaymentList({ events, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0, isKnown = () => false }) {
-  const list = cleanPaymentEvents({ events, since, isKnown });
+export function sharedPaymentList({ events: storedEvents, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0, isKnown = () => false }) {
+  const list = cleanPaymentEvents({ events: storedEvents.map(rederiveCashOut), since, isKnown }); // an old row «18000 deposit to boss» is re-read as cash to the boss, not as customer cash
   return dedupePayments(list, { payments, aliasOf, timeZone, dups });
 }
 

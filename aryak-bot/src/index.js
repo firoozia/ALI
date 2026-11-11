@@ -72,7 +72,7 @@ import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
-import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport } from './cashbox.js';
+import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, rederiveCashOut } from './cashbox.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
@@ -1092,7 +1092,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'sheet_name_set': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNameSet(ic.from, ic.to); }
     case 'sheet_names_undo': return sheetNamesUndo(ic.id);
     case 'received_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedCheck(ic.name)]; }
-    case 'expenses_report': return [expensesReportText(ic.range)];
+    case 'expenses_report': return [await expensesReportText(ic.range)];
     case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
     case 'weekly_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await weeklyCheckReport()]; }
     case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
@@ -3175,7 +3175,12 @@ async function cashBoxMonth(month, depth = 0) {
   const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
   const cashIn = receivedItems(events, r, { timeZone: config.timezone, lookup: new Map() }).filter((i) => i.kind === 'cash' && !i.foreign);
   const startMs = Date.parse(from + 'T00:00:00+04:00'); const endMs = Date.parse(to + 'T23:59:59+04:00');
-  const outs = tracker.events.filter((e) => e.type === 'payment' && ['cash_to_boss', 'salary_advance'].includes(e.kind) && !e.simulated && e.at >= startMs && e.at <= endMs).map((e) => ({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '' }));
+  const outs = []; // the boss / advance rows of the month (an old row is re-read; the same amount posted twice within half an hour, «18000 deposit to boss» and its echo, is one)
+  for (const e of tracker.events.map(rederiveCashOut)) {
+    if (e.type !== 'payment' || !['cash_to_boss', 'salary_advance'].includes(e.kind) || e.simulated || e.at < startMs || e.at > endMs) continue;
+    if (outs.some((o) => o.kind === e.kind && o.amount === Number(e.amount) && Math.abs(o.at - e.at) <= 30 * 60 * 1000)) continue;
+    outs.push({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '' });
+  }
   const expenses = expenseStore.done(r).filter((e) => e.method === 'cash').map((e) => ({ amount: e.amount, type: e.type }));
   const transfers = await qbRows('Transfer', dayPlus(from, -3), dayPlus(to, 3));
   return cashBoxReport({ month, opening, cashIn, expenses, outs, transfers, timeZone: config.timezone, typeLabel: (t) => (TYPES[t]?.label || 'Other') });

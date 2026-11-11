@@ -26,6 +26,20 @@ export function cashOutKind(text) {
   return null;
 }
 
+/**
+ * An OLD stored payment row (made before the cash-out kinds existed) re-read: «18000 deposit to boss», «to boss», «advance 500 RAJU», «سلف …» in its text or its name make it cash to the boss / a salary
+ * advance. Stricter than a new caption: only «to boss» (a customer named BOSS is not the boss). Returns the row itself when nothing changes, else a changed copy.
+ */
+export function rederiveCashOut(e) {
+  if (!e || e.type !== 'payment' || CASH_OUT_KINDS.includes(e.kind) || e.kind === 'cheque' || e.kind === 'transfer') return e;
+  const words = [e.text, e.customerTyped, e.customer].filter(Boolean).join(' ');
+  if (!/(?:^|[^a-z])to\s+boss(?![a-z])|^\s*boss(?![a-z])/i.test(words) && !ADVANCE.test(words)) return e;
+  const amount = Number(e.amount) > 0 ? Number(e.amount) : null;
+  const out = cashOutKind(e.text ? e.text : words + ' ' + (amount || '')); // the posted words as they are; with none, the name and the amount
+  if (!out || out.kind === 'cash_unclear') return e;
+  return { ...e, kind: out.kind, ...(out.employee ? { employee: out.employee } : {}), customer: '', customerTyped: '', pendingName: false, reclassified: true };
+}
+
 /** The opening balances (a file on the server): { 'yyyy-mm': amount }. Asked once, then the month-end balance carries on; the owner can override. */
 export class CashBoxStore {
   constructor(dir = '') {
