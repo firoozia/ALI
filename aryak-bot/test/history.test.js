@@ -23,7 +23,7 @@ test('the monitor day: 01/11/2026 by default, a setting, and nothing before it i
   assert.ok(sharedPaymentList({ events, dups: new PaymentDups('') }).length === 2);
   assert.match(index, /const clampRange = \(r\) => \(r\.from < config\.monitorFrom \? \{ \.\.\.r, from: config\.monitorFrom \} : r\);/);
   assert.match(index, /const r = clampRange\(rangeOf\(kind, todayDubai\(\)\)\);/); assert.match(index, /const r = clampRange\(rangeOf\('week', todayDubai\(\)\)\);/);
-  assert.equal((index.match(/since: monitorStartMs\(\)/g) || []).length, 5); // «payments», the received report, the weekly check
+  assert.equal((index.match(/since: monitorStartMs\(\)/g) || []).length, 6); // «payments», the received report, the weekly check, the cash box
   assert.match(index, /e\.at >= Math\.max\(Date\.now\(\) - days \* 86400000, monitorStartMs\(\)\)/); // the photo test too
   assert.match(fs.readFileSync(path.join(import.meta.dirname, '..', 'deploy', 'gcp-startup.sh'), 'utf8'), /MONITOR_FROM/);
 });

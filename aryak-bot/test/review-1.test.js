@@ -824,3 +824,37 @@ test('expenses: a complete one-message entry is recorded silently; a missing car
   assert.ok(index.includes('startsWithName(text, config.botNames) && mayEdit')); // only a message that starts with her name, only the owner and the authorized
   assert.ok(index.includes('async function afterExpenseEntry')); void SEP;
 });
+
+test('the cash box: cash to the boss and salary advances are their own kinds (never a customer payment), the month report with the approved layout, matched to QuickBooks transfers, the opening balance carried', async () => {
+  const { cashOutKind, cashBoxReport, parseCashBoxCommand } = await import('../src/cashbox.js');
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const { SEP } = await import('../src/separator.js');
+  assert.deepEqual(cashOutKind('18000 deposit to boss'), { kind: 'cash_to_boss', amount: 18000, employee: '' });
+  assert.deepEqual(cashOutKind('cash to boss 10000'), { kind: 'cash_to_boss', amount: 10000, employee: '' });
+  assert.deepEqual(cashOutKind('advance 500 RAJU'), { kind: 'salary_advance', amount: 500, employee: 'RAJU' });
+  assert.equal(cashOutKind('cash from ZETA CO 750'), null); assert.equal(cashOutKind('handed 300 to somebody').kind, 'cash_unclear');
+  const ev = eventsFromCaption('payment', 'advance 500 RAJU').events[0];
+  assert.deepEqual([ev.kind, ev.amount, ev.employee, ev.customer], ['salary_advance', 500, 'RAJU', '']);
+  const at = Date.parse('2026-11-05T09:00:00Z');
+  assert.equal(sharedPaymentList({ events: [{ ...ev, at, ref: 'a' }, { type: 'payment', kind: 'cash', customer: 'ZETA CO', amount: 750, at, ref: 'b', currency: 'AED' }] }).length, 1); // the advance is out of every customer list
+  const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
+  const { text, remaining } = cashBoxReport({
+    month: '2026-11', opening: 2000, cashIn: [{ amount: 25430 }],
+    expenses: [{ amount: 610, type: 'fuel' }, { amount: 380.5, type: 'food' }, { amount: 250, type: 'office' }],
+    outs: [{ kind: 'cash_to_boss', amount: 10000, at: day('04'), employee: '' }, { kind: 'cash_to_boss', amount: 8000, at: day('18'), employee: '' }, { kind: 'salary_advance', amount: 500, at: day('06'), employee: 'RAJU' }, { kind: 'salary_advance', amount: 1000, at: day('09'), employee: 'AHMED' }],
+    transfers: [{ TxnDate: '2026-11-04', Amount: 10000 }, { TxnDate: '2026-11-18', Amount: 8000 }, { TxnDate: '2026-11-06', Amount: 500 }],
+    typeLabel: (t) => ({ fuel: 'Fuel', food: 'Food', office: 'Office' }[t]),
+  });
+  assert.equal(remaining, 6689.5);
+  assert.equal(text, ['📦 *Cash box — 11/2026*', SEP, SEP, '💵 *Cash in*', 'Opening balance (01/11)        2,000.00', 'Cash from customers           25,430.00', SEP, SEP, '💸 *Cash out*', '',
+    '🧾 *Company expenses (cash)*   1,240.50', '     ↳ Fuel 610.00 | Food 380.50 | Office 250.00', SEP,
+    '👔 *Cash to boss*             18,000.00', '🟢 04/11   10,000.00', '🟢 18/11    8,000.00', SEP,
+    '👷 *Salary advances*           1,500.00', '🟢 06/11      500.00   RAJU', '🔴 09/11    1,000.00   AHMED  (not in QuickBooks)', SEP, SEP,
+    '*Total in:  27,430.00 AED*', '*Total out: 20,740.50 AED*', '*Remaining in cash box: 6,689.50 AED*', '🟢 In QuickBooks: 3    🔴 Not yet: 1'].join('\n'));
+  assert.deepEqual(parseCashBoxCommand('cash box'), { op: 'report' }); assert.deepEqual(parseCashBoxCommand('صندوق'), { op: 'report' });
+  assert.deepEqual(parseCashBoxCommand('cash box opening 01/11 2000', new Date('2026-11-12T00:00:00Z')), { op: 'opening', month: '2026-11', amount: 2000 });
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("cashBoxStore.d.opening[prev] !== undefined) opening = (await cashBoxMonth(prev, depth + 1)).remaining")); // the month-end remaining is the next month's opening
+  assert.ok(index.includes("once(`cashbox:${now.day.slice(0, 7)}`)")); // the last day of the month at 19:00, to the owner only
+});

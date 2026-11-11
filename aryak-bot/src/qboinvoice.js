@@ -8,6 +8,7 @@
 
 import { parseCutCommand } from './cutedit.js';
 import { parseExpenseEdit } from './expenseedit.js';
+import { parseCashBoxCommand } from './cashbox.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseStatementRequest } from './period.js';
@@ -88,7 +89,8 @@ export function parseInvoiceCommand(text) {
   if (asPersian) return parseInvoiceCommand(asPersian);
   const raw = String(text || '').replace(/\r/g, '');
   { const ed = parseEditRequest(raw); if (ed) return { type: 'invoice_edit', ...ed }; } // «edit invoice 10003» + one change per line
-  { const sw = /^(?:atossa[ ,:]+)?([12])(?:[ ]*#?[ ]*G(\d+))?[.!]?$/i.exec(normalizeDigits(raw.trim())); if (sw) return { type: 'swap_answer', choice: Number(sw[1]), id: sw[2] ? 'G' + sw[2] : '' }; } // «1» / «2 #G5»: the answer to a digits-swapped payment check
+  { const sw = /^(?:atossa[ ,:]+)?([123])(?:[ ]*#?[ ]*G(\d+))?[.!]?$/i.exec(normalizeDigits(raw.trim())); if (sw) return { type: 'swap_answer', choice: Number(sw[1]), id: sw[2] ? 'G' + sw[2] : '' }; } // «1» / «2 #G5»: the answer to a digits-swapped payment check
+  { const cb = parseCashBoxCommand(raw); if (cb) return { type: 'cash_box', cmd: cb }; } // «cash box», «صندوق», «cash box opening 01/11 2000»
   { const xe = parseExpenseEdit(raw); if (xe) return { type: 'expense_edit', cmd: xe }; } // «edit #E8 cash», «delete #E8», «undo #E8»
   { const cc = parseCutCommand(raw); if (cc) return { type: 'cut_cmd', cmd: cc }; } // «cuts 215 08/11», «cut #Z1 customer NAME», «undo cut #X1»
   const first = plain(raw.split('\n')[0]).replace(/^(?:آتوسا|اتوسا)[ ,،:]*/u, '');

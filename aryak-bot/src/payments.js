@@ -2,6 +2,8 @@
 // A PROPOSAL only, read only: nothing is ever recorded in QuickBooks from here (recording a payment would be its own owner-approved job). The account numbers of the bank messages are
 // never kept: only the amount.
 
+import { CASH_OUT_KINDS } from './cashbox.js';
+const CASH_OUT = CASH_OUT_KINDS; // cash to the boss and salary advances are no customer payments
 import fs from 'node:fs';
 import path from 'node:path';
 import { withEnd } from './separator.js';
@@ -120,7 +122,7 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
 
 /** The report: [events] with an amount, newest first, at most [max] proposals; the footer says nothing was recorded. */
 export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map(), since = 0, questions = true }) {
-  const recent = events.filter((e) => e.type === 'payment' && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
+  const recent = events.filter((e) => e.type === 'payment' && !CASH_OUT.includes(e.kind) && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
   const marked = new Map(); const dropped = new Set();
@@ -203,10 +205,10 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
   const FOREIGN_WORD = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
   // Re-derived on every read: an estimate or a quotation was never a payment; a row made from a reply of filler («plz clear it», «also this») is no payment of its own — it goes when the same
   // amount stands in the list under its real post, else it stays with no customer, cleared when the reply said so.
-  const real = events.filter((e) => e.type === 'payment' && !e.simulated && e.at >= since && !(e.text && (isEstimateText(e.text) || isReplyFiller(e.text))));
+  const real = events.filter((e) => e.type === 'payment' && !CASH_OUT.includes(e.kind) && !e.simulated && e.at >= since && !(e.text && (isEstimateText(e.text) || isReplyFiller(e.text))));
   const fixed = [];
   for (const e of events) {
-    if (e.type !== 'payment' || e.simulated || e.at < since) continue;
+    if (e.type !== 'payment' || CASH_OUT.includes(e.kind) || e.simulated || e.at < since) continue;
     if (e.text && isEstimateText(e.text)) continue;
     if (e.text && isReplyFiller(e.text)) {
       if (real.some((o) => Math.round(Number(o.amount) * 100) === Math.round(Number(e.amount) * 100) && Math.abs(o.at - e.at) < 3 * 24 * 3600 * 1000)) continue;

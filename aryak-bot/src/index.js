@@ -72,6 +72,7 @@ import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
+import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport } from './cashbox.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
@@ -91,7 +92,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses } from './expenses.js';
+import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, TYPES, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -595,6 +596,7 @@ const clampRange = (r) => (r.from < config.monitorFrom ? { ...r, from: config.mo
 const swapPending = new Map(); // ref -> { at }: a payment to compare with QuickBooks for swapped digits
 function tellPayment(event) {
   if (replayCtx.getStore()?.quiet) return; // a message read from the history is never announced
+  if (CASH_OUT_KINDS.includes(event.kind)) return; // cash to the boss / a salary advance is no customer payment
   if (qbo.connected && !qbo.paused && Number(event.amount) > 0 && event.kind !== 'cheque') swapPending.set(event.ref, { at: Date.now() });
   if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf') && config.paymentNotices) payPending.set(event.ref, { at: Date.now() }); // held a few minutes: the messages about one payment become ONE notice
 }
@@ -768,6 +770,10 @@ async function trackGroup(raw, groupId, role) {
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
+      if (role === 'payment' && event.kind === 'cash_unclear' && !replayCtx.getStore()?.quiet) { // cash out of the box whose kind is unclear: ONE question in the owner's own chat
+        const gid = payChecks.codeFor(event.ref, String(event.employee || event.amount), 'cashkind');
+        await sock.sendMessage(ownIds()[0], { text: '🤖 Cash out check #' + gid + ' — ' + Number(event.amount).toFixed(2) + ' AED' + (event.employee ? ' (' + event.employee + ')' : '') + '\n1. Cash to boss  2. Salary advance  3. Customer cash\nAnswer 1 #' + gid + ', 2 #' + gid + ' or 3 #' + gid });
+      }
       if (role === 'payment' && (Number(event.amount) > 0 || event.invoices?.length) && qbo.connected && !qbo.paused && !replayCtx.getStore()?.quiet) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
         tellPayment(event);
       }
@@ -1145,14 +1151,24 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'price_list': return qboBulk.showDraft() || null;
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
+    case 'cash_box': {
+      if (ic.cmd.op === 'opening') { cashBoxStore.setOpening(ic.cmd.month, ic.cmd.amount); return ['Cash box opening for ' + ic.cmd.month.slice(5, 7) + '/' + ic.cmd.month.slice(0, 4) + ' set to ' + Number(ic.cmd.amount).toFixed(2) + ' AED.']; }
+      return [(await cashBoxMonth(todayDubai().slice(0, 7))).text];
+    }
     case 'expense_edit': return [await expenseEditReply(ic.cmd, here.chatId || 'owner', 'owner')];
     case 'swap_answer': {
       { const xa = answerExpenseEdit(expenseStore, here.chatId || 'owner', 'owner', String(ic.choice)); if (xa) return [xa]; } // the 1 / 2 of an expense edit preview
-      const waiting = payChecks.openIds().filter((i) => payChecks.get(i)?.action === 'swap');
+      const waiting = payChecks.openIds().filter((i) => ['swap', 'cashkind'].includes(payChecks.get(i)?.action));
       const id = ic.id ? ic.id.toUpperCase() : waiting.length === 1 ? waiting[0] : '';
       if (!id && !waiting.length) return null; // no payment check waits: the digit is not ours
       if (!id) return ['Several payment checks wait: ' + waiting.map((i) => '#' + i).join(', ') + '. Answer with the code, for example: ' + ic.choice + ' #' + waiting[0]];
-      if (payChecks.get(id)?.action !== 'swap') return null;
+      const item = payChecks.get(id);
+      if (item?.action === 'cashkind') { // 1 boss, 2 advance, 3 a customer's cash; logged, nothing written to QuickBooks
+        const kind = ic.choice === 1 ? 'cash_to_boss' : ic.choice === 2 ? 'salary_advance' : 'cash';
+        tracker.update(item.ref, kind === 'cash' ? { kind, pendingName: true } : { kind }); payChecks.close(id, 'accepted'); logger.info('cash out check ' + id + ' answered ' + ic.choice);
+        return ['Recorded #' + id + ' as ' + (kind === 'cash_to_boss' ? 'cash to boss' : kind === 'salary_advance' ? 'a salary advance' : 'customer cash') + '. Nothing was written to QuickBooks.'];
+      }
+      if (item?.action !== 'swap' || ic.choice > 2) return null;
       return decidePayCheck(ic.choice === 1 ? 'yes' : 'no', id);
     }
     case 'cut_cmd': {
@@ -3142,6 +3158,28 @@ async function invoiceLookupFor(events) {
   return lookup;
 }
 const expensesReportText = async (kind) => { const r = kind === 'all' ? { from: config.monitorFrom, to: todayDubai(), label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(todayDubai()) } : rangeOf(kind, todayDubai()); return expensesReport(expenseStore.done(r), qbo.connected && !qbo.paused ? await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)) : [], r.label); };
+const cashBoxStore = new CashBoxStore(path.join(config.authDir, 'qbo'));
+/** The cash box of a month (month to date for the running month): the opening balance (the owner's, else the previous month's remaining), cash in, cash out, the QuickBooks Transfers. */
+async function cashBoxMonth(month, depth = 0) {
+  const today = todayDubai();
+  const from = month + '-01';
+  const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const to = last < today ? last : today;
+  let opening = cashBoxStore.d.opening[month] ?? null;
+  if (opening === null && depth < 2) {
+    const prev = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
+    if (cashBoxStore.d.opening[prev] !== undefined) opening = (await cashBoxMonth(prev, depth + 1)).remaining; // the month-end remaining becomes the next month's opening
+  }
+  const r = { from, to, label: month };
+  const records = [...await qbRows('Payment', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('SalesReceipt', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('Deposit', dayPlus(from, -3), dayPlus(to, 3))];
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
+  const cashIn = receivedItems(events, r, { timeZone: config.timezone, lookup: new Map() }).filter((i) => i.kind === 'cash' && !i.foreign);
+  const startMs = Date.parse(from + 'T00:00:00+04:00'); const endMs = Date.parse(to + 'T23:59:59+04:00');
+  const outs = tracker.events.filter((e) => e.type === 'payment' && ['cash_to_boss', 'salary_advance'].includes(e.kind) && !e.simulated && e.at >= startMs && e.at <= endMs).map((e) => ({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '' }));
+  const expenses = expenseStore.done(r).filter((e) => e.method === 'cash').map((e) => ({ amount: e.amount, type: e.type }));
+  const transfers = await qbRows('Transfer', dayPlus(from, -3), dayPlus(to, 3));
+  return cashBoxReport({ month, opening, cashIn, expenses, outs, transfers, timeZone: config.timezone, typeLabel: (t) => (TYPES[t]?.label || 'Other') });
+}
 /** Is this expense already recorded in QuickBooks (vendor + amount ±1 + date ±3 days)? */
 const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return false; return matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -3), dayPlus(e.day, 3))).found.length > 0; };
 /** The approved aliases for a posted name: the cutting-group aliases, then the QuickBooks names the owner told for the sheet (sheet names), before any fuzzy match. */
@@ -3333,6 +3371,7 @@ setInterval(async () => {
     const toGroup = async (text) => { const jid = await expensesGroupJid(); if (jid) await sock.sendMessage(jid, { text }); };
     const toOwner = (text) => sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` });
     const steps = [];
+    if (dayPlus(now.day, 1).slice(8, 10) === '01' && once(`cashbox:${now.day.slice(0, 7)}`)) steps.push(['cash box', async () => toOwner((await cashBoxMonth(now.day.slice(0, 7))).text)]); // the last day of the month, 19:00
     if (once(`daily:${now.day}`)) steps.push(['daily expenses', async () => { if (expenseStore.done(rangeOf('today', now.day)).length) await toGroup(await expensesReportText('today')); }]);
     if (qbo.connected && !qbo.paused && once(`received:${now.day}`)) steps.push(['money received', async () => { const t = await receivedReportText('today'); if (!/No money was recorded/.test(t)) await toOwner(t); }]);
     if (now.weekday === 4 && once(`weekly:${now.day}`)) {

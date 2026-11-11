@@ -5,6 +5,7 @@
 //   { clearInvoices: ['inv-1'] }   a reply that lists the invoices the money cleared
 //   { ignore: true }               something to leave out (an expense)
 
+import { cashOutKind } from './cashbox.js';
 import { parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
 
 export function eventsFromCaption(role, text) {
@@ -27,6 +28,8 @@ export function eventsFromCaption(role, text) {
     };
   }
   if (role === 'payment') {
+    const out = cashOutKind(text); // cash leaving the cash box (to the boss, a salary advance): its own kind, never a customer payment
+    if (out) return { events: [{ type: 'payment', kind: out.kind, customer: '', amount: out.amount, currency: 'AED', lines: [], ...(out.employee ? { employee: out.employee } : {}) }] };
     const p = parsePaymentCaption(text);
     if (!p) return null;
     if (p.kind === 'cleared') return { cleared: true };
