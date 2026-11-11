@@ -183,6 +183,7 @@ export function parseInvoiceCommand(text) {
   }
   if (/^(?:payments|payment matches|پرداخت\s*ها)$/iu.test(s)) return { type: 'payments' };
   if (/^(?:unbilled|not invoiced|گزارش فاکتور\s*نشده)$/iu.test(s)) return { type: 'unbilled' };
+  if (/^(?:unbilled|not invoiced)\s+(?:details?|full|all)$/iu.test(s) || /^گزارش فاکتور\s*نشده\s+(?:کامل|تفصیل)$/u.test(s)) return { type: 'unbilled', details: true };
   if (/^(?:cut aliases|alias proposals|نام\s*های مستعار برش)$/iu.test(s)) return { type: 'alias_propose' };
   if ((m = /^(?:drop|حذف)\s+(\d+(?:\s*[,،]\s*\d+)*)\s+#?\s*(A\s*\d+)$/iu.exec(s))) return { type: 'alias_drop', numbers: m[1].split(/[,،]/).map((x) => Number(x)), id: m[2].replace(/\s+/g, '').toUpperCase() };
   if (/^(?:check tax inclusive|tax inclusive|بررسی مالیات شامل(?: قیمت)?|قیمت شامل مالیات)$/iu.test(s)) return { type: 'tax_inclusive' };

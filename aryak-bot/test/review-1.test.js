@@ -228,10 +228,11 @@ test('the three-way check: every case lands in its own section, with its sources
   assert.deepEqual(s('leftNotInvoiced'), [['NOVA ART LLC', ['220 12m (orders 08/11, OUT 09/11, no invoice)']]]); // ZETA is invoiced 6 for 6.3 left: fine
   assert.deepEqual(s('stillInWarehouse'), [['OMEGA CO', ['301 5m (orders 09/11, no invoice)']]]);
   assert.deepEqual(s('invoicedNotLeft'), [['CHI KITCHEN', ['999 20m (invoice 10/11, no OUT)']], ['TAU DOORS LLC', ['410 8m (orders 09/11, invoice 10/11, no OUT)']]]);
-  assert.deepEqual(s('leftWithoutPost'), [['PHI WOOD', ['555 3m (OUT 10/11, no invoice)']], ['UPSILON', ['777 4m (OUT 10/11, invoice 10/11)']]]);
+  assert.deepEqual(s('leftWithoutPost'), [['PHI WOOD', ['555 3m (OUT 10/11, no invoice)']]]); // an OUT that is invoiced is fine without an order post
   const text = threeWayText(r);
   assert.match(text, /^Left the warehouse, not invoiced \(1 customer\):\n• NOVA ART LLC: 220 12m \(orders 08\/11, OUT 09\/11, no invoice\)\n━+\nInvoiced, not left yet \(2 customers\):/);
-  assert.match(text, /Cut, still in the warehouse \(not left\) \(1 customer\)[\s\S]*Left without an order-group post \(check\) \(2 customers\)/);
+  assert.match(text, /Cut, still in the warehouse \(not left\) \(1 customer\)/); assert.doesNotMatch(text, /Left without an order-group post/); assert.match(text, /Say "unbilled details"/); // the short form
+  assert.match(threeWayText(r, { details: true }), /Left without an order-group post \(check\) \(1 customer\)/);
   // the sheet gave nothing: only the old question, and a warning
   const blind = threeWay({ events, outs: null, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: [], now: NOW });
   assert.deepEqual(blind.sections.stillInWarehouse.concat(blind.sections.invoicedNotLeft, blind.sections.leftWithoutPost), []); assert.ok(!blind.outKnown);
@@ -283,4 +284,33 @@ test('the owner\'s cases of 11/11 (made-up names): an invoice before the post, o
   // the same without the OUT rows of one customer: invoiced before the post is «invoiced, not left yet», and a truncated code still finds its invoice
   const noOut = threeWay({ events: [cut('ZETA RAD', '1810', 5, '08', 'a1'), cut('DESIGN TEST', '21', 30.8, '10', 'd1')], outs: [], invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: names, now: NOW });
   const lone = noOut.sections.invoicedNotLeft.map((g) => g.customer); assert.ok(lone.includes('DESIGN TEST') && lone.includes('ZETA RAD LLC')); assert.match(noOut.sections.invoicedNotLeft.find((g) => g.customer === 'ZETA RAD LLC').parts[0], /orders 08\/11, invoice 07\/11, no OUT/);
+});
+
+test('the live false findings of 11/11 (made-up names): invoice lines add up, edge banding and small lines are left out, unposted OUT rows only after the tracked history and only when not invoiced, the short form', () => {
+  const NOW = Date.parse('2026-11-11T08:00:00Z'); const at = (d) => Date.parse(`2026-11-${d}T10:00:00Z`);
+  const cut = (customer, code, qty, d, ref) => ({ type: 'cut', at: at(d), customer, customerTyped: customer, ref, lines: [{ code, quantity: qty, unit: 'm' }] });
+  const out = (customer, code, qty, d) => ({ customer, code, qty, unit: 'm', at: at(d) });
+  const line = (code, qty, name = 'PVC ' + code) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { Qty: qty, ItemRef: { value: code, name } } });
+  const inv = (customer, d, lines) => ({ TxnDate: `2026-11-${d}`, CustomerRef: { name: customer }, Line: lines });
+  const codesOf = (id, name) => (/edge|banding/i.test(name) ? [] : [String(name).replace(/^PVC /, '')]);
+  const events = [cut('OMEGA WOOD', '1810', 363, '07', 'a'), cut('SIGMA HOUSE', '1819', 350, '09', 'b'), cut('TAU CO', '505', 20, '06', 'c')];
+  const outs = [out('OMEGA WOOD LLC', '1810', 363.2, '07'), out('SIGMA HOUSE LLC', '1819', 350, '09'), out('TAU CO', '505', 20, '06'),
+    out('OLD CUSTOMER', '300', 40, '02'), // before the first tracked orders-group post (06/11)... made earlier
+    out('KAPPA LLC', '606', 7, '10')]; // after it, nobody posted, not invoiced
+  events.push(cut('OTHER', '999', 1, '04', 'early')); // the first tracked post: 04/11
+  const invoices = [inv('OMEGA WOOD LLC', '07', [line('1810', 300), line('1810', 63)]), inv('SIGMA HOUSE LLC', '09', [line('1819', 200), line('1819', 153)]),
+    inv('TAU CO', '06', [line('505', 20)]), inv('OLD CUSTOMER', '03', [line('300', 40)]),
+    inv('HIGH LLC', '10', [line('405', 1), line('113', 2), line('EDGE', 30, 'EDGE BANDING:EDGE 0.8x22 - 1810'), line('808', 30)])];
+  const r = threeWay({ events, outs, invoices, itemCodes: codesOf, qboNames: ['OMEGA WOOD LLC', 'SIGMA HOUSE LLC', 'TAU CO', 'OLD CUSTOMER', 'KAPPA LLC', 'HIGH LLC'], now: NOW });
+  const s = (k) => r.sections[k].map((g) => [g.customer, g.parts.map((p) => p.replace(/ \(.*$/, ''))]);
+  assert.deepEqual(s('leftNotInvoiced'), []); // 300 + 63 cover 363.2, 200 + 153 cover 350
+  assert.deepEqual(s('invoicedNotLeft'), [['HIGH LLC', ['808 30m']]]); // 1 m and 2 m lines and the edge banding are not listed; the film line with no OUT is
+  assert.deepEqual(s('leftWithoutPost'), [['KAPPA LLC', ['606 7m']]]); // the 02/11 OUT is before the history and is invoiced anyway
+  assert.equal(JSON.stringify(r).includes('22-22'), false);
+  // the short form: at most 8 customers a section, "+N more", the hidden sections named
+  const many = { outKnown: true, sections: { leftNotInvoiced: Array.from({ length: 12 }, (_, i) => ({ customer: 'C' + i, parts: ['1 5m (x)'] })), invoicedNotLeft: [], stillInWarehouse: [], leftWithoutPost: [{ customer: 'Z', parts: ['2 3m'] }], delivered: [] } };
+  const short = threeWayText(many);
+  assert.match(short, /\(12 customers\):(\n• C\d+: 1 5m \(x\)){8}\n\+4 more/); assert.match(short, /Say "unbilled details" for every customer, the OUT rows nobody posted and the deliveries\./); assert.doesNotMatch(short, /Left without/);
+  assert.match(threeWayText(many, { details: true }), /\(12 customers\):(\n• C\d+: 1 5m \(x\)){12}[\s\S]*Left without an order-group post/);
+  assert.deepEqual(parseInvoiceCommand('unbilled details'), { type: 'unbilled', details: true }); assert.deepEqual(parseInvoiceCommand('unbilled'), { type: 'unbilled' });
 });

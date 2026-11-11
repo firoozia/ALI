@@ -802,23 +802,25 @@ async function sheetOutRows(days) {
   try {
     const to = todayDubai();
     const rep = await fetchReport(config, { from: dayPlus(to, -days), to, detail: true, limit: 500 });
-    const rows = (rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT');
+    const rows = (rep.rows || []).filter((r) => (r.type === 'OUT' || r.type === 'CUT') && !/^[0-9.]+\s*[x×*]\s*(?:22|50)$/i.test(String(r.size || '').trim())); // edge banding (0.8x22, 1x50) is no film: not part of this comparison
     if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back: what left the warehouse is not claimed'); return null; }
     return rows.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }));
   } catch (e) { logger.warn('three-way: the sheet gave no OUT rows (' + e.message + ')'); return null; }
 }
 
 /** What was CUT (the orders group), what LEFT (the sheet's OUT rows), what was INVOICED (QuickBooks), per customer and code: the sections of src/threeway.js. */
-async function unbilledReport(events = tracker.events) {
+async function unbilledReport(events = tracker.events, opts = {}) {
   const days = 14;
   const since = new Date(Date.now() - (days + 26) * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const invoices = await qbo.query("select * from Invoice where TxnDate >= '" + since + "'");
-  const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
+  // only what the sheet tracks: the films. Edge banding («EDGE 0.8x22 - 1810»), services (delivery, parking) and samples are no part of this comparison.
+  const notTracked = (it) => it.Type === 'Service' || /edge|banding|deliver|parking|sample|transport|freight|shipping/i.test(`${it.Name || ''} ${it.Sku || ''} ${it.FullyQualifiedName || ''}`);
+  const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), notTracked(it) ? [] : [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
   const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet
-  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: nameAlias, qboNames, days, timeZone: config.timezone });
+  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => (items.has(String(id)) && !items.get(String(id)).length ? [] : [...(items.get(String(id)) || []), String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone });
   for (const l of result.trace || []) logger.info(l); // what each line came from
-  return threeWayText(result, { days });
+  return threeWayText(result, { days, details: !!opts.details });
 }
 
 /** Payments seen in the Confirmation group against the customers' OPEN invoices: a proposal only, read only; nothing is recorded in QuickBooks. */
@@ -1008,7 +1010,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'received_report': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await receivedReportText(ic.range)]; }
     case 'weekly_check': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await weeklyCheckReport()]; }
     case 'payments': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await paymentsReport(tracker.events)]; }
-    case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport()]; }
+    case 'unbilled': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await unbilledReport(undefined, { details: !!ic.details })]; }
     case 'alias_drop': { const n = cutAliases.drop(ic.id, ic.numbers); return [n ? `Removed ${n} line(s) from #${ic.id}; reply yes #${ic.id} to approve the rest.` : `Nothing removed from #${ic.id}.`]; }
     case 'tax_inclusive': return await qboBulk.planTaxInclusive();
     case 'tax_inclusive_undo': return await qboBulk.planUndoTaxInclusive(ic.source);

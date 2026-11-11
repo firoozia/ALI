@@ -19,8 +19,9 @@ import { SEP } from './separator.js';
 const DAY = 24 * 3600 * 1000;
 const PAIR_DAYS = 5; // a cut post and its OUT row
 const INVOICE_DAYS = 7; // an invoice and what it covers, before or after
+const MIN_LISTED = 2; // an invoice line of 2 m or less (a sample, a piece) is not worth a line in the report
 const tol = (q) => Math.max(1.5, 0.06 * q); // metres of difference that are not a difference
-const digits = (c) => (String(c || '').match(/\d{2,5}/g) || []).join('-');
+const digits = (c) => (String(c || '').match(/\d{2,5}/) || [''])[0]; // the product number: the first one (a truncated «21» stays «21»)
 const sameCode = (a, b) => a === b;
 const prefixCode = (a, b) => a !== b && Math.min(a.length, b.length) >= 2 && (a.startsWith(b) || b.startsWith(a)); // a truncated code («21» for «212»)
 const dayFormats = new Map();
@@ -41,6 +42,7 @@ const round1 = (n) => Math.round(n * 10) / 10;
 export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf = () => '', qboNames = [], now = Date.now(), days = 14, timeZone = 'Asia/Dubai' }) {
   const outKnown = Array.isArray(outs);
   const since = now - days * DAY;
+  const firstPost = Math.min(Infinity, ...events.filter((e) => e.type === 'cut' && !e.internal && !e.simulated).map((e) => e.at)); // the orders-group history the tracker has begins here
   const memo = new Map();
   const nameOf = (post) => { if (!memo.has(post)) memo.set(post, qboNameFor(post, qboNames, aliasOf) || aliasOf(post) || post); return memo.get(post); };
 
@@ -96,15 +98,15 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
 
   // ---- an invoice line covers an item
   const cover = (customer, code, at, qty) => {
-    let best = null;
-    for (const l of lines) {
-      if (l.customer !== customer || !(sameCode(l.code, code) || prefixCode(l.code, code)) || l.left < qty - tol(qty)) continue;
-      if (Math.abs(l.at - at) > INVOICE_DAYS * DAY) continue;
-      const score = Math.abs(l.at - at);
-      if (!best || score < best.score) best = { l, score };
-    }
-    if (best) { best.l.left = Math.max(0, best.l.left - qty); best.l.used = true; }
-    return best?.l || null;
+    const near = lines.filter((l) => l.customer === customer && (sameCode(l.code, code) || prefixCode(l.code, code)) && l.left > 0 && Math.abs(l.at - at) <= INVOICE_DAYS * DAY)
+      .sort((x, y) => Math.abs(x.at - at) - Math.abs(y.at - at));
+    // one line that holds the quantity, else the lines of the window added up (300 m + 63 m cover a 363.2 m OUT)
+    const single = near.find((l) => l.left >= qty - tol(qty));
+    const chosen = single ? [single] : (near.reduce((s2, l) => s2 + l.left, 0) >= qty - tol(qty) ? near : []);
+    if (!chosen.length) return null;
+    let need = qty;
+    for (const l of chosen) { const take = Math.min(l.left, need); l.left -= take; need -= take; l.used = true; if (need <= 1e-9) break; }
+    return chosen[0];
   };
   // an invoice that exists but is too far away in days: worth a look by the owner («invoiced in advance, or a second order»)
   const older = (customer, code, qty) => lines.find((l) => l.customer === customer && (sameCode(l.code, code) || prefixCode(l.code, code)) && !l.used && Math.abs(l.qty - qty) <= tol(qty));
@@ -129,7 +131,8 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   // B) OUT rows nobody posted
   for (const p of [...pools.values()].filter((q) => !q.cuts.length).sort((a, b) => a.at - b.at)) {
     const inv = cover(p.customer, p.code, p.at, p.qty);
-    const text = `${p.code} ${round1(p.qty)}${unitText(p.unit)} (OUT ${dm(p.at, timeZone)}, ${inv ? `invoice ${dm(inv.at, timeZone)}` : 'no invoice'})`;
+    if (inv || p.at < firstPost) continue; // invoiced is fine without an order post; before the tracked history nobody could have posted
+    const text = `${p.code} ${round1(p.qty)}${unitText(p.unit)} (OUT ${dm(p.at, timeZone)}, no invoice)`;
     add(out.leftWithoutPost, p.customer, text); note('leftWithoutPost', p.customer, p.code, text);
   }
   // C) cut posts that have no OUT row
@@ -144,7 +147,8 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   }
   // D) recent invoice lines that neither a cut nor an OUT used up: invoiced, not left yet
   if (outKnown) {
-    for (const l of lines.filter((x) => !x.used && x.customer && x.at >= since && x.qty > 0).sort((a, b) => a.at - b.at)) {
+    const coverageStart = pools.size ? Math.min(...[...pools.values()].map((p) => p.at)) : Infinity; // the invoices before the first OUT row we have say nothing about what left
+    for (const l of lines.filter((x) => !x.used && x.customer && x.at >= Math.max(since, coverageStart - DAY) && x.qty > MIN_LISTED).sort((a, b) => a.at - b.at)) {
       const text = `${l.code} ${round1(l.qty)}m (invoice ${dm(l.at, timeZone)}, no OUT)`;
       add(out.invoicedNotLeft, l.customer, text); note('invoicedNotLeft', l.customer, l.code, text);
     }
@@ -170,16 +174,24 @@ const TITLES = {
   delivered: 'Delivered, no invoice since',
 };
 
-/** The text: a block per section with its customers (at most [max] lines each), the blocks apart with separators; a clean state says so in one line. */
-export function threeWayText(result, { max = 10, days = 14 } = {}) {
+/**
+ * The text: a block per section with its customers, the blocks apart with separators; a clean state says so in one line. The SHORT form (the default and the evening report) shows the three
+ * sections that matter, at most [max] customers each, then «+N more»; [details] shows every section and every customer.
+ */
+export function threeWayText(result, { max = 8, days = 14, details = false } = {}) {
   const blocks = [];
-  for (const key of ['leftNotInvoiced', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost', 'delivered']) {
+  const keys = details ? ['leftNotInvoiced', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost', 'delivered'] : ['leftNotInvoiced', 'invoicedNotLeft', 'stillInWarehouse'];
+  let hidden = 0;
+  for (const key of keys) {
     const list = result.sections[key];
     if (!list.length) continue;
-    const rows = list.map((g) => `• ${g.customer}: ${g.parts.slice(0, 4).join(', ')}${g.parts.length > 4 ? ` +${g.parts.length - 4}` : ''}`);
-    blocks.push([`${TITLES[key]} (${list.length} customer${list.length === 1 ? '' : 's'}):`, ...rows.slice(0, max), ...(rows.length > max ? [`+${rows.length - max} more`] : [])].join('\n'));
+    const rows = list.map((g) => `• ${g.customer}: ${g.parts.slice(0, details ? 8 : 3).join(', ')}${g.parts.length > (details ? 8 : 3) ? ` +${g.parts.length - (details ? 8 : 3)}` : ''}`);
+    const shown = details ? rows : rows.slice(0, max);
+    blocks.push([`${TITLES[key]} (${list.length} customer${list.length === 1 ? '' : 's'}):`, ...shown, ...(rows.length > shown.length ? [`+${rows.length - shown.length} more`] : [])].join('\n'));
   }
+  if (!details) hidden = result.sections.leftWithoutPost.length + result.sections.delivered.length;
   if (!result.outKnown) blocks.unshift('⚠ The stock sheet gave no OUT rows, so what left the warehouse is unknown: only «cut, not invoiced» is shown.');
   if (!blocks.length || (blocks.length === 1 && !result.outKnown)) blocks.push(`✔ Everything cut, left and invoiced in the last ${days} days agrees.`);
+  if (!details && (hidden || blocks.length)) blocks.push('Say "unbilled details" for every customer' + (hidden ? ', the OUT rows nobody posted and the deliveries' : '') + '.');
   return blocks.join(`\n${SEP}\n`);
 }
