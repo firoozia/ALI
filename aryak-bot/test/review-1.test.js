@@ -227,7 +227,7 @@ test('the three-way check: every case lands in its own section, with its sources
   const s = (k) => r.sections[k].map((g) => [g.customer, g.parts]);
   assert.deepEqual(s('leftNotInvoiced'), [['NOVA ART LLC', ['220 12m (orders 08/11, OUT 09/11, no invoice)']]]); // ZETA is invoiced 6 for 6.3 left: fine
   assert.deepEqual(s('stillInWarehouse'), [['OMEGA CO', ['301 5m (orders 09/11, no invoice)']]]);
-  assert.deepEqual(s('invoicedNotLeft'), [['CHI KITCHEN', ['999 20m (invoice 10/11)']], ['TAU DOORS LLC', ['410 20m'.replace('20', '8') + ' (orders 09/11, invoice 10/11)']]]);
+  assert.deepEqual(s('invoicedNotLeft'), [['CHI KITCHEN', ['999 20m (invoice 10/11, no OUT)']], ['TAU DOORS LLC', ['410 8m (orders 09/11, invoice 10/11, no OUT)']]]);
   assert.deepEqual(s('leftWithoutPost'), [['PHI WOOD', ['555 3m (OUT 10/11, no invoice)']], ['UPSILON', ['777 4m (OUT 10/11, invoice 10/11)']]]);
   const text = threeWayText(r);
   assert.match(text, /^Left the warehouse, not invoiced \(1 customer\):\n• NOVA ART LLC: 220 12m \(orders 08\/11, OUT 09\/11, no invoice\)\n━+\nInvoiced, not left yet \(2 customers\):/);
@@ -250,4 +250,37 @@ test('the three-way check is fast on a big day (300 cuts, 300 OUT rows, 2000 inv
   assert.ok(Date.now() - started < 3000);
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'threeway.js'), 'utf8');
   assert.doesNotMatch(src, /\.(write|create|post|update|add)\(|fetch|sendMessage/); // read only
+});
+
+test('the owner\'s cases of 11/11 (made-up names): an invoice before the post, one group of two customers, a cut that is part of an OUT, a truncated code, and a real unbilled one', () => {
+  const NOW = Date.parse('2026-11-11T08:00:00Z'); const at = (d) => Date.parse(`2026-11-${d}T10:00:00Z`);
+  const cut = (customer, code, qty, d, ref) => ({ type: 'cut', at: at(d), customer, customerTyped: customer, ref, lines: [{ code, quantity: qty, unit: 'm' }] });
+  const out = (customer, code, qty, d) => ({ customer, code, qty, unit: 'm', at: at(d) });
+  const line = (code, qty) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { Qty: qty, ItemRef: { value: code, name: 'PVC ' + code } } });
+  const inv = (customer, d, lines) => ({ TxnDate: `2026-11-${d}`, CustomerRef: { name: customer }, Line: lines });
+  const names = ['ZETA RAD LLC', 'NOVA ART LLC', 'EBDA KITCHEN LLC', 'MASTER TEST', 'HIGH TEST', 'DESIGN TEST', 'ALPHA KITCHEN', 'DANDY TEST', 'BETA KITCHEN'];
+  const events = [
+    cut('ZETA RAD', '1810', 5, '08', 'a1'), // invoiced 07/11, before the post
+    cut('NOVA ART', '215', 72.6, '08', 'b1'), cut('NOVA ART', '215', 97.6, '08', 'b2'), // one group, two customers
+    cut('MASTER TEST', '216', 16, '05', 'c1'), // the OUT of that day is another customer's
+    cut('DESIGN TEST', '21', 30.8, '10', 'd1'), // truncated code 212
+    cut('ALPHA KITCHEN', '225', 6.4, '05', 'e1'), // a part of the OUT
+    cut('DANDY TEST', '702', 4.4, '08', 'f1'), // really left, not invoiced
+    cut('BETA KITCHEN', '1810', 21.3, '10', 'g1'), // invoiced 21 m eight days earlier
+  ];
+  const outs = [out('ZETA RAD LLC', '1810', 5, '08'), out('EBDA KITCHEN LLC', '215', 98.2, '08'), out('HIGH TEST', '216', 40.2, '05'), out('DESIGN TEST', '212', 30.8, '10'),
+    out('ALPHA KITCHEN', '225', 9.2, '05'), out('ALPHA KITCHEN', '225', 6.4, '05'), out('DANDY TEST', '702', 4.4, '08'), out('BETA KITCHEN', '1810', 21.3, '10')];
+  const invoices = [inv('ZETA RAD LLC', '07', [line('1810', 5)]), inv('EBDA KITCHEN LLC', '08', [line('215', 97)]), inv('HIGH TEST', '05', [line('216', 40)]), inv('DESIGN TEST', '10', [line('212', 30)]),
+    inv('ALPHA KITCHEN', '05', [line('225', 15)]), inv('BETA KITCHEN', '02', [line('1810', 21)])];
+  const r = threeWay({ events, outs, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: names, now: NOW });
+  const s = (k) => r.sections[k].map((g) => [g.customer, g.parts.map((p) => p.replace(/ \(.*$/, ''))]);
+  assert.deepEqual(s('leftNotInvoiced').sort(), [['BETA KITCHEN', ['1810 21.3m']], ['DANDY TEST', ['702 4.4m']]]); // only the real ones
+  assert.match(r.sections.leftNotInvoiced.find((g) => g.customer === 'BETA KITCHEN').parts[0], /check: invoice 02\/11 of 21m is older than 7 days/); // for the owner's look
+  assert.deepEqual(s('stillInWarehouse'), [['NOVA ART LLC', ['215 72.6m']]]); // the 72.6 m has no OUT; the 97.6 m took the 98.2 m
+  assert.deepEqual(s('invoicedNotLeft'), []); assert.deepEqual(s('leftWithoutPost'), []);
+  const none = (k) => assert.ok(!r.sections[k].some((g) => ['ZETA RAD LLC', 'EBDA KITCHEN LLC', 'MASTER TEST', 'HIGH TEST', 'DESIGN TEST', 'ALPHA KITCHEN'].includes(g.customer)), k);
+  for (const k of ['leftNotInvoiced', 'stillInWarehouse', 'invoicedNotLeft', 'leftWithoutPost']) none(k === 'stillInWarehouse' ? 'invoicedNotLeft' : k);
+  // the same without the OUT rows of one customer: invoiced before the post is «invoiced, not left yet», and a truncated code still finds its invoice
+  const noOut = threeWay({ events: [cut('ZETA RAD', '1810', 5, '08', 'a1'), cut('DESIGN TEST', '21', 30.8, '10', 'd1')], outs: [], invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: names, now: NOW });
+  const lone = noOut.sections.invoicedNotLeft.map((g) => g.customer); assert.ok(lone.includes('DESIGN TEST') && lone.includes('ZETA RAD LLC')); assert.match(noOut.sections.invoicedNotLeft.find((g) => g.customer === 'ZETA RAD LLC').parts[0], /orders 08\/11, invoice 07\/11, no OUT/);
 });
