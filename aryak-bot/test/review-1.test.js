@@ -732,6 +732,18 @@ test('credit customers who pay in parts: a found payment says how QuickBooks app
   assert.doesNotMatch(onAccount, /Needs your OK/);
   // 576 posted for the customer the program chose (OMEGA SHOP); the typed name is the customer who paid 567 two lines above
   const swapped = receivedText([item({ amount: 576, shown: '*576.00*', customer: 'OMEGA SHOP', typed: 'ZETA KITCHEN' })], { title: 't', records: [pay], openInvoices: open, now, checks: { codeFor: () => 'G5' } });
-  assert.match(swapped, /\*Needs your OK\*\n#G5: OMEGA SHOP 576\.00 vs Payment of 10\/11\/2026 567\.00 \(−9\.00, digits swapped\?\)\nyes #G5 \/ no #G5/);
+  assert.match(swapped, /not in QuickBooks yet — digits swapped\? 567\.00 was recorded; the question is in your chat/); assert.doesNotMatch(swapped, /Needs your OK/); // asked at once in the owner's chat, not in the list
+  const { swapCandidate } = await import('../src/expenses.js');
+  const ev = { amount: 576, customer: 'OMEGA SHOP', customerTyped: 'ZETA KITCHEN', at: Date.parse('2026-11-10T15:00:00Z') };
+  assert.equal(swapCandidate(ev, [pay], () => '', 'Asia/Dubai'), pay);
+  assert.equal(swapCandidate({ ...ev, amount: 600 }, [pay], () => '', 'Asia/Dubai'), null); // not the same digits
+  assert.equal(swapCandidate(ev, [pay, { ...pay, TotalAmt: 576 }], () => '', 'Asia/Dubai'), null); // the posted amount is recorded: nothing to ask
+  assert.equal(swapCandidate({ ...ev, swapAsked: true }, [pay], () => '', 'Asia/Dubai'), null); // asked once only
+  const { parseInvoiceCommand } = await import('../src/qboinvoice.js');
+  assert.deepEqual(parseInvoiceCommand('1'), { type: 'swap_answer', choice: 1, id: '' });
+  assert.deepEqual(parseInvoiceCommand('2 #G5'), { type: 'swap_answer', choice: 2, id: 'G5' });
+  const idx = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(idx, /if \(x\.action === 'swap'\) \{[\s\S]*?acceptedMatch[\s\S]*?rejectedMatch/); // 1 = same payment (shows the tick), 2 = stays not recorded
+  assert.ok(idx.includes("await sock.sendMessage(ownIds()[0], { text: ['🤖 Payment check #'")); // the owner's own chat, never a group
   assert.doesNotMatch(swapped, /on account/);
 });

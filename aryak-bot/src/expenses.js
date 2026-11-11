@@ -300,6 +300,22 @@ export function closestMatch(item, records, openInvoices, aliasOf = () => '') {
   return best ? { ...best, amount: Math.round(best.amount * 100) / 100, diff: Math.round((best.amount - item.amount) * 100) / 100 } : null;
 }
 
+/**
+ * A posted payment whose amount is the digits of a QuickBooks payment of the same customer in another order (576 posted, 567 recorded) within a week: that payment, or null. An exact
+ * (+-1) record of the posted amount means it is recorded, so there is nothing to ask. Names: the customer chosen and the name as posted.
+ */
+export function swapCandidate(event, payments, aliasOf = () => '', timeZone = 'Asia/Dubai') {
+  const amount = Number(event.amount) || 0;
+  if (!(amount > 0) || event.pendingName || event.acceptedMatch || event.rejectedMatch || event.swapAsked) return null;
+  const names = [event.customer, event.customerTyped].filter(Boolean);
+  if (!names.length) return null;
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(event.at));
+  const mine = payments.filter((r) => r._type !== 'Deposit' && closeDay(r.TxnDate, day, 7) && names.some((n) => nameOk(n, r.CustomerRef?.name || '', aliasOf)) && r.CustomerRef?.name);
+  if (mine.some((r) => near(r.TotalAmt, amount))) return null;
+  const digitsOf = (n) => String(Math.round(Number(n) * 100)).split('').sort().join('');
+  return mine.find((r) => Math.abs(Number(r.TotalAmt) - amount) > 1 && digitsOf(r.TotalAmt) === digitsOf(amount)) || null;
+}
+
 /** What the customer still owes (the open invoices of this name, as posted or as chosen). */
 export function openBalanceOf(item, openInvoices, aliasOf = () => '') {
   const who = (name) => nameOk(item.customer, name || '', aliasOf) || (!!item.typed && nameOk(item.typed, name || '', aliasOf));
@@ -334,7 +350,8 @@ export function receivedText(items, options) {
       else {
         const best = it.rejected ? null : closestMatch(it, records, openInvoices, aliasOf);
         if (best && Math.abs(best.diff) <= 1 && best.kind === 'invoices') status = '⚠ not in QuickBooks yet — pays ' + best.label + ' (' + money(best.amount) + ', posted ' + money(it.amount) + ')';
-        else if (best && Math.abs(best.diff) > 1 && (best.swapped || best.kind === 'payment')) { status = '⚠ not in QuickBooks yet'; needsOk.push({ it, best }); }
+        else if (best && Math.abs(best.diff) > 1 && best.swapped) status = '⚠ not in QuickBooks yet — digits swapped? ' + money(best.amount) + ' was recorded; the question is in your chat'; // asked at once in the owner's chat, never in this list
+        else if (best && Math.abs(best.diff) > 1 && best.kind === 'payment') { status = '⚠ not in QuickBooks yet'; needsOk.push({ it, best }); }
         else {
           const owed = openBalanceOf(it, openInvoices, aliasOf);
           if (!it.foreign && owed > 0 && owed + 1 >= it.amount) status = '⚠ not recorded in QuickBooks yet — on account; open balance ' + money(owed);

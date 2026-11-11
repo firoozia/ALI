@@ -90,7 +90,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
+import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, swapCandidate, weeklyCheckText } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -591,8 +591,10 @@ const monitorStartMs = () => Date.parse(`${config.monitorFrom}T00:00:00+04:00`) 
 const clampRange = (r) => (r.from < config.monitorFrom ? { ...r, from: config.monitorFrom } : r);
 
 /** The owner is told what a new payment entry looks like (a proposal; nothing is recorded in QuickBooks). */
+const swapPending = new Map(); // ref -> { at }: a payment to compare with QuickBooks for swapped digits
 function tellPayment(event) {
   if (replayCtx.getStore()?.quiet) return; // a message read from the history is never announced
+  if (qbo.connected && !qbo.paused && Number(event.amount) > 0 && event.kind !== 'cheque') swapPending.set(event.ref, { at: Date.now() });
   if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf') && config.paymentNotices) payPending.set(event.ref, { at: Date.now() }); // held a few minutes: the messages about one payment become ONE notice
 }
 
@@ -616,6 +618,30 @@ async function flushPaymentNotices() {
   }
   if (payNoticed.size > 500) for (const k of [...payNoticed.keys()].slice(0, 200)) payNoticed.delete(k);
 }
+/** Posted 576, recorded 567 for the same customer within a week: ONE message at once to the owner's own chat (never a group) with the choice 1 / 2; nothing is written to QuickBooks. */
+async function flushSwapChecks() {
+  if (!qbo.connected || qbo.paused || !swapPending.size) return;
+  const due = [...swapPending].filter((x) => Date.now() - x[1].at >= 3 * 60000).map((x) => x[0]);
+  if (!due.length) return;
+  const since = new Date(Date.now() - 12 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const payments = (await qbo.query("select * from Payment where TxnDate >= '" + since + "'").catch(() => [])).map((r) => ({ ...r, _type: 'Payment' }));
+  for (const ref of due) {
+    swapPending.delete(ref);
+    const e = tracker.events.find((x) => x.ref === ref);
+    if (!e) continue;
+    const rec = swapCandidate(e, payments, nameAlias, config.timezone);
+    if (!rec) continue;
+    tracker.update(ref, { swapAsked: true });
+    const day = (ms) => { const p = new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)).split('-'); return p[2] + '/' + p[1]; };
+    const money = (n) => Number(n).toFixed(2);
+    const text = 'payment ' + rec.TxnDate.slice(8, 10) + '/' + rec.TxnDate.slice(5, 7) + ' ' + money(rec.TotalAmt);
+    const id = payChecks.codeFor(ref, text, 'swap', { qboAmount: Number(rec.TotalAmt), posted: Number(e.amount) });
+    const name = String(rec.CustomerRef?.name || e.customer).toUpperCase();
+    await sock.sendMessage(ownIds()[0], { text: ['🤖 Payment check #' + id + ' — ' + name, 'Posted ' + day(e.at) + ': ' + money(e.amount) + ' AED (' + JSON.stringify(String(e.text || e.customerTyped || '').slice(0, 60)) + ')', 'QuickBooks: ' + text + ' AED', 'Digits swapped?', '1. Same payment (' + money(rec.TotalAmt) + '), match it', '2. Different payment: keep ' + money(e.amount) + ' as not recorded', 'Answer 1 #' + id + ' or 2 #' + id].join('\n') });
+    logger.info('payment check ' + id + ' asked: posted ' + e.amount + ', QuickBooks ' + rec.TotalAmt);
+  }
+}
+setInterval(() => { void flushSwapChecks().catch((x) => logger.warn('payment checks failed: ' + x.message)); }, 30 * 1000).unref();
 setInterval(() => { void flushPaymentNotices().catch((e) => logger.warn('payment notices failed: ' + e.message)); }, 30 * 1000).unref();
 
 /** A bank receipt, a cheque slip or a transfer advice posted as a PDF in the Confirmation group: one payment entry from its text. */
@@ -1118,6 +1144,14 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'price_list': return qboBulk.showDraft() || null;
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
+    case 'swap_answer': {
+      const waiting = payChecks.openIds().filter((i) => payChecks.get(i)?.action === 'swap');
+      const id = ic.id ? ic.id.toUpperCase() : waiting.length === 1 ? waiting[0] : '';
+      if (!id && !waiting.length) return null; // no payment check waits: the digit is not ours
+      if (!id) return ['Several payment checks wait: ' + waiting.map((i) => '#' + i).join(', ') + '. Answer with the code, for example: ' + ic.choice + ' #' + waiting[0]];
+      if (payChecks.get(id)?.action !== 'swap') return null;
+      return decidePayCheck(ic.choice === 1 ? 'yes' : 'no', id);
+    }
     case 'cut_cmd': {
       const cc = ic.cmd;
       if (cc.op === 'list') return [listCuts(cutEdits, tracker.events, { code: cc.code, day: cc.day, timeZone: config.timezone })];
@@ -3175,6 +3209,11 @@ function decidePayCheck(verb, id) {
     const photo = tracker.events.find((e) => e.ref === x.ref);
     if (verb === 'yes') { tracker.update(x.ref, { drawerInto: x.target }); payChecks.close(id, 'accepted'); return [`Accepted #${id}: the photo is the drawer of that cheque. Nothing was recorded in QuickBooks.`]; }
     tracker.update(x.ref, { drawerRefused: [...(photo?.drawerRefused || []), x.target] }); payChecks.close(id, 'refused'); return [`Refused #${id}: that pairing is dropped. Nothing was recorded in QuickBooks.`];
+  }
+  if (x.action === 'swap') { // the posted amount and a QuickBooks payment with the same digits: yes (1) = the same payment, no (2) = a different one; logged, nothing is written to QuickBooks
+    if (verb === 'yes') { tracker.update(x.ref, { acceptedMatch: { text: 'QuickBooks ' + x.text + ' (posted ' + Number(x.posted).toFixed(2) + ')', at: Date.now() } }); payChecks.close(id, 'accepted'); logger.info('payment check ' + id + ' answered 1: same payment'); return ['Matched #' + id + ': the posted ' + Number(x.posted).toFixed(2) + ' is the QuickBooks ' + x.text + '. Nothing was written to QuickBooks.']; }
+    tracker.update(x.ref, { rejectedMatch: { text: x.text, at: Date.now() } }); payChecks.close(id, 'refused'); logger.info('payment check ' + id + ' answered 2: a different payment');
+    return ['Kept #' + id + ': ' + Number(x.posted).toFixed(2) + ' stays not recorded in QuickBooks yet. Nothing was written.'];
   }
   if (x.action === 'clear') { // a bank clearing and a cheque: yes = that cheque is cleared on the day of the message; no = it stays open and the message is dropped
     if (verb === 'yes') { tracker.update(x.ref, { cleared: true, clearedAt: x.clearedAt || Date.now(), clearingMismatch: null, pendingClearing: null }); payChecks.close(id, 'accepted'); return [`Cleared #${id}: that cheque is marked cleared. Nothing was recorded in QuickBooks.`]; }

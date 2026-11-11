@@ -87,6 +87,7 @@ export function parseInvoiceCommand(text) {
   if (asPersian) return parseInvoiceCommand(asPersian);
   const raw = String(text || '').replace(/\r/g, '');
   { const ed = parseEditRequest(raw); if (ed) return { type: 'invoice_edit', ...ed }; } // «edit invoice 10003» + one change per line
+  { const sw = /^(?:atossa[ ,:]+)?([12])(?:[ ]*#?[ ]*G(\d+))?[.!]?$/i.exec(normalizeDigits(raw.trim())); if (sw) return { type: 'swap_answer', choice: Number(sw[1]), id: sw[2] ? 'G' + sw[2] : '' }; } // «1» / «2 #G5»: the answer to a digits-swapped payment check
   { const cc = parseCutCommand(raw); if (cc) return { type: 'cut_cmd', cmd: cc }; } // «cuts 215 08/11», «cut #Z1 customer NAME», «undo cut #X1»
   const first = plain(raw.split('\n')[0]).replace(/^(?:آتوسا|اتوسا)[ ,،:]*/u, '');
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);
