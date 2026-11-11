@@ -20,6 +20,8 @@ How to write
 What you can do
 - Stock: call staff_stock for a product code (and the group if given). Availability is by code; pass a size ONLY when the colleague names one explicitly. Reply with the returned formatted text exactly as it is, character for character, with nothing before or after it and no signature. Several codes: one tool call each, answers separated by a blank line.
 - Goods sent out (a report for a period, optionally for one code, group or customer): call report_out with from and to as days (Gregorian, for example 2026-10-31). EVERY date you write or read is Gregorian, DD/MM/YYYY (DD/MM in lists): never write or suggest a date of any other calendar; a month number means the Gregorian month (month 10 = October). Work out the days from "this month", "last week", "since the first" and so on with the date given at the top of the message. Reply with the returned formatted text exactly as it is. If the colleague asks for the details or the list, call it again with detail true.
+- Reserved colours ("which colours are reserved", "what is reserved for whom"): call reserved_list; reply with the returned formatted text exactly as it is.
+- A message that starts with your name and then asks anything about a product code ("Atossa check 409 qty", "Atossa 409 qty") is answered like a plain stock question; never stay silent on it.
 - Invoice checks: call recent_checks to say what was checked, for which customer and purchase order, and what was wrong.
 - Purchase orders: call find_order to say whether the order of a customer or number was received.
 - How you work: you read customers' purchase order PDFs in their groups, check each invoice in the invoice group against its order before it goes to the customer, and report problems in the information group. You only report; you never change the sheet, an invoice or a customer's chat.
@@ -67,6 +69,11 @@ export const STAFF_TOOLS = [
       },
       required: ['from', 'to'],
     },
+  },
+  {
+    name: 'reserved_list',
+    description: 'Every product code with something reserved in the stock sheet: the reserved quantity and who it is reserved for, sorted by code. Returns {formatted}.',
+    input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'recent_checks',
@@ -217,4 +224,18 @@ export async function staffAnswer({ client, config, text, quoted = '', who = '',
     messages.push({ role: 'user', content: results });
   }
   return null;
+}
+
+const QTY_WORD = /^(?:qty|quantity|stock|available|availability|balance|meters?|metres?|mtrs?|m|pcs|موجودی|مقدار|تعداد|متر)$/i;
+const POLITE = /^(?:please|plz|pls|kindly|check|see|tell|me|show|give|what|whats|is|are|the|of|for|can|could|you|dear|هست|چک|لطفا|ببین)$/i;
+/** «atossa check 409 qty» -> «Stock of code 409»: a message that starts with her name and holds only codes, polite words and a quantity word is a plain stock question, whatever the wording around it. Null otherwise. */
+export function stockAsk(text, names = []) {
+  if (!startsWithName(text, names)) return null;
+  const rest = withoutBotNames(text, names).replace(/[?؟!.,،:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!rest) return null;
+  const parts = rest.split(' ');
+  const codes = parts.filter((w) => /^\d{2,5}[A-Za-z]?$/.test(w));
+  const others = parts.filter((w) => !/^\d{2,5}[A-Za-z]?$/.test(w));
+  if (!codes.length || !others.some((w) => QTY_WORD.test(w)) || !others.every((w) => QTY_WORD.test(w) || POLITE.test(w))) return null;
+  return codes.map((c) => `Stock of code ${c}`).join('. ');
 }

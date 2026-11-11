@@ -69,7 +69,8 @@ import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
-import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, withoutBotNames } from './staff.js';
+import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, stockAsk, withoutBotNames } from './staff.js';
+import { fetchReserved, reservedText } from './reserved.js';
 import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
@@ -1929,6 +1930,7 @@ const staffHandlersFor = (key, lang = 'fa', persianUnits = false) => ({
       return { formatted: reportFailed(lang, isTimeout(e)), instruction };
     }
   },
+  reserved_list: async () => ({ formatted: reservedText(await fetchReserved(config).catch(() => null), lang), instruction: 'Send the formatted text exactly as it is, character for character, with nothing added before or after.' }),
   recent_checks: (i) => desk.lastChecks(i.count),
   find_order: (i) => desk.listOrders(i),
 });
@@ -2555,7 +2557,7 @@ async function handleStaffChat(raw, chatId, group) {
     }
     return true;
   }
-  let asked = text;
+  let asked = (group && stockAsk(text, config.botNames)) || text; // «Atossa check 409 qty» is the plain stock question
   let confirmed = false;
   let lang = staffLang; // the language the answer is written in
   const pend = config.voiceEnabled ? voiceDesk.get(key) : null;

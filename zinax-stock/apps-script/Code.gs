@@ -787,7 +787,24 @@ function sizeKey_(s) {
  * when that is unknown the answer is "not available" so a person checks. The real figures are returned for the
  * message to the sales manager; the assistant itself is only told yes or no.
  */
+function botReserved_() {
+  const groupName = {};
+  const ss = SpreadsheetApp.getActive();
+  if (ss.getSheetByName('Groups')) readAll_('Groups').forEach(function (g) { if (g[0]) groupName[String(g[0])] = String(g[1] || g[0]); });
+  const by = {};
+  readAll_('Items').forEach(function (r) {
+    const who = String(r[18] || '').trim();
+    if (r[7] !== 'IN_STOCK' || !who) return;
+    const code = String(r[2]).trim(), unit = String(r[6] || ''), key = code.toLowerCase() + '|' + unit;
+    const e = by[key] || (by[key] = { code: code, unit: unit, reserved: 0, customers: [] });
+    e.reserved = Math.round((e.reserved + (Number(r[5]) || 0)) * 100) / 100;
+    if (e.customers.indexOf(who) < 0) e.customers.push(who);
+  });
+  return { ok: true, rows: Object.keys(by).map(function (k) { return by[k]; }) };
+}
+
 function botStock_(req) {
+  if (req.reservedList) return botReserved_();
   const code = String(req.code || '').trim().toLowerCase();
   if (!code) return { ok: false, error: 'No code' };
   const ss = SpreadsheetApp.getActive();

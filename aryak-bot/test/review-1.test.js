@@ -668,3 +668,19 @@ test('a cheque photo whose name is not our customer is the drawer of a same-amou
   const yes = cleanPaymentEvents({ events: [cheque('a', 'ZETA KITCHEN', '05'), cheque('b', 'ZETA JOINERY', '07'), { ...photo, drawerInto: 'b' }], isKnown: known });
   assert.deepEqual(yes.map((e) => [e.ref, e.drawer || '']), [['a', ''], ['b', 'OMEGA KITCHENS LLC']]);
 });
+
+test('a message that starts with her name and holds a code and a quantity word is a plain stock question, whatever polite word stands between; the reserved list is sorted by code, in en and fa', async () => {
+  const { stockAsk } = await import('../src/staff.js');
+  const { reservedText, sortedReserved } = await import('../src/reserved.js');
+  for (const t of ['atossa check 409 qty', 'Atossa 409 qty', 'Atossa please check 409 quantity?', 'ATOSSA see 409 stock']) assert.equal(stockAsk(t, ['Atossa']), 'Stock of code 409', t);
+  assert.equal(stockAsk('Ok atossa check 409 ?', ['Atossa']), null); // does not start with her name
+  assert.equal(stockAsk('atossa check 409 and 410 qty', ['Atossa']), null); // an extra word: the model reads it
+  assert.equal(stockAsk('atossa 409 410 qty', ['Atossa']), 'Stock of code 409. Stock of code 410');
+  const rows = [{ code: '511', unit: 'm', reserved: 20, customers: ['ZETA CO'] }, { code: '409', unit: 'm', reserved: 45.5, customers: ['NOVA CO', 'ZETA CO'] }, { code: '300', unit: 'm', reserved: 0, customers: [] }];
+  assert.deepEqual(sortedReserved(rows).map((r) => r.code), ['409', '511']);
+  assert.equal(reservedText({ ok: true, rows }, 'en'), 'Reserved so far (2 codes)\n409 — 45.5 m — for NOVA CO, ZETA CO\n511 — 20 m — for ZETA CO');
+  assert.match(reservedText({ ok: true, rows }, 'fa'), /^رزروشده تا الان \(2 کد\)\n409 — 45.5 m — برای NOVA CO, ZETA CO/);
+  assert.match(reservedText({ ok: true, rows: [] }, 'en'), /Nothing is reserved/);
+  const gs = fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'zinax-stock', 'apps-script', 'Code.gs'), 'utf8');
+  assert.match(gs, /if \(req\.reservedList\) return botReserved_\(\);/);
+});
