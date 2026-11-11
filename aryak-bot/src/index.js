@@ -35,7 +35,7 @@ import { extractInvoiceRequest } from './qboextract.js';
 import { NamePreviews, QboNameDesk } from './qbonames.js';
 import { BulkPreviews, PriceDraft, QboBulkDesk } from './qbobulk.js';
 import { OneShot, SendDesk, chooseText, confirmText, findInvoice, isOwnerCommand, parseSendCommand, resolveGroups, sendFileName } from './invoicesend.js';
-import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, nameKey, rowOfGroup, settleDuplicates } from './customergroups.js';
+import { CustomerGroupDesk, CustomerGroups, NameBook, altNames, collectCustomers, customerRowFor, learnPrintedName, mergeSources, nameKey, rowGroups, rowOfGroup, settleDuplicates } from './customergroups.js';
 import { TaughtStore, TeachDesk, isExplicitTeaching, looksLikeTeaching, runTeaching } from './teach.js';
 import { WatchList } from './watchlist.js';
 import { cutFindingText, invoiceFindingText, shortPoint } from './finding.js';
@@ -695,6 +695,7 @@ async function trackGroup(raw, groupId, role) {
       if (role === 'payment' && !event.customer && pn && nowAt() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
       if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event })) continue;
       if (isDuplicatePayment(tracker, event)) { trace(whereDet, 'tracker', 'the same payment was already recorded minutes ago: counted once'); continue; }
+      if (event.customer && ev.customer && !sameStop(ev.customer, event.customer, nameAlias)) logger.info(`tracker: "${ev.customer}" was recorded as "${event.customer}" (${rowOfName(ev.customer) ? 'customer-group row' : 'alias map'}) — say "explain name ${ev.customer}" to see why`);
       if (!tracker.add(event)) continue;
       trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
@@ -858,7 +859,7 @@ async function paymentsReport(events, only = '', opts = {}) {
 
 setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(tracker.events).catch((e) => logger.warn(`payments: the re-read of old rows failed: ${e.message}`)); }, 45000); // soon after the start (QuickBooks is connected by then), not only when a report is asked
 const availDrafts = new AvailabilityDrafts();
-const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_name_set_many', 'sheet_names_undo', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
+const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_name_set_many', 'sheet_names_undo', 'name_explain', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
 const officeAsked = new Set(); // customer messages already surfaced to the owner as an invoice request or an order
 /**
@@ -1008,6 +1009,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       void readPhotoTest(here.chatId || ownIds()[0], ic.group, ic.days).catch((e) => logger.warn(`photo test failed: ${e.message}`));
       return [`Reading ${count} kept photo${count === 1 ? '' : 's'} of the ${photoGroupLabel(ic.group)} from the last ${ic.days} day${ic.days === 1 ? '' : 's'} with ${TEST_MODEL} only. One message per photo follows, then a summary. Nothing is stored or recorded.`];
     }
+    case 'name_explain': return [nameExplain(ic.name)];
     case 'sheet_names': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNamesPreview(); }
     case 'sheet_name_set_many': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNameSetMany(ic.pairs); }
     case 'sheet_name_set': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return sheetNameSet(ic.from, ic.to); }
@@ -3028,6 +3030,13 @@ async function invoiceLookupFor(events) {
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
 /** The approved aliases for a posted name: the cutting-group aliases, then the QuickBooks names the owner told for the sheet (sheet names), before any fuzzy match. */
 const nameAlias = (n) => cutAliases.resolve(n) || overrideFor(sheetNameStore, n);
+
+/** Why a posted name became a customer: every mapping that touches it, so a wrong one can be seen (and shown to the owner) before it is changed. */
+function nameExplain(name) {
+  const row = rowOfName(name); const stored = aliases.resolve(name, knownCustomers()); const names = (qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean);
+  return [`*"${name}"*`, `customer-group row: ${row ? row.customer + ' (groups: ' + rowGroups(row).map((g) => g.subject).join(' + ') + ')' : 'none'}`, `alias map: ${stored && stored !== name ? stored : 'none'}`,
+    `cut alias: ${cutAliases.resolve(name) || 'none'}`, `sheet-name answer: ${overrideFor(sheetNameStore, name) || 'none'}`, `QuickBooks match: ${qboNameFor(name, names, nameAlias) || 'none'}`, `recorded as: ${canon(name) || name}`].join('\n');
+}
 
 /** A name as QuickBooks writes it (an old alias may still give a longer one): the exact QuickBooks name when the post's name fits exactly one customer there, else the name as posted. */
 function namerOver(names) {

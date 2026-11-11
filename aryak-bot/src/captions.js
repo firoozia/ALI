@@ -37,12 +37,15 @@ export function parseCutCaption(text) {
   let invoiceQuantity;
   // WhatsApp text can lose the plus: «1510=25M» is 15+10=25M, «2572.6=97.6M» is 25+72.6=97.6M (a split of the digits whose parts add up to the total)
   rest = rest.replace(/(?<![0-9.])(\d[0-9.]{1,12}\d)\s*=\s*(INVOICED?\s*)?(\d+(?:\.\d+)?)(?![0-9])/i, (all, digits, inv, total) => {
+    let near = '';
     for (let k = 1; k < digits.length; k++) {
       const a = digits.slice(0, k); const b = digits.slice(k);
       if (a.endsWith('.') || b.startsWith('.') || a[0] === '0' && !a.startsWith('0.') || b[0] === '0' && !b.startsWith('0.') || (a.match(/\./g) || []).length > 1 || (b.match(/\./g) || []).length > 1) continue;
       if (Math.abs(Number(a) + Number(b) - Number(total)) < 0.0005) return a + '+' + b + '=' + (inv || '') + total;
+      // the writer's own slip in adding («72.6+25.6=97.6M» is 98.2): two decimal parts whose sum is within a metre of the total still read as the two parts, the total as written
+      if (!near && a.includes('.') && b.includes('.') && Math.abs(Number(a) + Number(b) - Number(total)) <= 1) near = a + '+' + b + '=' + (inv || '') + total;
     }
-    return all;
+    return near || all;
   });
   const p = QTY_PIECES.exec(rest);
   const t = p ? null : QTY_TIMES.exec(rest);

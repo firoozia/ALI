@@ -165,6 +165,7 @@ export function parseInvoiceCommand(text) {
         return { type: 'sheet_name_set_many', pairs };
       }
     }
+    { const ne = /^(?:explain\s+name|who\s+is|resolve\s+name)\s+(.{2,80})$/iu.exec(s); if (ne) return { type: 'name_explain', name: ne[1].trim() }; } // why a posted name became a customer
     { // the sheet's customer names: «sheet names», «name OLD → QuickBooks name», «undo names #H1»
       let sn = /^(?:sheet\s+names?|sheet\s+customers?|اسامی\s+جدول|نام‌?های\s+جدول)$/iu.exec(s); if (sn) return { type: 'sheet_names' };
       sn = /^name\s+(.{1,80}?)\s*(?:\(\s*\d+\s*\)\s*)?(?:→|->|=>)\s*(.{2,120})$/iu.exec(s); if (sn) return { type: 'sheet_name_set', from: sn[1].trim(), to: sn[2].trim() };

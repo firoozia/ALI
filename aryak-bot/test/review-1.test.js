@@ -478,3 +478,22 @@ test('in an internal group only a message that STARTS with her name is answered:
   assert.match(index, /strict: !!group && !group\.test,/); assert.match(index, /if \(!addressedIn\(text, ctx, !test\)\) return false;/);
   assert.ok(index.indexOf("const addressed = !group || isAddressed({") < index.indexOf('const tc = parseTrackerCommand(text)')); // before every answer of an internal group
 });
+
+// ---- the AL EBDA case of 08/11 (made-up names)
+test('a shared group and a reply with a lost plus: one cut of 97.6 m for the typed customer, paired with the 98.2 m OUT and the 97 m invoice, and nothing is listed', () => {
+  const NOW = Date.parse('2026-11-11T08:00:00Z'); const at = (hh) => Date.parse(`2026-11-08T${hh}:00Z`);
+  const first = eventsFromCaption('cut', 'ART NO 215 AL EBDA 72.6M....').events[0];
+  const second = eventsFromCaption('cut', 'ART NO 215 AL EBDA 72.625.6=97.6M').events[0]; // the plus is lost, and the writer's sum is 98.2
+  assert.deepEqual([first.lines[0].quantity, second.lines[0].quantity, second.pieces], [72.6, 97.6, [72.6, 25.6]]);
+  // the tracker stored the OTHER customer's name (the shared group's row), the typed name is kept beside it
+  const ev = (e, ref, hh) => ({ ...e, customer: 'NUQOOSH IND . LLC', customerTyped: 'AL EBDA', at: at(hh), ref });
+  const events = [{ type: 'cut', at: Date.parse('2026-11-02T10:00:00Z'), customer: 'FIRST', ref: 'f', lines: [{ code: '1', quantity: 1, unit: 'm' }] }, ev(first, 'p1', '09:02'), ev(second, 'p2', '09:03')];
+  assert.deepEqual(settleCuts(events).filter((e) => e.type === 'cut' && e.customerTyped).map((e) => e.ref), ['p2']); // the earlier part is not a cut of its own
+  const names = ['AL EBDA AL MALKI KITCHEN', 'NUQOOSH IND . LLC'];
+  const line = { DetailType: 'SalesItemLineDetail', Amount: 970, SalesItemLineDetail: { Qty: 97, UnitPrice: 10, ItemRef: { value: '215', name: 'PVC 215' } } };
+  const r = threeWay({ events, outs: [{ customer: 'AL EBDA AL MALKI KITCHEN', code: '215', qty: 98.2, unit: 'm', at: at('10:00') }], invoices: [{ TxnDate: '2026-11-08', DocNumber: 'inv-9979', CustomerRef: { name: 'AL EBDA AL MALKI KITCHEN' }, Line: [line] }],
+    itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: names, now: NOW });
+  for (const k of Object.keys(r.sections)) assert.deepEqual(r.sections[k], [], k);
+  assert.equal(parseCutCaption('ART NO 215 AL EBDA 72.625.6=97.6M').customer, 'AL EBDA');
+  assert.deepEqual(parseInvoiceCommand('who is AL EBDA'), { type: 'name_explain', name: 'AL EBDA' });
+});

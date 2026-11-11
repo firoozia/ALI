@@ -69,7 +69,9 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   const since = now - days * DAY;
   const firstPost = Math.min(Infinity, ...events.filter((e) => e.type === 'cut' && !e.internal && !e.simulated).map((e) => e.at)); // the orders-group history the tracker has begins here
   const memo = new Map();
-  const nameOf = (post) => { if (!memo.has(post)) memo.set(post, qboNameFor(post, qboNames, aliasOf) || aliasOf(post) || post); return memo.get(post); };
+  // The customer of a post: the name as TYPED, matched to QuickBooks first (a shared group's row may have given the post the other customer's name: «AL EBDA» in the NUQOOSH & AL EBDA group);
+  // only when the typed name fits nobody does the name the tracker stored count.
+  const nameOf = (post, stored = '') => { const k = `${post}|${stored}`; if (!memo.has(k)) memo.set(k, qboNameFor(post, qboNames, aliasOf) || (stored ? qboNameFor(stored, qboNames, aliasOf) || aliasOf(stored) || stored : aliasOf(post) || post)); return memo.get(k); };
 
   // ---- the three sources as lists
   const cuts = [];
@@ -79,7 +81,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
     for (const l of e.lines || []) {
       const code = digits(l.code); const qty = Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity);
       if (!code || !(qty > 0)) continue;
-      cuts.push({ customer: nameOf(e.customer || post), code, qty, unit: l.unit || 'm', at: e.at, text: e.text || '', pool: null });
+      cuts.push({ customer: nameOf(post, e.customer), code, qty, unit: l.unit || 'm', at: e.at, text: e.text || '', pool: null });
     }
   }
   const pools = new Map(); // an OUT group: one customer, one code, one day (two operations of a day are one)
