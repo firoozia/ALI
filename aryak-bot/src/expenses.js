@@ -82,7 +82,7 @@ export function rangeOf(kind, today) {
  */
 export function expenseAsk(text) {
   const s = String(text || '').replace(/[?!.,؟،]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const named = /(?:^|[^a-z])(?:atossa|atosa|atousa|atoosa)(?![a-z])|آتوسا|اتوسا/i.test(s);
+  const named = /^[ @*_~>"'«([]*(?:(?:atossa|atosa|atousa|atoosa)(?![a-z])|آتوسا|اتوسا)/i.test(s); // the name must START the message
   if (!named) return null;
   const rest = s.replace(/(?:^|[^a-z])(?:atossa|atosa|atousa|atoosa)(?![a-z])|آتوسا|اتوسا/gi, ' ').trim();
   if (!rest) return 'today'; // only her name: the day's list

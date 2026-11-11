@@ -464,3 +464,17 @@ test('the Confirmation group is recorded silently: no per-post notice, no #D que
   const at = lines.findIndex((l, i) => /^━+$/.test(l) && /^━+$/.test(lines[i + 1] || ''));
   assert.ok(at >= 0 && lines[at + 2] !== '' && lines[at - 1] !== ''); // two rules on consecutive lines, no blank line around or between them
 });
+
+// ---- internal groups answer only a message that starts with her name
+import { isAddressed, startsWithName } from '../src/staff.js';
+
+test('in an internal group only a message that STARTS with her name is answered: not a quote of her message, not a name or an @mention in the middle', () => {
+  for (const t of ['Atossa', 'atosa what is 209', 'Atousa, send the statement', 'ATOSSA: delivery report?', 'آتوسا صورت‌حساب', '@Atossa check', '  *Atossa* hello', 'Atoosa']) assert.ok(startsWithName(t, ['atossa']), t);
+  for (const t of ['Yes this good', 'For the full day?', 'Give me when its delivered', 'thanks Atossa', 'please ask @Atossa about it', 'Atossalike', 'hello', '']) assert.equal(startsWithName(t, ['atossa']), false, t);
+  const base = { text: 'Give me when its delivered', mentioned: ['me@lid'], quotedFrom: 'me@lid', ownIds: ['me@lid'], names: ['atossa'] };
+  assert.equal(isAddressed(base), true); // the old rule (her own chat, the test group): a quote counts
+  assert.equal(isAddressed({ ...base, strict: true }), false); assert.equal(isAddressed({ ...base, text: 'Atossa give me when its delivered', strict: true }), true);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(index, /strict: !!group && !group\.test,/); assert.match(index, /if \(!addressedIn\(text, ctx, !test\)\) return false;/);
+  assert.ok(index.indexOf("const addressed = !group || isAddressed({") < index.indexOf('const tc = parseTrackerCommand(text)')); // before every answer of an internal group
+});

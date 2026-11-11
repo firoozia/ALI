@@ -86,7 +86,20 @@ const words = (s) => String(s || '').toLowerCase().replace(/[‌‏]/g, ' ').spl
  * Is a group message for the bot? Yes when it mentions the bot, replies to a message of the bot, or says one of
  * the bot's names as a word. Everything else in a busy group is left alone.
  */
-export function isAddressed({ text, mentioned = [], quotedFrom = '', ownIds = [], names = [] }) {
+/**
+ * True when the message STARTS with her name («Atossa», «Atosa», «Atousa», «آتوسا», any case, an optional @, comma or colon after it). The rule of the internal company groups (owner 2026-11-11):
+ * only such a message is answered; a quote of her own message and a mention in the middle of a sentence are not.
+ */
+export function startsWithName(text, names = []) {
+  const t = normalizeLetters(String(text || '')).replace(/^[\s@*_~>"'«(["+B+"[]+/u, '');
+  const m = /^([\p{L}\p{N}]+)/u.exec(t);
+  if (!m) return false;
+  const all = [...names, ...BOT_NAME_VARIANTS].map(normalizeLetters);
+  return all.some((n) => (/\s/.test(n) ? t.startsWith(n) : n === m[1]));
+}
+
+export function isAddressed({ text, mentioned = [], quotedFrom = '', ownIds = [], names = [], strict = false }) {
+  if (strict) return startsWithName(text, names); // an internal company group: only a message that starts with her name
   const own = ownIds.filter(Boolean);
   if (mentioned.some((m) => own.includes(m))) return true;
   if (quotedFrom && own.includes(quotedFrom)) return true;

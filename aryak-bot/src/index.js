@@ -1363,9 +1363,9 @@ const quotedTextOf = (ctx) => {
   const quoted = textOf(normalizeMessageContent(ctx.quotedMessage)) || '';
   return quoted.startsWith('🤖') ? '' : quoted;
 };
-const addressedIn = (text, ctx) => isAddressed({
+const addressedIn = (text, ctx, strict = false) => isAddressed({
   text, mentioned: (ctx?.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx?.participant ? jidNormalizedUser(ctx.participant) : '',
-  ownIds: ownIds(), names: config.botNames,
+  ownIds: ownIds(), names: config.botNames, strict,
 });
 
 /**
@@ -1444,7 +1444,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
       }
     }
   }
-  if (!addressedIn(text, ctx)) return false;
+  if (!addressedIn(text, ctx, !test)) return false; // an internal group: only a message that starts with her name (the test group keeps the old rule)
   const quoted = quotedTextOf(ctx);
   const eff = effectiveRequest(text, quoted, config.botNames);
   { // an invoice request: the preview is built and shown HERE (an internal group); only the owner's yes creates it
@@ -2200,7 +2200,7 @@ async function handleStaffChat(raw, chatId, group) {
   const ctx = (content.extendedTextMessage || audio || image)?.contextInfo || {};
   const addressed = !group || isAddressed({
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
-    ownIds: own, names: config.botNames,
+    ownIds: own, names: config.botNames, strict: !!group && !group.test, // an internal company group answers only a message that STARTS with her name (owner 2026-11-11); the test group and her own chat keep the old rule
   });
   // Cost control: in the cut, delivery, confirmation, information and invoices groups a photo or a voice note is never read by itself
   // (no download, no vision, no speech); only a message that addresses her by name, or answers her, may be.
