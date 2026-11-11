@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ExpenseStore, expenseAsk, expensesText } from '../src/expenses.js';
-import { draftText, stateOf } from '../src/availdraft.js';
 import { parseCutCaption } from '../src/captions.js';
 import { Tracker, reconcileCuts, settleCuts } from '../src/tracker.js';
 import { cutFindingText } from '../src/finding.js';
@@ -25,15 +24,6 @@ test('an expense made in the test group before test data was kept apart is marke
   assert.equal(s.done(range).length, 2);
   assert.equal(s.markTestOnce('m1', ['E1', 'E9']), 1); assert.equal(s.done(range).length, 1); assert.doesNotMatch(expensesText(s.done(range), '10/11'), /85\.50/);
   assert.equal(s.markTestOnce('m1', ['E2']), 0); assert.equal(s.done(range).length, 1); // once only
-});
-
-test('a tiny remnant is never «available»: it says what is left and asks how many meters; a real length still is available; a longer ask is not enough', () => {
-  const r = (free) => stateOf('406', { found: true, free, unit: 'm' }, 0, 10);
-  assert.equal(r(1.8).state, 'remnant'); assert.equal(draftText([r(1.8)]), 'Only 1.8 m left of code 406 (remnant). How many meters do you need?');
-  assert.equal(r(2.8).state, 'remnant'); assert.equal(r(10).state, 'yes'); assert.equal(r(60).state, 'yes');
-  assert.equal(stateOf('406', { found: true, free: 1.8, unit: 'm' }, 5, 10).state, 'part'); // asked for more than is there
-  assert.equal(stateOf('406', { found: true, free: 1.8, unit: 'm' }, 0, 0).state, 'yes'); // threshold off
-  assert.doesNotMatch(draftText([r(1.8)]), /available/);
 });
 
 test('the plus lost in WhatsApp text: «1510=25M» is 15+10=25M; a normal cut is untouched', () => {

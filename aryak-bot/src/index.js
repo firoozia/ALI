@@ -845,7 +845,7 @@ async function customerAsksAvailability({ messageId, groupId, subject, text, sim
   if (!ask || asked.has(messageId)) return false;
   asked.add(messageId); if (asked.size > 300) asked.delete(asked.values().next().value);
   const states = [];
-  for (const code of ask.codes) { try { states.push(stateOf(code, await fetchStock(config, { code }), ask.quantity, config.remnantMeters)); } catch (e) { logger.warn(`availability draft: the sheet did not answer for ${code}: ${e.message}`); return false; } }
+  for (const code of ask.codes) { try { states.push(stateOf(code, await fetchStock(config, { code }), ask.quantity)); } catch (e) { logger.warn(`availability draft: the sheet did not answer for ${code}: ${e.message}`); return false; } }
   const draft = states.some((x) => x.state === 'ambiguous') ? '' : draftText(states, ask.quantity);
   const id = draft ? availDrafts.add({ groupId, subject, draft, simulated }) : '';
   const managerDigits = jidDigits(config.salesManager);
