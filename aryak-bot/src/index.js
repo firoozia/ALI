@@ -800,18 +800,21 @@ const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = aw
 /** The OUT rows of the stock sheet for the last [days] days (read only): [{ customer, code, qty, unit, at }], or null when the sheet could not give them all (then nothing is claimed about what left). */
 async function sheetOutRows(days) {
   try {
-    const to = todayDubai();
-    const rep = await fetchReport(config, { from: dayPlus(to, -days), to, detail: true, limit: 500 });
-    const rows = (rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT'); // edge banding is recorded under the colour code of the film: all rows count
-    if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back: what left the warehouse is not claimed'); return null; }
+    const to = todayDubai(); const rows = [];
+    for (let back = days; back > 0; back -= 10) { // ten days at a time: a page is at most 500 rows
+      const from = dayPlus(to, -back); const upTo = dayPlus(to, -Math.max(0, back - 10) - (back > 10 ? 1 : 0));
+      const rep = await fetchReport(config, { from, to: back <= 10 ? to : upTo, detail: true, limit: 500 });
+      if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back for ' + from + ': what left the warehouse is not claimed'); return null; }
+      rows.push(...(rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT')); // edge banding is recorded under the colour code of the film: all rows count
+    }
     return rows.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }));
   } catch (e) { logger.warn('three-way: the sheet gave no OUT rows (' + e.message + ')'); return null; }
 }
 
 /** What was CUT (the orders group), what LEFT (the sheet's OUT rows), what was INVOICED (QuickBooks), per customer and code: the sections of src/threeway.js. */
 async function unbilledReport(events = tracker.events, opts = {}) {
-  const days = 14;
-  const since = new Date(Date.now() - (days + 26) * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const days = 45;
+  const since = new Date(Date.now() - (days + 30) * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const invoices = await qbo.query("select * from Invoice where TxnDate >= '" + since + "'");
   // only what the sheet tracks: the films. Edge banding («EDGE 0.8x22 - 1810»), services (delivery, parking) and samples are no part of this comparison.
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), itemCodesOf(it)])); // film by its code, edge banding by its colour, nothing else

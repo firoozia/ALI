@@ -225,19 +225,19 @@ test('the three-way check: every case lands in its own section, with its sources
   const invoices = [inv('ZETA RAD INTERNATIONAL LLC', '10', [line('215', 6)]), inv('TAU DOORS LLC', '10', [line('410', 8)]), inv('CHI KITCHEN', '10', [line('999', 20)]), inv('UPSILON', '10', [line('777', 4)])];
   const r = threeWay({ events, outs, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['ZETA RAD INTERNATIONAL LLC', 'NOVA ART LLC', 'OMEGA CO', 'TAU DOORS LLC', 'PHI WOOD', 'CHI KITCHEN', 'UPSILON'], now: NOW });
   const s = (k) => r.sections[k].map((g) => [g.customer, g.parts]);
-  assert.deepEqual(s('leftNotInvoiced'), [['NOVA ART LLC', ['220 12m (orders 08/11, OUT 09/11, no invoice)']]]); // ZETA is invoiced 6 for 6.3 left: fine
-  assert.deepEqual(s('stillInWarehouse'), [['OMEGA CO', ['301 5m (orders 09/11, no invoice)']]]);
-  assert.deepEqual(s('invoicedNotLeft'), [['CHI KITCHEN', ['999 20m (invoice 10/11, no OUT)']], ['TAU DOORS LLC', ['410 8m (orders 09/11, invoice 10/11, no OUT)']]]);
-  assert.deepEqual(s('leftWithoutPost'), [['PHI WOOD', ['555 3m (OUT 10/11, no invoice)']]]); // an OUT that is invoiced is fine without an order post
+  assert.deepEqual(s('leftNotInvoiced'), [['NOVA ART LLC', ['220 12m (orders 08/11, OUT 09/11, no invoice) — 1 day']]]); // ZETA is invoiced 6 for 6.3 left: fine
+  assert.deepEqual(s('stillInWarehouse'), [['OMEGA CO', ['301 5m (orders 09/11, no invoice) — 1 day']]]);
+  assert.deepEqual(s('invoicedNotLeft'), [['CHI KITCHEN', ['999 20m (invoice 10/11, no OUT) — 1 day']], ['TAU DOORS LLC', ['410 8m (orders 09/11, invoice 10/11, no OUT) — 1 day']]]);
+  assert.deepEqual(s('leftWithoutPost'), [['PHI WOOD', ['555 3m (OUT 10/11, no invoice) — today']]]); // an OUT that is invoiced is fine without an order post
   const text = threeWayText(r);
-  assert.match(text, /^Left the warehouse, not invoiced \(1 customer\):\n• NOVA ART LLC: 220 12m \(orders 08\/11, OUT 09\/11, no invoice\)\n━+\nInvoiced, not left yet \(2 customers\):/);
-  assert.match(text, /Cut, still in the warehouse \(not left\) \(1 customer\)/); assert.doesNotMatch(text, /Left without an order-group post/); assert.match(text, /Say "unbilled details"/); // the short form
+  assert.match(text, /^Left, not invoiced \(1 customer\):\n• NOVA ART LLC: 220 12m \(orders 08\/11, OUT 09\/11, no invoice\) — 1 day\n━+\nInvoiced, not left yet \(2 customers\):/);
+  assert.match(text, /Cut \/ ready, not invoiced yet \(1 customer\)/); assert.doesNotMatch(text, /Left without an order-group post/); assert.match(text, /Say "unbilled details"/); // the short form
   assert.match(threeWayText(r, { details: true }), /Left without an order-group post \(check\) \(1 customer\)/);
   // the sheet gave nothing: only the old question, and a warning
   const blind = threeWay({ events, outs: null, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: [], now: NOW });
   assert.deepEqual(blind.sections.stillInWarehouse.concat(blind.sections.invoicedNotLeft, blind.sections.leftWithoutPost), []); assert.ok(!blind.outKnown);
   assert.match(threeWayText(blind), /^⚠ The stock sheet gave no OUT rows/);
-  assert.match(threeWayText(threeWay({ events: [], outs: [], invoices: [], now: NOW })), /^✔ Everything cut, left and invoiced in the last 14 days agrees\./);
+  assert.match(threeWayText(threeWay({ events: [], outs: [], invoices: [], now: NOW })), /^✔ Everything cut, left and invoiced in the last 45 days agrees\./);
 });
 
 test('the three-way check is fast on a big day (300 cuts, 300 OUT rows, 2000 invoice lines, 200 names) and never writes anything', () => {
@@ -275,8 +275,7 @@ test('the owner\'s cases of 11/11 (made-up names): an invoice before the post, o
     inv('ALPHA KITCHEN', '05', [line('225', 15)]), inv('BETA KITCHEN', '02', [line('1810', 21)])];
   const r = threeWay({ events, outs, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: names, now: NOW });
   const s = (k) => r.sections[k].map((g) => [g.customer, g.parts.map((p) => p.replace(/ \(.*$/, ''))]);
-  assert.deepEqual(s('leftNotInvoiced').sort(), [['BETA KITCHEN', ['1810 21.3m']], ['DANDY TEST', ['702 4.4m']]]); // only the real ones
-  assert.match(r.sections.leftNotInvoiced.find((g) => g.customer === 'BETA KITCHEN').parts[0], /check: invoice 02\/11 of 21m is older than 7 days/); // for the owner's look
+  assert.deepEqual(s('leftNotInvoiced').sort(), [['DANDY TEST', ['702 4.4m']]]); // only the real one: BETA's invoice of 02/11 and its OUT of 10/11 are one closed pair
   assert.deepEqual(s('stillInWarehouse'), [['NOVA ART LLC', ['215 72.6m']]]); // the 72.6 m has no OUT; the 97.6 m took the 98.2 m
   assert.deepEqual(s('invoicedNotLeft'), []); assert.deepEqual(s('leftWithoutPost'), []);
   const none = (k) => assert.ok(!r.sections[k].some((g) => ['ZETA RAD LLC', 'EBDA KITCHEN LLC', 'MASTER TEST', 'HIGH TEST', 'DESIGN TEST', 'ALPHA KITCHEN'].includes(g.customer)), k);
@@ -323,8 +322,8 @@ test('one OUT with an invoice of another quantity is ONE line «quantity differs
   const cut = { type: 'cut', at: at('04'), customer: 'SOMEONE', ref: 'first', lines: [{ code: '1', quantity: 1, unit: 'm' }] }; // the tracked history begins on 04/11
   const r = threeWay({ events: [cut], outs: [out('SIGMA HOUSE', '1819', 350, '09'), out('CARPENTER CO', '201', 20.2, '11')],
     invoices: [inv('SIGMA HOUSE', '09', 'inv-9989', [line('1819', 153)]), inv('CARPENTER CO', '11', 'inv-10010', [line('220', 20)])], itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['SIGMA HOUSE', 'CARPENTER CO'], now: NOW });
-  assert.deepEqual(r.sections.quantityDiffers, [{ customer: 'SIGMA HOUSE', parts: ['1819: OUT 350m (09/11) vs invoiced 153m (inv-9989) → 197m not invoiced'] }]);
-  assert.deepEqual(r.sections.checkCode, [{ customer: 'CARPENTER CO', parts: ['OUT 201 20.2m vs invoice 220 20m on 11/11 — check the code'] }]);
+  assert.deepEqual(r.sections.quantityDiffers.map((g) => [g.customer, g.parts]), [['SIGMA HOUSE', ['1819: OUT 350m (09/11) vs invoiced 153m (inv-9989) → 197m not invoiced — 1 day']]]);
+  assert.deepEqual(r.sections.checkCode.map((g) => [g.customer, g.parts]), [['CARPENTER CO', ['OUT 201 20.2m vs invoice 220 20m on 11/11 — check the code — today']]]);
   for (const k of ['leftNotInvoiced', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost']) assert.deepEqual(r.sections[k], [], k); // not listed again
   const text = threeWayText(r);
   assert.match(text, /^Quantity differs \(OUT vs invoice\) \(1 customer\):\n• SIGMA HOUSE: 1819: OUT 350m[\s\S]*Possible wrong code \(same day, same quantity\) \(1 customer\):/);
@@ -387,4 +386,23 @@ test('every generated text is Gregorian: no 14xx year, no Persian month name, no
   for (const t of texts) { assert.doesNotMatch(String(t), YEAR, String(t).slice(0, 80)); assert.doesNotMatch(String(t), MONTH, String(t).slice(0, 80)); }
   assert.equal(parseDay('09/08/1405'), '2026-10-31'); // an explicit Solar Hijri year is read as one...
   assert.equal(parseDay('01/11/2026'), '2026-11-01'); assert.equal(parseDay('1/9/2026'), '2026-09-01'); // ...everything else is Gregorian
+});
+
+test('goods for a courier: pairs across up to 30 days both ways, the open items are follow-ups with their age (oldest first, ⚠ after 7 days), a courier pickup is supporting evidence', () => {
+  const NOW = Date.parse('2026-11-20T08:00:00Z'); const at = (d) => Date.parse(`2026-11-${d}T10:00:00Z`);
+  const line = (code, qty) => ({ DetailType: 'SalesItemLineDetail', Amount: qty * 10, SalesItemLineDetail: { Qty: qty, UnitPrice: 10, ItemRef: { value: code, name: 'PVC ' + code } } });
+  const inv = (customer, d, doc, lines) => ({ TxnDate: `2026-11-${d}`, DocNumber: doc, CustomerRef: { name: customer }, Line: lines });
+  const cut = (customer, code, qty, d, ref) => ({ type: 'cut', at: at(d), customer, customerTyped: customer, ref, lines: [{ code, quantity: qty, unit: 'm' }] });
+  const events = [cut('FIRST', '1', 1, '02', 'x'), cut('ZETA', '1810', 21.3, '10', 'a'), cut('NOVA', '215', 30, '15', 'b'), cut('OMEGA', '301', 12, '03', 'c'),
+    { type: 'delivery', status: 'picked-up', customer: 'TAU CO', customerTyped: 'TAU CO', at: at('12'), ref: 'p1', lines: [], delivered: { quantity: 1, unit: 'roll' } }];
+  const outs = [{ customer: 'ZETA', code: '1810', qty: 21.3, unit: 'm', at: at('10') }, { customer: 'SIGMA', code: '777', qty: 40, unit: 'm', at: at('08') }];
+  const invoices = [inv('ZETA', '02', 'inv-1', [line('1810', 21)]), inv('TAU CO', '08', 'inv-2', [line('404', 18)]), inv('PHI', '18', 'inv-3', [line('909', 9)])];
+  const r = threeWay({ events, outs, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['ZETA', 'NOVA', 'OMEGA', 'TAU CO', 'SIGMA', 'PHI'], now: NOW });
+  assert.deepEqual(r.sections.quantityDiffers, []); // ZETA: invoiced 02/11, left 10/11, 8 days apart: one closed pair
+  assert.deepEqual(r.sections.leftNotInvoiced, []); assert.deepEqual(r.sections.leftWithoutPost.map((g) => [g.customer, g.ages[0], g.parts[0].startsWith('⚠')]), [['SIGMA', 11, true]]); // an OUT nobody posted and not invoiced: for the details
+  assert.deepEqual(r.sections.stillInWarehouse.map((g) => [g.customer, g.ages[0], g.parts[0].startsWith('⚠')]), [['OMEGA', 16, true], ['NOVA', 4, false]]); // oldest first, ⚠ after 7 days
+  assert.deepEqual(r.sections.invoicedNotLeft.map((g) => [g.customer, g.ages[0], g.parts[0].startsWith('⚠')]), [['TAU CO', 12, true], ['PHI', 2, false]]);
+  assert.match(r.sections.invoicedNotLeft[0].parts[0], /^⚠ 404 18m \(invoice 08\/11, no OUT, courier pickup 12\/11\) — 12 days$/); // supporting evidence, still open until the OUT appears
+  const text = threeWayText(r);
+  assert.match(text, /Cut \/ ready, not invoiced yet \(2 customers\):\n• OMEGA: ⚠ 301 12m/); assert.match(text, /Invoiced, not left yet \(2 customers\):\n• TAU CO: ⚠ 404 18m/);
 });

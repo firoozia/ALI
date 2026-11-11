@@ -17,8 +17,9 @@ import { settleCuts } from './tracker.js';
 import { SEP } from './separator.js';
 
 const DAY = 24 * 3600 * 1000;
-const PAIR_DAYS = 5; // a cut post and its OUT row
-const INVOICE_DAYS = 7; // an invoice and what it covers, before or after
+const PAIR_DAYS = 30; // a cut post and its OUT row, before or after (goods for a courier are cut today and may leave days later)
+const INVOICE_DAYS = 30; // an invoice and what it covers, before or after (invoiced first and sent later, or sent first and invoiced later)
+const WARN_DAYS = 7; // an open item older than this is marked ⚠
 const MIN_LISTED = 2; // an invoice line of 2 m or less (a sample, a piece) is not worth a line in the report
 const tol = (q) => Math.max(1.5, 0.06 * q); // metres of difference that are not a difference
 const digits = (c) => (String(c || '').match(/\d{2,5}/) || [''])[0]; // the product number: the first one (a truncated «21» stays «21»)
@@ -62,7 +63,7 @@ export const isFilmItem = (it) => itemCodesOf(it).length > 0;
  * (then nothing is claimed about what left). [invoices]: QuickBooks invoice records with Line, TxnDate, CustomerRef. [itemCodes](itemId, name) -> the codes of an item.
  * Returns { sections: { leftNotInvoiced, stillInWarehouse, invoicedNotLeft, leftWithoutPost, delivered }, outKnown, trace } where a section is [{ customer, parts: [text] }].
  */
-export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf = () => '', qboNames = [], now = Date.now(), days = 14, timeZone = 'Asia/Dubai' }) {
+export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf = () => '', qboNames = [], now = Date.now(), days = 45, timeZone = 'Asia/Dubai' }) {
   const outKnown = Array.isArray(outs);
   const since = now - days * DAY;
   const firstPost = Math.min(Infinity, ...events.filter((e) => e.type === 'cut' && !e.internal && !e.simulated).map((e) => e.at)); // the orders-group history the tracker has begins here
@@ -136,7 +137,15 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   const older = (customer, code, qty) => lines.find((l) => l.customer === customer && (sameCode(l.code, code) || prefixCode(l.code, code)) && !l.used && Math.abs(l.qty - qty) <= tol(qty));
 
   const out = { leftNotInvoiced: [], quantityDiffers: [], checkCode: [], stillInWarehouse: [], invoicedNotLeft: [], leftWithoutPost: [], delivered: [] };
-  const add = (list, customer, text) => { const hit = list.find((g) => g.customer === customer); if (hit) hit.parts.push(text); else list.push({ customer, parts: [text] }); };
+  // an open item is a follow-up, not an error: it is listed every day with its age in days (from its oldest date) until it closes; older than a week gets ⚠
+  const add = (list, customer, text, from = null) => {
+    let shown = text; let age = 0;
+    if (from) { age = Math.max(0, Math.floor((now - from) / DAY)); shown = `${age > WARN_DAYS ? '⚠ ' : ''}${text} — ${age === 0 ? 'today' : `${age} day${age === 1 ? '' : 's'}`}`; }
+    const hit = list.find((g) => g.customer === customer);
+    if (hit) { hit.parts.push(shown); hit.ages.push(age); } else list.push({ customer, parts: [shown], ages: [age] });
+  };
+  const pickups = events.filter((e) => e.type === 'delivery' && e.status === 'picked-up' && !e.internal && !e.simulated).map((e) => ({ customer: nameOf(e.customerTyped || e.customer), at: e.at }));
+  const courier = (customer, from) => { const hit = pickups.find((q) => q.customer === customer && q.at >= from - DAY); return hit ? `, courier pickup ${dm(hit.at, timeZone)}` : ''; }; // supporting evidence only
   const trace = [];
   const note = (section, customer, code, text, extra = '') => { trace.push(`three-way: ${section} "${customer}" ${code}: ${text}${extra}`); };
   const postText = (cuts2) => (cuts2.find((c) => c.text)?.text ? ` — post: "${cuts2.find((c) => c.text).text}"` : '');
@@ -160,7 +169,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
     const diff = round1(p.qty - sum);
     const docs = [...new Set(near.map((l) => l.doc).filter(Boolean))].join(', ');
     const text = `${p.code}: OUT ${round1(p.qty)}${unitText(p.unit)} (${dm(p.at, timeZone)}) vs invoiced ${round1(sum)}m${docs ? ` (${docs})` : ''} → ${diff >= 0 ? `${diff}m not invoiced` : `${-diff}m invoiced beyond what left`}`;
-    add(out.quantityDiffers, p.customer, text); note('quantityDiffers', p.customer, p.code, text);
+    add(out.quantityDiffers, p.customer, text, p.at); note('quantityDiffers', p.customer, p.code, text);
     for (const l of near) l.left = 0;
   }
   // 2) the same customer, the same day and the same quantity under ANOTHER code: probably a wrong code on the OUT or on the invoice
@@ -170,36 +179,34 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
     if (!hit) { unexplained.push(p); continue; }
     hit.used = true; hit.left = 0;
     const text = `OUT ${p.code} ${round1(p.qty)}${unitText(p.unit)} vs invoice ${hit.code} ${round1(hit.qty)}m on ${dm(p.at, timeZone)} — check the code`;
-    add(out.checkCode, p.customer, text); note('checkCode', p.customer, p.code, text);
+    add(out.checkCode, p.customer, text, p.at); note('checkCode', p.customer, p.code, text);
   }
   // 3) the rest: left and not invoiced (with a post: the real unbilled; without one: for the details)
   for (const p of unexplained) {
     if (p.cuts.length) {
-      const hint = older(p.customer, p.code, p.qty);
-      if (hint) hint.used = true; // said here with the OUT, not again as «invoiced, not left»
-      const text = `${p.code} ${round1(p.qty)}${unitText(p.unit)} (orders ${dm(Math.max(...p.cuts.map((x) => x.at)), timeZone)}, OUT ${dm(p.at, timeZone)}, no invoice${hint ? `; check: invoice ${dm(hint.at, timeZone)} of ${round1(hint.qty)}m is older than ${INVOICE_DAYS} days` : ''})`;
-      add(out.leftNotInvoiced, p.customer, text); note('leftNotInvoiced', p.customer, p.code, text, postText(p.cuts));
+      const text = `${p.code} ${round1(p.qty)}${unitText(p.unit)} (orders ${dm(Math.max(...p.cuts.map((x) => x.at)), timeZone)}, OUT ${dm(p.at, timeZone)}, no invoice)`;
+      add(out.leftNotInvoiced, p.customer, text, p.at); note('leftNotInvoiced', p.customer, p.code, text, postText(p.cuts));
     } else {
       const text = `${p.code} ${round1(p.qty)}${unitText(p.unit)} (OUT ${dm(p.at, timeZone)}, no invoice)`;
-      add(out.leftWithoutPost, p.customer, text); note('leftWithoutPost', p.customer, p.code, text);
+      add(out.leftWithoutPost, p.customer, text, p.at); note('leftWithoutPost', p.customer, p.code, text);
     }
   }
   // C) cut posts that have no OUT row
   for (const c of cuts.filter((x) => !x.pool).sort((a, b) => a.at - b.at)) {
     if (!outKnown) { // the sheet gave nothing: the old question, cut and not invoiced
-      if (!cover(c.customer, c.code, c.at, c.qty)) { const text = `${c.code} ${round1(c.qty)}${unitText(c.unit)} (orders ${dm(c.at, timeZone)}, no invoice)`; add(out.leftNotInvoiced, c.customer, text); note('leftNotInvoiced', c.customer, c.code, text, postText([c])); }
+      if (!cover(c.customer, c.code, c.at, c.qty)) { const text = `${c.code} ${round1(c.qty)}${unitText(c.unit)} (orders ${dm(c.at, timeZone)}, no invoice)`; add(out.leftNotInvoiced, c.customer, text, c.at); note('leftNotInvoiced', c.customer, c.code, text, postText([c])); }
       continue;
     }
     const inv = cover(c.customer, c.code, c.at, c.qty);
-    if (inv) { if (c.qty <= MIN_LISTED && inv.qty <= MIN_LISTED + 1e-9) continue; /* a 1 m or 2 m line is not worth a report line, with a post or without */ const text = `${c.code} ${round1(inv.qty)}${unitText('m')} (orders ${dm(c.at, timeZone)}, invoice ${dm(inv.at, timeZone)}, no OUT)`; add(out.invoicedNotLeft, c.customer, text); note('invoicedNotLeft', c.customer, c.code, text, postText([c])); }
-    else { const text = `${c.code} ${round1(c.qty)}${unitText(c.unit)} (orders ${dm(c.at, timeZone)}, no invoice)`; add(out.stillInWarehouse, c.customer, text); note('stillInWarehouse', c.customer, c.code, text, postText([c])); }
+    if (inv) { if (c.qty <= MIN_LISTED && inv.qty <= MIN_LISTED + 1e-9) continue; /* a 1 m or 2 m line is not worth a report line, with a post or without */ const text = `${c.code} ${round1(inv.qty)}${unitText('m')} (orders ${dm(c.at, timeZone)}, invoice ${dm(inv.at, timeZone)}, no OUT${courier(c.customer, inv.at)})`; add(out.invoicedNotLeft, c.customer, text, inv.at); note('invoicedNotLeft', c.customer, c.code, text, postText([c])); }
+    else { const text = `${c.code} ${round1(c.qty)}${unitText(c.unit)} (orders ${dm(c.at, timeZone)}, no invoice)`; add(out.stillInWarehouse, c.customer, text, c.at); note('stillInWarehouse', c.customer, c.code, text, postText([c])); }
   }
   // D) recent invoice lines that neither a cut nor an OUT used up: invoiced, not left yet
   if (outKnown) {
     const coverageStart = pools.size ? Math.min(...[...pools.values()].map((p) => p.at)) : Infinity; // the invoices before the first OUT row we have say nothing about what left
     for (const l of lines.filter((x) => !x.used && x.customer && x.at >= Math.max(since, coverageStart - DAY) && x.qty > MIN_LISTED).sort((a, b) => a.at - b.at)) {
-      const text = `${l.code} ${round1(l.qty)}m (invoice ${dm(l.at, timeZone)}, no OUT)`;
-      add(out.invoicedNotLeft, l.customer, text); note('invoicedNotLeft', l.customer, l.code, text);
+      const text = `${l.code} ${round1(l.qty)}m (invoice ${dm(l.at, timeZone)}, no OUT${courier(l.customer, l.at)})`;
+      add(out.invoicedNotLeft, l.customer, text, l.at); note('invoicedNotLeft', l.customer, l.code, text);
     }
   }
   // a delivery post has no code: a customer-level note when nothing at all was invoiced for him since
@@ -208,19 +215,24 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   for (const e of events) {
     if (e.type !== 'delivery' || !e.delivered || e.internal || e.simulated || e.at < since) continue;
     const customer = nameOf(e.customerTyped || e.customer); if (!customer) continue;
-    if ((lastInvoice.get(customer) || 0) < e.at - DAY) add(out.delivered, customer, `delivered ${dm(e.at, timeZone)}, no invoice since`);
+    if ((lastInvoice.get(customer) || 0) < e.at - DAY) add(out.delivered, customer, `delivered ${dm(e.at, timeZone)}, no invoice since`, e.at);
   }
-  const order = (list) => list.sort((a, b) => b.parts.length - a.parts.length || a.customer.localeCompare(b.customer)).map((g) => ({ ...g, parts: [...new Set(g.parts)] }));
+  const order = (list) => list.map((g) => {
+    const idx = g.parts.map((_, i) => i).sort((x, y) => g.ages[y] - g.ages[x]); // the oldest first
+    const parts = []; const ages = [];
+    for (const i of idx) if (!parts.includes(g.parts[i])) { parts.push(g.parts[i]); ages.push(g.ages[i]); }
+    return { ...g, parts, ages, age: ages[0] || 0 };
+  }).sort((a, b) => b.age - a.age || b.parts.length - a.parts.length || a.customer.localeCompare(b.customer)); // the customer with the oldest item first
   for (const k of Object.keys(out)) out[k] = order(out[k]);
   return { sections: out, outKnown, trace };
 }
 
 const TITLES = {
-  leftNotInvoiced: 'Left the warehouse, not invoiced',
+  leftNotInvoiced: 'Left, not invoiced',
   quantityDiffers: 'Quantity differs (OUT vs invoice)',
   checkCode: 'Possible wrong code (same day, same quantity)',
   invoicedNotLeft: 'Invoiced, not left yet',
-  stillInWarehouse: 'Cut, still in the warehouse (not left)',
+  stillInWarehouse: 'Cut / ready, not invoiced yet',
   leftWithoutPost: 'Left without an order-group post (check)',
   delivered: 'Delivered, no invoice since',
 };
@@ -229,7 +241,7 @@ const TITLES = {
  * The text: a block per section with its customers, the blocks apart with separators; a clean state says so in one line. The SHORT form (the default and the evening report) shows the three
  * sections that matter, at most [max] customers each, then «+N more»; [details] shows every section and every customer.
  */
-export function threeWayText(result, { max = 8, days = 14, details = false } = {}) {
+export function threeWayText(result, { max = 8, days = 45, details = false } = {}) {
   const blocks = [];
   const keys = details ? ['leftNotInvoiced', 'quantityDiffers', 'checkCode', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost', 'delivered'] : ['leftNotInvoiced', 'quantityDiffers', 'checkCode', 'invoicedNotLeft', 'stillInWarehouse'];
   let hidden = 0;
