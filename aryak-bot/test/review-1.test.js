@@ -684,3 +684,36 @@ test('a message that starts with her name and holds a code and a quantity word i
   const gs = fs.readFileSync(path.join(import.meta.dirname, '..', '..', 'zinax-stock', 'apps-script', 'Code.gs'), 'utf8');
   assert.match(gs, /if \(req\.reservedList\) return botReserved_\(\);/);
 });
+
+test('old cut rows: the shared-group name is repaired on read from the sheet OUT row; the owner corrects rows with a preview, a yes and an undo', async () => {
+  const { repairSharedCuts } = await import('../src/cutrepair.js');
+  const { CutEdits, parseCutCommand, listCuts, requestCutEdit, decideCutEdit } = await import('../src/cutedit.js');
+  const at = Date.parse('2026-11-08T08:00:00Z');
+  const cut = (ref, q, extra = {}) => ({ type: 'cut', ref, at: at + q, customer: 'NOVA KITCHENS LLC', lines: [{ code: '215', quantity: q, unit: 'm' }], ...extra });
+  const events = [cut('a', 72.6), cut('b', 97.6), cut('c', 40, { customerTyped: 'NOVA KITCHENS LLC' })];
+  const outs = [{ customer: 'ZETA JOINERY', code: '215', qty: 72.6, at }, { customer: 'ZETA JOINERY', code: '215', qty: 25.6, at: at + 1000 }];
+  const fixed = repairSharedCuts(events, outs, ['NOVA KITCHENS LLC'], { timeZone: 'Asia/Dubai' });
+  assert.deepEqual(fixed.map((e) => [e.ref, e.customer]), [['b', 'ZETA JOINERY'], ['c', 'NOVA KITCHENS LLC']]); // 72.6 is a part of the larger cut: not counted twice
+  assert.equal(events[0].customer, 'NOVA KITCHENS LLC'); // the stored rows are untouched
+  assert.equal(repairSharedCuts(events, [{ customer: 'ZETA JOINERY', code: '300', qty: 72.6, at }], ['NOVA KITCHENS LLC']), events); // another code: nothing
+  assert.equal(repairSharedCuts(events, outs, []), events);
+  assert.deepEqual(parseCutCommand('cuts 215 08/11'), { op: 'list', code: '215', day: '11-08' });
+  assert.deepEqual(parseCutCommand('cut #Z12 merge #Z13'), { op: 'merge', row: 'Z12', other: 'Z13' });
+  assert.deepEqual(parseCutCommand('Atossa cut Z3 customer AL EBDA KITCHEN'), { op: 'customer', row: 'Z3', name: 'AL EBDA KITCHEN' });
+  assert.equal(parseCutCommand('cut something'), null);
+  const tracker = new Tracker({ dir: '' });
+  for (const e of [cut('a', 72.6), cut('b', 25.6)]) tracker.add(e);
+  const store = new CutEdits('');
+  const list = listCuts(store, tracker.events, { code: '215', day: '11-08', timeZone: 'Asia/Dubai' });
+  assert.match(list, /#Z1 .*NOVA KITCHENS LLC .*215 72\.6 m/); assert.match(list, /#Z2 .*215 25\.6 m/);
+  const preview = requestCutEdit(store, tracker, { op: 'merge', row: 'Z1', other: 'Z2' }, {});
+  assert.match(preview, /yes #X1 \/ no #X1/); assert.equal(tracker.events[0].lines[0].quantity, 72.6); // nothing before the yes
+  assert.match(decideCutEdit(store, tracker, 'yes', 'X1')[0], /^Done #X1/);
+  assert.equal(tracker.events[0].lines[0].quantity, 98.2); assert.equal(tracker.events[1].internal, true);
+  assert.match(decideCutEdit(store, tracker, 'undo', 'X1')[0], /^Undone #X1/);
+  assert.equal(tracker.events[0].lines[0].quantity, 72.6); assert.ok(!tracker.events[1].internal);
+  requestCutEdit(store, tracker, { op: 'customer', row: 'Z1', name: 'ZETA JOINERY' }, {});
+  assert.match(decideCutEdit(store, tracker, 'no', 'X2')[0], /^Refused/); assert.equal(tracker.events[0].customer, 'NOVA KITCHENS LLC');
+  requestCutEdit(store, tracker, { op: 'cancel', row: 'Z2' }, {}); decideCutEdit(store, tracker, 'yes', 'X3');
+  assert.ok(tracker.events[1].cancelled && tracker.events[1].internal);
+});

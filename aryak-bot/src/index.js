@@ -71,6 +71,8 @@ import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, rep
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
+import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
+import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
 import { PersianNames, seedPersianNames } from './persiannames.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
@@ -866,7 +868,8 @@ async function unbilledReport(events = tracker.events, opts = {}) {
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), itemCodesOf(it)])); // film by its code, edge banding by its colour, nothing else
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
   const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet
-  const result = threeWay({ events, outs, returns: outs?.returns, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone, trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') || 0 : 0 });
+  const sharedNames = customerGroups.rows().filter((r) => rowGroups(r).some((g) => /\s(?:&|and|\+)\s/i.test(String(g.subject || '')))).map((r) => r.customer).filter(Boolean); // a group shared by two customers is mapped to one of them
+  const result = threeWay({ events: repairSharedCuts(events, outs, sharedNames, { timeZone: config.timezone }), outs, returns: outs?.returns, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone, trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') || 0 : 0 });
   for (const l of result.trace || []) logger.info(l); // what each line came from
   return threeWayText(result, { days, details: !!opts.details });
 }
@@ -1006,6 +1009,7 @@ qboInvoices.targets = async (p, decidedIn) => {
   }
   return out;
 };
+const cutEdits = new CutEdits(path.join(config.authDir, 'qbo')); // correcting old stored cut rows: previews #X1, short row ids #Z1
 const invoiceEdits = new InvoiceEdits({ invoices: qboInvoices, store: new EditStore(path.join(config.authDir, 'qbo')), log: (t) => logger.info(t) }); // editing an invoice: a preview #W1, the owner's yes applies it
 
 // The one-off upper-casing of the QuickBooks customer names: a preview (#N1) and the owner's yes; a sparse update of the two name fields only.
@@ -1114,11 +1118,17 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'price_list': return qboBulk.showDraft() || null;
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
+    case 'cut_cmd': {
+      const cc = ic.cmd;
+      if (cc.op === 'list') return [listCuts(cutEdits, tracker.events, { code: cc.code, day: cc.day, timeZone: config.timezone })];
+      if (cc.op === 'undo') return decideCutEdit(cutEdits, tracker, 'undo', cc.id, { log: (t) => logger.info(t) });
+      return [requestCutEdit(cutEdits, tracker, cc, { canon, timeZone: config.timezone }) || 'I could not read that cut edit.'];
+    }
     case 'invoice_edit': { const blocked = qboInvoices.guard(); if (blocked) return [blocked]; return [await invoiceEdits.request({ number: ic.number, ops: ic.ops, bad: ic.bad, requester: 'owner', origin: here.chatId ? { jid: here.chatId } : null })]; }
     case 'request': case 'request_partial': { const r = await qboInvoices.request({ text, requester: 'owner', origin: here.chatId ? { jid: here.chatId } : null }); return [r.owner || r.requester]; }
     case 'yes': case 'no': {
       if (/^[0-9]+$/.test(ic.id || '')) { // «yes #36»: the number alone fits the ONE waiting item with it; several or none is said, never silence
-        const ids = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...invoiceEdits.store.openIds(), ...payChecks.openIds(), ...(pendingBackfill ? [pendingBackfill.id] : [])];
+        const ids = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...invoiceEdits.store.openIds(), ...payChecks.openIds(), ...cutEdits.openIds(), ...(pendingBackfill ? [pendingBackfill.id] : [])];
         const hits = ids.filter((x) => x.replace(/^[A-Za-z]+/, '') === ic.id);
         const word = ic.type === 'yes' ? 'yes' : 'no';
         if (hits.length !== 1) return [hits.length ? 'Several items wait under the number ' + ic.id + ': ' + hits.map((h) => '#' + h).join(', ') + '. Nothing was done. Reply with the full code, for example: ' + word + ' #' + hits[0] : 'Nothing is waiting under the number ' + ic.id + '. Nothing was done. Say "waiting" to see what is open.'];
@@ -1130,7 +1140,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         const inGroup = String(here.chatId || '').endsWith('@g.us');
         const open = inGroup
           ? [...qboInvoices.openIds().filter((id) => Object.values(qboInvoices.store.d.previews).find((p) => p.id === id)?.origin?.jid === here.chatId), ...invoiceEdits.store.openIds().filter((id) => invoiceEdits.store.get(id)?.origin?.jid === here.chatId), ...groupStatements.openIds()]
-          : [...qboInvoices.openIds(), ...invoiceEdits.store.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...(pendingBackfill ? [pendingBackfill.id] : [])];
+          : [...qboInvoices.openIds(), ...invoiceEdits.store.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...cutEdits.openIds(), ...(pendingBackfill ? [pendingBackfill.id] : [])];
         if (!open.length) return null;
         if (open.length > 1) {
           if (isEnglishOut()) return [`${open.length} previews are waiting: ${open.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the full code, for example: ${ic.type === 'yes' ? 'yes' : 'no'} #${open[0]}`];
@@ -1138,7 +1148,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
         }
         id = open[0]; said = isEnglishOut() ? `${ic.type === 'yes' ? 'Approved' : 'Cancelled'} #${id}.\n` : `(${ic.type === 'yes' ? 'بله' : 'نه'} برای پیش‌نمایش #${id})\n`;
       }
-      const out = await (id.startsWith('G') ? decidePayCheck(ic.type, id) : id.startsWith('H') ? decideSheetNames(ic.type, id) : id.startsWith('W') ? invoiceEdits.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }) : id.startsWith('B') ? decideBackfill(ic.type, id) : id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
+      const out = await (id.startsWith('X') ? decideCutEdit(cutEdits, tracker, ic.type, id, { log: (t) => logger.info(t) }) : id.startsWith('G') ? decidePayCheck(ic.type, id) : id.startsWith('H') ? decideSheetNames(ic.type, id) : id.startsWith('W') ? invoiceEdits.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }) : id.startsWith('B') ? decideBackfill(ic.type, id) : id.startsWith('V') ? decideAvailability(ic.type, id) : id.startsWith('A') ? decideAlias(ic.type, id) : id.startsWith('S') ? decideGroupStatement(ic.type, id) : id.startsWith('N') ? qboNames.decide({ verb: ic.type, id }) : /^[EMTPCUDRFIJKL]/.test(id) ? qboBulk.decide({ verb: ic.type, id }) : qboInvoices.decide({ verb: ic.type, id, decidedIn: here.chatId || '' }));
       return said && out.length ? [said + out[0], ...out.slice(1)] : out;
     }
     case 'pause': qbo.setPaused(true); qboInvoices.audit.add({ event: 'pause', approver: 'owner' }); return ['کوییک‌بوکس متوقف شد: هیچ تماسی با آن گرفته نمی‌شود تا بنویسید «ادامهٔ کوییک‌بوکس».'];
@@ -1338,6 +1348,7 @@ function waitingItems(by) {
     for (const id of qboNames.openIds()) add(id, 'customer names', no(id));
     for (const id of invoiceEdits.store.openIds()) add(id, 'invoice edit', no(id));
     for (const id of payChecks.openIds()) add(id, 'payment pairing to confirm', no(id));
+    for (const id of cutEdits.openIds()) add(id, 'cut row correction', no(id));
     for (const id of qboBulk.openIds()) add(id, 'bulk job', no(id));
     for (const id of cutAliases.openIds()) add(id, 'aliases', no(id));
     if (pendingBackfill) add(pendingBackfill.id, 'history backfill estimate', no(pendingBackfill.id));

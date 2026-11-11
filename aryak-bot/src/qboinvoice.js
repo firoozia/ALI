@@ -6,6 +6,7 @@
 // id written here. Safety: a kill switch in the client, at most 10 creations an hour and 40 a day, an append-only audit log, only the "create invoice"
 // write exists, and QBO_WRITE off refuses everything. Nothing here sends anything to a customer.
 
+import { parseCutCommand } from './cutedit.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseStatementRequest } from './period.js';
@@ -86,6 +87,7 @@ export function parseInvoiceCommand(text) {
   if (asPersian) return parseInvoiceCommand(asPersian);
   const raw = String(text || '').replace(/\r/g, '');
   { const ed = parseEditRequest(raw); if (ed) return { type: 'invoice_edit', ...ed }; } // «edit invoice 10003» + one change per line
+  { const cc = parseCutCommand(raw); if (cc) return { type: 'cut_cmd', cmd: cc }; } // «cuts 215 08/11», «cut #Z1 customer NAME», «undo cut #X1»
   const first = plain(raw.split('\n')[0]).replace(/^(?:آتوسا|اتوسا)[ ,،:]*/u, '');
   let m = /^فاکتور\s+بساز(?:ید)?\s+(.+)$/u.exec(first);
   if (m) return { type: 'request', customer: m[1].trim(), lines: raw.split('\n').slice(1).map((l) => l.trim()).filter(Boolean) };
@@ -97,7 +99,7 @@ export function parseInvoiceCommand(text) {
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
     // the number alone («yes #36», «yes 36», «36 yes»): the desk looks for the ONE waiting item with that number; no letter is needed
     if ((m = new RegExp(String.raw`^(?:(${W})\s*#?\s*(\d{1,4})|#?\s*(\d{1,4})\s*#?\s*(${W}))$`, 'iu').exec(s))) { const word = m[1] || m[4]; return { type: isYes(word) ? 'yes' : 'no', id: m[2] || m[3] }; }
-    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLAVBHWG])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLAVBHWGX])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)
   if ((m = /^ایمیل\s+مشتری(?:\s*ها)?(?:\s+(\S+@\S+))?$/u.exec(s))) return { type: 'bulk_email', email: m[1] || '' };
