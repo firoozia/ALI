@@ -49,6 +49,7 @@ import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { qboNameFor } from './qboname.js';
 import { itemCodesOf, threeWay, threeWayText } from './threeway.js';
+import { isCancelText } from './captions.js';
 import { EditStore, InvoiceEdits } from './invoiceedit.js';
 import { officeNote, parseOfficeRequest } from './officerequest.js';
 import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
@@ -668,6 +669,14 @@ async function trackGroup(raw, groupId, role) {
   if (!text && !image) return;
   const quotedId = (content.extendedTextMessage || image)?.contextInfo?.stanzaId || '';
   const refOf = (id, i = 0) => createHash('sha256').update(`${groupId}|${id}${i ? `|${i}` : ''}`).digest('hex').slice(0, 24);
+  // A quote-reply that says «cancel» to a cut post of the orders group: that post (customer, code, quantity) is marked CANCELLED, silently. It is no cut any more; the three-way check follows it up.
+  if (role === 'cut' && quotedId && text && isCancelText(text)) {
+    const refs = new Set(Array.from({ length: 12 }, (_, i) => refOf(quotedId, i)));
+    const hit = tracker.events.filter((e) => e.type === 'cut' && refs.has(e.ref) && !e.cancelled);
+    for (const e of hit) tracker.update(e.ref, { internal: true, cancelled: { at: nowAt(), text: String(text).slice(0, 80) } });
+    trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', hit.length ? `${hit.length} cut post(s) cancelled by a quote-reply` : 'a cancel word, but no recorded cut post is quoted');
+    return;
+  }
   // The shapes the groups really use are read here without a model (and without downloading the photo).
   const det = text ? eventsFromCaption(role, text) : null;
   if (det) {
@@ -804,14 +813,16 @@ async function sheetOutRows(days) {
   const key = `${todayDubai()}|${days}`;
   if (sheetPages.rows && sheetPages.key === key && Date.now() - sheetPages.at < 10 * 60 * 1000) return sheetPages.rows;
   try {
-    const to = todayDubai(); const rows = [];
+    const to = todayDubai(); const rows = []; const returned = []; let returnsKnown = true;
     for (let back = days; back > 0; back -= 10) { // ten days at a time: a page is at most 500 rows
       const from = dayPlus(to, -back); const upTo = dayPlus(to, -Math.max(0, back - 10) - (back > 10 ? 1 : 0));
-      const rep = await fetchReport(config, { from, to: back <= 10 ? to : upTo, detail: true, limit: 500 });
+      const rep = await fetchReport(config, { from, to: back <= 10 ? to : upTo, detail: true, limit: 500, returns: true });
       if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back for ' + from + ': what left the warehouse is not claimed'); return null; }
+      if (Array.isArray(rep.returns)) returned.push(...rep.returns.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }))); else returnsKnown = false; // an older script sends none
       rows.push(...(rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT')); // edge banding is recorded under the colour code of the film: all rows count
     }
     const mapped = rows.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }));
+    if (returnsKnown) mapped.returns = returned; // the goods that came back into stock (a property of the list)
     Object.assign(sheetPages, { at: Date.now(), key, rows: mapped });
     return mapped;
   } catch (e) { logger.warn('three-way: the sheet gave no OUT rows (' + e.message + ')'); return null; }
@@ -826,7 +837,7 @@ async function unbilledReport(events = tracker.events, opts = {}) {
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), itemCodesOf(it)])); // film by its code, edge banding by its colour, nothing else
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
   const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet
-  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone, trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') || 0 : 0 });
+  const result = threeWay({ events, outs, returns: outs?.returns, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone, trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') || 0 : 0 });
   for (const l of result.trace || []) logger.info(l); // what each line came from
   return threeWayText(result, { days, details: !!opts.details });
 }

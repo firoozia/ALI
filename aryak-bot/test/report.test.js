@@ -100,6 +100,6 @@ test('fetchReport asks the report action with the bot token and the days', async
   const fetchImpl = async (url, init) => { sent = JSON.parse(init.body); return { ok: true, status: 200, json: async () => ({ ok: true, operations: 0, totals: [], byCode: [] }) }; };
   const r = await fetchReport({ sheetUrl: 'https://x/exec', botToken: 'bottok' }, { from: '2026-10-01', to: '2026-10-31', code: '229', detail: true }, fetchImpl, { info: () => {} });
   assert.equal(r.operations, 0);
-  assert.deepEqual(sent, { action: 'botReport', token: 'bottok', from: '2026-10-01', to: '2026-10-31', code: '229', category: '', customer: '', detail: true, limit: 0 });
+  assert.deepEqual(sent, { action: 'botReport', token: 'bottok', from: '2026-10-01', to: '2026-10-31', code: '229', category: '', customer: '', detail: true, returns: false, limit: 0 });
   await assert.rejects(fetchReport({ sheetUrl: 'https://x/exec', botToken: 'b' }, { from: 'x', to: 'y' }, async () => ({ ok: true, status: 200, json: async () => ({ ok: false, error: 'from and to must be days like 2026-10-31' }) }), { log: () => {} }), /must be days/);
 });

@@ -497,3 +497,32 @@ test('a shared group and a reply with a lost plus: one cut of 97.6 m for the typ
   assert.equal(parseCutCaption('ART NO 215 AL EBDA 72.625.6=97.6M').customer, 'AL EBDA');
   assert.deepEqual(parseInvoiceCommand('who is AL EBDA'), { type: 'name_explain', name: 'AL EBDA' });
 });
+
+// ---- a cancel by quote-reply
+import { isCancelText } from '../src/captions.js';
+
+test('a cancelled cut is never «cut, not invoiced»: closed when it never left or came back and is not on an invoice; otherwise a check with what is missing', () => {
+  for (const t of ['cancel', 'Cancelled', 'canceled', 'cancel order', 'CANCEL!', 'کنسل', 'كنسل', 'لغو', 'لغو شد', 'إلغاء']) assert.ok(isCancelText(t), t);
+  for (const t of ['ART NO 215 ZETA 10M', 'ok', 'no cancellation needed here, please keep the whole order as we agreed yesterday', '']) assert.equal(isCancelText(t), false, t);
+  const NOW = Date.parse('2026-11-12T08:00:00Z'); const at = (d, hh = '10') => Date.parse(`2026-11-${d}T${hh}:00:00Z`);
+  const cut = (customer, code, qty, d, ref, cancelled) => ({ type: 'cut', at: at(d), customer, customerTyped: customer, ref, lines: [{ code, quantity: qty, unit: 'm' }], ...(cancelled ? { internal: true, cancelled: { at: at(cancelled), text: 'cancel' } } : {}) });
+  const line = (code, qty) => ({ DetailType: 'SalesItemLineDetail', Amount: qty * 10, SalesItemLineDetail: { Qty: qty, UnitPrice: 10, ItemRef: { value: code, name: 'PVC ' + code } } });
+  const inv = (customer, d, doc, lines) => ({ TxnDate: `2026-11-${d}`, DocNumber: doc, CustomerRef: { name: customer }, Line: lines });
+  const base = { itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['ZETA', 'NOVA', 'OMEGA', 'TAU'], now: NOW };
+  const events = [{ type: 'cut', at: at('01'), customer: 'FIRST', ref: 'f', lines: [{ code: '1', quantity: 1, unit: 'm' }] },
+    cut('ZETA', '215', 20, '08', 'a', '08'), // never left, not invoiced: closed
+    cut('NOVA', '216', 30, '08', 'b', '09'), // left, came back, not invoiced: closed
+    cut('OMEGA', '217', 12, '08', 'c', '09'), // left, never came back
+    cut('TAU', '218', 8, '08', 'd', '08')]; // never left but still on an invoice
+  const outs = [{ customer: 'NOVA', code: '216', qty: 30, unit: 'm', at: at('08') }, { customer: 'OMEGA', code: '217', qty: 12, unit: 'm', at: at('08') }];
+  const returns = [{ customer: 'NOVA', code: '216', qty: 30, unit: 'm', at: at('09') }];
+  const r = threeWay({ ...base, events, outs, returns, invoices: [inv('TAU', '08', 'inv-77', [line('218', 8)])] });
+  assert.deepEqual(r.sections.cancelledClosed.map((g) => [g.customer, g.parts[0].replace(/ — .*$/, '')]).sort(), [['NOVA', '216 30m cancelled 09/11, returned 09/11'], ['ZETA', '215 20m cancelled 08/11, never left']]);
+  assert.deepEqual(r.sections.cancelledCheck.map((g) => [g.customer, g.parts[0].replace(/ — .*$/, '')]).sort(), [['OMEGA', '217 12m cancelled 09/11: not returned to stock yet'], ['TAU', '218 8m cancelled 08/11: still on invoice inv-77']]);
+  for (const k of ['leftNotInvoiced', 'stillInWarehouse', 'invoicedNotLeft', 'leftWithoutPost']) assert.deepEqual(r.sections[k], [], k); // a cancelled cut is no «cut, not invoiced», nor an OUT without a post
+  assert.match(threeWayText(r), /Cancelled — check \(2 customers\)/); assert.doesNotMatch(threeWayText(r), /Cancelled, closed/); assert.match(threeWayText(r, { details: true }), /Cancelled, closed \(2 customers\)/);
+  const blind = threeWay({ ...base, events, outs, returns: null, invoices: [] });
+  assert.match(blind.sections.cancelledCheck.map((g) => g.parts[0]).join(' '), /the sheet gave no return rows/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(index, /if \(role === 'cut' && quotedId && text && isCancelText\(text\)\) \{[\s\S]*?tracker\.update\(e\.ref, \{ internal: true, cancelled: \{ at: nowAt\(\)[\s\S]*?return;\n  \}/); // silent: no reply
+});

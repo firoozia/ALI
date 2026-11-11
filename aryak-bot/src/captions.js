@@ -263,3 +263,10 @@ export function unitConflict(description, quantity, uom) {
   const same = (/^kg|kilo/i.test(d[2]) && /^kilo|^kg/.test(u)) || (/^l/i.test(d[2]) && /^l(?:itre|iter|tr)?$/.test(u));
   return same && Number(quantity) < Number(d[1]) ? `توضیح کالا ${d[1]} ${d[2].toLowerCase()} است ولی مقدار ${quantity} با واحد ${uom} نوشته شده؛ باید روشن شود` : '';
 }
+
+/** A short message that says «cancel» («cancel», «cancelled», «canceled», «cancel order», «كنسل», «کنسل», «لغو», «إلغاء»): used on a quote-reply to a cut post, which it then cancels. */
+export function isCancelText(text) {
+  const t = String(text || '').normalize('NFKC').replace(/[*_~]+/g, ' ').trim();
+  if (!t || t.length > 60) return false;
+  return /(?:^|[\s,.:;!؟?()-])(?:cancel(?:l?ed)?(?:\s+order)?|[كک]نسل(?:\s*(?:شد|شده))?|لغو(?:\s*(?:شد|شده))?|إلغاء|الغاء)(?=$|[\s,.:;!؟?()-])/iu.test(t);
+}

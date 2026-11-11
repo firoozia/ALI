@@ -911,9 +911,14 @@ function botReport_(req) {
 
   const moves = readAll_('Movements');
   const undone = undone_(moves);
-  const totals = {}, codes = {}, customers = {}, rows = [];
+  const totals = {}, codes = {}, customers = {}, rows = [], returnRows = [];
   let operations = 0;
   moves.forEach(function (r) {
+    if (req.returns && r[2] === 'RETURN' && !undone[String(r[0])]) { // goods back in stock (asked for by the cancel check; never part of the totals)
+      const rday = Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd');
+      if (rday >= from && rday <= to) returnRows.push({ day: rday, at: ms_(r[8]), code: String(r[5]).trim(), qty: Number(r[3]) || 0, unit: String(r[4]), customer: String(r[12] || '').trim() });
+      return;
+    }
     if ((r[2] !== 'OUT' && r[2] !== 'CUT') || undone[String(r[0])]) return;
     const day = Utilities.formatDate(new Date(ms_(r[8])), tz, 'yyyy-MM-dd');
     if (day < from || day > to) return;
@@ -959,6 +964,7 @@ function botReport_(req) {
     out.rows = rows.sort(function (a, b) { return b.at - a.at; }).slice(0, Math.min(500, Math.max(60, Number(req.limit) || 60)));
     out.rowsTotal = rows.length;
   }
+  if (req.returns) out.returns = returnRows;
   return out;
 }
 
