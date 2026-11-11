@@ -726,7 +726,7 @@ test('credit customers who pay in parts: a found payment says how QuickBooks app
   const pay = { _type: 'Payment', TxnDate: dubai('10'), TotalAmt: 567, CustomerRef: { name: 'ZETA KITCHEN' }, Line: [{ Amount: 567, LinkedTxn: [{ TxnId: '70', TxnType: 'Invoice' }] }] };
   const now = Date.parse('2026-11-11T09:00:00Z');
   const found = receivedText([item({})], { title: 't', records: [pay], openInvoices: open, now });
-  assert.match(found, /\*ZETA KITCHEN\*\n🟢 567\.00  \(applied to inv-9925 part\)/);
+  assert.match(found, /\*ZETA KITCHEN\*\n🟢 567\.00  \(applied to inv-9925 \(part\)\)/);
   const onAccount = receivedText([item({ amount: 300, shown: '*300.00*' })], { title: 't', records: [], openInvoices: open, now });
   assert.match(onAccount, /🔴 300\.00  not in QuickBooks yet \(open balance 939\.83\)/);
   assert.doesNotMatch(onAccount, /Needs your OK/);
@@ -760,4 +760,16 @@ test('the approved money received layout: bold name per customer, a line per rec
   assert.doesNotMatch(text, /Payments to match/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.doesNotMatch(index, /paymentsReport\(tracker\.events, '', \{ days: 1, questions: false \}\)/); // the separate list is gone from the day's report
+});
+
+test('a payment shows the invoice NUMBER it was applied to (also a fully paid invoice, found by its id), "(part)" when only part was paid, never an internal id; amounts in lines stay plain', async () => {
+  const { receivedText } = await import('../src/expenses.js');
+  const now = Date.parse('2026-11-11T16:00:00Z');
+  const item = { amount: 900, shown: '*900.00*', foreign: false, unconverted: false, note: '', day: '2026-11-11', customer: 'ZETA KITCHEN', typed: '', kind: 'cash', invoices: [], cleared: false, due: '', drawer: '', at: now - 3600000, ref: 'r', paid: null };
+  const pay = { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 900, CustomerRef: { name: 'ZETA KITCHEN' }, Line: [{ Amount: 400, LinkedTxn: [{ TxnId: '74736', TxnType: 'Invoice' }] }, { Amount: 500, LinkedTxn: [{ TxnId: '74738', TxnType: 'Invoice' }] }, { Amount: 10, LinkedTxn: [{ TxnId: '99999', TxnType: 'Invoice' }] }] };
+  const linkedInvoices = [{ Id: '74736', DocNumber: '10005', TotalAmt: 400, Balance: 0 }, { Id: '74738', DocNumber: '9925', TotalAmt: 800, Balance: 300 }];
+  const text = receivedText([item], { title: 't', records: [pay], linkedInvoices, now });
+  assert.match(text, /🟢 900\.00  \(applied to inv-10005, inv-9925 \(part\)\)/);
+  assert.doesNotMatch(text, /inv #|74736|74738|99999/);
+  assert.ok(!text.split('\n').filter((l) => /^[🟢🔴⏳]/u.test(l)).some((l) => l.includes('*'))); // no bold inside a receipt line
 });

@@ -329,11 +329,11 @@ export function receivedText(items, options) {
   const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
   const matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   const inQb = (it) => matched.has(it) || it.paid === true;
-  const invName = new Map(openInvoices.map((i) => [String(i.Id), i]));
+  const invName = new Map([...(options.linkedInvoices || []), ...openInvoices].map((i) => [String(i.Id), i])); // the open invoices and the ones a payment is linked to (fully paid ones too)
   const appliedText = (rec) => { // «payment 10/11, applied to inv-9925 part»: however QuickBooks spread it
     if (!rec || rec._type !== 'Payment') return '';
     const parts = [];
-    for (const l of rec.Line || []) for (const t of l.LinkedTxn || []) if (t.TxnType === 'Invoice') { const inv = invName.get(String(t.TxnId)); parts.push((inv ? 'inv-' + (inv.DocNumber || inv.Id) : 'inv #' + t.TxnId) + (inv && Number(inv.Balance) > 0 ? ' part' : '')); }
+    for (const l of rec.Line || []) for (const t of l.LinkedTxn || []) if (t.TxnType === 'Invoice') { const inv = invName.get(String(t.TxnId)); if (!inv || !inv.DocNumber) continue; const partly = Number(inv.Balance) > 0 || (Number(l.Amount) > 0 && Number(inv.TotalAmt) > 0 && Number(l.Amount) + 0.005 < Number(inv.TotalAmt)); parts.push('inv-' + inv.DocNumber + (partly ? ' (part)' : '')); } // a number QuickBooks does not give is never shown: its internal id means nothing to the owner
     return parts.length ? '  (applied to ' + parts.join(', ') + ')' : '';
   };
   // The approved layout (owner 2026-11-11): one block per customer (bold name, a line per receipt), 🟢 recorded / 🔴 not recorded / ⏳ a cheque still in time; the full-width rule between customers, two rules
