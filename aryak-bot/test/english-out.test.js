@@ -34,12 +34,12 @@ test('English output: what the person said (after the Heard: label) is quoted, n
   assert.equal(outLang(), 'en'); assert.ok(/same number of lines/.test(TRANSLATE_SYSTEM) && /#Q8/.test(TRANSLATE_SYSTEM) && /AED/.test(TRANSLATE_SYSTEM));
 });
 
-test('the dates and the cut line are English: Cut: 12 m, 8 Nov, orders group', () => {
+test('the dates and the cut line are Gregorian: Cut: 12 m, 08/11, orders group', () => {
   const at = Date.parse('2026-11-08T05:00:00Z');
-  assert.equal(cutLine({ qty: 12, unit: 'm', at }), 'Cut: 12 m, 8 Nov, orders group');
-  assert.equal(cutLine({ qty: 2, unit: 'roll', at }, { label: 'Orders Pictures' }), 'Cut: 2 roll, 8 Nov, Orders Pictures');
+  assert.equal(cutLine({ qty: 12, unit: 'm', at }), 'Cut: 12 m, 08/11, orders group');
+  assert.equal(cutLine({ qty: 2, unit: 'roll', at }, { label: 'Orders Pictures' }), 'Cut: 2 roll, 08/11, Orders Pictures');
   setOutLang('fa');
-  try { assert.equal(cutLine({ qty: 12, unit: 'm', at }), 'برش: ۱۲ متر، ۱۷ آبان، گروه سفارش آریاک'); assert.equal(heardText('fa', 'x'), 'شنیدم: x'); } finally { setOutLang('en'); }
+  try { assert.equal(cutLine({ qty: 12, unit: 'm', at }), 'برش: ۱۲ متر، ۰۸/۱۱، گروه سفارش آریاک'); assert.equal(heardText('fa', 'x'), 'شنیدم: x'); } finally { setOutLang('en'); }
   assert.equal(heardText('fa', 'کد ۱۰۹'), 'Heard: کد ۱۰۹'); // English mode: whatever the language, the echo is the Heard: line
 });
 

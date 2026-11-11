@@ -25,10 +25,10 @@ test('days typed in any of the accepted ways become one Gregorian day', () => {
   assert.equal(toDMY('2026-10-31'), '31/10/2026');
 });
 
-test('today is given in both calendars to the model', () => {
-  assert.equal(todayLine(new Date('2026-11-04T10:00:00Z'), 'Asia/Dubai'), 'Today is 2026-11-04 (Gregorian) = 1405-08-13 (Jalali), Wednesday.');
+test('today is given to the model as a Gregorian date only', () => {
+  assert.equal(todayLine(new Date('2026-11-04T10:00:00Z'), 'Asia/Dubai'), 'Today is 04/11/2026 (2026-11-04), Wednesday. Every date is Gregorian.');
   // near midnight the day of the team's own time zone counts
-  assert.match(todayLine(new Date('2026-11-04T21:00:00Z'), 'Asia/Dubai'), /^Today is 2026-11-05 /);
+  assert.match(todayLine(new Date('2026-11-04T21:00:00Z'), 'Asia/Dubai'), /^Today is 05\/11\/2026 /);
 });
 
 const result = {

@@ -793,11 +793,11 @@ test('two similar names are two customers and two previews, never merged; «نه
 
 // ------------------------------------------------------------------------------------------------ the final cut beside each line
 import { Tracker } from '../src/tracker.js';
-import { cutRecords, cutTotal, markCutsInvoiced, unInvoicedCuts, persianDay, cutLine } from '../src/cuts.js';
+import { cutRecords, cutTotal, markCutsInvoiced, unInvoicedCuts, gregorianDay, cutLine } from '../src/cuts.js';
 import { setOutLang } from '../src/outlang.js';
 setOutLang('fa'); // these tests read the Persian sentences; the English output is tested in english-out.test.js
 
-const CUT_AT = Date.parse('2026-10-30T09:00:00Z'); // 8 Aban 1405 in the books' time zone
+const CUT_AT = Date.parse('2026-10-30T09:00:00Z'); // 30/10/2026 in the books' time zone
 function cutDesk() {
   const t = mk({ customers: [...MULTI_CUSTOMERS, ...CUSTOMERS], items: MULTI_ITEMS, invoices: [...histFor('81'), ...histFor('82')] });
   const tr = new Tracker({ dir: '' });
@@ -810,15 +810,15 @@ function cutDesk() {
 }
 
 test('the cut beside the line: a matching cut is shown with the day and the group; a different quantity and a missing cut are warnings; the persian day is right', async () => {
-  assert.equal(persianDay(CUT_AT), '۸ آبان');
-  assert.equal(persianDay(Date.parse('2026-03-21T10:00:00Z')), '۱ فروردین'); // Nowruz 1405
-  assert.equal(cutLine({ qty: 12, unit: 'm', at: CUT_AT }), 'برش: ۱۲ متر، ۸ آبان، گروه سفارش آریاک');
+  assert.equal(gregorianDay(CUT_AT), '۳۰/۱۰');
+  assert.equal(gregorianDay(Date.parse('2026-03-21T10:00:00Z')), '۲۱/۰۳');
+  assert.equal(cutLine({ qty: 12, unit: 'm', at: CUT_AT }), 'برش: ۱۲ متر، ۳۰/۱۰، گروه سفارش آریاک');
   const { t } = cutDesk();
   const r = await t.inv.request({ text: MULTI, requester: 'owner' }); // AL EBDA 215 = 97 m, NUQOOSH 220 = 12 m
   const [ebda, nuq] = r.owner.split('— — —');
-  assert.ok(nuq.includes('برش: ۱۲ متر، ۸ آبان، گروه سفارش آریاک'), nuq); // matches: no warning
+  assert.ok(nuq.includes('برش: ۱۲ متر، ۳۰/۱۰، گروه سفارش آریاک'), nuq); // matches: no warning
   assert.ok(!nuq.includes('برش ثبت‌شده') && !nuq.includes('برشی ثبت نشده'));
-  assert.ok(ebda.includes('برش: ۹۰ متر، ۸ آبان') && ebda.includes('درخواست ۹۷ متر، برش ثبت‌شده ۹۰ متر'), ebda); // the quantity differs
+  assert.ok(ebda.includes('برش: ۹۰ متر، ۳۰/۱۰') && ebda.includes('درخواست ۹۷ متر، برش ثبت‌شده ۹۰ متر'), ebda); // the quantity differs
   // no cut recorded for the code of a line
   const none = cutDesk();
   const r2 = await none.t.inv.request({ text: 'فاکتور بده\nNUQOOSH\n۲۱۵ =۴ متر', requester: 'owner' });

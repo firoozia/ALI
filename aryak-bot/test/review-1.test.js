@@ -367,3 +367,24 @@ test('edge banding counts toward the colour code of the film: PERFCET-like 1819 
   const r = threeWay({ events, outs, invoices, itemCodes: (id) => itemCodesOf(byId.get(id)), qboNames: ['SIGMA HOUSE', 'OMEGA WOOD'], now: NOW });
   for (const k of ['leftNotInvoiced', 'quantityDiffers', 'checkCode', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost']) assert.deepEqual(r.sections[k], [], k); // fully invoiced: nothing listed
 });
+
+// ---- every date is Gregorian
+import { formatDetails, formatReport, parseDay, reportInvalidDate, todayLine } from '../src/report.js';
+import { cutLine } from '../src/cuts.js';
+import { staffRules } from '../src/staff.js';
+import { buildDigest } from '../src/digest.js';
+import { setOutLang } from '../src/outlang.js';
+
+test('every generated text is Gregorian: no 14xx year, no Persian month name, no Jalali in the prompts or the tool descriptions; an explicit 14xx year is converted and the Gregorian day shown', () => {
+  const YEAR = /(?<![0-9])14[0-9]{2}(?![0-9])/;
+  const MONTH = /فروردین|اردیبهشت|خرداد|تیر\b|مرداد|شهریور|مهر\b|آبان|آذر|بهمن|اسفند|Farvardin|Ordibehesht|Khordad|Mordad|Shahrivar|Aban|Azar|Bahman|Esfand|Jalali|Shamsi|Solar Hijri/;
+  const at = Date.parse('2026-11-08T05:00:00Z');
+  const texts = [todayLine(new Date('2026-11-04T10:00:00Z')), reportInvalidDate('fa'), reportInvalidDate('en'), cutLine({ qty: 12, unit: 'm', at }), staffRules('Atossa')];
+  setOutLang('fa'); try { texts.push(cutLine({ qty: 12, unit: 'm', at })); } finally { setOutLang('en'); }
+  const result = { from: '2026-11-01', to: '2026-11-08', rows: [{ day: '2026-11-05', at, type: 'OUT', code: '215', size: '', qty: 12, unit: 'm', customer: 'ZETA', invoice: '' }], codes: [{ code: '215', category: 'PVC', unit: 'm', total: 12, operations: 1, customers: [{ name: 'ZETA', total: 12 }] }], totals: { operations: 1, packages: 1 } };
+  for (const lang of ['fa', 'en', 'ar']) { try { texts.push(formatReport(result, lang), formatDetails(result, lang)); } catch { /* a layout this fixture does not fill */ } }
+  texts.push(buildDigest({ history: [], requests: [], day: '2026-11-08', timeZone: 'Asia/Dubai', events: [] }));
+  for (const t of texts) { assert.doesNotMatch(String(t), YEAR, String(t).slice(0, 80)); assert.doesNotMatch(String(t), MONTH, String(t).slice(0, 80)); }
+  assert.equal(parseDay('09/08/1405'), '2026-10-31'); // an explicit Solar Hijri year is read as one...
+  assert.equal(parseDay('01/11/2026'), '2026-11-01'); assert.equal(parseDay('1/9/2026'), '2026-09-01'); // ...everything else is Gregorian
+});

@@ -36,8 +36,8 @@ const valid = (y, m, d) => {
 };
 
 /**
- * A day typed by a person -> Gregorian "yyyy-mm-dd", or null. Accepted: 2026-10-31, 2026/10/31, 31/10/2026 and the
- * Jalali ones (1405-08-09, 1405/8/9, 09/08/1405); Persian and Arabic digits too.
+ * A day typed by a person -> Gregorian "yyyy-mm-dd", or null. Accepted: 2026-10-31, 2026/10/31, 31/10/2026; Persian and Arabic digits too. A date is read as
+ * Gregorian; only a year written EXPLICITLY as a Solar Hijri year (14xx) is converted, and every answer shows the Gregorian date back.
  */
 export function parseDay(text) {
   const s = normalizeDigits(String(text || '')).trim();
@@ -53,12 +53,11 @@ export function parseDay(text) {
 /** "2026-10-31" -> "31/10/2026". */
 export const toDMY = (isoDay) => `${isoDay.slice(8, 10)}/${isoDay.slice(5, 7)}/${isoDay.slice(0, 4)}`;
 
-/** Today in both calendars, for the model to turn "this month" or "last week" into days. */
+/** Today for the model to turn "this month" or "last week" into days: Gregorian only (the owner's rule: every date is Gregorian). */
 export function todayLine(now = new Date(), timeZone = 'Asia/Dubai') {
   const g = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
-  const j = toJalali(g);
   const weekday = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long' }).format(now);
-  return `Today is ${g} (Gregorian) = ${j.y}-${pad(j.m)}-${pad(j.d)} (Jalali), ${weekday}.`;
+  return `Today is ${toDMY(g)} (${g}), ${weekday}. Every date is Gregorian.`;
 }
 
 const L = {
@@ -67,7 +66,7 @@ const L = {
     ops: 'تعداد عملیات', total: 'جمع', out: 'جمع خروج', packages: 'تعداد بسته', mainCustomers: 'مشتری‌های اصلی', noCustomer: 'بدون مشتری',
     moreCodes: (n) => `و ${n} کد دیگر`, hint: 'برای فهرست عملیات بنویسید «جزئیات»', comma: '،',
     detailsTitle: (a, b) => `عملیات خروج از ${a} تا ${b}`, outWord: 'خروج', cutWord: 'برش', code: 'کد', moreOps: (n) => `و ${n} عملیات دیگر`,
-    invalid: 'تاریخ را نتوانستم بفهمم؛ لطفاً مثلاً بنویسید 1405-08-03 یا 31/10/2026.',
+    invalid: 'تاریخ را نتوانستم بفهمم؛ لطفاً مثلاً بنویسید 31/10/2026 یا 2026-10-31.',
     failed: (slow) => `دریافت گزارش خروج ناموفق بود (${slow ? 'پاسخ برگه دیر رسید' : 'ارتباط با برگه برقرار نشد'}). لطفاً یکی دو دقیقه بعد دوباره بپرسید.`,
   },
   ar: {

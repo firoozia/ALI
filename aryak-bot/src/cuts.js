@@ -102,36 +102,22 @@ export function unInvoicedCuts(tracker, { since = 0 } = {}) {
   return out.sort((a, b) => b.at - a.at);
 }
 
-// ---- the day in the Persian calendar, as the office writes it («۸ آبان»)
-const JMONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-function toJalali(gy, gm, gd) {
-  const gdm = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-  let jy = gy <= 1600 ? 0 : 979; gy -= gy <= 1600 ? 621 : 1600;
-  const gy2 = gm > 2 ? gy + 1 : gy;
-  let days = 365 * gy + Math.floor((gy2 + 3) / 4) - Math.floor((gy2 + 99) / 100) + Math.floor((gy2 + 399) / 400) - 80 + gd + gdm[gm - 1];
-  jy += 33 * Math.floor(days / 12053); days %= 12053;
-  jy += 4 * Math.floor(days / 1461); days %= 1461;
-  if (days > 365) { jy += Math.floor((days - 1) / 365); days = (days - 1) % 365; }
-  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
-  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
-  return { jy, jm, jd };
-}
-/** «۸ آبان» for a time stamp, in the time zone of the books. */
-export function persianDay(ms, timeZone = 'Asia/Dubai') {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)).split('-').map(Number);
-  const j = toJalali(parts[0], parts[1], parts[2]);
-  return `${faDigits(j.jd)} ${JMONTHS[j.jm - 1]}`;
+// ---- the day: Gregorian everywhere (the owner's rule), DD/MM in a list
+/** «30/10» for a time stamp, in the time zone of the books (the digits Persian, as the rest of a Persian line). */
+export function gregorianDay(ms, timeZone = 'Asia/Dubai') {
+  const [, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)).split('-');
+  return faDigits(`${d}/${m}`);
 }
 
-/** «برش: ۱۲ متر، ۸ آبان، گروه سفارش آریاک». */
+/** «برش: ۱۲ متر، ۳۰/۱۰، گروه سفارش آریاک». */
 export function cutLine(total, { label = 'گروه سفارش آریاک', timeZone = 'Asia/Dubai' } = {}) {
-  if (isEnglishOut()) { // «Cut: 12 m, 8 Nov, orders group»
-    const day = new Intl.DateTimeFormat('en-GB', { timeZone, day: 'numeric', month: 'short' }).format(new Date(total.at));
+  if (isEnglishOut()) { // «Cut: 12 m, 08/11, orders group»
+    const day = new Intl.DateTimeFormat('en-GB', { timeZone, day: '2-digit', month: '2-digit' }).format(new Date(total.at)); // 08/11
     const where = /[؀-ۿ]/.test(label) ? 'orders group' : label;
     return `Cut: ${total.qty} ${total.unit === 'm' ? 'm' : total.unit === 'roll' ? 'roll' : total.unit}, ${day}, ${where}`;
   }
   const unit = total.unit === 'm' ? 'متر' : total.unit === 'roll' ? 'رول' : total.unit;
-  return `برش: ${faDigits(total.qty)} ${unit}، ${persianDay(total.at, timeZone)}، ${label}`;
+  return `برش: ${faDigits(total.qty)} ${unit}، ${gregorianDay(total.at, timeZone)}، ${label}`;
 }
 
 // ---- the cross-check of an invoice with the cutting group («Aryak Orders»): read only, a warning and never a stop
