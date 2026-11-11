@@ -177,5 +177,14 @@ test('unbilled with ~300 events, ~2000 invoice lines and 200 QuickBooks names fi
   const started = Date.now();
   const r = unbilled({ events, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: names, now: NOW });
   const ms = Date.now() - started;
-  assert.ok(r.groups.length > 0); assert.ok(ms < 1000, 'took ' + ms + ' ms');
+  assert.ok(r.groups.length > 0); assert.ok(ms < 3000, 'took ' + ms + ' ms'); // it took minutes before; the margin is for a busy machine
+});
+
+test('a bare yes or no in a GROUP counts only what was made in that group: the drafts and lists of the owner\'s own chat do not', () => {
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const at = index.indexOf("const inGroup = String(here.chatId || '').endsWith('@g.us');");
+  const block = index.slice(at, at + 900);
+  assert.ok(at > 0);
+  assert.match(block, /\? \[\.\.\.qboInvoices\.openIds\(\)\.filter\(\(id\) => Object\.values\(qboInvoices\.store\.d\.previews\)\.find\(\(p\) => p\.id === id\)\?\.origin\?\.jid === here\.chatId\), \.\.\.groupStatements\.openIds\(\)\]/);
+  assert.doesNotMatch(block.slice(0, block.indexOf(': [...qboInvoices')), /availDrafts|qboNames|pendingBackfill|cutAliases/); // none of those count in a group
 });

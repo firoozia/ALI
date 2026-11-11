@@ -1056,7 +1056,11 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       }
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
-        const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...(pendingBackfill ? [pendingBackfill.id] : [])];
+        // in a GROUP a bare yes or no counts only what was made in that group (the invoice previews it asked, the statements); the drafts, the name lists and the rest live in the owner's own chat
+        const inGroup = String(here.chatId || '').endsWith('@g.us');
+        const open = inGroup
+          ? [...qboInvoices.openIds().filter((id) => Object.values(qboInvoices.store.d.previews).find((p) => p.id === id)?.origin?.jid === here.chatId), ...groupStatements.openIds()]
+          : [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...(pendingBackfill ? [pendingBackfill.id] : [])];
         if (!open.length) return null;
         if (open.length > 1) {
           if (isEnglishOut()) return [`${open.length} previews are waiting: ${open.map((x) => `#${x}`).join(', ')}. Nothing was done. Reply with the full code, for example: ${ic.type === 'yes' ? 'yes' : 'no'} #${open[0]}`];
