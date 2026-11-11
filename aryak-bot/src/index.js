@@ -48,7 +48,7 @@ import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { qboNameFor } from './qboname.js';
-import { isFilmItem, threeWay, threeWayText } from './threeway.js';
+import { itemCodesOf, threeWay, threeWayText } from './threeway.js';
 import { EditStore, InvoiceEdits } from './invoiceedit.js';
 import { officeNote, parseOfficeRequest } from './officerequest.js';
 import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
@@ -802,7 +802,7 @@ async function sheetOutRows(days) {
   try {
     const to = todayDubai();
     const rep = await fetchReport(config, { from: dayPlus(to, -days), to, detail: true, limit: 500 });
-    const rows = (rep.rows || []).filter((r) => (r.type === 'OUT' || r.type === 'CUT') && !/^[0-9.]+\s*[x×*]\s*(?:22|50)$/i.test(String(r.size || '').trim())); // edge banding (0.8x22, 1x50) is no film: not part of this comparison
+    const rows = (rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT'); // edge banding is recorded under the colour code of the film: all rows count
     if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back: what left the warehouse is not claimed'); return null; }
     return rows.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }));
   } catch (e) { logger.warn('three-way: the sheet gave no OUT rows (' + e.message + ')'); return null; }
@@ -814,11 +814,10 @@ async function unbilledReport(events = tracker.events, opts = {}) {
   const since = new Date(Date.now() - (days + 26) * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const invoices = await qbo.query("select * from Invoice where TxnDate >= '" + since + "'");
   // only what the sheet tracks: the films. Edge banding («EDGE 0.8x22 - 1810»), services (delivery, parking) and samples are no part of this comparison.
-  const notTracked = (it) => !isFilmItem(it);
-  const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), notTracked(it) ? [] : [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
+  const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), itemCodesOf(it)])); // film by its code, edge banding by its colour, nothing else
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
   const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet
-  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => (items.has(String(id)) && !items.get(String(id)).length ? [] : [...(items.get(String(id)) || []), String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone });
+  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone });
   for (const l of result.trace || []) logger.info(l); // what each line came from
   return threeWayText(result, { days, details: !!opts.details });
 }

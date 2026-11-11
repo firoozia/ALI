@@ -339,14 +339,31 @@ test('a small cut (2 m or less) that is invoiced and not left is not listed, wit
   assert.equal(mk(30).sections.invoicedNotLeft.length, 1);
 });
 
-import { isFilmItem } from '../src/threeway.js';
+import { isFilmItem, itemCodesOf } from '../src/threeway.js';
 
 test('only PVC film is compared: the category before «:» decides; saw blades, edge banding, services and free (0.00) lines are not', () => {
   const it = (FullyQualifiedName, extra = {}) => ({ Name: FullyQualifiedName.split(':').pop(), FullyQualifiedName, Type: 'Inventory', ...extra });
   assert.ok(isFilmItem(it('PVC FILM:PVC FILM108'))); assert.ok(isFilmItem({ Name: 'PVC 1810', Sku: 'PVC-1810', Type: 'Inventory' }));
-  for (const bad of [it('saw blade aryak:SAW BLADE 300 MDF 300*96'), it('EDGE BANDING:EDGE 0.8x22 - 1810'), it('DELIVERY:DELIVERY CHARGE'), { Name: 'PARKING', Type: 'Service' }, { Name: 'Glue 55' }]) assert.equal(isFilmItem(bad), false, bad.FullyQualifiedName || bad.Name);
+  for (const bad of [it('saw blade aryak:SAW BLADE 300 MDF 300*96'), it('EDGE BANDING:EDGE 0.8x22 - ABC'), it('DELIVERY:DELIVERY CHARGE'), { Name: 'PARKING', Type: 'Service' }, { Name: 'Glue 55' }]) assert.equal(isFilmItem(bad), false, bad.FullyQualifiedName || bad.Name);
   const NOW = Date.parse('2026-11-11T08:00:00Z');
   const free = { TxnDate: '2026-11-05', DocNumber: 'inv-9958', CustomerRef: { name: 'HIGH LLC' }, Line: [{ DetailType: 'SalesItemLineDetail', Amount: 0, SalesItemLineDetail: { Qty: 3, UnitPrice: 0, ItemRef: { value: '402', name: 'P402 DAMEGE' } } }] };
   const r = threeWay({ events: [], outs: [], invoices: [free], itemCodes: () => ['402'], qboNames: ['HIGH LLC'], now: NOW });
   assert.deepEqual(r.sections.invoicedNotLeft, []);
+});
+
+test('edge banding counts toward the colour code of the film: PERFCET-like 1819 (350 m = 153 film + 200 edge) and MASTER-like 1810 (363.2 m = 300 film + 63 edge) come out OK', () => {
+  const films = (code) => ({ Id: 'f' + code, Name: 'PVC FILM' + code, Sku: 'PVC-' + code, FullyQualifiedName: 'PVC FILM:PVC FILM' + code, Type: 'Inventory' });
+  const edge = (width, code) => ({ Id: 'e' + width + code, Name: 'EDGE 0.8x' + width + ' - ' + code, FullyQualifiedName: 'EDGE BANDING:EDGE 0.8x' + width + ' - ' + code, Type: 'Inventory' });
+  const all = [films('1819'), films('1810'), edge('50', '1819'), edge('22', '1810'), { Id: 'sb', Name: 'SAW BLADE 300 MDF 300*96', FullyQualifiedName: 'saw blade aryak:SAW BLADE 300 MDF 300*96' }, { Id: 'dl', Name: 'DELIVERY', Type: 'Service' }];
+  assert.deepEqual(itemCodesOf(edge('22', '1810')), ['1810']); assert.deepEqual(itemCodesOf(all[4]), []); assert.deepEqual(itemCodesOf(all[5]), []);
+  assert.ok(!JSON.stringify(all.map(itemCodesOf)).includes('22-22')); assert.deepEqual(itemCodesOf({ Name: 'EDGE BAND COLOUR 1807', FullyQualifiedName: 'EDGE BANDING:EDGE BAND COLOUR 1807' }), ['1807']);
+  const byId = new Map(all.map((i) => [i.Id, i]));
+  const line = (itemId, qty, rate = 10) => ({ DetailType: 'SalesItemLineDetail', Amount: qty * rate, SalesItemLineDetail: { Qty: qty, UnitPrice: rate, ItemRef: { value: itemId, name: byId.get(itemId).Name } } });
+  const NOW = Date.parse('2026-11-11T08:00:00Z'); const at = (d) => Date.parse(`2026-11-${d}T10:00:00Z`);
+  const cut = { type: 'cut', at: at('04'), customer: 'OTHER', ref: 'first', lines: [{ code: '1', quantity: 1, unit: 'm' }] };
+  const events = [cut, { type: 'cut', at: at('09'), customer: 'SIGMA HOUSE', ref: 'a', lines: [{ code: '1819', quantity: 350, unit: 'm' }] }, { type: 'cut', at: at('07'), customer: 'OMEGA WOOD', ref: 'b', lines: [{ code: '1810', quantity: 363.2, unit: 'm' }] }];
+  const outs = [{ customer: 'SIGMA HOUSE', code: '1819', qty: 100, unit: 'm', at: at('09') }, { customer: 'SIGMA HOUSE', code: '1819', qty: 90, unit: 'm', at: at('09') }, { customer: 'SIGMA HOUSE', code: '1819', qty: 80, unit: 'm', at: at('09') }, { customer: 'SIGMA HOUSE', code: '1819', qty: 80, unit: 'm', at: at('09') }, { customer: 'OMEGA WOOD', code: '1810', qty: 363.2, unit: 'm', at: at('07') }];
+  const invoices = [{ TxnDate: '2026-11-09', DocNumber: 'inv-9989', CustomerRef: { name: 'SIGMA HOUSE' }, Line: [line('e501819', 200), line('f1819', 153)] }, { TxnDate: '2026-11-07', DocNumber: 'inv-9973', CustomerRef: { name: 'OMEGA WOOD' }, Line: [line('f1810', 300), line('e221810', 63)] }];
+  const r = threeWay({ events, outs, invoices, itemCodes: (id) => itemCodesOf(byId.get(id)), qboNames: ['SIGMA HOUSE', 'OMEGA WOOD'], now: NOW });
+  for (const k of ['leftNotInvoiced', 'quantityDiffers', 'checkCode', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost']) assert.deepEqual(r.sections[k], [], k); // fully invoiced: nothing listed
 });

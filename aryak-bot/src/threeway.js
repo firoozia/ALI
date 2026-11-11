@@ -35,17 +35,27 @@ const unitText = (u) => (u === 'roll' ? ' roll' : u === 'pcs' ? ' pcs' : 'm');
 const round1 = (n) => Math.round(n * 10) / 10;
 
 /**
- * True for an item the stock sheet tracks: the PVC FILM category (the part of the full name before «:», e.g. «PVC FILM:PVC FILM108»); a top-level item is a film only when its name or SKU says PVC.
- * Edge banding, saw blades (a code taken from «MDF 300*96»), services and anything else are no part of the comparison.
+ * The codes an invoice item counts toward in the comparison with the stock sheet, or [] when it is no part of it.
+ *  - PVC FILM (the category before «:» in the full name, or a top-level item named PVC): its own code.
+ *  - EDGE BANDING: the sheet records its OUT under the same COLOUR code as the film, so a line whose colour is NNNN («... - NNNN», «COLOUR NNNN») counts toward code NNNN, added to
+ *    the film lines of that code. A code is never built from a size like «0.8x22».
+ *  - saw blades, services (delivery, parking), samples and everything else: nothing.
  */
-export function isFilmItem(it) {
-  const full = String(it?.FullyQualifiedName || it?.Name || '');
+export function itemCodesOf(it) {
+  const name = String(it?.Name || ''); const sku = String(it?.Sku || ''); const full = String(it?.FullyQualifiedName || name);
   const category = full.includes(':') ? full.split(':')[0] : '';
-  if (it?.Type === 'Service') return false;
-  if (/edge|banding|deliver|parking|sample|transport|freight|shipping|saw|blade/i.test(`${it?.Name || ''} ${it?.Sku || ''} ${category}`)) return false;
-  if (category) return /pvc\s*film/i.test(category);
-  return /pvc/i.test(`${it?.Name || ''} ${it?.Sku || ''}`);
+  if (it?.Type === 'Service') return [];
+  if (/deliver|parking|sample|transport|freight|shipping|\bsaw\b|blade/i.test(`${name} ${sku} ${category}`)) return [];
+  if (/edge|banding/i.test(`${name} ${sku} ${category}`)) {
+    const m = /(?:-|colou?r)\s*(\d{3,5})\s*$/i.exec(name) || /(?:-|colou?r)\s*(\d{3,5})\s*$/i.exec(full);
+    return m ? [m[1]] : [];
+  }
+  const film = category ? /pvc\s*film/i.test(category) : /pvc/i.test(`${name} ${sku}`);
+  return film ? [sku.replace(/^(?:PVC|EDGE\d*)-/i, ''), name.replace(/^.*?(\d{3,5})$/, '$1'), name] : [];
 }
+
+/** True for an item that counts toward some code (film or edge banding by colour). */
+export const isFilmItem = (it) => itemCodesOf(it).length > 0;
 
 /**
  * [events]: the tracker's events (cuts of the orders group; deliveries). [outs]: the sheet's OUT rows [{ customer, code, qty, unit, at }], or null when the sheet could not give them
