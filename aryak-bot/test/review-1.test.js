@@ -230,7 +230,7 @@ test('the three-way check: every case lands in its own section, with its sources
   assert.deepEqual(s('invoicedNotLeft'), [['CHI KITCHEN', ['999 20m (invoice 10/11, no OUT) — 1 day']], ['TAU DOORS LLC', ['410 8m (orders 09/11, invoice 10/11, no OUT) — 1 day']]]);
   assert.deepEqual(s('leftWithoutPost'), [['PHI WOOD', ['555 3m (OUT 10/11, no invoice) — today']]]); // an OUT that is invoiced is fine without an order post
   const text = threeWayText(r);
-  assert.match(text, /^Left, not invoiced \(1 customer\):\n• NOVA ART LLC: 220 12m \(orders 08\/11, OUT 09\/11, no invoice\) — 1 day\n━+\nInvoiced, not left yet \(2 customers\):/);
+  assert.match(text, /^\*Left, not invoiced \(1 customer\)\*\n\*NOVA ART LLC\*\n220 12m \(orders 08\/11, OUT 09\/11, no invoice\) — 1 day\n━+\n━+\n\*Invoiced, not left yet \(2 customers\)\*/);
   assert.match(text, /Cut \/ ready, not invoiced yet \(1 customer\)/); assert.doesNotMatch(text, /Left without an order-group post/); assert.match(text, /Say "unbilled details"/); // the short form
   assert.match(threeWayText(r, { details: true }), /Left without an order-group post \(check\) \(1 customer\)/);
   // the sheet gave nothing: only the old question, and a warning
@@ -309,8 +309,8 @@ test('the live false findings of 11/11 (made-up names): invoice lines add up, ed
   // the short form: at most 8 customers a section, "+N more", the hidden sections named
   const many = { outKnown: true, sections: { leftNotInvoiced: Array.from({ length: 12 }, (_, i) => ({ customer: 'C' + i, parts: ['1 5m (x)'] })), invoicedNotLeft: [], stillInWarehouse: [], leftWithoutPost: [{ customer: 'Z', parts: ['2 3m'] }], delivered: [] } };
   const short = threeWayText(many);
-  assert.match(short, /\(12 customers\):(\n• C\d+: 1 5m \(x\)){8}\n\+4 more/); assert.match(short, /Say "unbilled details" for every customer, the OUT rows nobody posted and the deliveries\./); assert.doesNotMatch(short, /Left without/);
-  assert.match(threeWayText(many, { details: true }), /\(12 customers\):(\n• C\d+: 1 5m \(x\)){12}[\s\S]*Left without an order-group post/);
+  assert.equal((short.match(/^\*C\d+\*$/gm) || []).length, 8); assert.match(short, /\+4 more/); assert.match(short, /Say "unbilled details" for every customer, the OUT rows nobody posted and the deliveries\./); assert.doesNotMatch(short, /Left without/);
+  assert.equal((threeWayText(many, { details: true }).match(/^\*C\d+\*$/gm) || []).length, 12); assert.match(threeWayText(many, { details: true }), /Left without an order-group post/);
   assert.deepEqual(parseInvoiceCommand('unbilled details'), { type: 'unbilled', details: true }); assert.deepEqual(parseInvoiceCommand('unbilled'), { type: 'unbilled' });
 });
 
@@ -326,7 +326,7 @@ test('one OUT with an invoice of another quantity is ONE line «quantity differs
   assert.deepEqual(r.sections.checkCode.map((g) => [g.customer, g.parts]), [['CARPENTER CO', ['OUT 201 20.2m vs invoice 220 20m on 11/11 — check the code — today']]]);
   for (const k of ['leftNotInvoiced', 'invoicedNotLeft', 'stillInWarehouse', 'leftWithoutPost']) assert.deepEqual(r.sections[k], [], k); // not listed again
   const text = threeWayText(r);
-  assert.match(text, /^Quantity differs \(OUT vs invoice\) \(1 customer\):\n• SIGMA HOUSE: 1819: OUT 350m[\s\S]*Possible wrong code \(same day, same quantity\) \(1 customer\):/);
+  assert.match(text, /^\*Quantity differs \(OUT vs invoice\) \(1 customer\)\*\n\*SIGMA HOUSE\*[\s\S]*\*Possible wrong code \(same day, same quantity\) \(1 customer\)\*/);
 });
 
 test('a small cut (2 m or less) that is invoiced and not left is not listed, with an orders post too', () => {
@@ -404,7 +404,7 @@ test('goods for a courier: pairs across up to 30 days both ways, the open items 
   assert.deepEqual(r.sections.invoicedNotLeft.map((g) => [g.customer, g.ages[0], g.parts[0].startsWith('⚠')]), [['TAU CO', 12, true], ['PHI', 2, false]]);
   assert.match(r.sections.invoicedNotLeft[0].parts[0], /^⚠\uFE0F? 404 18m \(invoice 08\/11, no OUT, courier pickup 10\/11\) — 12 days$/); // supporting evidence, still open until the OUT appears
   const text = threeWayText(r);
-  assert.match(text, /Cut \/ ready, not invoiced yet \(2 customers\):\n• OMEGA: ⚠\uFE0F? 301 12m/); assert.match(text, /Invoiced, not left yet \(2 customers\):\n• TAU CO: ⚠\uFE0F? 404 18m/);
+  assert.match(text, /\*Cut \/ ready, not invoiced yet \(2 customers\)\*\n\*OMEGA\*\n⚠\uFE0F? 301 12m/); assert.match(text, /\*Invoiced, not left yet \(2 customers\)\*\n\*TAU CO\*\n⚠\uFE0F? 404 18m/);
 });
 
 test('the evening list stays honest: pickups attach only to the closest open item within 3 days, invoices before the OUT tracking start are not «not left», small cuts are not listed, the footer names the date', () => {

@@ -14,7 +14,7 @@
 //     (within a tolerance: cut 6.2 m may be invoiced 6 m, the end of a roll may give more). One invoice line is used up by what it covers, so it is not reused.
 import { qboNameFor } from './qboname.js';
 import { settleCuts } from './tracker.js';
-import { SEP } from './separator.js';
+import { SEP, withSeparators } from './separator.js';
 
 const DAY = 24 * 3600 * 1000;
 const PAIR_DAYS = 30; // a cut post and its OUT row, before or after (goods for a courier are cut today and may leave days later)
@@ -271,14 +271,17 @@ export function threeWayText(result, { max = 8, days = 45, details = false } = {
   for (const key of keys) {
     const list = result.sections[key] || [];
     if (!list.length) continue;
-    const rows = list.map((g) => `• ${g.customer}: ${g.parts.slice(0, details ? 8 : 3).join(', ')}${g.parts.length > (details ? 8 : 3) ? ` +${g.parts.length - (details ? 8 : 3)}` : ''}`);
-    const shown = details ? rows : rows.slice(0, max);
-    blocks.push([`${TITLES[key]} (${list.length} customer${list.length === 1 ? '' : 's'}):`, ...shown, ...(rows.length > shown.length ? [`+${rows.length - shown.length} more`] : [])].join('\n'));
+    // one customer = one block: the bold QuickBooks name, then each item on its own line; one separator between customers
+    const cap = details ? Infinity : 3;
+    const blocksOf = list.map((g) => [`*${g.customer}*`, ...g.parts.slice(0, cap), ...(g.parts.length > cap ? [`+${g.parts.length - cap} more`] : [])].join('\n'));
+    const shown = details ? blocksOf : blocksOf.slice(0, max);
+    const body = withSeparators([...shown, ...(blocksOf.length > shown.length ? [`+${blocksOf.length - shown.length} more`] : [])]);
+    blocks.push(`*${TITLES[key]} (${list.length} customer${list.length === 1 ? '' : 's'})*` + '\n' + body);
   }
   if (!details) hidden = (result.sections.leftWithoutPost || []).length + (result.sections.delivered || []).length;
   if (!result.outKnown) blocks.unshift('⚠ The stock sheet gave no OUT rows, so what left the warehouse is unknown: only «cut, not invoiced» is shown.');
   if (!blocks.length || (blocks.length === 1 && !result.outKnown)) blocks.push(`✔ Everything cut, left and invoiced in the last ${days} days agrees.`);
   if (result.outKnown && result.trackedSince) blocks.push(`Invoices before ${dmy(result.trackedSince)} are not checked for «not left yet»: the sheet's OUT rows are tracked from then.`);
   if (!details && (hidden || blocks.length)) blocks.push('Say "unbilled details" for every customer' + (hidden ? ', the OUT rows nobody posted and the deliveries' : '') + '.');
-  return blocks.join(`\n${SEP}\n`);
+  return blocks.join('\n' + SEP + '\n' + SEP + '\n'); // two rules between the main sections
 }
