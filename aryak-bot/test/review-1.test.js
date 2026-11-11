@@ -450,7 +450,7 @@ import { paymentsText } from '../src/payments.js';
 test('the Confirmation group is recorded silently: no per-post notice, no #D question, one end-of-day report with the findings and the possible duplicates; the double rule has no blank line', async () => {
   const { loadConfig } = await import('../src/config.js');
   const env = { ANTHROPIC_API_KEY: 'k', SHEET_URL: 'u', ZINAX_BOT_TOKEN: 't' };
-  assert.equal(loadConfig(env).config.paymentNotices, false); assert.equal(loadConfig(env).config.deliveryRunLine, false);
+  assert.equal(loadConfig(env).config.paymentNotices, false); assert.equal(loadConfig(env).config.deliveryRunLine, true); assert.equal(loadConfig({ ...env, DELIVERY_RUN_LINE: 'off' }).config.deliveryRunLine, false);
   assert.equal(loadConfig({ ...env, PAYMENT_NOTICES: 'on' }).config.paymentNotices, true); assert.equal(loadConfig({ ...env, DELIVERY_RUN_LINE: 'on' }).config.deliveryRunLine, true);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(index, /event\.source === 'pdf'\) && config\.paymentNotices\) payPending\.set/); // no notice unless the setting is on
