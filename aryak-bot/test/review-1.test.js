@@ -338,3 +338,15 @@ test('a small cut (2 m or less) that is invoiced and not left is not listed, wit
   assert.deepEqual(mk(1).sections.invoicedNotLeft, []); assert.deepEqual(mk(2).sections.invoicedNotLeft, []);
   assert.equal(mk(30).sections.invoicedNotLeft.length, 1);
 });
+
+import { isFilmItem } from '../src/threeway.js';
+
+test('only PVC film is compared: the category before «:» decides; saw blades, edge banding, services and free (0.00) lines are not', () => {
+  const it = (FullyQualifiedName, extra = {}) => ({ Name: FullyQualifiedName.split(':').pop(), FullyQualifiedName, Type: 'Inventory', ...extra });
+  assert.ok(isFilmItem(it('PVC FILM:PVC FILM108'))); assert.ok(isFilmItem({ Name: 'PVC 1810', Sku: 'PVC-1810', Type: 'Inventory' }));
+  for (const bad of [it('saw blade aryak:SAW BLADE 300 MDF 300*96'), it('EDGE BANDING:EDGE 0.8x22 - 1810'), it('DELIVERY:DELIVERY CHARGE'), { Name: 'PARKING', Type: 'Service' }, { Name: 'Glue 55' }]) assert.equal(isFilmItem(bad), false, bad.FullyQualifiedName || bad.Name);
+  const NOW = Date.parse('2026-11-11T08:00:00Z');
+  const free = { TxnDate: '2026-11-05', DocNumber: 'inv-9958', CustomerRef: { name: 'HIGH LLC' }, Line: [{ DetailType: 'SalesItemLineDetail', Amount: 0, SalesItemLineDetail: { Qty: 3, UnitPrice: 0, ItemRef: { value: '402', name: 'P402 DAMEGE' } } }] };
+  const r = threeWay({ events: [], outs: [], invoices: [free], itemCodes: () => ['402'], qboNames: ['HIGH LLC'], now: NOW });
+  assert.deepEqual(r.sections.invoicedNotLeft, []);
+});

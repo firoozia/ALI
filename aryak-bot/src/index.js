@@ -48,7 +48,7 @@ import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { qboNameFor } from './qboname.js';
-import { threeWay, threeWayText } from './threeway.js';
+import { isFilmItem, threeWay, threeWayText } from './threeway.js';
 import { EditStore, InvoiceEdits } from './invoiceedit.js';
 import { officeNote, parseOfficeRequest } from './officerequest.js';
 import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
@@ -814,7 +814,7 @@ async function unbilledReport(events = tracker.events, opts = {}) {
   const since = new Date(Date.now() - (days + 26) * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const invoices = await qbo.query("select * from Invoice where TxnDate >= '" + since + "'");
   // only what the sheet tracks: the films. Edge banding («EDGE 0.8x22 - 1810»), services (delivery, parking) and samples are no part of this comparison.
-  const notTracked = (it) => it.Type === 'Service' || /edge|banding|deliver|parking|sample|transport|freight|shipping/i.test(`${it.Name || ''} ${it.Sku || ''} ${it.FullyQualifiedName || ''}`);
+  const notTracked = (it) => !isFilmItem(it);
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), notTracked(it) ? [] : [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
   const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet

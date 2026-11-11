@@ -35,6 +35,19 @@ const unitText = (u) => (u === 'roll' ? ' roll' : u === 'pcs' ? ' pcs' : 'm');
 const round1 = (n) => Math.round(n * 10) / 10;
 
 /**
+ * True for an item the stock sheet tracks: the PVC FILM category (the part of the full name before «:», e.g. «PVC FILM:PVC FILM108»); a top-level item is a film only when its name or SKU says PVC.
+ * Edge banding, saw blades (a code taken from «MDF 300*96»), services and anything else are no part of the comparison.
+ */
+export function isFilmItem(it) {
+  const full = String(it?.FullyQualifiedName || it?.Name || '');
+  const category = full.includes(':') ? full.split(':')[0] : '';
+  if (it?.Type === 'Service') return false;
+  if (/edge|banding|deliver|parking|sample|transport|freight|shipping|saw|blade/i.test(`${it?.Name || ''} ${it?.Sku || ''} ${category}`)) return false;
+  if (category) return /pvc\s*film/i.test(category);
+  return /pvc/i.test(`${it?.Name || ''} ${it?.Sku || ''}`);
+}
+
+/**
  * [events]: the tracker's events (cuts of the orders group; deliveries). [outs]: the sheet's OUT rows [{ customer, code, qty, unit, at }], or null when the sheet could not give them
  * (then nothing is claimed about what left). [invoices]: QuickBooks invoice records with Line, TxnDate, CustomerRef. [itemCodes](itemId, name) -> the codes of an item.
  * Returns { sections: { leftNotInvoiced, stillInWarehouse, invoicedNotLeft, leftWithoutPost, delivered }, outKnown, trace } where a section is [{ customer, parts: [text] }].
@@ -73,6 +86,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
     for (const l of inv.Line || []) {
       if (l.DetailType !== 'SalesItemLineDetail') continue;
       const d = l.SalesItemLineDetail || {};
+      if ((l.Amount !== undefined && !(Number(l.Amount) > 0)) || (d.UnitPrice !== undefined && !(Number(d.UnitPrice) > 0))) continue; // a free line (rate 0.00: a replacement for damage, a sample) is no sale
       for (const code of new Set(itemCodes(d.ItemRef?.value, d.ItemRef?.name).map(digits).filter(Boolean))) lines.push({ customer: inv.CustomerRef?.name || '', code, qty: Number(d.Qty) || 0, left: Number(d.Qty) || 0, at, doc: inv.DocNumber || '', used: false });
     }
   }
