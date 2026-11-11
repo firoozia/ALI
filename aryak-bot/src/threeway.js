@@ -197,6 +197,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   let runStart = outDays[0];
   for (let i = 1; i < outDays.length; i++) if (outDays[i] - outDays[i - 1] > 7) runStart = outDays[i];
   const coverageStart = trackedSince > 0 ? trackedSince : (outDays.length ? runStart * DAY : since); // the sheet answered with no OUT row at all: the window we asked for
+  const grace = trackedSince > 0 ? 0 : DAY; // the owner's day is exact; a guessed start gets a day of grace
   const inl = []; // invoiced, not left yet: the courier evidence is attached after all of them are known
   // C) cut posts that have no OUT row
   for (const c of cuts.filter((x) => !x.pool).sort((a, b) => a.at - b.at)) {
@@ -206,7 +207,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
     }
     const inv = cover(c.customer, c.code, c.at, c.qty);
     if (inv) {
-      if ((c.qty <= MIN_LISTED && inv.qty <= MIN_LISTED + 1e-9) || inv.at < coverageStart - DAY) continue; // a 1 m or 2 m line is not worth a report line; an invoice before the OUT coverage says nothing about what left
+      if ((c.qty <= MIN_LISTED && inv.qty <= MIN_LISTED + 1e-9) || inv.at < coverageStart - grace) continue; // a 1 m or 2 m line is not worth a report line; an invoice before the OUT coverage says nothing about what left
       inl.push({ customer: c.customer, code: c.code, from: inv.at, post: postText([c]), build: (ev) => `${c.code} ${round1(inv.qty)}${unitText('m')} (orders ${dm(c.at, timeZone)}, invoice ${dm(inv.at, timeZone)}, no OUT${ev})` });
     } else {
       if (c.qty <= MIN_LISTED) continue; // a 1 m or 2 m (or pcs) cut with no invoice yet is not worth a line either
@@ -215,7 +216,7 @@ export function threeWay({ events, outs, invoices, itemCodes = () => [], aliasOf
   }
   // D) recent invoice lines that neither a cut nor an OUT used up: invoiced, not left yet
   if (outKnown) {
-    for (const l of lines.filter((x) => !x.used && x.customer && x.at >= Math.max(since, coverageStart - DAY) && x.qty > MIN_LISTED).sort((a, b) => a.at - b.at)) {
+    for (const l of lines.filter((x) => !x.used && x.customer && x.at >= Math.max(since, coverageStart - grace) && x.qty > MIN_LISTED).sort((a, b) => a.at - b.at)) {
       inl.push({ customer: l.customer, code: l.code, from: l.at, post: '', build: (ev) => `${l.code} ${round1(l.qty)}m (invoice ${dm(l.at, timeZone)}, no OUT${ev})` });
     }
   }

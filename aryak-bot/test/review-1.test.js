@@ -428,3 +428,18 @@ test('the evening list stays honest: pickups attach only to the closest open ite
   const far = Object.fromEntries(set.sections.invoicedNotLeft.map((g) => [g.customer, g.parts.join(' ')]));
   assert.match(far['AR RAD'], /221 70m \(invoice 12\/10, no OUT\) — /); // the 12/10 invoice is a month from the pickup: no evidence attached to it
 });
+
+test('the default OUT tracking start is 01/11/2026 and a setting: invoices before it never enter «invoiced, not left», but still cover a later OUT', async () => {
+  const { loadConfig } = await import('../src/config.js');
+  const env = { ANTHROPIC_API_KEY: 'k', SHEET_URL: 'u', ZINAX_BOT_TOKEN: 't' };
+  assert.equal(loadConfig(env).config.outTrackedSince, '2026-11-01'); assert.equal(loadConfig({ ...env, OUT_TRACKED_SINCE: '2026-11-05' }).config.outTrackedSince, '2026-11-05'); assert.equal(loadConfig({ ...env, OUT_TRACKED_SINCE: '' }).config.outTrackedSince, '');
+  const NOW = Date.parse('2026-11-12T08:00:00Z'); const since = Date.parse('2026-11-01T00:00:00+04:00');
+  const line = (code, qty) => ({ DetailType: 'SalesItemLineDetail', Amount: qty * 10, SalesItemLineDetail: { Qty: qty, UnitPrice: 10, ItemRef: { value: code, name: 'PVC ' + code } } });
+  const inv = (customer, date, doc, lines) => ({ TxnDate: date, DocNumber: doc, CustomerRef: { name: customer }, Line: lines });
+  const invoices = [inv('OLD CO', '2026-10-31', 'inv-1', [line('300', 40)]), inv('NEW CO', '2026-11-01', 'inv-2', [line('301', 40)]), inv('COVER CO', '2026-10-20', 'inv-3', [line('302', 20)])];
+  const outs = [{ customer: 'COVER CO', code: '302', qty: 20, unit: 'm', at: Date.parse('2026-11-05T10:00:00Z') }];
+  const events = [{ type: 'cut', at: Date.parse('2026-10-25T10:00:00Z'), customer: 'FIRST', ref: 'x', lines: [{ code: '1', quantity: 1, unit: 'm' }] }, { type: 'cut', at: Date.parse('2026-11-05T09:00:00Z'), customer: 'COVER CO', ref: 'c', lines: [{ code: '302', quantity: 20, unit: 'm' }] }];
+  const r = threeWay({ events, outs, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['OLD CO', 'NEW CO', 'COVER CO'], now: NOW, trackedSince: since });
+  assert.deepEqual(r.sections.invoicedNotLeft.map((g) => g.customer), ['NEW CO']); // 31/10 is before the day; 01/11 is the day itself
+  assert.deepEqual(r.sections.leftNotInvoiced, []); // the 20/10 invoice (16 days earlier) covers the 05/11 OUT
+});
