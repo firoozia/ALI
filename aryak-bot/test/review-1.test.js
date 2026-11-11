@@ -208,3 +208,46 @@ test('the owner\'s sheet-name answers are approved aliases before any fuzzy matc
   const day = [{ type: 'cut', at: NOW - 7200000, customer: 'NOVA IND', ref: 'a', lines: [{ code: '215', quantity: 72.6, unit: 'm' }] }, { type: 'cut', at: NOW - 3600000, customer: 'NOVA IND', ref: 'b', lines: [{ code: '215', quantity: 97.6, unit: 'm' }], pieces: [25, 72.6] }];
   assert.deepEqual(settleCuts(day).map((e) => e.ref), ['b']);
 });
+
+// ---- the three-way check: cut (orders group) / left (sheet OUT) / invoiced (QuickBooks)
+import { threeWay, threeWayText } from '../src/threeway.js';
+
+test('the three-way check: every case lands in its own section, with its sources; a quantity difference is never a mismatch; no OUT rows from the sheet means nothing is claimed about what left', () => {
+  const NOW = Date.parse('2026-11-11T08:00:00Z'); const at = (d) => Date.parse(`2026-11-${d}T10:00:00Z`);
+  const cut = (customer, code, qty, d, ref) => ({ type: 'cut', at: at(d), customer, customerTyped: customer, ref, lines: [{ code, quantity: qty, unit: 'm' }] });
+  const out = (customer, code, qty, d) => ({ customer, code, qty, unit: 'm', at: at(d) });
+  const line = (code, qty) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { Qty: qty, ItemRef: { value: code, name: 'PVC ' + code } } });
+  const inv = (customer, d, lines) => ({ TxnDate: `2026-11-${d}`, CustomerRef: { name: customer }, Line: lines });
+  const events = [
+    cut('ZETA RAD', '215', 6.2, '08', 'a'), cut('NOVA ART', '220', 12, '08', 'b'), cut('OMEGA CO', '301', 5, '09', 'c'), cut('TAU DOORS', '410', 8, '09', 'd'),
+  ];
+  const outs = [out('ZETA RAD INTERNATIONAL LLC', '215', 6.3, '09'), out('NOVA ART LLC', '220', 12, '09'), out('PHI WOOD', '555', 3, '10'), out('UPSILON', '777', 4, '10')];
+  const invoices = [inv('ZETA RAD INTERNATIONAL LLC', '10', [line('215', 6)]), inv('TAU DOORS LLC', '10', [line('410', 8)]), inv('CHI KITCHEN', '10', [line('999', 20)]), inv('UPSILON', '10', [line('777', 4)])];
+  const r = threeWay({ events, outs, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: ['ZETA RAD INTERNATIONAL LLC', 'NOVA ART LLC', 'OMEGA CO', 'TAU DOORS LLC', 'PHI WOOD', 'CHI KITCHEN', 'UPSILON'], now: NOW });
+  const s = (k) => r.sections[k].map((g) => [g.customer, g.parts]);
+  assert.deepEqual(s('leftNotInvoiced'), [['NOVA ART LLC', ['220 12m (orders 08/11, OUT 09/11, no invoice)']]]); // ZETA is invoiced 6 for 6.3 left: fine
+  assert.deepEqual(s('stillInWarehouse'), [['OMEGA CO', ['301 5m (orders 09/11, no invoice)']]]);
+  assert.deepEqual(s('invoicedNotLeft'), [['CHI KITCHEN', ['999 20m (invoice 10/11)']], ['TAU DOORS LLC', ['410 20m'.replace('20', '8') + ' (orders 09/11, invoice 10/11)']]]);
+  assert.deepEqual(s('leftWithoutPost'), [['PHI WOOD', ['555 3m (OUT 10/11, no invoice)']], ['UPSILON', ['777 4m (OUT 10/11, invoice 10/11)']]]);
+  const text = threeWayText(r);
+  assert.match(text, /^Left the warehouse, not invoiced \(1 customer\):\n• NOVA ART LLC: 220 12m \(orders 08\/11, OUT 09\/11, no invoice\)\n━+\nInvoiced, not left yet \(2 customers\):/);
+  assert.match(text, /Cut, still in the warehouse \(not left\) \(1 customer\)[\s\S]*Left without an order-group post \(check\) \(2 customers\)/);
+  // the sheet gave nothing: only the old question, and a warning
+  const blind = threeWay({ events, outs: null, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: [], now: NOW });
+  assert.deepEqual(blind.sections.stillInWarehouse.concat(blind.sections.invoicedNotLeft, blind.sections.leftWithoutPost), []); assert.ok(!blind.outKnown);
+  assert.match(threeWayText(blind), /^⚠ The stock sheet gave no OUT rows/);
+  assert.match(threeWayText(threeWay({ events: [], outs: [], invoices: [], now: NOW })), /^✔ Everything cut, left and invoiced in the last 14 days agrees\./);
+});
+
+test('the three-way check is fast on a big day (300 cuts, 300 OUT rows, 2000 invoice lines, 200 names) and never writes anything', () => {
+  const NOW = Date.parse('2026-11-11T08:00:00Z');
+  const names = Array.from({ length: 200 }, (_, i) => `CUSTOMER${String.fromCharCode(65 + (i % 26))}${i} TRADING LLC`);
+  const invoices = Array.from({ length: 200 }, (_, i) => ({ TxnDate: '2026-11-0' + (1 + (i % 9)), CustomerRef: { name: names[i] }, Line: Array.from({ length: 10 }, (_, k) => ({ DetailType: 'SalesItemLineDetail', SalesItemLineDetail: { Qty: 5, ItemRef: { value: String(k), name: 'PVC ' + (200 + k) } } })) }));
+  const events = Array.from({ length: 300 }, (_, i) => ({ type: 'cut', at: NOW - 3600000, customer: 'Customer' + String.fromCharCode(65 + (i % 26)) + (i % 200) + ' trdg', customerTyped: 'Customer' + String.fromCharCode(65 + (i % 26)) + (i % 200) + ' trdg', ref: 'r' + i, lines: [{ code: String(200 + (i % 10)), quantity: 5, unit: 'm' }] }));
+  const outs = Array.from({ length: 300 }, (_, i) => ({ customer: names[i % 200], code: String(200 + (i % 10)), qty: 5, unit: 'm', at: NOW - 1800000 }));
+  const started = Date.now();
+  threeWay({ events, outs, invoices, itemCodes: (id, name) => [String(name).replace(/^PVC /, '')], qboNames: names, now: NOW });
+  assert.ok(Date.now() - started < 3000);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'threeway.js'), 'utf8');
+  assert.doesNotMatch(src, /\.(write|create|post|update|add)\(|fetch|sendMessage/); // read only
+});

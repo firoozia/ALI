@@ -48,6 +48,7 @@ import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { qboNameFor } from './qboname.js';
+import { threeWay, threeWayText } from './threeway.js';
 import { officeNote, parseOfficeRequest } from './officerequest.js';
 import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
 import { Tracker, balanceOf, settleCuts, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
@@ -795,14 +796,28 @@ const qbo = new Qbo({
 setInterval(() => { qbo.keepFresh().catch(() => {}); }, 5 * 60 * 1000).unref(); // refresh before the access token expires, not only when a call finds it expired
 const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = await sock.sendMessage(jid, { document: buf, mimetype, fileName, caption }); if (!r) throw new Error('the document was not sent'); };
 /** The text of the report «cut or delivered, not invoiced»: the posts against ALL of the customers' QuickBooks invoices of the last 40 days. Read only. */
+/** The OUT rows of the stock sheet for the last [days] days (read only): [{ customer, code, qty, unit, at }], or null when the sheet could not give them all (then nothing is claimed about what left). */
+async function sheetOutRows(days) {
+  try {
+    const to = todayDubai();
+    const rep = await fetchReport(config, { from: dayPlus(to, -days), to, detail: true, limit: 500 });
+    const rows = (rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT');
+    if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back: what left the warehouse is not claimed'); return null; }
+    return rows.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }));
+  } catch (e) { logger.warn('three-way: the sheet gave no OUT rows (' + e.message + ')'); return null; }
+}
+
+/** What was CUT (the orders group), what LEFT (the sheet's OUT rows), what was INVOICED (QuickBooks), per customer and code: the sections of src/threeway.js. */
 async function unbilledReport(events = tracker.events) {
-  const since = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-  const invoices = await qbo.query(`select * from Invoice where TxnDate >= '${since}'`);
+  const days = 14;
+  const since = new Date(Date.now() - (days + 26) * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const invoices = await qbo.query("select * from Invoice where TxnDate >= '" + since + "'");
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
-  const result = unbilled({ events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: nameAlias, qboNames, timeZone: config.timezone });
-  for (const l of result.trace || []) logger.info(l); // what each line came from: the post name, the QuickBooks name it was grouped under, the post
-  return unbilledText(result);
+  const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet
+  const result = threeWay({ events, outs, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: nameAlias, qboNames, days, timeZone: config.timezone });
+  for (const l of result.trace || []) logger.info(l); // what each line came from
+  return threeWayText(result, { days });
 }
 
 /** Payments seen in the Confirmation group against the customers' OPEN invoices: a proposal only, read only; nothing is recorded in QuickBooks. */
