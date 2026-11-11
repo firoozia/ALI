@@ -3158,6 +3158,11 @@ async function sheetNameSet(from, to) { return sheetNameSetMany([{ from, to, lea
 function decidePayCheck(verb, id) {
   const x = payChecks.get(id);
   if (!x || x.status !== 'open') return [`#${id} is not waiting any more.`];
+  if (x.action === 'drawer') { // a cheque photo and the cheque it may belong to: yes = that cheque's drawer, the photo is no row of its own; no = this pairing is not asked again
+    const photo = tracker.events.find((e) => e.ref === x.ref);
+    if (verb === 'yes') { tracker.update(x.ref, { drawerInto: x.target }); payChecks.close(id, 'accepted'); return [`Accepted #${id}: the photo is the drawer of that cheque. Nothing was recorded in QuickBooks.`]; }
+    tracker.update(x.ref, { drawerRefused: [...(photo?.drawerRefused || []), x.target] }); payChecks.close(id, 'refused'); return [`Refused #${id}: that pairing is dropped. Nothing was recorded in QuickBooks.`];
+  }
   if (x.action === 'clear') { // a bank clearing and a cheque: yes = that cheque is cleared on the day of the message; no = it stays open and the message is dropped
     if (verb === 'yes') { tracker.update(x.ref, { cleared: true, clearedAt: x.clearedAt || Date.now(), clearingMismatch: null, pendingClearing: null }); payChecks.close(id, 'accepted'); return [`Cleared #${id}: that cheque is marked cleared. Nothing was recorded in QuickBooks.`]; }
     tracker.update(x.ref, { clearingMismatch: null, pendingClearing: null }); payChecks.close(id, 'refused'); return [`Refused #${id}: that cheque stays open. Nothing was recorded in QuickBooks.`];

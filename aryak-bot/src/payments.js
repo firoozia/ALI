@@ -241,6 +241,15 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
     const keep = isKnown(e.customer) ? e : twin; const drop = keep === e ? twin : e;
     keep.drawer = drop.customer; if (drop.kind === 'cheque') keep.kind = 'cheque'; drop.merged = true;
   }
+  // A cheque PHOTO whose printed name is not one of our customers is the drawer of a cheque of the same amount (±1 AED) received within 14 days, open or already cleared, whatever the day. One such
+  // cheque: it becomes that cheque's drawer. Two or more: nothing is guessed, the photo stays and asks the owner (a pairing the owner accepted or refused is remembered on the photo).
+  const DAY14 = 14 * 24 * 3600 * 1000;
+  for (const e of list) {
+    if (e.merged || e.source !== 'photo' || !e.customer || e.pendingName || isKnown(e.customer) || isClearingText(e.text)) continue;
+    if (e.drawerInto) { const t = list.find((o) => o.ref === e.drawerInto && !o.merged); if (t) { t.drawer = e.customer; if (e.kind === 'cheque') t.kind = 'cheque'; e.merged = true; } continue; }
+    const cands = list.filter((o) => o !== e && !o.merged && o.kind === 'cheque' && (isKnown(o.customer) || o.source !== 'photo') && o.customer && !o.pendingName && !sameCutCustomer(o.customer, e.customer) && Math.abs(Number(o.amount) - Number(e.amount)) <= 1 && Math.abs(o.at - e.at) <= DAY14 && !(e.drawerRefused || []).includes(o.ref));
+    if (cands.length === 1) { cands[0].drawer = e.customer; e.merged = true; } else if (cands.length > 1) { e.kind = 'cheque'; e.drawerAsk = cands.map((o) => ({ ref: o.ref, customer: o.customer })); }
+  }
   for (let i = list.length - 1; i >= 0; i--) if (list[i].merged) list.splice(i, 1);
   // The bank's clearing messages (when the owner did not quote the cheque): the oldest open cheque of that amount (±1) in the last 30 days, the one with the customer's name first. Two or more
   // that fit are NOT guessed: the message is set aside and each candidate carries it as a pending clearing (the owner decides). Never a cash row.

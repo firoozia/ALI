@@ -655,3 +655,16 @@ test('the owner\'s cheque process: the bank message quote-replied on the cheque 
   assert.match(index, /if \(role === 'payment' && quotedId && text && isClearingText\(text\)\) \{[\s\S]*?if \(same\) tracker\.update\(cheque\.ref, \{ kind: 'cheque', cleared: true, clearedAt: nowAt\(\)[\s\S]*?return;\n    \}\n  \}/); // silent, never a payment
   assert.match(index, /if \(x\.action === 'clear'\) \{[\s\S]*?cleared: true, clearedAt: x\.clearedAt/);
 });
+
+test('a cheque photo whose name is not our customer is the drawer of a same-amount cheque within 14 days, open or cleared, on any day; two candidates ask the owner', () => {
+  const t = (d, hh) => Date.parse(`2026-11-${d}T${hh}:00Z`);
+  const known = (n) => /ZETA/.test(n);
+  const cheque = (ref, customer, d, extra = {}) => ({ type: 'payment', kind: 'cheque', currency: 'AED', ref, at: t(d, '05:00'), customer, amount: 3500, text: customer + ' cheque 3500', ...extra });
+  const photo = { type: 'payment', kind: 'cheque', source: 'photo', currency: 'AED', ref: 'p', at: t('11', '06'), customer: 'OMEGA KITCHENS LLC', amount: 3500, text: '' };
+  const one = cleanPaymentEvents({ events: [cheque('a', 'ZETA KITCHEN', '05', { cleared: true, clearedAt: t('10', '08') }), photo], isKnown: known });
+  assert.deepEqual(one.map((e) => [e.ref, e.drawer]), [['a', 'OMEGA KITCHENS LLC']]);
+  const two = cleanPaymentEvents({ events: [cheque('a', 'ZETA KITCHEN', '05'), cheque('b', 'ZETA JOINERY', '07'), photo], isKnown: known });
+  assert.equal(two.length, 3); assert.equal(two.find((e) => e.ref === 'p').drawerAsk.length, 2);
+  const yes = cleanPaymentEvents({ events: [cheque('a', 'ZETA KITCHEN', '05'), cheque('b', 'ZETA JOINERY', '07'), { ...photo, drawerInto: 'b' }], isKnown: known });
+  assert.deepEqual(yes.map((e) => [e.ref, e.drawer || '']), [['a', ''], ['b', 'OMEGA KITCHENS LLC']]);
+});

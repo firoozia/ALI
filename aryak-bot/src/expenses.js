@@ -267,7 +267,7 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, at: e.at, pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, at: e.at, drawerAsk: e.drawerAsk || null, name: e.customer || '', pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
@@ -340,9 +340,10 @@ export function receivedText(items, options) {
     if (it.clearingMismatch) clearings.push({ it, text: 'the bank cleared ' + money(it.clearingMismatch.amount) + ' for this cheque of ' + money(it.amount) + ' (' + signed(it.clearingMismatch.amount - it.amount) + ')', at: it.clearingMismatch.at });
     else if (it.pendingClearing) clearings.push({ it, text: 'a bank clearing of ' + money(it.pendingClearing.amount) + ' arrived ' + dd(it.pendingClearing.at) + ' and ' + it.pendingClearing.count + ' open cheques fit it: is it this one?', at: it.pendingClearing.at });
   }
-  const okBlock = needsOk.length || clearings.length ? [SEP, SEP, ['*Needs your OK*', ...clearings.map(({ it, text, at }) => {
-    const code = checks ? checks.codeFor(it.ref, text, 'clear', { clearedAt: at }) : '';
-    return (code ? '#' + code + ': ' : '') + (it.customer || 'UNKNOWN').toUpperCase() + ' cheque ' + money(it.amount) + ' — ' + text + (code ? '\nyes #' + code + ' (cleared) / no #' + code : '');
+  for (const it of items) for (const t of it.drawerAsk || []) clearings.push({ it, action: 'drawer', target: t.ref, text: it.name + ' cheque photo ' + money(it.amount) + ': is it the drawer of the cheque of ' + t.customer + '?', at: 0 });
+  const okBlock = needsOk.length || clearings.length ? [SEP, SEP, ['*Needs your OK*', ...clearings.map(({ it, text, at, action, target }) => {
+    const code = checks ? (action === 'drawer' ? checks.codeFor(it.ref, text, 'drawer', { target }) : checks.codeFor(it.ref, text, 'clear', { clearedAt: at })) : '';
+    return (code ? '#' + code + ': ' : '') + (it.customer || 'UNKNOWN').toUpperCase() + ' cheque ' + money(it.amount) + ' — ' + text + (code ? '\nyes #' + code + (action === 'drawer' ? '' : ' (cleared)') + ' / no #' + code : '');
   }), ...needsOk.map(({ it, best }) => {
     const text = best.label + ' ' + money(best.amount);
     const code = checks ? checks.codeFor(it.ref, text) : '';
