@@ -345,6 +345,18 @@ export function receivedText(items, options) {
   const needsOk = []; let green = 0; let red = 0;
   const plain = (it) => String(it.shown || money(it.amount)).replace(/\*/g, '');
   const ddmm = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  /** The invoice lines of a recorded receipt (cash, cheque or transfer alike): one invoice = its number after the amount; several = no number there, then the closed and the partly paid lines. */
+  const invoiceLines = (rec, it) => {
+    const own = ownInvoices(rec, it); const out = { inline: '', extra: [], spread: false };
+    if (own.length === 1) out.inline = '     ' + docOf(own[0].inv);
+    if (own.length > 1) {
+      out.spread = true;
+      const closed = own.filter((x) => Number(x.inv.Balance) <= 0.004);
+      if (closed.length) out.extra.push('     _↳ closed: ' + closed.map((x) => docOf(x.inv)).join(', ') + '_');
+      for (const x of own.filter((y) => Number(y.inv.Balance) > 0.004)) out.extra.push('     _↳ ' + docOf(x.inv) + ': ' + money(x.paid) + ' of ' + money(x.inv.TotalAmt) + ' paid_ *' + money(x.inv.Balance) + ' open*'); // paid = what THIS payment applied; open = the balance after it
+    }
+    return out;
+  };
   const lineOf = (it) => {
     const kind = it.kind; const rec = matched.get(it); let ok = false; let tail = ''; let extra = [];
     const days = Math.max(0, Math.floor((nowMs - it.at) / 86400000));
@@ -358,17 +370,17 @@ export function receivedText(items, options) {
         it._inTime = inTime;
       }
       if (it.drawer) tail += ' (drawer ' + it.drawer + ')';
-      if (it.clearedDay && it.clearedDay !== it.day) tail += ' received ' + ddmm(it.day);
+      if (it.cleared && rec) { // the invoices this cheque paid, the same lines as for cash
+        const inv = invoiceLines(rec, it);
+        tail += inv.inline; extra.push(...inv.extra);
+        if (!inv.spread && it.clearedDay && it.clearedDay !== it.day) tail += ' received ' + ddmm(it.day);
+      } else if (it.clearedDay && it.clearedDay !== it.day) tail += ' received ' + ddmm(it.day);
     } else if (inQb(it)) {
       ok = true;
-      const own = ownInvoices(rec, it);
-      if (own.length === 1) tail = '     ' + docOf(own[0].inv); // one invoice: its number on the same line, after the amount
+      const inv = invoiceLines(rec, it);
+      tail = inv.inline; // one invoice: its number on the same line, after the amount
       if (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004) extra.push('      ↳ (QuickBooks ' + money(rec.TotalAmt) + ')');
-      if (own.length > 1) { // a payment spread over several invoices (credit customers): no number on the amount line
-        const closed = own.filter((x) => Number(x.inv.Balance) <= 0.004);
-        if (closed.length) extra.push('     _↳ closed: ' + closed.map((x) => docOf(x.inv)).join(', ') + '_');
-        for (const x of own.filter((y) => Number(y.inv.Balance) > 0.004)) extra.push('     _↳ ' + docOf(x.inv) + ': ' + money(Number(x.inv.TotalAmt) - Number(x.inv.Balance)) + ' of ' + money(x.inv.TotalAmt) + ' paid_ *' + money(x.inv.Balance) + ' open*');
-      }
+      extra.push(...inv.extra); // a payment spread over several invoices: no number on the amount line
     }
     else {
       const best = it.rejected ? null : closestMatch(it, records, openInvoices, aliasOf);

@@ -775,3 +775,16 @@ test('the approved invoice lines: one invoice after the amount on the same line 
   assert.match(text, /\*CREDIT\*\n🟢 1500\.00\n     _↳ closed: inv-9880, inv-9901_\n     _↳ inv-9940: 300\.00 of 800\.00 paid_ \*500\.00 open\*/);
   assert.doesNotMatch(text, /applied|inv-inv-|inv #/);
 });
+
+test('a cleared cheque gets the same invoice lines as cash: closed invoices and the partly paid one (paid by this payment of its total, the balance open)', async () => {
+  const { receivedText } = await import('../src/expenses.js');
+  const now = Date.parse('2026-11-11T16:00:00Z');
+  const item = { amount: 3500, shown: '*3,500.00*', foreign: false, unconverted: false, note: '', day: '2026-11-10', customer: 'AL AHLIA KITCHEN', typed: '', kind: 'cheque', invoices: [], cleared: true, clearedDay: '2026-11-11', due: '', drawer: 'AL MALTA KITCHENS LLC', at: now - 3600000, ref: 'c', paid: null };
+  const pay = { _type: 'Payment', TxnDate: '2026-11-11', TotalAmt: 3500, CustomerRef: { name: 'AL AHLIA KITCHEN' }, Line: [['1', 1797.25], ['2', 1496.25], ['3', 206.5]].map((x) => ({ Amount: x[1], LinkedTxn: [{ TxnId: x[0], TxnType: 'Invoice' }] })) };
+  const linkedInvoices = [{ Id: '1', DocNumber: '9679', TotalAmt: 1797.25, Balance: 0 }, { Id: '2', DocNumber: '9738', TotalAmt: 1496.25, Balance: 0 }, { Id: '3', DocNumber: '9841', TotalAmt: 3706.5, Balance: 3500 }];
+  const text = receivedText([item], { title: 't', records: [pay], linkedInvoices, now });
+  assert.match(text, /\*AL AHLIA KITCHEN\*\n🟢 3,500\.00  cleared 11\/11 \(drawer AL MALTA KITCHENS LLC\)\n     _↳ closed: inv-9679, inv-9738_\n     _↳ inv-9841: 206\.50 of 3,706\.50 paid_ \*3,500\.00 open\*/);
+  assert.doesNotMatch(text, /received 10\/11/); // dropped when the invoice lines are there
+  const one = receivedText([item], { title: 't', records: [{ ...pay, Line: [pay.Line[0]], TotalAmt: 3500 }], linkedInvoices, now });
+  assert.match(one, /cleared 11\/11 \(drawer AL MALTA KITCHENS LLC\)     inv-9679/); // one invoice: its number after the line
+});
