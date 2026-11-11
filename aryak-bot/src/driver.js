@@ -119,3 +119,36 @@ export function driverEveningLines(events, { day, timeZone = 'Asia/Dubai', alias
   if (d.strays.length) lines.push(`- Delivered with no matching dispatch: ${d.strays.map((s) => `${show(s.customer)} ${hhmm(s.at, timeZone)}`).join(', ')}`);
   return lines;
 }
+
+/** A request for the day's DELIVERY report («delivery report for the whole day?», «گزارش تحویل»), or, in the delivery group itself, «for the full day?» after it. */
+export function isDeliveryReportAsk(text, inDeliveryGroup = false) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (/\bdeliver\w*\s+report\b|\breport\s+(?:of|on|for)\s+(?:the\s+)?deliver|\btoday'?s\s+deliver|\bdeliveries\s+(?:of\s+|for\s+)?(?:today|the\s+day)\b|گزارش\s+تحویل/i.test(s)) return true;
+  return inDeliveryGroup && /^(?:and\s+)?(?:for\s+)?(?:the\s+)?(?:whole|full|entire)\s+day\b[^.]{0,20}$/i.test(s.replace(/[?!]+$/, ''));
+}
+
+/** The day's delivery report: our driver's dispatches with delivered times and what is not confirmed, the courier and client pickups with times, deliveries with no dispatch. */
+export function deliveryDayText(events, { now = Date.now(), timeZone = 'Asia/Dubai', aliasOf = () => '', display } = {}) {
+  const day = dayOf(now, timeZone);
+  const d = driverDay(events, { day, timeZone, aliasOf, display });
+  const [y, m, dd] = day.split('-');
+  if (!d.runs.length && !d.pickups.length && !d.strays.length) return `Delivery report — ${dd}/${m}\nNothing was dispatched or picked up today.`;
+  const lines = [`Delivery report — ${dd}/${m}`];
+  if (d.runs.length) {
+    lines.push('Our driver:');
+    for (const run of d.runs) {
+      const done = run.stops.filter((s) => s.deliveredAt).sort((a, b) => a.deliveredAt - b.deliveredAt); const left = run.stops.filter((s) => !s.deliveredAt);
+      lines.push(`- ${hhmm(run.at, timeZone)} dispatch, ${packages(sum(run.stops))}: ${done.length ? `delivered ${stopsList(done, timeZone)}` : 'nothing delivered yet'}${left.length ? `; NOT confirmed delivered: ${left.map((s) => show(s.customer)).join(', ')}` : ''}`);
+    }
+  } else lines.push('Our driver: nothing dispatched.');
+  if (d.pickups.length) lines.push(`Courier and client pickups: ${d.pickups.map((p) => `${show(p.customer)} (${p.by ? `${p.by.toUpperCase()} ` : ''}${hhmm(p.at, timeZone)})`).join(', ')}.`);
+  if (d.strays.length) lines.push(`Delivered with no matching dispatch: ${d.strays.map((s) => `${show(s.customer)} ${hhmm(s.at, timeZone)}`).join(', ')}.`);
+  return lines.join('\n');
+}
+
+/** «Yes this good», «thanks», «perfect»: a short thanks or approval that needs no report, only a short acknowledgement. */
+export function isAckText(text) {
+  const s = String(text || '').replace(/[.!?؟,،]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s || /[0-9#۰-۹]/.test(s) || s.split(' ').length > 6) return false;
+  return /\b(?:good|great|perfect|nice|thanks|thank\s+you|well\s+done|noted|got\s+it)\b|ممنون|مرسی|عالی|خوبه|دمت\s+گرم|دستت\s+درد/i.test(s);
+}

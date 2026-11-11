@@ -206,3 +206,27 @@ export function sharedPaymentList({ events, payments = [], aliasOf = () => '', t
   }
   return kept;
 }
+
+/**
+ * Several messages about ONE payment (a cheque photo, the bank credit, the cash line, a document read later) are one notice: the entries of [refs] are grouped by amount (an entry
+ * with no amount stands alone). For each group the entry to announce is the latest one whose customer [isKnown] (a QuickBooks customer), else the latest with a name; the other
+ * names are kept, so the notice can say both (the payer we invoice may differ from the drawer of the cheque).
+ */
+export function groupPaymentNotices(events, refs, { isKnown = () => false } = {}) {
+  const items = refs.map((r) => events.find((e) => e.type === 'payment' && e.ref === r)).filter(Boolean);
+  const groups = new Map();
+  for (const e of items) {
+    const k = Number(e.amount) > 0 ? 'a' + Math.round(Number(e.amount)) : 'r' + e.ref;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const how = (e) => (e.source === 'pdf' ? ' (document)' : e.kind === 'cheque' ? ' (cheque)' : e.kind === 'transfer' ? ' (bank credit)' : '');
+  return [...groups.values()].map((list) => {
+    const named = list.filter((e) => e.customer && !e.pendingName);
+    const known = named.filter((e) => isKnown(e.customer));
+    const pool = known.length ? known : named.length ? named : list;
+    const rep = pool[pool.length - 1];
+    const others = [...new Set(list.filter((e) => e !== rep && e.customer && !e.pendingName && e.customer !== rep.customer).map((e) => e.customer + how(e)))];
+    return { rep, others, refs: list.map((e) => e.ref) };
+  });
+}

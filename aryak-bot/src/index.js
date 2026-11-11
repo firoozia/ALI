@@ -47,7 +47,7 @@ import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups,
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
-import { driverEveningLines, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
+import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
 import { Tracker, balanceOf, settleCuts, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
@@ -69,7 +69,7 @@ import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
 import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
 import { unbilled, unbilledText } from './unbilled.js';
-import { PaymentDups, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
+import { PaymentDups, groupPaymentNotices, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
 import { GroupStatements, StatementPreviews, askLine, effectiveRequest, parseStyleReply, previewText, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
@@ -583,8 +583,30 @@ const clampRange = (r) => (r.from < config.monitorFrom ? { ...r, from: config.mo
 /** The owner is told what a new payment entry looks like (a proposal; nothing is recorded in QuickBooks). */
 function tellPayment(event) {
   if (replayCtx.getStore()?.quiet) return; // a message read from the history is never announced
-  if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf')) void paymentsReport(tracker.events, event.ref).then((text) => text && sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
+  if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf')) payPending.set(event.ref, { at: Date.now() }); // held a few minutes: the messages about one payment become ONE notice
 }
+
+// One notice per payment: an entry waits 3 minutes (8 while its amount is still unread), then the entries of one amount are announced together, once.
+const payPending = new Map(); // ref -> { at }
+const payNoticed = new Map(); // ref -> the amount announced
+async function flushPaymentNotices() {
+  if (!qbo.connected || qbo.paused || !payPending.size) return;
+  const due = [...payPending].filter(([ref, p]) => { const e = tracker.events.find((x) => x.ref === ref); return Date.now() - p.at >= (e && Number(e.amount) > 0 ? 3 : 8) * 60000; }).map(([ref]) => ref);
+  if (!due.length) return;
+  const known = new Set((qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean));
+  const isKnown = (n) => [...known].some((q) => sameStop(n, q, (x) => cutAliases.resolve(x)));
+  for (const g of groupPaymentNotices(tracker.events, due, { isKnown })) {
+    for (const r of g.refs) payPending.delete(r);
+    if (g.refs.every((r) => payNoticed.get(r) === Number(g.rep.amount || 0))) continue; // already announced with this amount
+    for (const r of g.refs) payNoticed.set(r, Number(g.rep.amount || 0));
+    try {
+      const body = await paymentsReport(tracker.events, g.rep.ref);
+      if (body) await sock.sendMessage(ownIds()[0], { text: '🤖 ' + body + (g.others.length ? '\nAlso read from the same payment: ' + g.others.join('; ') + '.' : '') });
+    } catch (e) { logger.warn('payment proposal failed: ' + e.message); }
+  }
+  if (payNoticed.size > 500) for (const k of [...payNoticed.keys()].slice(0, 200)) payNoticed.delete(k);
+}
+setInterval(() => { void flushPaymentNotices().catch((e) => logger.warn('payment notices failed: ' + e.message)); }, 30 * 1000).unref();
 
 /** A bank receipt, a cheque slip or a transfer advice posted as a PDF in the Confirmation group: one payment entry from its text. */
 async function trackPaymentPdf(raw, groupId) {
@@ -675,7 +697,7 @@ async function trackGroup(raw, groupId, role) {
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
       if (role === 'payment' && (Number(event.amount) > 0 || event.invoices?.length) && qbo.connected && !qbo.paused && !replayCtx.getStore()?.quiet) { // the owner is told which open invoices this payment looks like (a proposal; nothing is recorded)
-        void paymentsReport(tracker.events, event.ref).then((text) => text && sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` })).catch((e) => logger.warn(`payment proposal failed: ${e.message}`));
+        tellPayment(event);
       }
       if (role === 'delivery') {
         const findings = [...checkDelivery(tracker, event), ...checkCod(tracker, event)];
@@ -2131,6 +2153,16 @@ async function handleStaffChat(raw, chatId, group) {
     trace(where, role, 'the driver question, answered from the delivery posts');
     await reply(whereText(trackerOf(group?.test).events, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: await driverNamer() }));
     return true;
+  }
+  // «delivery report for the whole day» (and, in the delivery group, «for the full day?» after it): the day's DELIVERY report, not the goods-out sheet; a short thanks gets a short word.
+  if (text && !audio && !image && addressed && group) {
+    const inDelivery = (await trackedRole(chatId)) === 'delivery';
+    if (isDeliveryReportAsk(text, inDelivery)) {
+      trace(where, role, 'the delivery report of the day, from the delivery posts');
+      await reply(deliveryDayText(trackerOf(group?.test).events, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: await driverNamer() }));
+      return true;
+    }
+    if (inDelivery && isAckText(text)) { await reply('Noted.'); return true; }
   }
   // The pipeline commands of the owner: a hold on delivery until cash is confirmed, the balance of a customer, the open orders.
   if (admin && (!group || group.command)) {
