@@ -36,7 +36,7 @@ export function cutFindingText(findings, name = '') {
   const lines = [`⚠️ Cut does not match the invoice — ${first.customer}`];
   for (const f of findings.slice(0, 8)) {
     const what = f.kind === 'cut-over' ? 'cut is MORE than invoiced' : 'cut is LESS than invoiced';
-    lines.push(`- Invoice ${f.number || '?'}, code ${f.code}: invoiced ${f.invoiced} ${f.unit}, cut ${f.cut} ${f.unit} (${what})`);
+    lines.push(`- Invoice ${f.number || '?'}, code ${f.code}: invoiced ${f.invoiced} ${f.unit}, cut ${f.cut} ${f.unit} (${what})${f.source ? ` — cut counted from the ${f.source}` : ''}`);
   }
   if (findings.length > 8) lines.push(`- and ${findings.length - 8} more`);
   if (name) lines.push(`— ${name}`);

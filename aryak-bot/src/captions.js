@@ -35,6 +35,11 @@ export function parseCutCaption(text) {
   let pieces;
   let unit = 'm';
   let invoiceQuantity;
+  // WhatsApp text can lose the plus: «1510=25M» is 15+10=25M (a split of the digits whose parts add up to the total)
+  rest = rest.replace(/(?<![0-9.])(\d{2,8})\s*=\s*(INVOICED?\s*)?(\d+(?:\.\d+)?)(?![0-9])/i, (all, digits, inv, total) => {
+    for (let k = 1; k < digits.length; k++) { const a = digits.slice(0, k); const b = digits.slice(k); if (a[0] !== '0' && b[0] !== '0' && Number(a) + Number(b) === Number(total)) return a + '+' + b + '=' + (inv || '') + total; }
+    return all;
+  });
   const p = QTY_PIECES.exec(rest);
   const t = p ? null : QTY_TIMES.exec(rest);
   if (p) {

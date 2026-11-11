@@ -19,18 +19,23 @@ export function parseAvailabilityAsk(text) {
 }
 
 /** One code's answer from the sheet's result: { code, state: 'yes' | 'no' | 'part' | 'ambiguous', free } (the figures are for the manager only). */
-export function stateOf(code, result, quantity = 0) {
+export function stateOf(code, result, quantity = 0, remnantBelow = 10) {
   if (result?.ambiguous) return { code, state: 'ambiguous', free: 0, categories: result.categories || [] };
   if (!result?.found) return { code, state: 'no', free: 0 };
   const free = Number(result.free) || 0;
   if (free <= 0) return { code, state: 'no', free };
-  return { code, state: quantity > 0 && free < quantity ? 'part' : 'yes', free, unit: result.unit || 'm' };
+  const unit = result.unit || 'm';
+  if (quantity > 0 && free < quantity) return { code, state: 'part', free, unit };
+  // a tiny remnant is never «available»: the customer is told what is left and asked how many meters he needs
+  if (unit === 'm' && remnantBelow > 0 && free < remnantBelow) return { code, state: 'remnant', free, unit };
+  return { code, state: 'yes', free, unit };
 }
 
 /** The draft for the customer: no figures. An ambiguous code is left to the manager. */
 export function draftText(states, quantity = 0) {
   const yes = states.filter((x) => x.state === 'yes'); const no = states.filter((x) => x.state === 'no' || x.state === 'part');
   const lines = [];
+  for (const x of states.filter((y) => y.state === 'remnant')) lines.push(`Only ${x.free} m left of code ${x.code} (remnant). How many meters do you need?`);
   if (yes.length) lines.push(`Yes, ${yes.length === 1 ? 'code' : 'codes'} ${yes.map((x) => x.code).join(', ')} ${yes.length === 1 ? 'is' : 'are'} available.${quantity > 0 ? '' : ' How many meters do you need?'}`);
   if (no.length) lines.push(`Sorry, ${no.length === 1 ? 'code' : 'codes'} ${no.map((x) => x.code).join(', ')} ${no.length === 1 ? 'is' : 'are'} not available at the moment.`);
   return lines.join('\n');
@@ -38,7 +43,7 @@ export function draftText(states, quantity = 0) {
 
 /** What the manager reads: who asked, what, the draft, and the real figures. */
 export function managerText({ id, subject, asked, states, draft, simulated }) {
-  const figures = states.map((x) => `${x.code}: ${x.state === 'ambiguous' ? `in more than one group: ${(x.categories || []).join(', ')}` : x.state === 'no' ? 'not available' : `free ${x.free} ${x.unit || 'm'}${x.state === 'part' ? ' (less than asked)' : ''}`}`).join('; ');
+  const figures = states.map((x) => `${x.code}: ${x.state === 'ambiguous' ? `in more than one group: ${(x.categories || []).join(', ')}` : x.state === 'no' ? 'not available' : `free ${x.free} ${x.unit || 'm'}${x.state === 'part' ? ' (less than asked)' : x.state === 'remnant' ? ' (a remnant: the draft says what is left, not available)' : ''}`}`).join('; ');
   return [
     `${simulated ? 'SIMULATION: ' : ''}Customer group "${subject}" asks: "${asked}"`,
     `Sheet: ${figures}`,

@@ -76,6 +76,23 @@ export function rangeOf(kind, today) {
   return { from: today, to, label: dmy(today) };
 }
 
+/**
+ * A question to Atossa in the expenses group: her name alone, or her name with «expenses» and a word of asking («check all expenses in this group», «show the expenses of the week»).
+ * Returns the period asked ('today' | 'week' | 'month' | 'all') or null when it is not such a question.
+ */
+export function expenseAsk(text) {
+  const s = String(text || '').replace(/[?!.,؟،]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const named = /(?:^|[^a-z])(?:atossa|atosa|atousa|atoosa)(?![a-z])|آتوسا|اتوسا/i.test(s);
+  if (!named) return null;
+  const rest = s.replace(/(?:^|[^a-z])(?:atossa|atosa|atousa|atoosa)(?![a-z])|آتوسا|اتوسا/gi, ' ').trim();
+  if (!rest) return 'today'; // only her name: the day's list
+  if (!/(?:expenses?|هزینه)/i.test(rest) || !/(?:check|show|list|report|summary|total|what|how much|all|every|بررسی|نشان|لیست|گزارش|مجموع|همه|کل)/i.test(rest)) return null;
+  if (/(?:^|[^a-z])(?:month|monthly)(?![a-z])|ماه/i.test(rest)) return 'month';
+  if (/(?:^|[^a-z])(?:week|weekly)(?![a-z])|هفته/i.test(rest)) return 'week';
+  if (/(?:^|[^a-z])(?:all|every|everything|whole)(?![a-z])|همه|کل/i.test(rest)) return 'all';
+  return 'today';
+}
+
 /** The stored expenses: a file on the server (never in the repository). */
 export class ExpenseStore {
   constructor(dir = '', now = () => Date.now()) {
@@ -85,6 +102,13 @@ export class ExpenseStore {
   }
   save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
   add(entry) { this.d.n += 1; const e = { id: `E${this.d.n}`, at: this.now(), ...entry }; this.d.items.push(e); if (this.d.items.length > 3000) this.d.items.shift(); this.save(); return e; }
+  /** A one-time correction of the stored data (named, done once): these ids were made in the TEST group before test data was kept apart. */
+  markTestOnce(name, ids) {
+    this.d.migrations = this.d.migrations || {};
+    if (this.d.migrations[name]) return 0;
+    let n = 0; for (const id of ids) { const e = this.get(id); if (e && !e.test) { e.test = true; n += 1; } }
+    this.d.migrations[name] = Date.now(); this.save(); return n;
+  }
   get(id) { return this.d.items.find((e) => e.id === String(id || '').toUpperCase()) || null; }
   /** The open entries of a person (not saved, not cancelled), newest last. */
   openFor(by) { return this.d.items.filter((e) => e.by === by && !['done', 'cancelled'].includes(e.state) && this.now() - e.at < 24 * 3600 * 1000); }

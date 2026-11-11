@@ -48,7 +48,7 @@ import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { driverEveningLines, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
-import { Tracker, balanceOf, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
+import { Tracker, balanceOf, settleCuts, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
 import { formatDetails, formatReport, parseDay, reportFailed, reportInvalidDate, todayLine } from './report.js';
 import { formatStaffStock, separateStockAnswers } from './stock-format.js';
@@ -80,7 +80,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
+import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, weeklyCheckText } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -526,7 +526,7 @@ async function sheetDay(day) {
   }
   const dayStart = Date.parse(`${day}T00:00:00Z`) - 14 * 3600000;
   const cuts = tracker.events.filter((e) => e.type === 'cut' && e.at >= dayStart && e.at < dayStart + 38 * 3600000 && localParts(e.at, config.timezone).day === day);
-  return reconcileSheet({ cuts, rows, tol: config.cutToleranceMetres, match: sheetMatch });
+  return reconcileSheet({ cuts: settleCuts(cuts), rows, tol: config.cutToleranceMetres, match: sheetMatch });
 }
 
 async function sheetCheck(now = Date.now()) {
@@ -817,7 +817,7 @@ async function customerAsksAvailability({ messageId, groupId, subject, text, sim
   if (!ask || asked.has(messageId)) return false;
   asked.add(messageId); if (asked.size > 300) asked.delete(asked.values().next().value);
   const states = [];
-  for (const code of ask.codes) { try { states.push(stateOf(code, await fetchStock(config, { code }), ask.quantity)); } catch (e) { logger.warn(`availability draft: the sheet did not answer for ${code}: ${e.message}`); return false; } }
+  for (const code of ask.codes) { try { states.push(stateOf(code, await fetchStock(config, { code }), ask.quantity, config.remnantMeters)); } catch (e) { logger.warn(`availability draft: the sheet did not answer for ${code}: ${e.message}`); return false; } }
   const draft = states.some((x) => x.state === 'ambiguous') ? '' : draftText(states, ask.quantity);
   const id = draft ? availDrafts.add({ groupId, subject, draft, simulated }) : '';
   const managerDigits = jidDigits(config.salesManager);
@@ -2856,6 +2856,7 @@ async function runBackfill(p) {
 // ---------------------------------------------------------------------------------------------------------------- company expenses
 // A receipt photo with the amount as its caption in the EXPENSES group (see expenses.js). Kept on the server; read only towards QuickBooks (it is only compared with what the office recorded).
 const expenseStore = new ExpenseStore(path.join(config.authDir, 'expenses'));
+expenseStore.markTestOnce('test-group-before-separation-2026-11-11', ['E1']); // E1 was made in the TEST group before test data was kept apart: never in a real report
 if (expenseStore.d.group?.subject && !config.expensesGroupNames.includes(String(expenseStore.d.group.subject).toLowerCase())) config.expensesGroupNames.push(String(expenseStore.d.group.subject).toLowerCase());
 const isExpensesSubject = (subject) => config.expensesGroupNames.some((w) => String(subject || '').toLowerCase().includes(w));
 const expensesGroupJid = async () => expenseStore.d.group?.id || (config.expensesGroupNames[0] ? findGroupJid(config.expensesGroupNames[0]) : null);
@@ -2909,6 +2910,13 @@ async function expensesTurn(raw, groupId, info) {
   if (!text) return false;
   const done = handleReply(expenseStore, by, parseExpenseReply(text), config.timezone);
   if (done) { await say(done.text); return true; }
+  const asked = expenseAsk(text); // «Atossa check all expenses in this group» / only her name: the list, in the group
+  if (asked) {
+    const today = todayDubai();
+    const r = asked === 'all' ? { from: config.monitorFrom, to: today, label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(today) } : rangeOf(asked, today);
+    await say(expensesText(expenseStore.done(r), r.label));
+    return true;
+  }
   const cap = parseExpenseCaption(text);
   if (cap.amount && /^[\s\d.,]+(?:aed|dhs?|درهم)?\s*[\p{L}]{0,12}\s*$/iu.test(normalizeDigits(text))) { // only an amount (and a type word): an expense with no receipt
     await say(entryText(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData }))));
@@ -2917,6 +2925,7 @@ async function expensesTurn(raw, groupId, info) {
   return false;
 }
 
+const dayLabel = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
 const dayPlus = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 /** The QuickBooks rows of an entity in a period (read only; a failed look-up gives none). */
 const qbRows = async (entity, from, to) => qbo.query(`select * from ${entity} where TxnDate >= '${from}' and TxnDate <= '${to}'`).then((rows) => rows.map((r) => ({ ...r, _type: entity }))).catch((e) => { logger.warn(`expenses: the QuickBooks ${entity} look-up failed: ${e.message}`); return []; });

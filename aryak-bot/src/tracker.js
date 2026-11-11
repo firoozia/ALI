@@ -157,7 +157,33 @@ export async function extractEvent({ client, config, role, caption = '', images 
 
 // ---- comparing the steps -------------------------------------------------------------------------------------------------
 
-const sumByCode = (events) => {
+/**
+ * The cut posts as they really count: a post repeated within ten minutes (same customer, same lines) is ONE cut; a post that gives its parts and their total («15+10=25M»)
+ * already includes the earlier same-day post of the same customer and code that equals one of its parts (the 10 is not added again).
+ */
+export function settleCuts(events) {
+  const day = (ms) => Math.floor((ms + 4 * 3600000) / DAY);
+  const sign = (e) => (e.lines || []).map((l) => `${normCode(l.code)}|${l.quantity}|${normUnit(l.unit) || 'm'}`).join(';');
+  const cuts = events.filter((e) => e.type === 'cut' && !e.internal && (e.lines || []).length).sort((a, b) => a.at - b.at);
+  const drop = new Set();
+  for (let i = 0; i < cuts.length; i++) for (let j = i + 1; j < cuts.length; j++) {
+    if (drop.has(cuts[i]) || drop.has(cuts[j])) continue;
+    if (cuts[j].at - cuts[i].at <= 10 * 60000 && sign(cuts[i]) === sign(cuts[j]) && sameCustomer(cuts[i].customer, cuts[j].customer)) drop.add(cuts[j]);
+  }
+  for (const e of cuts) {
+    if (drop.has(e) || !(e.pieces?.length > 1) || e.lines.length !== 1) continue;
+    const mine = e.lines[0]; const spent = new Set();
+    for (const part of e.pieces) {
+      const earlier = cuts.find((k) => k !== e && !drop.has(k) && !spent.has(k) && k.at < e.at && day(k.at) === day(e.at) && k.lines.length === 1 && !(k.pieces?.length > 1)
+        && normCode(k.lines[0].code) === normCode(mine.code) && normUnit(k.lines[0].unit) === normUnit(mine.unit) && Math.abs(Number(k.lines[0].quantity) - part) < 1e-6 && sameCustomer(k.customer, e.customer));
+      if (earlier) { spent.add(earlier); drop.add(earlier); }
+    }
+  }
+  return events.filter((e) => !drop.has(e));
+}
+
+const sumByCode = (all) => {
+  const events = settleCuts(all);
   const m = new Map();
   for (const e of events) for (const l of e.internal ? [] : e.lines || []) { // an opened roll or a damaged piece is not a sale
     if (!l.code || !l.quantity) continue;
@@ -255,7 +281,7 @@ export function checkInvoiceAgainstOrders(tracker, inv, { windowDays = 45, expla
  *  - no cut at all, or a cut with no invoice, is never a finding (not every cut is photographed): see cutDigest.
  * Each finding has a [key] so it is said once. Internal rolls ("FOR CUT") and damage notes are not cuts.
  */
-export function reconcileCuts(tracker, customer, { now = Date.now(), windowDays = 10, shortDays = 3, graceDays = 3, tol = 0.5 } = {}) {
+export function reconcileCuts(tracker, customer, { now = Date.now(), windowDays = 10, shortDays = 3, graceDays = 3, tol = 0.5, newCutDays = 3 } = {}) {
   const invoices = tracker.of('invoice', customer, { since: now - windowDays * DAY }).filter((e) => (e.lines || []).some((l) => l.code && l.quantity));
   if (!invoices.length) return [];
   const first = Math.min(...invoices.map((i) => i.at));
@@ -270,10 +296,15 @@ export function reconcileCuts(tracker, customer, { now = Date.now(), windowDays 
   const out = [];
   for (const [key, want] of invoiced) {
     const [code, unit] = key.split('|');
-    const got = scanned.has(key) ? scanned.get(key) : cut.get(key) || 0;
-    const slack = tol * Math.max(1, scans.get(key) || 1);
     const last = [...invoices].reverse().find((i) => (i.lines || []).some((l) => normCode(l.code) === code));
-    const base = { customer: last.customer || customer, number: last.number || '', code, unit, invoiced: round2(want), cut: round2(got) };
+    // a cut made well AFTER the invoice (more than [newCutDays] days: a new order of the same code) is a new cut with no invoice yet, never a mismatch on this old invoice
+    const limit = last.at + newCutDays * DAY;
+    const cutNow = sumByCode(cuts.filter((e) => e.at <= limit)).get(key) || 0;
+    const scannedNow = sumByCode(outs.filter((o) => o.at <= limit).map((o) => ({ lines: [{ code: o.code, quantity: o.qty, unit: o.unit }] }))).get(key);
+    const useScan = scannedNow !== undefined;
+    const got = useScan ? scannedNow : cutNow;
+    const slack = tol * Math.max(1, scans.get(key) || 1);
+    const base = { customer: last.customer || customer, number: last.number || '', code, unit, invoiced: round2(want), cut: round2(got), source: useScan ? 'warehouse sheet scans' : 'orders group posts' };
     if (got > want + slack) out.push({ ...base, kind: 'cut-over', key: `cutrec|${last.ref || last.number}|${code}|over|${round2(got)}` });
     else if (got > 0 && got < want - slack && now - last.at >= shortDays * DAY && tracker.startedAt && now - tracker.startedAt >= graceDays * DAY) {
       out.push({ ...base, kind: 'cut-short', key: `cutrec|${last.ref || last.number}|${code}|short|${round2(got)}` });
