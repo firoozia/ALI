@@ -49,7 +49,22 @@ export function managerText({ id, subject, asked, states, draft, simulated }) {
 
 export class AvailabilityDrafts {
   constructor({ now = () => Date.now(), ttlMs = 30 * 60 * 1000 } = {}) { Object.assign(this, { now, ttlMs }); this.map = new Map(); this.n = 0; }
-  add({ groupId, subject, draft, simulated = false }) { this.n += 1; const id = `V${this.n}`; this.map.set(id, { id, groupId, subject, draft, simulated, at: this.now() }); return id; }
+  add({ groupId, subject, draft, simulated = false, codes = [], messageId = '' }) { this.n += 1; const id = `V${this.n}`; this.map.set(id, { id, groupId, subject, draft, simulated, codes, messageId, at: this.now() }); return id; }
+  /**
+   * A colleague or the owner answered in the customer group himself: the waiting drafts of that group whose question this answers are dropped and returned. An answer is a reply to the
+   * customer's message, or a text sent after the question that names one of its codes or says yes / no / available. [quotedId]: the message the answer quotes.
+   */
+  dropAnswered({ groupId, text, quotedId = '' }) {
+    const dropped = [];
+    for (const id of this.openIds()) {
+      const d = this.get(id);
+      if (!d || d.simulated || d.groupId !== groupId) continue;
+      const names = (d.codes || []).some((k) => new RegExp('(?<![0-9A-Za-z])' + String(k).replace(/[^0-9A-Za-z]/g, '') + '(?![0-9A-Za-z])', 'i').test(String(text || '')));
+      const says = /(?:\b(?:yes|no|available|unavailable|not\s+available|ok|okay|sure|have|don'?t\s+have)\b|موجود|ندار|دار[یم]|بله|نه\b|آره|اره)/i.test(String(text || ''));
+      if ((quotedId && d.messageId && quotedId === d.messageId) || names || says) { this.clear(id); dropped.push(d); }
+    }
+    return dropped;
+  }
   get(id) { const d = this.map.get(String(id).toUpperCase()); if (!d) return null; if (this.now() - d.at > this.ttlMs) { this.map.delete(d.id); return null; } return d; }
   openIds() { return [...this.map.keys()].filter((id) => this.get(id)); }
   clear(id) { this.map.delete(String(id).toUpperCase()); }

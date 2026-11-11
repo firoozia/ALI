@@ -847,7 +847,7 @@ async function customerAsksAvailability({ messageId, groupId, subject, text, sim
   const states = [];
   for (const code of ask.codes) { try { states.push(stateOf(code, await fetchStock(config, { code }), ask.quantity)); } catch (e) { logger.warn(`availability draft: the sheet did not answer for ${code}: ${e.message}`); return false; } }
   const draft = states.some((x) => x.state === 'ambiguous') ? '' : draftText(states, ask.quantity);
-  const id = draft ? availDrafts.add({ groupId, subject, draft, simulated }) : '';
+  const id = draft ? availDrafts.add({ groupId, subject, draft, simulated, codes: ask.codes, messageId }) : '';
   const managerDigits = jidDigits(config.salesManager);
   const to = !simulated && managerDigits ? `${managerDigits}@s.whatsapp.net` : ownIds()[0];
   logger.info(`availability draft ${id || '(none)'} for "${subject}" sent privately to ${simulated ? 'the owner (simulation)' : managerDigits ? 'the sales manager' : 'the owner'}`);
@@ -3175,6 +3175,18 @@ async function onMessage(raw) {
   const watchedInfo = await groupInfo(groupId);
   // The owner's statement request in a CUSTOMER group (not an internal one): asked in his own chat, sent to the group only after his yes.
   if (!groupAllowed(watchedInfo.subject, config).ok && await customerGroupStatement({ raw, groupId, info: watchedInfo }).catch((e) => { logger.warn(`customer-group statement: ${e.message}`); return false; })) return;
+  if (!groupAllowed(watchedInfo.subject, config).ok && availDrafts.openIds().length) { // a colleague or the owner answers the question in the customer group himself: the waiting draft is dropped, the owner told once
+    const said = textOf(normalizeMessageContent(raw.message)) || '';
+    const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+    const staffSaid = raw.key.fromMe || staffChecker([...config.staffNumbers, ...config.adminNumbers, ...config.ownerNumbers], lids(watchedInfo.lidToPhone))(who) === true;
+    if (said && staffSaid && !replayCtx.getStore()?.quiet) {
+      const quotedId = (normalizeMessageContent(raw.message)?.extendedTextMessage?.contextInfo || {}).stanzaId || '';
+      for (const d of availDrafts.dropAnswered({ groupId, text: said, quotedId })) {
+        const name = raw.key.fromMe ? 'the owner' : (raw.pushName || 'a colleague');
+        void sock.sendMessage(ownIds()[0], { text: '🤖 #' + d.id + ' dropped: answered in the group by ' + name }).catch((e) => logger.warn('draft drop note failed: ' + e.message));
+      }
+    }
+  }
   if (!groupAllowed(watchedInfo.subject, config).ok && !raw.key.fromMe) { // a customer's «209 available?» in his own group: a private draft for the sales manager; the group itself is never written to by this
     const customerText = textOf(normalizeMessageContent(raw.message)) || '';
     const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
