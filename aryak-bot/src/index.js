@@ -48,6 +48,7 @@ import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
 import { qboNameFor } from './qboname.js';
+import { officeNote, parseOfficeRequest } from './officerequest.js';
 import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
 import { Tracker, balanceOf, settleCuts, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
@@ -834,6 +835,7 @@ setTimeout(() => { if (qbo.connected && !qbo.paused) void migrateStoredPayments(
 const availDrafts = new AvailabilityDrafts();
 const OWNER_CHAT_COMMANDS = new Set(['unbilled', 'payments', 'backfill', 'read_photos', 'expense_delete', 'cancel_all', 'queue_list', 'received_check', 'sheet_names', 'sheet_name_set', 'sheet_name_set_many', 'sheet_names_undo', 'expenses_report', 'received_report', 'weekly_check', 'payment_dup', 'alias_propose', 'alias_drop', 'stock_diff', 'tax_inclusive', 'tax_inclusive_undo', 'persian_list', 'persian_set', 'compare', 'dry_run', 'cost_report', 'audit', 'auth_list', 'details']);
 const asked = new Set(); // customer messages already answered with a draft
+const officeAsked = new Set(); // customer messages already surfaced to the owner as an invoice request or an order
 /**
  * A customer asks «209 available?» in his own group (or the owner simulates it in the test group): the answer is DRAFTED from the ZINAX sheet and sent PRIVATELY to the sales
  * manager (the owner when there is none, and always in a simulation). Nothing is said in the customer group until the manager's «yes #V1».
@@ -3178,6 +3180,11 @@ async function onMessage(raw) {
     const sender = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
     if (customerText && staffChecker([...config.staffNumbers, ...config.adminNumbers, ...config.ownerNumbers], lids(watchedInfo.lidToPhone))(sender) !== true) {
       void customerAsksAvailability({ messageId: raw.key.id, groupId, subject: watchedInfo.subject, text: customerText }).catch((e) => logger.warn(`availability draft failed: ${e.message}`));
+      const need = parseOfficeRequest(customerText); // «send the invoice», «we need 505 30 mtr»: surfaced ONCE to the owner's own chat; the customer group is never written to
+      if (need && !officeAsked.has(raw.key.id) && !replayCtx.getStore()?.quiet) {
+        officeAsked.add(raw.key.id); if (officeAsked.size > 300) officeAsked.delete(officeAsked.values().next().value);
+        void sock.sendMessage(ownIds()[0], { text: '🤖 ' + officeNote(watchedInfo.subject, customerText, need) }).catch((e) => logger.warn('office request note failed: ' + e.message));
+      }
     }
   }
   // A SHADOW group: the real customer flow runs on it and its answers become cards in the test group; nothing is ever sent to it.
