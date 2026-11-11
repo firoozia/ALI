@@ -73,6 +73,8 @@ export function parseInvoiceCommand(text) {
     const W = 'بله|اره|آره|اوکی|نه|خیر|yes|no|ok|okay';
     const isYes = (w) => /^(?:بله|اره|آره|اوکی|yes|ok|okay)$/iu.test(w);
     if ((m = new RegExp(String.raw`^(${W})$`, 'iu').exec(s))) return { type: isYes(m[1]) ? 'yes' : 'no', id: '' };
+    // the number alone («yes #36», «yes 36», «36 yes»): the desk looks for the ONE waiting item with that number; no letter is needed
+    if ((m = new RegExp(String.raw`^(?:(${W})\s*#?\s*(\d{1,4})|#?\s*(\d{1,4})\s*#?\s*(${W}))$`, 'iu').exec(s))) { const word = m[1] || m[4]; return { type: isYes(word) ? 'yes' : 'no', id: m[2] || m[3] }; }
     if ((m = new RegExp(String.raw`^(?:(${W})\s*)?#?\s*([QNEMTPCUDRFSIJKLAVBH])\s*(\d+)\s*#?(?:\s*(${W}))?$`, 'iu').exec(s)) && (m[1] || m[4]) && !(m[1] && m[4])) return { type: isYes(m[1] || m[4]) ? 'yes' : 'no', id: `${m[2].toUpperCase()}${m[3]}` };
   }
   // the owner's bulk QuickBooks jobs (see qbobulk.js)

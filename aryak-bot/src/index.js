@@ -1045,6 +1045,13 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'price_start': return qboBulk.planPrices();
     case 'request': case 'request_partial': { const r = await qboInvoices.request({ text, requester: 'owner', origin: here.chatId ? { jid: here.chatId } : null }); return [r.owner || r.requester]; }
     case 'yes': case 'no': {
+      if (/^[0-9]+$/.test(ic.id || '')) { // «yes #36»: the number alone fits the ONE waiting item with it; several or none is said, never silence
+        const ids = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...(pendingBackfill ? [pendingBackfill.id] : [])];
+        const hits = ids.filter((x) => x.replace(/^[A-Za-z]+/, '') === ic.id);
+        const word = ic.type === 'yes' ? 'yes' : 'no';
+        if (hits.length !== 1) return [hits.length ? 'Several items wait under the number ' + ic.id + ': ' + hits.map((h) => '#' + h).join(', ') + '. Nothing was done. Reply with the full code, for example: ' + word + ' #' + hits[0] : 'Nothing is waiting under the number ' + ic.id + '. Nothing was done. Say "waiting" to see what is open.'];
+        ic = { ...ic, id: hits[0] };
+      }
       let id = ic.id; let said = '';
       if (!id) { // a bare yes or no: it counts only when exactly ONE preview is open (any kind); none: it is not ours; several: they are listed and nothing is done
         const open = [...qboInvoices.openIds(), ...qboNames.openIds(), ...qboBulk.openIds(), ...groupStatements.openIds(), ...cutAliases.openIds(), ...availDrafts.openIds(), ...(pendingSheetNames ? [pendingSheetNames.id] : []), ...(pendingBackfill ? [pendingBackfill.id] : [])];
@@ -1380,7 +1387,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
       } else await sayIn(raw, chatId, where, 'Owner command: use your own chat.');
       return true;
     }
-    if (dec && (dec.type === 'yes' || dec.type === 'no') && /^[QSA]\d+$/.test(dec.id || '')) {
+    if (dec && (dec.type === 'yes' || dec.type === 'no') && /^(?:[QSA][0-9]+|[0-9]+)$/.test(dec.id || '')) {
       trace(where, role, `the owner's ${dec.type} for #${dec.id} typed in an internal group`);
       for (const part of (await qboInvoiceCommand(dec, text, { chatId })) || []) await sayIn(raw, chatId, where, part);
       return true;

@@ -88,7 +88,7 @@ test('a bare yes: any case, ok, Persian words; with a full code it always names 
   assert.deepEqual(parseInvoiceCommand('YES #Q12'), { type: 'yes', id: 'Q12' }); assert.deepEqual(parseInvoiceCommand('ok #S3'), { type: 'yes', id: 'S3' }); assert.deepEqual(parseInvoiceCommand('no #N1'), { type: 'no', id: 'N1' });
   assert.equal(parseInvoiceCommand('yes please'), null); // a sentence is not an answer
   const at = src.indexOf("case 'yes': case 'no': {");
-  const block = src.slice(at, at + 1700);
+  const block = src.slice(at, at + 3000);
   assert.match(block, /\.\.\.qboInvoices\.openIds\(\), \.\.\.qboNames\.openIds\(\), \.\.\.qboBulk\.openIds\(\), \.\.\.groupStatements\.openIds\(\)/); // previews of every kind
   assert.match(block, /if \(!open\.length\) return null;/); // none waiting: not ours
   assert.match(block, /previews are waiting: .*Nothing was done\. Reply with the full code, for example: /); // several: listed, nothing done
