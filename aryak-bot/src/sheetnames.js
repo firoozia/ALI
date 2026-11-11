@@ -7,7 +7,7 @@ import { askSheet } from './stock.js';
 import { sameCutCustomer } from './cuts.js';
 import { looseKey } from './namekey.js';
 import { sameBrandForm } from './expenses.js';
-import { brandWords, nearWord } from './cutaliases.js';
+import { nearBrand } from './qboname.js';
 import { SEP } from './separator.js';
 
 const BATCH = 100; // cells per request (the sheet's own limit is 200)
@@ -20,8 +20,6 @@ export function findQboName(qboNames, typed) {
   return qboNames.find((n) => n === typed) || qboNames.find((n) => squeeze(n) === t) || '';
 }
 
-/** One letter more or less in each brand word, in order (AHALIA / AHLIA): a weaker match, used only when nothing stronger fits. */
-const nearBrand = (a, b) => { const x = brandWords(a); const y = brandWords(b); return x.length > 0 && x.length === y.length && x.every((w, i) => nearWord(w, y[i])); };
 const day = (ms) => new Date(ms + 4 * 3600 * 1000).toISOString().slice(0, 10);
 
 /** The sheet's names as [{ tab, column, name, rows }] and the QuickBooks names as [string] -> { same, rename, unclear } (the cells of a rename are kept for the apply). */

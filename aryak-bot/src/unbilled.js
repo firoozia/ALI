@@ -4,6 +4,7 @@
 
 import { withEnd, withSeparators } from './separator.js';
 import { sameCutCustomer } from './cuts.js';
+import { qboNameFor } from './qboname.js';
 
 const DAY = 24 * 3600 * 1000;
 const dm = (ms, timeZone) => { const [, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)).split('-'); return `${d}/${m}`; };
@@ -13,7 +14,7 @@ const digits = (c) => (String(c || '').match(/\d{2,5}/g) || []).join('-');
  * [events]: the tracker's events. [invoices]: QuickBooks invoice records of the last weeks (Line, TxnDate, CustomerRef.name). [itemCodes](itemId) -> the codes of an item.
  * [aliasOf](name) -> the QuickBooks name an approved alias stands for. Returns { groups: [{ customer, parts: ['303 6.4m 08/11', …] }], customers }.
  */
-export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () => '', now = Date.now(), days = 30, timeZone = 'Asia/Dubai' }) {
+export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () => '', qboNames = [], now = Date.now(), days = 30, timeZone = 'Asia/Dubai' }) {
   const lines = [];
   for (const inv of invoices) {
     const at = Date.parse(`${inv.TxnDate}T00:00:00Z`) || 0;
@@ -22,10 +23,12 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
       lines.push({ customer: inv.CustomerRef?.name || '', codes: itemCodes(l.SalesItemLineDetail?.ItemRef?.value, l.SalesItemLineDetail?.ItemRef?.name), at });
     }
   }
-  const same = (post, qboName) => sameCutCustomer(post, qboName) || (!!aliasOf(post) && sameCutCustomer(aliasOf(post), qboName));
+  const nameOf = (post) => qboNameFor(post, qboNames, aliasOf) || aliasOf(post) || post; // every posted spelling of a customer is its QuickBooks name
+  const same = (post, qboName) => nameOf(post) === qboName || sameCutCustomer(post, qboName) || (!!aliasOf(post) && sameCutCustomer(aliasOf(post), qboName));
   const invoicesOf = (post) => lines.filter((x) => same(post, x.customer));
   const byCustomer = new Map();
-  const add = (customer, text) => { const name = aliasOf(customer) || customer; byCustomer.set(name, [...(byCustomer.get(name) || []), text]); }; // an approved alias merges the two spellings into the QuickBooks name
+  const trace = [];
+  const add = (customer, text, ref = '', post = '') => { const name = nameOf(customer); byCustomer.set(name, [...(byCustomer.get(name) || []), text]); trace.push(`unbilled: "${name}" <- "${post || customer}": ${text}${ref ? ` (post ${String(ref).slice(0, 8)})` : ''}`); }; // one QuickBooks name for the spellings of one customer name
   for (const e of events) {
     if (e.at < now - days * DAY || e.internal || e.simulated) continue;
     const post = e.customerTyped || e.customer;
@@ -36,14 +39,14 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
         if (!(Number(l.quantity) > 0) || l.invoiced) continue; // an invoice the program itself recorded takes the cut
         const k = digits(l.code);
         const covered = his.some((x) => x.at >= e.at - DAY && x.codes.some((c) => digits(c) === k));
-        if (!covered) add(e.customer || post, `${String(l.code).replace(/^ART\.?\s*NO\.?\s*/i, '')} ${Number(l.invoiceQuantity) > 0 ? l.invoiceQuantity : l.quantity}${l.unit === 'roll' ? ' roll' : 'm'} ${dm(e.at, timeZone)}`);
+        if (!covered) add(e.customer || post, `${String(l.code).replace(/^ART\.?\s*NO\.?\s*/i, '')} ${Number(l.invoiceQuantity) > 0 ? l.invoiceQuantity : l.quantity}${l.unit === 'roll' ? ' roll' : 'm'} ${dm(e.at, timeZone)}`, e.ref, post);
       }
     } else if (e.type === 'delivery' && e.delivered) {
-      if (!his.some((x) => x.at >= e.at - DAY)) add(e.customer || post, `delivered ${dm(e.at, timeZone)}, no invoice since`);
+      if (!his.some((x) => x.at >= e.at - DAY)) add(e.customer || post, `delivered ${dm(e.at, timeZone)}, no invoice since`, e.ref, post);
     }
   }
   const groups = [...byCustomer].map(([customer, parts]) => ({ customer, parts: [...new Set(parts)] })).sort((a, b) => b.parts.length - a.parts.length || a.customer.localeCompare(b.customer));
-  return { groups, customers: groups.length };
+  return { groups, customers: groups.length, trace };
 }
 
 /** The short text: at most [max] lines, then «+N more»; a clean day says so in one line. */

@@ -47,6 +47,7 @@ import { MorningStore, morningDue, parseMorningCommand, runMorning, matchGroups,
 import { customerFromMessages, productCode } from './codes.js';
 import { orderLinesOf, parseCustomerText } from './orderlines.js';
 import { Experience, describeCandidate, importPatterns, formatStatus, learnedReport, parseLearnCommand, reportDue } from './experience.js';
+import { qboNameFor } from './qboname.js';
 import { deliveryDayText, driverEveningLines, isAckText, isDeliveryReportAsk, isDriverQuestion, runDoneLine, sameStop, whereText } from './driver.js';
 import { Tracker, balanceOf, settleCuts, checkCod, checkDelivery, checkInvoiceAgainstOrders, isDuplicatePayment, customersWithOpenInvoices, cutDigest, reconcileCuts, checkInvoiceAgainstCuts, dueNags, extractEvent, formatBalance, markCleared, openOrders, parseTrackerCommand, statementsDue } from './tracker.js';
 import { buildDigest, digestDue, isOrderStatusCommand, orderStatusText, readLastDigest, writeLastDigest } from './digest.js';
@@ -797,7 +798,10 @@ async function unbilledReport(events = tracker.events) {
   const since = new Date(Date.now() - 40 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const invoices = await qbo.query(`select * from Invoice where TxnDate >= '${since}'`);
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), [String(it.Sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(it.Name || '').replace(/^.*?(\d{3,5})$/, '$1')]]));
-  return unbilledText(unbilled({ events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone }));
+  const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
+  const result = unbilled({ events, invoices, itemCodes: (id, name) => [...(items.get(String(id)) || []), String(name || '')], aliasOf: (n) => cutAliases.resolve(n), qboNames, timeZone: config.timezone });
+  for (const l of result.trace || []) logger.info(l); // what each line came from: the post name, the QuickBooks name it was grouped under, the post
+  return unbilledText(result);
 }
 
 /** Payments seen in the Confirmation group against the customers' OPEN invoices: a proposal only, read only; nothing is recorded in QuickBooks. */
@@ -2971,11 +2975,7 @@ async function invoiceLookupFor(events) {
 const expensesReportText = (kind) => { const r = rangeOf(kind, todayDubai()); return expensesText(expenseStore.done(r), r.label); };
 /** A name as QuickBooks writes it (an old alias may still give a longer one): the exact QuickBooks name when the post's name fits exactly one customer there, else the name as posted. */
 function namerOver(names) {
-  return (n) => {
-    const exact = findQboName(names, n); if (exact) return exact;
-    const hit = names.filter((q) => sameStop(n, q, (x) => cutAliases.resolve(x)));
-    return hit.length === 1 ? hit[0] : n;
-  };
+  return (n) => qboNameFor(n, names, (x) => cutAliases.resolve(x)) || n;
 }
 const driverNamerNow = () => namerOver((qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean)); // the list already read (the evening report is not a place to call QuickBooks)
 async function driverNamer() {
