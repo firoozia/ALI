@@ -95,8 +95,8 @@ test('money received, private to the owner: cash, cheques, bank transfers, each 
   const items = receivedItems(events, rangeOf('today', '2026-11-10'), { lookup });
   assert.deepEqual(items.map((i) => [i.kind, i.amount, i.customer]), [['cash', 115, 'ALWAN ALSHAM'], ['cash', 3500, 'AL AHLIA KITCHEN'], ['cheque', 2000, 'AWAB WOOD'], ['bank', 504, 'MUNICH DOOR KITCHEN']]);
   const records = [{ TxnDate: '2026-11-09', TotalAmt: 115, CustomerRef: { name: 'ALWAN ALSHAM' } }]; // ±3 days, the same customer
-  const text = receivedText(items, { title: '10/11/2026', records });
-  assert.equal(text, ['*Money received — 10/11/2026*', '💵 Cash', '1. ALWAN ALSHAM — *115.00* ✔ in QuickBooks', SEP, '2. AL AHLIA KITCHEN — *3,500.00* ⚠ not in QuickBooks yet', SEP, '🧾 Cheques', '3. AWAB WOOD — *2,000.00* — ⏳ not cleared', SEP, '🏦 Bank transfers', '4. MUNICH DOOR KITCHEN — *504.00* for inv-9940 ✔ in QuickBooks', SEP, 'Total received: *6,119.00 AED* (cash *3,615.00* / cheques *2,000.00* / transfers *504.00*)', '⚠ 2 not in QuickBooks, 1 cheque not cleared'].join('\n'));
+  const text = receivedText(items, { title: '10/11/2026', records, now: Date.parse('2026-11-10T09:00:00Z') });
+  assert.equal(text, ['*Money received — 10/11/2026*', '💵 Cash', '1. ALWAN ALSHAM — *115.00* ✔ in QuickBooks', SEP, '2. AL AHLIA KITCHEN — *3,500.00* ⚠ not in QuickBooks yet', SEP, '🧾 Cheques', '3. AWAB WOOD — *2,000.00* — ⏳ not cleared (0 days)', SEP, '🏦 Bank transfers', '4. MUNICH DOOR KITCHEN — *504.00* for inv-9940 ✔ in QuickBooks', SEP, 'Total received: *6,119.00 AED* (cash *3,615.00* / cheques *2,000.00* / transfers *504.00*)', '⚠ 2 not in QuickBooks, 1 cheque not cleared'].join('\n'));
   assert.equal(receivedText([], { title: '10/11/2026' }), '*Money received — 10/11/2026*\nNo money was recorded.');
   // another customer's payment of the same amount is not the same receipt; the simulated and the old are left out
   assert.match(receivedText(items.slice(0, 1), { title: 't', records: [{ TxnDate: '2026-11-10', TotalAmt: 115, CustomerRef: { name: 'ZED CARPENTRY' } }] }), /⚠ not in QuickBooks yet/);

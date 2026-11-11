@@ -242,13 +242,18 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
     keep.drawer = drop.customer; if (drop.kind === 'cheque') keep.kind = 'cheque'; drop.merged = true;
   }
   for (let i = list.length - 1; i >= 0; i--) if (list[i].merged) list.splice(i, 1);
-  // the bank's clearing messages end cheques already received: the OLDEST open cheque of that amount (±1) in the last 30 days, the one with the customer's name first; never a cash row
+  // The bank's clearing messages (when the owner did not quote the cheque): the oldest open cheque of that amount (±1) in the last 30 days, the one with the customer's name first. Two or more
+  // that fit are NOT guessed: the message is set aside and each candidate carries it as a pending clearing (the owner decides). Never a cash row.
   const DAYMS = 24 * 3600 * 1000;
   for (const e of [...list]) {
     if (!isClearingText(e.text)) continue;
     const open = list.filter((o) => o !== e && o.kind === 'cheque' && !o.cleared && !isClearingText(o.text) && Math.abs(Number(o.amount) - Number(e.amount)) <= 1 && e.at - o.at <= 30 * DAYMS && o.at - e.at <= DAYMS).sort((a, b) => a.at - b.at);
-    const pick = open.find((o) => e.customer && o.customer && !e.pendingName && sameCutCustomer(o.customer, e.customer)) || open[0];
-    if (pick) { pick.cleared = true; pick.clearedAt = e.at; list.splice(list.indexOf(e), 1); } else { e.kind = 'cheque'; e.cleared = true; e.clearedAt = e.at; } // no open cheque known: still a cheque, never cash
+    const named = open.filter((o) => e.customer && o.customer && !e.pendingName && sameCutCustomer(o.customer, e.customer));
+    const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : null;
+    if (pick) { pick.cleared = true; pick.clearedAt = e.at; list.splice(list.indexOf(e), 1); } else if (open.length > 1) {
+      for (const o of open) o.pendingClearing = { at: e.at, amount: Number(e.amount), count: open.length };
+      list.splice(list.indexOf(e), 1);
+    } else { e.kind = 'cheque'; e.cleared = true; e.clearedAt = e.at; } // no open cheque known: still a cheque, never cash
   }
   return list;
 }

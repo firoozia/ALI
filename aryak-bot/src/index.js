@@ -50,6 +50,7 @@ import { Experience, describeCandidate, importPatterns, formatStatus, learnedRep
 import { qboNameFor } from './qboname.js';
 import { itemCodesOf, threeWay, threeWayText } from './threeway.js';
 import { PayChecks } from './paychecks.js';
+import { isClearingText } from './payments.js';
 import { isCancelText, isClearReply, isReplyFiller, looksLikeName } from './captions.js';
 import { EditStore, InvoiceEdits } from './invoiceedit.js';
 import { officeNote, parseOfficeRequest } from './officerequest.js';
@@ -673,6 +674,20 @@ async function trackGroup(raw, groupId, role) {
   if (!text && !image) return;
   const quotedId = (content.extendedTextMessage || image)?.contextInfo?.stanzaId || '';
   const refOf = (id, i = 0) => createHash('sha256').update(`${groupId}|${id}${i ? `|${i}` : ''}`).digest('hex').slice(0, 24);
+  // The owner quote-replies the bank's clearing message to a cheque: THAT cheque is cleared on that date (amount from the message, customer from the cheque). Never a new payment, never a cash row.
+  if (role === 'payment' && quotedId && text && isClearingText(text)) {
+    const refs = new Set([payRef(groupId, quotedId), ...Array.from({ length: 12 }, (_, i) => refOf(quotedId, i))]);
+    const cheque = tracker.events.find((e) => e.type === 'payment' && refs.has(e.ref));
+    if (cheque) {
+      const amt = Number(parsePaymentCaption(text)?.amount) || 0;
+      if (!(Number(cheque.amount) > 0) && amt > 0) tracker.update(cheque.ref, { amount: amt });
+      const same = amt > 0 && Math.abs(amt - (Number(cheque.amount) > 0 ? Number(cheque.amount) : amt)) <= 1;
+      if (same) tracker.update(cheque.ref, { kind: 'cheque', cleared: true, clearedAt: nowAt(), clearingMismatch: null });
+      else tracker.update(cheque.ref, { kind: 'cheque', clearingMismatch: { amount: amt, at: nowAt() } }); // a different amount: the owner decides, the cheque stays open
+      trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', same ? 'a clearing message quoted on a cheque: that cheque is cleared' : 'a clearing message quoted on a cheque with another amount: waiting for the owner');
+      return;
+    }
+  }
   // A quote-reply of filler to a payment («plz clear it», «also this», «done»): never a payment of its own and never a customer name; «clear» sets the status of the quoted payment.
   if (role === 'payment' && quotedId && text && isReplyFiller(text)) {
     const refs = new Set([payRef(groupId, quotedId), ...Array.from({ length: 12 }, (_, i) => refOf(quotedId, i))]);
@@ -3143,6 +3158,10 @@ async function sheetNameSet(from, to) { return sheetNameSetMany([{ from, to, lea
 function decidePayCheck(verb, id) {
   const x = payChecks.get(id);
   if (!x || x.status !== 'open') return [`#${id} is not waiting any more.`];
+  if (x.action === 'clear') { // a bank clearing and a cheque: yes = that cheque is cleared on the day of the message; no = it stays open and the message is dropped
+    if (verb === 'yes') { tracker.update(x.ref, { cleared: true, clearedAt: x.clearedAt || Date.now(), clearingMismatch: null, pendingClearing: null }); payChecks.close(id, 'accepted'); return [`Cleared #${id}: that cheque is marked cleared. Nothing was recorded in QuickBooks.`]; }
+    tracker.update(x.ref, { clearingMismatch: null, pendingClearing: null }); payChecks.close(id, 'refused'); return [`Refused #${id}: that cheque stays open. Nothing was recorded in QuickBooks.`];
+  }
   if (verb === 'yes') { tracker.update(x.ref, { acceptedMatch: { text: x.text, at: Date.now() } }); payChecks.close(id, 'accepted'); return [`Accepted #${id}: that payment is matched to ${x.text}. Nothing was recorded in QuickBooks.`]; }
   tracker.update(x.ref, { rejectedMatch: { text: x.text, at: Date.now() } }); payChecks.close(id, 'refused');
   return [`Refused #${id}: that pairing is dropped and will not be asked again. Nothing was recorded in QuickBooks.`];

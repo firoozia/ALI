@@ -267,7 +267,7 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, at: e.at, pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
@@ -299,7 +299,7 @@ export function closestMatch(item, records, openInvoices, aliasOf = () => '') {
 const signed = (d) => (d > 0 ? '+' : d < 0 ? '−' : '') + money(Math.abs(d));
 
 export function receivedText(items, options) {
-  const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null;
+  const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
   const matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   const inQb = (it) => matched.has(it) || it.paid === true;
   const groups = [['cash', '💵 Cash'], ['cheque', '🧾 Cheques'], ['bank', '🏦 Bank transfers']];
@@ -323,7 +323,7 @@ export function receivedText(items, options) {
       }
       const dueText = it.due ? ' — due ' + dmy(it.due) : ''; const drawerText = it.drawer ? ' — drawer ' + it.drawer : '';
       const recvText = it.clearedDay && it.clearedDay !== it.day ? ' — received ' + it.day.slice(8, 10) + '/' + it.day.slice(5, 7) : '';
-      const cheque = kind === 'cheque' ? dueText + drawerText + recvText + ' — ' + (it.cleared ? 'cleared' + (it.clearedDay ? ' ' + it.clearedDay.slice(8, 10) + '/' + it.clearedDay.slice(5, 7) : '') : '⏳ not cleared') : '';
+      const cheque = kind === 'cheque' ? dueText + drawerText + recvText + ' — ' + (it.cleared ? 'cleared' + (it.clearedDay ? ' ' + it.clearedDay.slice(8, 10) + '/' + it.clearedDay.slice(5, 7) : '') : '⏳ not cleared (' + Math.max(0, Math.floor((nowMs - it.at) / 86400000)) + ' days)') : '';
       return `${n}. ${(it.customer || 'UNKNOWN').toUpperCase()} — ${it.shown}${it.invoices.length ? ` for ${it.invoices.join(', ')}` : ''}${cheque}${kind === 'cheque' ? (it.foreign || it.accepted || inQb(it) ? ` ${status}` : '') : ` ${status}`}${it.note ? `\n⚠ ${it.note}` : ''}`;
     });
     blocks.push([label, withSeparators(entries)].join('\n'));
@@ -333,7 +333,17 @@ export function receivedText(items, options) {
   const total = items.reduce((x, i) => x + i.amount, 0);
   const missing = items.filter((i) => !i.foreign && !inQb(i)).length; const uncleared = items.filter((i) => i.kind === 'cheque' && !i.cleared).length; const foreign = items.filter((i) => i.unconverted).length;
   const warn = [...(missing ? [`${missing} not in QuickBooks`] : []), ...(uncleared ? [`${uncleared} cheque${uncleared === 1 ? '' : 's'} not cleared`] : []), ...(foreign ? [`${foreign} in a currency with no rate (not in the total)`] : [])];
-  const okBlock = needsOk.length ? [SEP, SEP, ['*Needs your OK*', ...needsOk.map(({ it, best }) => {
+  const clearings = [];
+  const dd = (ms) => new Date(ms + 4 * 3600000).toISOString().slice(8, 10) + '/' + new Date(ms + 4 * 3600000).toISOString().slice(5, 7);
+  for (const it of items) {
+    if (it.kind !== 'cheque' || it.cleared) continue;
+    if (it.clearingMismatch) clearings.push({ it, text: 'the bank cleared ' + money(it.clearingMismatch.amount) + ' for this cheque of ' + money(it.amount) + ' (' + signed(it.clearingMismatch.amount - it.amount) + ')', at: it.clearingMismatch.at });
+    else if (it.pendingClearing) clearings.push({ it, text: 'a bank clearing of ' + money(it.pendingClearing.amount) + ' arrived ' + dd(it.pendingClearing.at) + ' and ' + it.pendingClearing.count + ' open cheques fit it: is it this one?', at: it.pendingClearing.at });
+  }
+  const okBlock = needsOk.length || clearings.length ? [SEP, SEP, ['*Needs your OK*', ...clearings.map(({ it, text, at }) => {
+    const code = checks ? checks.codeFor(it.ref, text, 'clear', { clearedAt: at }) : '';
+    return (code ? '#' + code + ': ' : '') + (it.customer || 'UNKNOWN').toUpperCase() + ' cheque ' + money(it.amount) + ' — ' + text + (code ? '\nyes #' + code + ' (cleared) / no #' + code : '');
+  }), ...needsOk.map(({ it, best }) => {
     const text = best.label + ' ' + money(best.amount);
     const code = checks ? checks.codeFor(it.ref, text) : '';
     return (code ? '#' + code + ': ' : '') + (it.customer || 'UNKNOWN').toUpperCase() + ' ' + money(it.amount) + ' vs ' + text + ' (' + signed(best.diff) + ')' + (code ? '\nyes #' + code + ' / no #' + code : '');

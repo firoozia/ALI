@@ -633,3 +633,25 @@ test('one cheque seen three ways (the post with «cheaque» in the name, the pho
   const two = cleanPaymentEvents({ events: [{ ...events[0], ref: 'a', customer: 'OMEGA CO', text: 'OMEGA CO cheque 3500', at: t('05', '05:00') }, { ...events[0], ref: 'b', at: t('08', '05:00') }, events[2]], isKnown: () => true });
   assert.deepEqual(two.map((x) => [x.ref, !!x.cleared]).sort(), [['a', false], ['b', true]]);
 });
+
+test('the owner\'s cheque process: the bank message quote-replied on the cheque clears THAT cheque (same amount) or waits for the OK (other amount); a message with no reply clears the one cheque that fits, and two that fit wait for the OK', () => {
+  const t = (d, hh) => Date.parse(`2026-11-${d}T${hh}:00Z`);
+  const cheque = (ref, customer, d, amount = 3500, extra = {}) => ({ type: 'payment', kind: 'cheque', currency: 'AED', ref, at: t(d, '05:00'), customer, amount, text: customer + ' cheque ' + amount, ...extra });
+  const sms = (ref, d, amount = 3500) => ({ type: 'payment', kind: 'cash', currency: 'AED', ref, at: t(d, '08:00'), customer: '', pendingName: true, amount, text: 'Your AC is credited with AED ' + amount + '.00 for Outward Cheque Clearing' });
+  // no reply: two open cheques of the amount, none by that name: nothing is guessed
+  const two = cleanPaymentEvents({ events: [cheque('a', 'ZETA CO', '05'), cheque('b', 'NOVA CO', '07'), sms('s', '11')], isKnown: () => true });
+  assert.deepEqual(two.map((e) => [e.ref, !!e.cleared, e.pendingClearing?.count]), [['a', false, 2], ['b', false, 2]]);
+  const items = receivedItems(two, { from: '2026-11-05', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  const codes = []; const text = receivedText(items, { title: 't', now: t('11', '09:00'), checks: { codeFor: (ref, tx, action) => { codes.push([ref, action]); return 'G' + codes.length; } } });
+  assert.match(text, /\*Needs your OK\*\n#G1: ZETA CO cheque 3,500\.00 — a bank clearing of 3,500\.00 arrived 11\/11 and 2 open cheques fit it: is it this one\?\nyes #G1 \(cleared\) \/ no #G1/); assert.deepEqual(codes, [['a', 'clear'], ['b', 'clear']]);
+  assert.match(text, /⏳ not cleared \(6 days\)/); // the age of an open cheque
+  // one cheque by that name among two: that one
+  assert.deepEqual(cleanPaymentEvents({ events: [cheque('a', 'ZETA CO', '05'), cheque('b', 'NOVA CO', '07'), { ...sms('s', '11'), customer: 'NOVA CO', pendingName: false }], isKnown: () => true }).map((e) => [e.ref, !!e.cleared]), [['a', false], ['b', true]]);
+  // a quoted clearing with another amount: the cheque stays open and shows the question
+  const mismatch = cleanPaymentEvents({ events: [{ ...cheque('m', 'ZETA CO', '05'), clearingMismatch: { amount: 3200, at: t('11', '08:00') } }], isKnown: () => true });
+  const text2 = receivedText(receivedItems(mismatch, { from: '2026-11-05', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() }), { title: 't', now: t('11', '09:00'), checks: { codeFor: () => 'G9' } });
+  assert.match(text2, /the bank cleared 3,200\.00 for this cheque of 3,500\.00 \(−300\.00\)\nyes #G9 \(cleared\) \/ no #G9/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(index, /if \(role === 'payment' && quotedId && text && isClearingText\(text\)\) \{[\s\S]*?if \(same\) tracker\.update\(cheque\.ref, \{ kind: 'cheque', cleared: true, clearedAt: nowAt\(\)[\s\S]*?return;\n    \}\n  \}/); // silent, never a payment
+  assert.match(index, /if \(x\.action === 'clear'\) \{[\s\S]*?cleared: true, clearedAt: x\.clearedAt/);
+});

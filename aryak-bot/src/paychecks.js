@@ -12,10 +12,10 @@ export class PayChecks {
 
   save() { if (!this.file) return; try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(this.d), { mode: 0o600 }); } catch { /* best effort */ } }
   /** The code of this pairing (a payment entry and the candidate text); a new one when it is new. */
-  codeFor(ref, text) {
+  codeFor(ref, text, action = 'match', extra = {}) {
     const known = Object.values(this.d.items).find((x) => x.ref === ref && x.text === text && x.status === 'open');
     if (known) return known.id;
-    this.d.n += 1; const id = `G${this.d.n}`; this.d.items[id] = { id, ref, text, at: this.now(), status: 'open' }; this.save(); return id;
+    this.d.n += 1; const id = `G${this.d.n}`; this.d.items[id] = { id, ref, text, action, ...extra, at: this.now(), status: 'open' }; this.save(); return id;
   }
 
   get(id) { return this.d.items[String(id).toUpperCase()] || null; }
