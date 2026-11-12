@@ -1207,6 +1207,33 @@ test('today\'s six stored rows are re-read: a stock question is no money, the ba
   assert.match(text, /\*ALWAN SHAM\*\n🟢 708\.75/);
   assert.doesNotMatch(text, /680\.00|PCC|stock|credited/); // our own invoice PDF is no payment
   assert.match(text, /⚠ receipt PDF 15:24, amount not read — check/); assert.doesNotMatch(text, /^[🟢🔴⏳⭐] 0\.00/mu); // no 0.00 row
-  assert.match(text, /\*NO CUSTOMER\*\n🔴 3,000\.00 {2}not in QuickBooks yet \(delivery\?\)/);
+  assert.match(text, /🚚 \*Driver cash 3,000\.00\*\n     no «collected» post found in the delivery group/); assert.match(text, /\*Total: 4,422\.75 AED\*/); // counted once in the cash
   assert.ok(isInvoiceFile('Invoice inv-10012.pdf') && isInvoiceFile('inv-10012.pdf') && !isInvoiceFile('receipt 123.pdf'));
+});
+
+test('the driver\'s cash: «3000 aed delivery» is cash the driver handed in; the delivery group\'s collected posts of the same and the previous day split it by customer (each against QuickBooks); if they do not add up the difference is said; counted once', async () => {
+  const { collectedAmount, driverCashAmount } = await import('../src/paymentfix.js');
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const { receivedItems, receivedText, driverBreakdown } = await import('../src/expenses.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  assert.deepEqual([collectedAmount('Zeta wood AED750 collected'), collectedAmount('delivered AED 176 collected'), collectedAmount('COD 945'), collectedAmount('delivered')], [750, 176, 945, 0]);
+  assert.deepEqual([driverCashAmount('3000 aed delivery'), driverCashAmount('3000 delivery'), driverCashAmount('driver cash 3000'), driverCashAmount('cash from X 3000')], [3000, 3000, 3000, 0]);
+  const ev = eventsFromCaption('payment', '3000 aed delivery').events[0];
+  assert.deepEqual([ev.kind, ev.source, ev.customer, ev.amount], ['cash', 'driver', '', 3000]);
+  const d = eventsFromCaption('delivery', 'Zeta wood AED750 collected');
+  assert.ok(d === null || d.events[0].collected === 750 || d.events[0].collected === undefined); // the delivery reader keeps its own shape
+  const t = (day, hhmm) => Date.parse('2026-11-' + day + 'T' + hhmm + ':00+04:00');
+  const delivery = (ref, day, customer, collected) => ({ type: 'delivery', ref, at: t(day, '11:00'), customer, collected });
+  const row = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'd', at: t('12', '16:00'), customer: 'delivery', amount: 3000, text: '3000 aed delivery' };
+  const list = sharedPaymentList({ events: [row] });
+  assert.deepEqual([list[0].source, list[0].customer], ['driver', '']); // an old stored row is read the same way
+  const items = receivedItems(list, { from: '2026-11-12', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  const records = [{ _type: 'Payment', TxnDate: '2026-11-12', TotalAmt: 750, CustomerRef: { name: 'ZETA WOOD PRESSING' } }];
+  const ok = [delivery('x1', '12', 'ZETA WOOD PRESSING', 750), delivery('x2', '11', 'NOVA KITCHEN', 1250), delivery('x3', '12', 'OMEGA CO', 1000), delivery('x4', '05', 'OLD CO', 99)];
+  assert.deepEqual([driverBreakdown(items[0], ok).ok, driverBreakdown(items[0], ok).found], [true, 3000]); // 750 + 1250 + 1000; the old one is out of the two days
+  const good = receivedText(items, { title: '12/11', records, deliveries: ok, now: t('12', '18:00') });
+  assert.match(good, /🚚 \*Driver cash 3,000\.00\*\n🟢 750\.00 {3}ZETA WOOD PRESSING\n🔴 1,250\.00 {3}NOVA KITCHEN {2}not in QuickBooks yet\n🔴 1,000\.00 {3}OMEGA CO {2}not in QuickBooks yet/);
+  assert.match(good, /\*Total: 3,000\.00 AED\*\nCash 3,000\.00/); // counted once in the cash
+  const bad = receivedText(items, { title: '12/11', records, deliveries: [delivery('y1', '12', 'ZETA WOOD PRESSING', 750)], now: t('12', '18:00') });
+  assert.match(bad, /🚚 \*Driver cash 3,000\.00\* — collected posts found: 750\.00; difference 2,250\.00\n🟢 750\.00 {3}ZETA WOOD PRESSING/);
 });

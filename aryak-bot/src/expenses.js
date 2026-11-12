@@ -376,6 +376,19 @@ export function openBalanceOf(item, openInvoices, aliasOf = () => '') {
 
 const signed = (d) => (d > 0 ? '+' : d < 0 ? '−' : '') + money(Math.abs(d));
 
+/**
+ * The cash the DRIVER handed in (source 'driver') split by the customers he collected from: the delivery group's «collected» posts of the same day and the day before. { parts: [{ customer, amount }], found, diff, ok }
+ * ok = the posts add up to the handed-in amount (+-1 AED).
+ */
+export function driverBreakdown(item, deliveries, timeZone = 'Asia/Dubai') {
+  const dayKey = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+  const today = dayKey(item.at); const before = dayKey(item.at - 86400000);
+  const parts = (deliveries || []).filter((d) => Number(d.collected) > 0 && [today, before].includes(dayKey(d.at))).map((d) => ({ customer: d.customer || d.customerTyped || '', amount: Number(d.collected), at: d.at }));
+  const found = Math.round(parts.reduce((n, p) => n + p.amount, 0) * 100) / 100;
+  const diff = Math.round((item.amount - found) * 100) / 100;
+  return { parts, found, diff, ok: parts.length > 0 && Math.abs(diff) <= 1 };
+}
+
 export function receivedText(items, options) {
   const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
   const unreadAt = items.unread || [];
@@ -456,13 +469,26 @@ export function receivedText(items, options) {
     return icon + ' ' + plain(it) + (it.invoices.length && !tail.trim().startsWith('inv-') ? ' for ' + it.invoices.join(', ') : '') + tail + (extra.length ? '\n' + extra.join('\n') : '') + (it.note ? '\n⚠ ' + it.note : '');
   };
   const sections = [];
+  const driverItems = items.filter((i) => i.source === 'driver' && i.kind === 'cash');
   for (const [kind, label] of groups) {
-    const list = items.filter((i) => i.kind === kind);
-    if (!list.length) continue;
+    const list = items.filter((i) => i.kind === kind && i.source !== 'driver');
+    const driverBlocks = kind === 'cash' ? driverItems.map((d) => { // the driver's cash: one block, split by the customers of his «collected» posts, each matched to QuickBooks as usual
+      const bd = driverBreakdown(d, options.deliveries, options.timeZone || 'Asia/Dubai');
+      if (!bd.parts.length) return '🚚 *Driver cash ' + money(d.amount) + '*\n     no «collected» post found in the delivery group';
+      const sub = bd.parts.map((p) => {
+        const pseudo = { amount: p.amount, day: d.day, customer: p.customer, kind: 'cash', at: p.at };
+        const rec = matchReceipts([pseudo], records, aliasOf).get(pseudo);
+        if (bd.ok) { if (rec) green += 1; else red += 1; }
+        return (rec ? '🟢 ' : '🔴 ') + money(p.amount) + '   ' + String(p.customer || 'UNKNOWN').toUpperCase() + (rec ? '' : '  not in QuickBooks yet');
+      });
+      const head = bd.ok ? '🚚 *Driver cash ' + money(d.amount) + '*' : '🚚 *Driver cash ' + money(d.amount) + '* — collected posts found: ' + money(bd.found) + '; difference ' + money(bd.diff);
+      return [head, ...sub].join('\n');
+    }) : [];
+    if (!list.length && !driverBlocks.length) continue;
     const byName = new Map();
     for (const it of list) { const k = (it.customer || matched.get(it)?.CustomerRef?.name || (it.what ? 'NO CUSTOMER' : 'UNKNOWN')).toUpperCase(); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(it); }
     const people = [...byName].map((x) => '*' + x[0] + '*\n' + x[1].map(lineOf).join('\n'));
-    sections.push(label + '\n\n' + people.join('\n' + SEP + '\n'));
+    sections.push(label + '\n\n' + [...people, ...driverBlocks].join('\n' + SEP + '\n'));
   }
   const sum = (k) => items.filter((i) => i.kind === k).reduce((x, i) => x + i.amount, 0);
   const total = items.reduce((x, i) => x + i.amount, 0);

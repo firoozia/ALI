@@ -11,6 +11,18 @@ export const isGenericBankSms = (text) => isBankSms(text) && /for\s+(?:Aani|IPP|
 const BAD_NAME = /details|credited|aani|\bipp\b|inward|outward|login|online|instant|local|account|banking/i;
 export const bankSmsAmount = (text) => { const m = /(?:AED|Dhs?)\.?\s*([\d,]+(?:\.\d+)?)/i.exec(String(text || '')); return m ? Number(m[1].replace(/,/g, '')) : 0; };
 /** Our own invoice forwarded as a PDF is never a payment: «Invoice inv-10012.pdf», «Tax Invoice». */
+/** The money the DRIVER collected on deliveries and handed in: «3000 aed delivery», «driver cash 3000», «from driver 3000». Returns the amount or 0. */
+export const driverCashAmount = (text) => {
+  const t = String(text || '').trim();
+  const m = /^\s*([\d,]+(?:\.\d+)?)\s*(?:aed|dhs?)?\s*deliver\w*\s*$/i.exec(t) || /(?:driver\s+cash|from\s+(?:the\s+)?driver|cash\s+from\s+(?:the\s+)?driver)\D{0,12}([\d,]+(?:\.\d+)?)/i.exec(t) || /([\d,]+(?:\.\d+)?)\s*(?:aed|dhs?)?\s*(?:from\s+(?:the\s+)?driver|driver\s+cash)/i.exec(t);
+  return m ? Number(m[1].replace(/,/g, '')) : 0;
+};
+/** The amount a delivery post says was COLLECTED: «Aila wood AED750 collected», «delivered AED 176 collected», «COD 945». Returns the amount or 0. */
+export const collectedAmount = (text) => {
+  const t = String(text || '');
+  const m = /(?:AED|Dhs?)\.?\s*([\d,]+(?:\.\d+)?)\s*(?:\w+\s+)?collected/i.exec(t) || /collected\s*:?\s*(?:AED|Dhs?)?\.?\s*([\d,]+(?:\.\d+)?)/i.exec(t) || /\bCOD\s*:?\s*(?:AED|Dhs?)?\.?\s*([\d,]+(?:\.\d+)?)/i.exec(t);
+  return m ? Number(m[1].replace(/,/g, '')) : 0;
+};
 export const isInvoiceFile = (name, text = '') => /(?:^|[^a-z])invoice[-_ ]*inv[-_]?\d|^inv[-_]?\d{3,}|tax invoice/i.test(String(name || '') + ' ' + String(text || ''));
 const WORD_ONLY = new Set(['delivery', 'deliveries']);
 
@@ -28,7 +40,7 @@ export function fixStoredPayments(events, timeZone = 'Asia/Dubai') {
       const named = e.customer && !BAD_NAME.test(e.customer) && String(e.customer).length <= 40 && !e.pendingName; // «… credited with AED 197.93 for AR RAD»: a real name stays
       return { ...e, text: e.text || words, ...(named ? {} : { customer: '', customerTyped: '', pendingName: true, bankSms: true }), ...(clearing ? {} : { kind: 'transfer' }), amount: Number(e.amount) > 0 ? e.amount : bankSmsAmount(words) };
     }
-    if (e.kind === 'cash' && WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()) && (!e.text || /^\s*[\d,.]+\s*(?:aed|dhs?)?\s*deliver\w*\s*$/i.test(e.text))) return { ...e, customer: '', customerTyped: '', pendingName: true, what: 'delivery?' }; // cash with no customer: «3000 aed delivery»
+    if (e.kind === 'cash' && !e.cleared0 && (driverCashAmount(e.text) > 0 || (WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()) && !e.text))) return { ...e, customer: '', customerTyped: '', pendingName: false, source: 'driver', amount: Number(e.amount) > 0 ? e.amount : driverCashAmount(e.text) }; // «3000 aed delivery»: the cash the driver handed in, never a customer
     return e;
   });
   // a bank SMS has no name: the receipt PDF of the same amount (+-1 AED) the same day gives it, and the two are ONE row (the SMS keeps its exact amount)

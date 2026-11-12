@@ -62,7 +62,7 @@ test('the wiring: the question is answered before the model, in the test group f
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(index, /if \(text && !audio && !image && addressed && isDriverQuestion\(text\)\) \{[\s\S]*?whereText\(trackerOf\(group\?\.test\)\.events/);
   assert.ok(index.indexOf('isDriverQuestion(text)') < index.indexOf('const tc = parseTrackerCommand(text)'));
-  assert.match(index, /\.\.\.\(role === 'delivery' \? \{ msg: raw\.key\.id \} : \{\}\)/);
+  assert.match(index, /\.\.\.\(role === 'delivery' \? \{ msg: raw\.key\.id, text: String\(text\)\.slice\(0, 200\) \} : \{\}\)/);
   assert.match(index, /await announceRunDone\(testTracker\.events, event, \(t\) => reply\(`SIMULATION: \$\{t\}`\)\)/);
   assert.match(index, /extraLines: \[\.\.\.driverEveningLines\(tracker\.events/);
   const fn = index.slice(index.indexOf('async function announceRunDone'), index.indexOf('/** For every received entry'));

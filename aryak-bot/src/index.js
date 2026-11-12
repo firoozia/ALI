@@ -94,7 +94,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, TYPES, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses, qbKindOf } from './expenses.js';
+import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, TYPES, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses, qbKindOf, driverBreakdown } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -776,7 +776,7 @@ async function trackGroup(raw, groupId, role) {
       return;
     }
     for (const [i, ev] of det.events.entries()) {
-      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'delivery' ? { msg: raw.key.id } : {}), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}), ...(role === 'cut' ? { text: String(text).slice(0, 160) } : {}) };
+      const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'delivery' ? { msg: raw.key.id, text: String(text).slice(0, 200) } : {}), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}), ...(role === 'cut' ? { text: String(text).slice(0, 160) } : {}) };
       const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
       if (role === 'payment' && !event.customer && pn && nowAt() - pn.at < 10 * 60 * 1000) { event.customer = canon(pn.customer); event.customerTyped = pn.customer; delete event.pendingName; trace(whereDet, 'tracker', 'the payment took the name posted just before it'); }
       if (role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event })) continue;
@@ -3231,7 +3231,12 @@ async function cashBoxMonth(month, depth = 0) {
   const r = { from, to, label: month };
   const records = [...await qbRows('Payment', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('SalesReceipt', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('Deposit', dayPlus(from, -3), dayPlus(to, 3))];
   const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
-  const cashIn = receivedItems(events, r, { timeZone: config.timezone, lookup: new Map() }).filter((i) => i.kind === 'cash' && !i.foreign);
+  const deliveries = tracker.events.filter((e) => e.type === 'delivery');
+  const cashIn = receivedItems(events, r, { timeZone: config.timezone, lookup: new Map() }).filter((i) => i.kind === 'cash' && !i.foreign).flatMap((i) => { // the driver's cash is split by the customers of his «collected» posts, each compared with QuickBooks on its own
+    if (i.source !== 'driver') return [i];
+    const bd = driverBreakdown(i, deliveries, config.timezone);
+    return bd.ok ? bd.parts.map((p, n) => ({ ...i, amount: p.amount, customer: p.customer, ref: i.ref + '|' + n, source: '' })) : [i];
+  });
   const startMs = Date.parse(from + 'T00:00:00+04:00'); const endMs = Date.parse(to + 'T23:59:59+04:00');
   const outs = []; // the boss / advance rows of the month (an old row is re-read; the same amount posted twice within half an hour, «18000 deposit to boss» and its echo, is one)
   for (const e of tracker.events.map(rederiveCashOut)) {
@@ -3426,7 +3431,7 @@ async function receivedReportText(kind) {
   const linkedIds = [...new Set(records.filter((x) => x._type === 'Payment').flatMap((x) => (x.Line || []).flatMap((l) => (l.LinkedTxn || []).filter((t) => t.TxnType === 'Invoice').map((t) => String(t.TxnId)))))].filter((id) => /^[0-9]+$/.test(id) && !openInvoices.some((i) => String(i.Id) === id)).slice(0, 60);
   const linkedInvoices = linkedIds.length ? await qbo.query("select * from Invoice where Id in ('" + linkedIds.join("','") + "')").catch(() => []) : []; // the number of every invoice a payment of the day is linked to (fully paid ones too)
   const recentInvoices = await qbRows('Invoice', dayPlus(r.from, -3), dayPlus(r.to, 1));
-  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, linkedInvoices, recentInvoices, checks: kind === 'today' ? payChecks : null });
+  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, linkedInvoices, recentInvoices, deliveries: tracker.events.filter((e) => e.type === 'delivery'), timeZone: config.timezone, checks: kind === 'today' ? payChecks : null });
   return text; // the «payments to match» list is gone: its information is inside each line of the report
 }
 async function weeklyCheckReport() {
