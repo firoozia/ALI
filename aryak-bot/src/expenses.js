@@ -112,7 +112,7 @@ export class ExpenseStore {
   get(id) { return this.d.items.find((e) => e.id === String(id || '').toUpperCase()) || null; }
   /** The open entries of a person (not saved, not cancelled), newest last. */
   openFor(by) { return this.d.items.filter((e) => e.by === by && !['done', 'cancelled'].includes(e.state) && this.now() - (e.createdAt || e.at) < 24 * 3600 * 1000); }
-  latestFor(by, timeZone = 'Asia/Dubai') { const today = dayOf(this.now(), timeZone); return [...this.d.items].reverse().find((e) => e.by === by && e.state !== 'cancelled' && e.day === today) || null; }
+  latestFor(by, timeZone = 'Asia/Dubai') { const today = dayOf(this.now(), timeZone); return [...this.d.items].reverse().find((e) => e.by === by && e.state !== 'cancelled' && (e.postDay || e.day) === today) || null; }
   done(range) { return this.d.items.filter((e) => e.state === 'done' && !e.test && e.day >= range.from && e.day <= range.to); } // an expense made in the TEST group is test data: never in a real report
   remove(id) { const i = this.d.items.findIndex((e) => e.id === String(id || '').toUpperCase()); if (i < 0) return null; const [gone] = this.d.items.splice(i, 1); this.save(); return gone; }
   setGroup(group) { this.d.group = group; this.save(); }
@@ -170,7 +170,9 @@ export function makeEntry({ caption = '', reading = null, hasReceipt = false, ha
   const type = cap.type || (TYPES[reading?.category] ? reading.category : 'other');
   const method = methodFromWords(caption);
   const note = type === 'vehicles' ? String(caption || '').replace(/\d[\d.,]*/g, ' ').split(/\s+/).filter((w) => w && !typeFromWords(w) && !methodFromWords(w) && !/^(?:aed|dhs?|درهم)$/i.test(w)).join(' ').slice(0, 60) : ''; // a car: the plate or the driver, as written
-  const base = { by, byName, ref, day: dayOf(at, timeZone), date: reading?.date || dayOf(at, timeZone), type, vendor: reading?.vendor || '', hasReceipt, hasPhoto: hasPhoto || hasReceipt, receiptAmount, captionAmount: cap.amount, ...(method ? { method } : {}), ...(note ? { note } : {}), ...(test ? { test: true } : {}) };
+  const postDay = dayOf(at, timeZone);
+  const printed = /^\d{4}-\d{2}-\d{2}$/.test(String(reading?.date || '')) && reading.date <= postDay && dayNum(reading.date) >= dayNum(postDay) - 90 ? reading.date : ''; // the date PRINTED on the receipt (not in the future, not older than three months); the post time is the fallback
+  const base = { by, byName, ref, day: printed || postDay, postDay, date: printed || postDay, type, vendor: reading?.vendor || '', hasReceipt, hasPhoto: hasPhoto || hasReceipt, receiptAmount, captionAmount: cap.amount, ...(method ? { method } : {}), ...(note ? { note } : {}), ...(test ? { test: true } : {}) };
   if (receiptAmount && cap.amount !== null && Math.abs(receiptAmount - cap.amount) > 0.005) return { ...base, amount: null, state: 'pick_amount' };
   const amount = receiptAmount || cap.amount;
   if (!amount) return { ...base, amount: null, state: 'need_amount' };
@@ -222,7 +224,21 @@ export function matchExpenses(entries, records) {
     const at = records.findIndex((r, i) => !used.has(i) && near(r.TotalAmt, e.amount) && closeDay(r.TxnDate, e.date || e.day) && nameOk(e.vendor, r.EntityRef?.name || r.VendorRef?.name || ''));
     if (at >= 0) { used.add(at); found.push({ entry: e, record: records[at] }); } else missing.push(e);
   }
-  return { found, missing, unused: records.filter((_, i) => !used.has(i)) };
+  // a second look before «not found»: up to 14 days apart (a receipt posted late), the amount within 0.05 AND the vendor or the category agreeing
+  const vendorOf = (r) => r.EntityRef?.name || r.VendorRef?.name || '';
+  const categoryOf = (r) => String((r.Line || []).map((l) => l.AccountBasedExpenseLineDetail?.AccountRef?.name || '').find(Boolean) || '');
+  const agrees = (e, r) => (e.vendor ? nameOk(e.vendor, vendorOf(r)) : !!e.type && !!categoryOf(r) && typeFromWords(categoryOf(r)) === e.type);
+  for (const e of [...missing]) {
+    const at = records.findIndex((r, i) => !used.has(i) && Math.abs(Number(r.TotalAmt) - Number(e.amount)) <= 0.05 && closeDay(r.TxnDate, e.date || e.day, 14) && agrees(e, r));
+    if (at >= 0) { used.add(at); found.push({ entry: e, record: records[at] }); missing.splice(missing.indexOf(e), 1); }
+  }
+  // an amount that equals a QuickBooks expense's total BEFORE tax («219.05» for ENOC 230.00): not matched, but pointed at
+  const hints = [];
+  for (const e of missing) {
+    const r = records.find((x, i) => !used.has(i) && Number(x.TxnTaxDetail?.TotalTax) > 0 && Math.abs(Number(x.TotalAmt) - Number(x.TxnTaxDetail.TotalTax) - Number(e.amount)) <= 0.05 && closeDay(x.TxnDate, e.date || e.day, 14) && (!e.vendor || nameOk(e.vendor, vendorOf(x))));
+    if (r) hints.push({ entry: e, record: r });
+  }
+  return { found, missing, unused: records.filter((_, i) => !used.has(i)), hints };
 }
 
 /**

@@ -11,7 +11,9 @@ const typeLabel = (t) => TYPES[t]?.label || 'Other';
 /** The expenses report: a block per type, a line per expense (🟢 matched to a QuickBooks expense: vendor + amount ±1 + date ±3 days; 🔴 not yet), then the totals. [records]: the QuickBooks Purchase rows. */
 export function expensesReport(entries, records, title) {
   if (!entries.length) return '🧾 *Expenses — ' + title + '*\nNo expense was recorded.';
-  const matches = matchExpenses(entries, records || []).found;
+  const matched = matchExpenses(entries, records || []);
+  const matches = matched.found;
+  const hintOf = new Map((matched.hints || []).map((h) => [h.entry, h.record]));
   const found = new Set(matches.map((x) => x.entry));
   const recordOf = new Map(matches.map((x) => [x.entry, x.record]));
   const toFix = [];
@@ -25,7 +27,7 @@ export function expensesReport(entries, records, title) {
       const acct = rec && rec.AccountRef?.name ? '  (QuickBooks: ' + rec.AccountRef.name + ')' : '';
       const wrong = kind && e.method && kind !== e.method ? '  ⚠ posted ' + e.method + ', QuickBooks ' + (rec.AccountRef?.name || 'account') + ' (' + kind + ') — please fix' : '';
       if (wrong) toFix.push('#' + e.id + ' posted ' + e.method + ', QuickBooks ' + (rec.AccountRef?.name || 'account') + ' (' + kind + ')');
-      return (found.has(e) ? '🟢 ' : '🔴 ') + money(e.amount).padEnd(8) + methodName(e.method).padEnd(7) + who.padEnd(10) + (who.length >= 10 ? ' ' : '') + '#' + e.id + (e.addedByOwner ? ' (added by owner)' : '') + (found.has(e) ? acct : '') + wrong;
+      return (found.has(e) ? '🟢 ' : '🔴 ') + money(e.amount).padEnd(8) + methodName(e.method).padEnd(7) + who.padEnd(10) + (who.length >= 10 ? ' ' : '') + '#' + e.id + (e.addedByOwner ? ' (added by owner)' : '') + (found.has(e) ? acct : '') + wrong + (hintOf.has(e) ? '\n     ↳ this looks like the amount before VAT of ' + (hintOf.get(e).EntityRef?.name || 'a QuickBooks expense') + ' ' + hintOf.get(e).TxnDate.slice(8, 10) + '/' + hintOf.get(e).TxnDate.slice(5, 7) + ' ' + money(hintOf.get(e).TotalAmt) : '');
     })].join('\n'));
   }
   const total = entries.reduce((n, e) => n + Number(e.amount), 0);

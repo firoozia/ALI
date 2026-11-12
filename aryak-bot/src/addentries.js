@@ -42,7 +42,7 @@ export function parseAddEntries(text, today = new Date().toISOString().slice(0, 
 
 const dm = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
 const line = (e) => {
-  if (e.kind === 'expense') return dm(e.day) + '  Expense ' + money(e.amount) + '  ' + (TYPE_NAMES[e.type] || 'Other') + '  ' + (e.method || 'method? (asked after your 1)') + (e.qbAccount ? ' (QuickBooks: ' + e.qbAccount + (e.qbVendor ? ', ' + e.qbVendor : '') + ')' : e.qbNone ? ' (not found in QuickBooks)' : '') + (e.vendor ? '  ' + e.vendor : '');
+  if (e.kind === 'expense') return dm(e.day) + '  Expense ' + money(e.amount) + '  ' + (TYPE_NAMES[e.type] || 'Other') + '  ' + (e.method || 'method? (asked after your 1)') + (e.qbAccount ? ' (QuickBooks: ' + e.qbAccount + (e.qbVendor ? ', ' + e.qbVendor : '') + ')' : e.qbNone ? ' (not found in QuickBooks' + (e.qbHint ? ': ' + e.qbHint : '') + ')' : '') + (e.vendor ? '  ' + e.vendor : '');
   if (e.kind === 'cash_to_boss') return dm(e.day) + '  Cash to boss ' + money(e.amount);
   return dm(e.day) + '  Salary advance ' + money(e.amount) + (e.employee ? '  ' + e.employee : '');
 };

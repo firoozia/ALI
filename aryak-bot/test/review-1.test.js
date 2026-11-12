@@ -1120,3 +1120,23 @@ test('owner review: «invoice NAME 221 20m» is read; the preview pairs by the n
   const add = parseAddEntries('add expense 140.07 fuel 10/11', '2026-11-12'); add.entries[0].qbAccount = 'ADCB Bank'; add.entries[0].qbVendor = 'ENOC'; add.entries[0].method = 'card';
   assert.match(requestAdd(new (await import('../src/expenses.js')).ExpenseStore('', () => 1), add, 'o'), /140\.07 {2}Fuel {2}card \(QuickBooks: ADCB Bank, ENOC\)/);
 });
+
+test('a receipt photo is dated by the date printed on it; a late-posted receipt is looked for up to 14 days (amount within 0.05, vendor or category agreeing); an amount before VAT is pointed at, never matched', async () => {
+  const { makeEntry, matchExpenses } = await import('../src/expenses.js');
+  const { expensesReport } = await import('../src/expenseedit.js');
+  const post = Date.parse('2026-11-10T12:00:00Z');
+  const e1 = makeEntry({ caption: '140.07 fuel', reading: { total: 140.07, vendor: 'ENOC', date: '2026-11-02' }, hasReceipt: true, hasPhoto: true, by: 'u', at: post });
+  assert.deepEqual([e1.day, e1.date, e1.postDay], ['2026-11-02', '2026-11-02', '2026-11-10']); // the printed date, not the post time
+  assert.equal(makeEntry({ caption: '10', reading: { total: 10, date: '2026-12-31' }, hasReceipt: true, by: 'u', at: post }).day, '2026-11-10'); // a date in the future is no receipt date
+  assert.equal(makeEntry({ caption: '10', reading: { total: 10, date: '2025-01-01' }, hasReceipt: true, by: 'u', at: post }).day, '2026-11-10'); // nor one a year old
+  assert.equal(makeEntry({ caption: '10', reading: null, by: 'u', at: post }).day, '2026-11-10'); // none printed: the post time
+  const records = [{ TxnDate: '2026-11-02', TotalAmt: 140.07, EntityRef: { name: 'ENOC' }, AccountRef: { name: 'ADCB Bank' } }, { TxnDate: '2026-11-01', TotalAmt: 19.91, EntityRef: { name: 'FRESH CART' }, Line: [{ AccountBasedExpenseLineDetail: { AccountRef: { name: 'Food' } } }] }, { TxnDate: '2026-11-07', TotalAmt: 230, TxnTaxDetail: { TotalTax: 10.95 }, EntityRef: { name: 'ENOC' } }];
+  const ent = (id, amount, day, type, vendor) => ({ id, amount, day, date: day, type, vendor, method: 'card', state: 'done' });
+  const late = matchExpenses([ent('E1', 140.07, '2026-11-10', 'fuel', 'ENOC'), ent('E2', 19.9, '2026-11-10', 'food', ''), ent('E3', 219.05, '2026-11-10', 'fuel', 'ENOC')], records);
+  assert.deepEqual(late.found.map((f) => f.entry.id), ['E1', 'E2']); // 8 and 9 days apart: 140.07 exact with the vendor, 19.90 vs 19.91 within 0.05 with the category (Food)
+  assert.deepEqual(late.missing.map((m) => m.id), ['E3']);
+  assert.equal(late.hints[0].entry.id, 'E3'); assert.equal(late.hints[0].record.TotalAmt, 230); // 219.05 + 10.95 VAT = 230.00
+  const text = expensesReport([ent('E3', 219.05, '2026-11-10', 'fuel', 'ENOC')], records, '10/11/2026');
+  assert.match(text, /🔴 219\.05 {2}card {3}ENOC {6}#E3\n     ↳ this looks like the amount before VAT of ENOC 07\/11 230\.00/);
+  assert.equal(matchExpenses([ent('E9', 85.5, '2026-11-01', 'fuel', '')], [{ TxnDate: '2026-11-06', TotalAmt: 85.5 }]).missing.length, 1); // no vendor or category to agree: stays missing
+});

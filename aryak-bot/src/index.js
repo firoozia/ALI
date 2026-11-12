@@ -1170,10 +1170,18 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'add_entries': {
       for (const en of ic.parsed.entries) { // every expense is looked up in ALL the purchase accounts: amount +-1 AED, date +-7 days (the vendor too when written), the nearest day first; the account says cash or card
         if (en.kind !== 'expense' || !qbo.connected || qbo.paused) continue;
-        const rows = await qbRows('Purchase', dayPlus(en.day, -7), dayPlus(en.day, 7));
+        const rows = await qbRows('Purchase', dayPlus(en.day, -14), dayPlus(en.day, 14));
         const dayNo = (iso) => Math.floor(Date.parse(iso + 'T00:00:00Z') / 86400000);
-        const rec = rows.filter((r) => Math.abs(Number(r.TotalAmt) - en.amount) <= 1 && (!en.vendor || sameStop(en.vendor, r.EntityRef?.name || '', nameAlias))).sort((a, b) => Math.abs(dayNo(a.TxnDate) - dayNo(en.day)) - Math.abs(dayNo(b.TxnDate) - dayNo(en.day)))[0];
-        if (rec) { en.qbAccount = rec.AccountRef?.name || 'account'; en.qbVendor = rec.EntityRef?.name || ''; if (!en.method && qbKindOf(rec)) en.method = qbKindOf(rec); } else en.qbNone = true;
+        const apart = (r) => Math.abs(dayNo(r.TxnDate) - dayNo(en.day)); const byDate = (a, b) => apart(a) - apart(b);
+        const vendorOk = (r) => !en.vendor || sameStop(en.vendor, r.EntityRef?.name || '', nameAlias);
+        const rec = rows.filter((r) => apart(r) <= 7 && Math.abs(Number(r.TotalAmt) - en.amount) <= 1 && vendorOk(r)).sort(byDate)[0]
+          || rows.filter((r) => Math.abs(Number(r.TotalAmt) - en.amount) <= 0.05 && vendorOk(r)).sort(byDate)[0]; // a receipt posted late: up to 14 days, the amount within 0.05
+        if (rec) { en.qbAccount = rec.AccountRef?.name || 'account'; en.qbVendor = rec.EntityRef?.name || ''; if (!en.method && qbKindOf(rec)) en.method = qbKindOf(rec); }
+        else {
+          en.qbNone = true;
+          const pre = rows.filter((r) => Number(r.TxnTaxDetail?.TotalTax) > 0 && Math.abs(Number(r.TotalAmt) - Number(r.TxnTaxDetail.TotalTax) - en.amount) <= 0.05 && vendorOk(r)).sort(byDate)[0]; // «219.05» is the amount before VAT of ENOC 230.00
+          if (pre) en.qbHint = 'looks like the amount before VAT of ' + (pre.EntityRef?.name || 'a QuickBooks expense') + ' ' + pre.TxnDate.slice(8, 10) + '/' + pre.TxnDate.slice(5, 7) + ' ' + Number(pre.TotalAmt).toFixed(2);
+        }
       }
       return [requestAdd(expenseStore, ic.parsed, here.chatId || 'owner')];
     }
