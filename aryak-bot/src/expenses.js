@@ -410,6 +410,12 @@ export function receivedText(items, options) {
     return out;
   };
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
+  // a nameless row (a bank SMS nobody named) equal to exactly ONE open invoice of the customers is that customer's payment, said as a proposal
+  items = items.map((it) => {
+    if (it.customer || matched.has(it) || it.source === 'driver' || it.noInvoice) return it;
+    const hits = openInvoices.filter((inv) => Number(inv.Balance) > 0 && Math.abs(Number(inv.Balance) - it.amount) <= 0.01);
+    return hits.length === 1 && hits[0].CustomerRef?.name ? { ...it, customer: hits[0].CustomerRef.name } : it;
+  });
   const unreadLines = unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check');
   if (!items.length) return unreadLines.length ? ['💰 *Money received — ' + title + '*', ...unreadLines].join('\n') : `💰 *Money received — ${title}*\nNo money was recorded.`;
   const needsOk = []; let green = 0; let red = 0; let stars = 0;

@@ -1237,3 +1237,16 @@ test('the driver\'s cash: «3000 aed delivery» is cash the driver handed in; th
   const bad = receivedText(items, { title: '12/11', records, deliveries: [delivery('y1', '12', 'ZETA WOOD PRESSING', 750)], now: t('12', '18:00') });
   assert.match(bad, /🚚 \*Driver cash 3,000\.00\* — collected posts found: 750\.00; difference 2,250\.00\n🟢 750\.00 {3}ZETA WOOD PRESSING/);
 });
+
+test('a quote-reply «<name> cleared» names the bank SMS row it quotes; a nameless transfer equal to exactly one open invoice shows that customer and the invoice', async () => {
+  const { receivedText } = await import('../src/expenses.js');
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("(?:cleared?|received|paid)") && index.includes("customer: canon(named[1].trim()), customerTyped: named[1].trim(), pendingName: false, cleared: true")); // the reply sets the customer of the quoted row
+  const now = Date.parse('2026-11-12T18:00:00+04:00');
+  const item = { amount: 714, shown: '*714.00*', foreign: false, unconverted: false, note: '', day: '2026-11-12', customer: '', typed: '', kind: 'bank', invoices: [], cleared: true, due: '', drawer: '', at: now - 3600000, ref: 'sms', paid: null };
+  const open = [{ Id: '1', DocNumber: 'inv-10012', Balance: 714, TotalAmt: 714, CustomerRef: { name: 'PVC WORK CARPENTER LLC' } }, { Id: '2', DocNumber: 'inv-10013', Balance: 300, TotalAmt: 300, CustomerRef: { name: 'NOVA CO' } }];
+  const text = receivedText([item], { title: '12/11', records: [], openInvoices: open, now });
+  assert.match(text, /\*PVC WORK CARPENTER LLC\*\n🔴 714\.00 {2}not in QuickBooks yet \(pays inv-10012, 714\.00\)/);
+  const twice = receivedText([item], { title: '12/11', records: [], openInvoices: [...open, { Id: '3', DocNumber: 'inv-10014', Balance: 714, TotalAmt: 714, CustomerRef: { name: 'OMEGA CO' } }], now });
+  assert.match(twice, /\*UNKNOWN\*/); // two invoices of that amount: not guessed
+});

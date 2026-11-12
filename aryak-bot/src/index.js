@@ -737,6 +737,19 @@ async function trackGroup(raw, groupId, role) {
       return;
     }
   }
+  // A quote-reply «<name> cleared / received / paid» to a payment row (the bank's SMS above all): the name is that row's customer (the QuickBooks name through the aliases), the row is cleared, and no payment of its own is made.
+  if (role === 'payment' && quotedId && text) {
+    const named = /^(.{2,60}?)\s+(?:cleared?|received|paid)\s*[.!]?$/i.exec(String(text).trim());
+    if (named && looksLikeName(named[1]) && !isReplyFiller(named[1])) {
+      const refs = new Set([payRef(groupId, quotedId), ...Array.from({ length: 12 }, (_, i) => refOf(quotedId, i))]);
+      const hit = tracker.events.filter((e) => e.type === 'payment' && refs.has(e.ref));
+      if (hit.length) {
+        for (const e of hit) tracker.update(e.ref, { customer: canon(named[1].trim()), customerTyped: named[1].trim(), pendingName: false, cleared: true });
+        trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply named the payment it quotes: ' + named[1].trim());
+        return;
+      }
+    }
+  }
   // A quote-reply of filler to a payment («plz clear it», «also this», «done»): never a payment of its own and never a customer name; «clear» sets the status of the quoted payment.
   if (role === 'payment' && quotedId && text && isReplyFiller(text)) {
     const refs = new Set([payRef(groupId, quotedId), ...Array.from({ length: 12 }, (_, i) => refOf(quotedId, i))]);
