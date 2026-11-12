@@ -572,6 +572,17 @@ setInterval(async () => {
 }, 30 * 60 * 1000).unref();
 
 const lastPayName = new Map(); // group -> the last bare name posted in the Confirmation group
+/** The records made from one WhatsApp message (cut, delivery, payment and the lines of a multi-line post, an expense) are removed when that message is deleted. */
+function voidMessage(groupId, id) {
+  const refs = new Set();
+  for (let i = 0; i < 12; i++) refs.add(createHash('sha256').update(`${groupId}|${id}${i ? `|${i}` : ''}`).digest('hex').slice(0, 24));
+  const gone = tracker.removeWhere((e) => refs.has(e.ref) || e.msg === id);
+  let expenses = 0;
+  for (const x of expenseStore.d.items) if (x.ref === id && x.state !== 'cancelled') { x.state = 'cancelled'; x.deleted = true; expenses += 1; }
+  if (expenses) expenseStore.save();
+  logger.info('deleted message ' + id + ': ' + gone + ' record(s) removed' + (expenses ? ', ' + expenses + ' expense(s) cancelled' : ''));
+  return gone + expenses;
+}
 const payRef = (groupId, id) => createHash('sha256').update(`${groupId}|${id}`).digest('hex').slice(0, 24); // the reference of a payment entry made from message [id]
 
 /** The text of a PDF (its text layer, free) as payment evidence: { amount, date, payer, receipt, invoices } or null when it has no readable text or amount. */
@@ -1778,6 +1789,13 @@ async function nameInvoice({ raw, groupId, fileName, base64, number, customer, f
   return !!sentLine;
 }
 
+/** The same invoice number posted again is a REVISION (not a duplicate) when the same customer's invoice of that number was checked before, or the message says it is updated / corrected / reissued. */
+function isRevision(number, customer, raw) {
+  const words = [raw?.message ? textOf(normalizeMessageContent(raw.message)) : '', normalizeMessageContent(raw?.message)?.documentMessage?.caption || ''].join(' ');
+  if (/updat|revis|re-?issu|correct|amend|new version|replace|ویرایش|اصلاح|به‌?روز/i.test(words)) return true;
+  return desk.history.some((h) => String(h.number || '').toLowerCase() === String(number).toLowerCase() && h.customer && customer && sameStop(h.customer, customer, nameAlias));
+}
+
 async function watchGroup(raw, groupId, role) {
   // An invoice posted from this very account (the owner tests from it) is checked in the Invoices group: the bot never posts a PDF itself.
   if (raw.key.fromMe && role !== 'invoice') return;
@@ -1832,7 +1850,7 @@ async function watchGroup(raw, groupId, role) {
   const extra = [
     ...memory,
     ...(verdict.invoice ? auditInvoice(verdict.invoice, { book, day, vatRate: config.vatRate, tol: config.moneyTolerance, customer: verdict.request_customer || meta.customer, sheetUnits }) : []),
-    ...(number ? checkNumber(number, desk.numbers(), tracker.deleted) : []),
+    ...(number ? checkNumber(number, desk.numbers(), tracker.deleted, isRevision(number, canon(verdict.request_customer || verdict.invoice_customer || meta.customer || ''), raw)) : []),
   ];
   const problems = mergeProblems(own, extra);
   for (const p of problems) experience.bump(`ie|${p.kind}`);
@@ -3595,6 +3613,10 @@ async function start() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     let history = 0;
     for (const raw of messages) {
+      { // a message the person DELETED («This message was deleted»): every record made from it goes too (a wrong cut post, a wrong payment)
+        const rv = normalizeMessageContent(raw?.message)?.protocolMessage;
+        if (rv && (rv.type === 0 || rv.type === 'REVOKE') && rv.key?.id) { try { voidMessage(rv.key.remoteJid || raw.key.remoteJid, rv.key.id); } catch (e) { logger.warn('deleted message: ' + e.message); } continue; }
+      }
       const verdict = shouldProcess({ type, raw, seen: handled, ownerSeen });
       if (!verdict.ok) {
         // A refused message is never silent, except bulk history after a restart (counted in one line).

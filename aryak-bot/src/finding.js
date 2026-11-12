@@ -6,7 +6,7 @@ import { toEnglish } from './english.js';
 const LABEL = {
   quantity: 'Wrong quantity', extra: 'Extra item', missing: 'Missing item', code: 'Wrong code', size: 'Wrong size', price: 'Wrong price', total: 'Wrong total',
   'line-total': 'Line amount', subtotal: 'Subtotal', vat: 'VAT', 'price-below': 'Price below list', unit: 'Price unit', 'unit-sheet': 'Item unit',
-  currency: 'Currency', duplicate: 'Duplicate number', customer: 'Customer name', unreadable: 'Unreadable',
+  currency: 'Currency', duplicate: 'Duplicate number', revision: 'Updated version', customer: 'Customer name', unreadable: 'Unreadable',
   'order-note': 'Order note', 'sourcing-cover': 'Covered by sourcing', 'cut-over': 'Cut above the invoice', 'cut-short': 'Cut below the invoice',
   'price-unknown': 'Price not in list', 'prices-unchecked': 'Prices not checked', gap: 'Missing number', 'price-above': 'Price above list', 'price-missing': 'Price not printed',
 };

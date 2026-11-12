@@ -140,11 +140,16 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
     (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
   }
   const same = (r, inv) => (inv.codes || []).some((k) => code(k) === r.code || (r.digits && digitsOf(k) === r.digits));
-  if (invoiced) { // any invoice line of this customer and this code, on or after the cut day, takes the cut
-    for (const r of rows) {
+  if (invoiced) { // the SAME pairing as «unbilled»: an invoice line of this customer and this code within +-windowDays of the cut, before OR after it (an invoice may come the day before the cut);
+    // each invoice line is used up by what it takes (a margin is normal: a cut larger than its line still counts, but a line takes cuts only while some of it is left)
+    const left = new Map(invoiced.map((inv) => [inv, Number(inv.qty) || 0]));
+    const tol = (q) => Math.max(1.5, 0.06 * q);
+    for (const r of [...rows].sort((a, b) => a.at - b.at)) {
       if (!r.left) continue;
-      const hit = invoiced.find((inv) => same(r, inv) && inv.at >= r.at - DAY);
-      if (hit) { r.left = false; r.by = { number: hit.number, at: hit.at }; }
+      const cands = invoiced.filter((inv) => same(r, inv) && Math.abs(inv.at - r.at) <= windowDays * DAY && left.get(inv) > 0.0001);
+      const hit = cands.filter((inv) => Math.abs(Number(inv.qty) - r.qty) <= tol(r.qty)).sort((a, b) => Math.abs(a.at - r.at) - Math.abs(b.at - r.at))[0]
+        || cands.sort((a, b) => Math.abs(a.at - r.at) - Math.abs(b.at - r.at))[0];
+      if (hit) { left.set(hit, Math.max(0, left.get(hit) - r.qty)); r.left = false; r.by = { number: hit.number, at: hit.at }; }
     }
   }
   const problems = [];

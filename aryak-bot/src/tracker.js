@@ -59,6 +59,15 @@ export class Tracker {
     return true;
   }
 
+  /** Removes every event the test [pred] picks (a message the person deleted took its records with it). Returns how many. */
+  removeWhere(pred) {
+    const before = this.events.length;
+    this.events = this.events.filter((e) => !pred(e));
+    const n = before - this.events.length;
+    if (n) this.persist('events');
+    return n;
+  }
+
   markDeleted(number) { if (number && !this.deleted.has(number)) { this.deleted.add(number); this.persist('state'); } }
 
   of(type, customer, { since = 0, until = Infinity } = {}) {

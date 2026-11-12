@@ -10,7 +10,7 @@ const KIND = {
   'قیمت اشتباه': 'Wrong price', 'جمع کل اشتباه': 'Wrong total', 'نام مشتری': 'Customer name', ناخوانا: 'Unreadable', 'مبلغ ردیف': 'Line amount',
   'جمع جزء': 'Subtotal', مالیات: 'VAT', 'قیمت کمتر از لیست': 'Price below list', 'قیمت بیشتر از لیست': 'Price above list', 'قیمت چاپ نشده': 'Price not printed',
   'قیمت در لیست نیست': 'Price not in list', 'قیمت‌ها سنجیده نشد': 'Prices not checked', 'واحد قیمت': 'Price unit', 'واحد کالا': 'Item unit', 'واحد پول': 'Currency',
-  'شمارهٔ تکراری': 'Duplicate number', 'شمارهٔ جاافتاده': 'Missing number',
+  'شمارهٔ تکراری': 'Duplicate number', 'نسخهٔ به‌روز': 'Updated version', 'شمارهٔ جاافتاده': 'Missing number',
   'یادداشت سفارش': 'Order note', 'پوشش با تأمین': 'Covered by sourcing', 'برش بیشتر از فاکتور': 'Cut above the invoice', 'برش کمتر از فاکتور': 'Cut below the invoice',
 };
 
@@ -28,6 +28,7 @@ const RULES = [
   [/^فاکتور: (.+)$/, 'Invoice: $1'],
   // audit notes
   [/^این شماره پیش‌تر هم فرستاده شده است$/, 'This number was already posted'],
+  [/^نسخهٔ به‌روزشدهٔ همین شماره است$/, 'Updated version of this invoice number'],
   [/^شماره‌های (\d+) فاکتور بین این و فاکتور قبلی دیده نشد$/, '$1 invoice number(s) between this one and the previous invoice were not seen'],
   [/^واحد پول فاکتور باید درهم باشد$/, 'The invoice currency must be dirhams (AED)'],
   [/^مبلغ ردیف با مقدار ضربدر قیمت نمی‌خواند$/, 'The line amount does not equal quantity × price'],

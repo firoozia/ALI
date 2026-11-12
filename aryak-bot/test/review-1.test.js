@@ -995,3 +995,33 @@ test('the stored row {customer: "Pay", amount 157, cleared} is a cash expense (a
   assert.match(miss, /Company expenses \(cash\)[\s\S]*🔴 05\/11\s+157\.00\s+\(posted, not in QuickBooks\)/); // an expense not in QuickBooks, under the cash out
   assert.doesNotMatch(miss, /Cash from customers[\s\S]{0,80}157\.00/);
 });
+
+test('a deleted message takes its records away; the invoice preview pairs like «unbilled» (an invoice BEFORE the cut, each line used up); an updated invoice number is a revision, not a duplicate', async () => {
+  const { Tracker } = await import('../src/tracker.js');
+  const { crossCheck } = await import('../src/cuts.js');
+  const { checkNumber } = await import('../src/audit.js');
+  const { createHash } = await import('node:crypto');
+  const refOf = (g, id, i = 0) => createHash('sha256').update(g + '|' + id + (i ? '|' + i : '')).digest('hex').slice(0, 24);
+  const tr = new Tracker({ dir: '' });
+  tr.add({ type: 'cut', at: 1000, customer: 'ZETA WOOD', lines: [{ code: '206', quantity: 12, unit: 'm' }], ref: refOf('g1', 'WRONG') });
+  tr.add({ type: 'cut', at: 2000, customer: 'ZETA WOOD', lines: [{ code: '207', quantity: 12, unit: 'm' }], ref: refOf('g1', 'RIGHT') });
+  tr.add({ type: 'payment', at: 3000, kind: 'cash', customer: 'NOVA', amount: 5, ref: refOf('g1', 'PAYMSG', 1) });
+  assert.equal(tr.removeWhere((e) => e.ref === refOf('g1', 'WRONG')), 1); assert.deepEqual(tr.events.map((e) => e.lines?.[0]?.code || e.kind), ['207', 'cash']);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("rv.type === 'REVOKE'") && index.includes('voidMessage(rv.key.remoteJid || raw.key.remoteJid, rv.key.id)')); // a revoke message removes the records of the message it names
+  // 511: the invoice came the day before the cut and pairs with it; 206 is gone with its message; each invoice line is used up
+  const NOW = Date.parse('2026-11-12T08:00:00Z'); const DAY = 86400000;
+  const cutter = new Tracker({ dir: '' });
+  cutter.add({ type: 'cut', at: NOW - 3 * DAY, customer: 'ZETA WOOD', lines: [{ code: '511', quantity: 9, unit: 'm' }], ref: 'c1' });
+  cutter.add({ type: 'cut', at: NOW - 3 * DAY + 1000, customer: 'ZETA WOOD', lines: [{ code: '511', quantity: 5, unit: 'm' }], ref: 'c2' });
+  const early = { codes: ['PVC FILM511'], qty: 9, number: 'inv-1', at: NOW - 4 * DAY };
+  const r1 = crossCheck(cutter, 'ZETA WOOD', [{ code: '207', qty: 12 }], { now: NOW, invoiced: [early] });
+  assert.ok(!r1.problems.some((p) => /^511: cut 9m/.test(p))); // the 9 m cut pairs with its earlier invoice
+  assert.ok(r1.problems.some((p) => /^511: cut 5m/.test(p))); // the line is used up by the first cut: the second is not invoiced
+  assert.ok(r1.problems.includes('207: no order found'));
+  // a duplicate number is urgent; the same number posted again as an update is only a note
+  assert.equal(checkNumber('inv-9997', ['inv-9996', 'inv-9997'], new Set(), false)[0].kind, 'duplicate');
+  const rev = checkNumber('inv-9997', ['inv-9996', 'inv-9997'], new Set(), true);
+  assert.deepEqual([rev[0].kind, rev[0].severity], ['revision', 'info']);
+  assert.ok(index.includes('function isRevision(number, customer, raw)') && index.includes('desk.history.some'));
+});

@@ -50,7 +50,7 @@ test('the owner\'s rule: an invoice line of the same customer and code on or aft
   const invoiced = [
     { codes: ['216', 'PVC FILM216'], qty: 12, number: 'inv-9906', at: at(4) },   // the office, on the screen: the whole cut
     { codes: ['235', 'PVC FILM235'], qty: 4, number: 'inv-9918', at: at(3) },    // a smaller quantity than the cut: the order was 4, still invoiced
-    { codes: ['203', 'PVC FILM203'], qty: 9, number: 'inv-9929', at: at(10) },   // dated BEFORE the cut: another order
+    { codes: ['203', 'PVC FILM203'], qty: 9, number: 'inv-9929', at: at(40) },   // dated 37 days BEFORE the cut: outside the 30-day pairing window, another order
   ];
   const { problems } = crossCheck(tr, 'MASTER WOOD', [], { now: NOW, invoiced });
   assert.deepEqual(problems, ['203: cut 9m on 05/11, not invoiced', '512: cut 7m on 06/11, not invoiced', '410: cut 4m on 07/11, not invoiced']); // 216 and 235 are invoiced
@@ -66,7 +66,8 @@ test('the owner\'s rule: an invoice line of the same customer and code on or aft
   const later = new Tracker({ dir: '' });
   cut(later, 'l1', 'MASTER WOOD', '215', 11, 4);
   assert.deepEqual(crossCheck(later, 'MASTER WOOD', [], { now: NOW, invoiced: [{ codes: ['PVC FILM215'], qty: 3, number: 'inv-1', at: at(1) }] }).problems, []);
-  assert.equal(crossCheck(later, 'MASTER WOOD', [], { now: NOW, invoiced: [{ codes: ['PVC FILM215'], qty: 11, number: 'inv-0', at: at(9) }] }).problems.length, 1);
+  assert.equal(crossCheck(later, 'MASTER WOOD', [], { now: NOW, invoiced: [{ codes: ['PVC FILM215'], qty: 11, number: 'inv-0', at: at(40) }] }).problems.length, 1); // 36 days apart: outside the window
+  assert.deepEqual(crossCheck(later, 'MASTER WOOD', [], { now: NOW, invoiced: [{ codes: ['PVC FILM215'], qty: 11, number: 'inv-0', at: at(9) }] }).problems, []); // an invoice 5 days BEFORE the cut pairs with it (ordered the day before, cut the next day)
 });
 
 test('the customer of a post must be THIS customer: a trade word shared with another customer (door, kitchen, wood, trading, LLC) never joins them; the brand word does', () => {

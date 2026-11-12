@@ -23,11 +23,12 @@ export function splitNumber(number) {
  * never seen (at most 20 ahead of the highest known) is only a note, because the missing ones may simply not have been
  * posted in this group.
  */
-export function checkNumber(number, seen, deleted = new Set()) {
+export function checkNumber(number, seen, deleted = new Set(), revision = false) {
   const cur = splitNumber(number);
   if (!cur) return [];
   const same = seen.map(splitNumber).filter((s) => s && s.prefix === cur.prefix);
   if (same.some((s) => s.n === cur.n)) {
+    if (revision) return [{ kind: 'revision', item: String(number), requested: '', invoiced: String(number), note: 'نسخهٔ به‌روزشدهٔ همین شماره است', severity: 'info' }]; // an updated or reissued version of the same invoice
     return [{ kind: 'duplicate', item: String(number), requested: '', invoiced: String(number), note: 'این شماره پیش‌تر هم فرستاده شده است', severity: 'urgent' }];
   }
   const max = same.reduce((m, s) => Math.max(m, s.n), 0);

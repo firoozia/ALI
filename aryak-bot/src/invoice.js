@@ -77,7 +77,7 @@ const KIND = {
   missing: 'قلم جاافتاده', extra: 'قلم اضافه', code: 'کد اشتباه', size: 'اندازه اشتباه', quantity: 'مقدار اشتباه',
   price: 'قیمت اشتباه', total: 'جمع کل اشتباه', customer: 'نام مشتری', unreadable: 'ناخوانا',
   'line-total': 'مبلغ ردیف', subtotal: 'جمع جزء', vat: 'مالیات', 'price-below': 'قیمت کمتر از لیست', 'price-above': 'قیمت بیشتر از لیست',
-  'order-note': 'یادداشت سفارش', 'sourcing-cover': 'پوشش با تأمین', 'cut-over': 'برش بیشتر از فاکتور', 'cut-short': 'برش کمتر از فاکتور', 'price-missing': 'قیمت چاپ نشده', 'price-unknown': 'قیمت در لیست نیست', 'prices-unchecked': 'قیمت‌ها سنجیده نشد', unit: 'واحد قیمت', 'unit-sheet': 'واحد کالا', currency: 'واحد پول', duplicate: 'شمارهٔ تکراری', gap: 'شمارهٔ جاافتاده',
+  'order-note': 'یادداشت سفارش', 'sourcing-cover': 'پوشش با تأمین', 'cut-over': 'برش بیشتر از فاکتور', 'cut-short': 'برش کمتر از فاکتور', 'price-missing': 'قیمت چاپ نشده', 'price-unknown': 'قیمت در لیست نیست', 'prices-unchecked': 'قیمت‌ها سنجیده نشد', unit: 'واحد قیمت', 'unit-sheet': 'واحد کالا', currency: 'واحد پول', duplicate: 'شمارهٔ تکراری', revision: 'نسخهٔ به‌روز', gap: 'شمارهٔ جاافتاده',
 };
 
 /** The human label of a kind of point; a kind without one never shows as a raw internal word. */
