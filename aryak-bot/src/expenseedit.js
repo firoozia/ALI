@@ -1,6 +1,6 @@
 // Expenses: the 19:00 report in the style of «Money received», and editing / deleting an expense by its number with a preview, the owner's 1 / 2 and an undo. Nothing is ever written to QuickBooks.
 import { SEP } from './separator.js';
-import { TYPES, matchExpenses, methodFromWords, typeFromWords } from './expenses.js';
+import { TYPES, matchExpenses, methodFromWords, qbKindOf, typeFromWords } from './expenses.js';
 import { normalizeDigits } from './text.js';
 
 const money = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -11,20 +11,27 @@ const typeLabel = (t) => TYPES[t]?.label || 'Other';
 /** The expenses report: a block per type, a line per expense (🟢 matched to a QuickBooks expense: vendor + amount ±1 + date ±3 days; 🔴 not yet), then the totals. [records]: the QuickBooks Purchase rows. */
 export function expensesReport(entries, records, title) {
   if (!entries.length) return '🧾 *Expenses — ' + title + '*\nNo expense was recorded.';
-  const found = new Set(matchExpenses(entries, records || []).found.map((x) => x.entry));
+  const matches = matchExpenses(entries, records || []).found;
+  const found = new Set(matches.map((x) => x.entry));
+  const recordOf = new Map(matches.map((x) => [x.entry, x.record]));
+  const toFix = [];
   const blocks = [];
   for (const key of Object.keys(TYPES)) {
     const list = entries.filter((e) => (TYPES[e.type] ? e.type : 'other') === key);
     if (!list.length) continue;
     blocks.push([TYPES[key].emoji + ' *' + TYPES[key].label + '*', ...list.map((e) => {
       const who = String(e.vendor || (e.note || ''));
-      return (found.has(e) ? '🟢 ' : '🔴 ') + money(e.amount).padEnd(8) + methodName(e.method).padEnd(7) + who.padEnd(10) + (who.length >= 10 ? ' ' : '') + '#' + e.id + (e.addedByOwner ? ' (added by owner)' : '');
+      const rec = recordOf.get(e); const kind = rec ? qbKindOf(rec) : '';
+      const acct = rec && rec.AccountRef?.name ? '  (QuickBooks: ' + rec.AccountRef.name + ')' : '';
+      const wrong = kind && e.method && kind !== e.method ? '  ⚠ posted ' + e.method + ', QuickBooks ' + (rec.AccountRef?.name || 'account') + ' (' + kind + ') — please fix' : '';
+      if (wrong) toFix.push('#' + e.id + ' posted ' + e.method + ', QuickBooks ' + (rec.AccountRef?.name || 'account') + ' (' + kind + ')');
+      return (found.has(e) ? '🟢 ' : '🔴 ') + money(e.amount).padEnd(8) + methodName(e.method).padEnd(7) + who.padEnd(10) + (who.length >= 10 ? ' ' : '') + '#' + e.id + (e.addedByOwner ? ' (added by owner)' : '') + (found.has(e) ? acct : '') + wrong;
     })].join('\n'));
   }
   const total = entries.reduce((n, e) => n + Number(e.amount), 0);
   const card = entries.filter((e) => e.method === 'card').reduce((n, e) => n + Number(e.amount), 0);
   const cash = total - card;
-  return ['🧾 *Expenses — ' + title + '*', SEP, SEP, blocks.join('\n' + SEP + '\n'), SEP, SEP, '*Total: ' + money(total) + ' AED*', 'Cash box ' + money(cash) + ' | Bank card ' + money(card), '🟢 In QuickBooks: ' + found.size + '    🔴 Not yet: ' + (entries.length - found.size)].join('\n');
+  return ['🧾 *Expenses — ' + title + '*', SEP, SEP, blocks.join('\n' + SEP + '\n'), SEP, SEP, '*Total: ' + money(total) + ' AED*', 'Cash box ' + money(cash) + ' | Bank card ' + money(card), '🟢 In QuickBooks: ' + found.size + '    🔴 Not yet: ' + (entries.length - found.size), ...(toFix.length ? [SEP, '⚠ *To fix*', ...toFix] : [])].join('\n');
 }
 
 /**

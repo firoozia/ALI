@@ -1068,3 +1068,22 @@ test('the owner adds items the bot never saw: several lines, one preview, one 1/
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes('answerAdd(expenseStore, here.chatId || \'owner\', String(ic.choice), applyAdded)')); // the 1 / 2 reaches the batch
 });
+
+test('expenses against ALL QuickBooks purchases: the account is shown, cash or card comes from the account, a different posted method is flagged on its line, in a «To fix» section and in the Thursday check; an added expense with no method takes it from the match, else is asked', async () => {
+  const { qbKindOf, weeklyCheckText } = await import('../src/expenses.js');
+  const { expensesReport } = await import('../src/expenseedit.js');
+  const { parseAddEntries } = await import('../src/addentries.js');
+  assert.deepEqual([qbKindOf({ AccountRef: { name: 'Petty Cash' } }), qbKindOf({ AccountRef: { name: 'ADCB Bank' } }), qbKindOf({ AccountRef: { name: 'Visa Card' }, PaymentType: 'CreditCard' }), qbKindOf({})], ['cash', 'card', 'card', '']);
+  const e = (id, amount, method, vendor, type = 'fuel') => ({ id, amount, method, vendor, type, day: '2026-11-11', date: '2026-11-11', state: 'done', by: 'u' });
+  const records = [{ TxnDate: '2026-11-11', TotalAmt: 85.5, EntityRef: { name: 'ADNOC STATION' }, AccountRef: { name: 'ADCB Bank' }, _type: 'Purchase' }, { TxnDate: '2026-11-11', TotalAmt: 22.48, EntityRef: { name: 'DAY TO DAY' }, AccountRef: { name: 'Petty Cash' }, _type: 'Purchase' }];
+  const entries = [e('E7', 85.5, 'card', 'ADNOC'), e('E3', 22.48, 'card', 'Day to Day', 'office')];
+  const text = expensesReport(entries, records, '11/11/2026');
+  assert.match(text, /🟢 85\.50 {3}card {3}ADNOC {5}#E7 {2}\(QuickBooks: ADCB Bank\)\n/); // matches: the account is shown, no warning
+  assert.match(text, /🟢 22\.48 {3}card {3}Day to Day #E3 {2}\(QuickBooks: Petty Cash\) {2}⚠ posted card, QuickBooks Petty Cash \(cash\) — please fix/);
+  assert.match(text, /⚠ \*To fix\*\n#E3 posted card, QuickBooks Petty Cash \(cash\)$/);
+  const week = weeklyCheckText({ expenses: entries, purchases: records, items: [], payments: [], title: 'w' });
+  assert.match(week, /⚠ \*To fix: the payment method differs from QuickBooks\*\n#E3 posted card, QuickBooks Petty Cash \(cash\) — please fix/); assert.doesNotMatch(week, /All recorded/);
+  assert.equal(parseAddEntries('add expense 140.07 fuel 10/11 ENOC', '2026-11-12').entries[0].method, ''); // no method written
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("en.method = qbKindOf(rec)")); assert.ok(index.includes("state: en.method ? 'done' : 'ask_method'")); // taken from the account, else asked 1 card / 2 cash
+});

@@ -92,6 +92,7 @@ export function parseInvoiceCommand(text) {
   { const ed = parseEditRequest(raw); if (ed) return { type: 'invoice_edit', ...ed }; } // «edit invoice 10003» + one change per line
   { const sw = /^(?:atossa[ ,:]+)?([123])(?:[ ]*#?[ ]*G(\d+))?[.!]?$/i.exec(normalizeDigits(raw.trim())); if (sw) return { type: 'swap_answer', choice: Number(sw[1]), id: sw[2] ? 'G' + sw[2] : '' }; } // «1» / «2 #G5»: the answer to a digits-swapped payment check
   { const cb = parseCashBoxCommand(raw); if (cb) return { type: 'cash_box', cmd: cb }; } // «cash box», «صندوق», «cash box opening 01/11 2000»
+  { const ep = /^([12])\s*#?\s*(E\d+)$/i.exec(normalizeDigits(raw.trim())); if (ep) return { type: 'expense_pick', pick: ep[1], id: ep[2].toUpperCase() }; } // «1 #E5»: card or cash for an expense waiting for its method
   { const ae = parseAddEntries(raw); if (ae) return { type: 'add_entries', parsed: ae }; const ua = parseUndoAdd(raw); if (ua) return { type: 'add_undo', id: ua }; } // «add expense 140.07 fuel 10/11», «add cash to boss 18000 04/11», «add advance 500 RAJU 06/11»
   { const xe = parseExpenseEdit(raw); if (xe) return { type: 'expense_edit', cmd: xe }; } // «edit #E8 cash», «delete #E8», «undo #E8»
   { const cc = parseCutCommand(raw); if (cc) return { type: 'cut_cmd', cmd: cc }; } // «cuts 215 08/11», «cut #Z1 customer NAME», «undo cut #X1»

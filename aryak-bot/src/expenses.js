@@ -111,7 +111,7 @@ export class ExpenseStore {
   }
   get(id) { return this.d.items.find((e) => e.id === String(id || '').toUpperCase()) || null; }
   /** The open entries of a person (not saved, not cancelled), newest last. */
-  openFor(by) { return this.d.items.filter((e) => e.by === by && !['done', 'cancelled'].includes(e.state) && this.now() - e.at < 24 * 3600 * 1000); }
+  openFor(by) { return this.d.items.filter((e) => e.by === by && !['done', 'cancelled'].includes(e.state) && this.now() - (e.createdAt || e.at) < 24 * 3600 * 1000); }
   latestFor(by, timeZone = 'Asia/Dubai') { const today = dayOf(this.now(), timeZone); return [...this.d.items].reverse().find((e) => e.by === by && e.state !== 'cancelled' && e.day === today) || null; }
   done(range) { return this.d.items.filter((e) => e.state === 'done' && !e.test && e.day >= range.from && e.day <= range.to); } // an expense made in the TEST group is test data: never in a real report
   remove(id) { const i = this.d.items.findIndex((e) => e.id === String(id || '').toUpperCase()); if (i < 0) return null; const [gone] = this.d.items.splice(i, 1); this.save(); return gone; }
@@ -208,6 +208,14 @@ export const sameBrandForm = (a, b) => {
 const nameOk = (a, b, aliasOf = () => '') => !a || !b || sameCutCustomer(a, b) || (!!aliasOf(a) && sameCutCustomer(aliasOf(a), b)) || sameBrandForm(a, b); // «Akrasa lion» is «AKRASAA LIONS …»: a letter more or less, singular or plural
 
 /** The QuickBooks records (Purchase / Bill: { TxnDate, TotalAmt, EntityRef|VendorRef }) that match each expense by amount (±1) and date (±3 days); the vendor when both are known. Each record is used once. */
+/** Cash or card by the ACCOUNT a QuickBooks purchase was paid from: «Petty Cash» (the cash box) is cash, a bank or credit-card account is card; '' when the record says nothing. */
+export function qbKindOf(rec) {
+  const name = String(rec?.AccountRef?.name || '');
+  if (!name && !rec?.PaymentType) return '';
+  if (/petty\s*cash|cash\s*box|^cash$/i.test(name)) return 'cash';
+  if (rec.PaymentType === 'Cash' && !name) return 'cash';
+  return 'card';
+}
 export function matchExpenses(entries, records) {
   const used = new Set(); const found = []; const missing = [];
   for (const e of entries) {
@@ -471,9 +479,11 @@ export function weeklyCheckText({ expenses, purchases, items, payments, aliasOf 
   const exp = matchExpenses(expenses, purchases);
   const got = matchReceipts(items.filter((i) => !i.foreign), payments, aliasOf);
   const lostMoney = items.filter((i) => !i.foreign && !got.has(i) && i.paid !== true);
-  if (!exp.missing.length && !lostMoney.length) return `*Weekly check — ${title}*\n✔ All recorded in QuickBooks this week.`;
+  const methodDiffs = exp.found.filter((f) => f.entry.method && qbKindOf(f.record) && qbKindOf(f.record) !== f.entry.method); // posted card but QuickBooks paid it from the cash box, or the other way round
+  if (!exp.missing.length && !lostMoney.length && !methodDiffs.length) return `*Weekly check — ${title}*\n✔ All recorded in QuickBooks this week.`;
   const blocks = [];
   if (exp.missing.length) blocks.push(['Expenses not found in QuickBooks:', withSeparators(exp.missing.map((e, i) => `${i + 1}. ${dmy(e.date || e.day)} — ${who(e)} — *${money(e.amount)}* — ${typeLine(e)}`))].join('\n'));
+  if (methodDiffs.length) blocks.push(['⚠ *To fix: the payment method differs from QuickBooks*', ...methodDiffs.map((f) => '#' + f.entry.id + ' posted ' + f.entry.method + ', QuickBooks ' + (f.record.AccountRef?.name || 'account') + ' (' + qbKindOf(f.record) + ') — please fix')].join('\n'));
   if (lostMoney.length) blocks.push(['💰 *Money received not found in QuickBooks*', '', withSeparators(lostMoney.map((it) => `*${(it.customer || 'UNKNOWN').toUpperCase()}*\n🔴 ${money(it.amount)}  ${it.kind === 'bank' ? 'transfer' : it.kind} ${dmy(it.day)}`))].join('\n'));
   return [`*Weekly check — ${title}*`, blocks.join(`\n${SEP}\n`)].join('\n');
 }

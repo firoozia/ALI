@@ -93,7 +93,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, TYPES, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses } from './expenses.js';
+import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, TYPES, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses, qbKindOf } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -1167,12 +1167,21 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       if (ic.cmd.op === 'opening') return ['The cash box report shows only the month\'s own movements now: there is no opening balance to set.'];
       return [(await cashBoxMonth(todayDubai().slice(0, 7))).text];
     }
-    case 'add_entries': return [requestAdd(expenseStore, ic.parsed, here.chatId || 'owner')];
+    case 'add_entries': {
+      for (const en of ic.parsed.entries) { // no method written: the account of the matched QuickBooks purchase says cash or card
+        if (en.kind !== 'expense' || en.method || !qbo.connected || qbo.paused) continue;
+        const rec = matchExpenses([{ amount: en.amount, day: en.day, date: en.day, vendor: en.vendor }], await qbRows('Purchase', dayPlus(en.day, -3), dayPlus(en.day, 3))).found[0]?.record;
+        if (rec && qbKindOf(rec)) { en.method = qbKindOf(rec); en.qbAccount = rec.AccountRef?.name || ''; }
+      }
+      return [requestAdd(expenseStore, ic.parsed, here.chatId || 'owner')];
+    }
+    case 'expense_pick': { const hr = handleReply(expenseStore, 'owner', { pick: ic.pick, id: ic.id }); return hr ? [hr.text] : null; }
     case 'add_undo': return [undoAdd(expenseStore, ic.id, removeAdded)];
     case 'expense_edit': return [await expenseEditReply(ic.cmd, here.chatId || 'owner', 'owner')];
     case 'swap_answer': {
-      { const aa = answerAdd(expenseStore, here.chatId || 'owner', String(ic.choice), applyAdded); if (aa) return [aa]; } // the 1 / 2 of an «add …» preview
+      { const aa = answerAdd(expenseStore, here.chatId || 'owner', String(ic.choice), applyAdded); if (aa) { const waiting = expenseStore.openFor('owner'); return [aa + (waiting.length ? '\nCard or cash? ' + waiting.map((x) => '#' + x.id).join(', ') + ': answer 1 card / 2 cash' + (waiting.length > 1 ? ' with the code, for example: 1 #' + waiting[0].id : '') : '')]; } } // the 1 / 2 of an «add …» preview
       { const xa = answerExpenseEdit(expenseStore, here.chatId || 'owner', 'owner', String(ic.choice)); if (xa) return [xa]; } // the 1 / 2 of an expense edit preview
+      { const hr = ic.choice < 3 ? handleReply(expenseStore, 'owner', { pick: String(ic.choice), id: '' }) : null; if (hr && !/^No expense/.test(hr.text)) return [hr.text]; } // 1 card / 2 cash for the one added expense still waiting for its method
       const waiting = payChecks.openIds().filter((i) => ['swap', 'cashkind'].includes(payChecks.get(i)?.action));
       const id = ic.id ? ic.id.toUpperCase() : waiting.length === 1 ? waiting[0] : '';
       if (!id && !waiting.length) return null; // no payment check waits: the digit is not ours
@@ -3124,7 +3133,7 @@ function applyAdded(entries, batch) {
   const refs = [];
   entries.forEach((en, i) => {
     const at = Date.parse(en.day + 'T12:00:00+04:00'); const ref = 'added-' + batch + '-' + i;
-    if (en.kind === 'expense') refs.push({ t: 'x', id: expenseStore.add({ by: 'owner', byName: 'Owner', ref, day: en.day, date: en.day, type: en.type, vendor: en.vendor, amount: en.amount, method: en.method, state: 'done', hasReceipt: false, hasPhoto: false, addedByOwner: true, at }).id });
+    if (en.kind === 'expense') refs.push({ t: 'x', id: expenseStore.add({ by: 'owner', byName: 'Owner', ref, day: en.day, date: en.day, type: en.type, vendor: en.vendor, amount: en.amount, method: en.method, state: en.method ? 'done' : 'ask_method', hasReceipt: false, hasPhoto: false, addedByOwner: true, at, createdAt: Date.now(), ...(en.method ? { method: en.method } : {}) }).id });
     else { tracker.add({ type: 'payment', kind: en.kind, customer: '', amount: en.amount, currency: 'AED', lines: [], ...(en.employee ? { employee: en.employee } : {}), at, ref, addedByOwner: true, text: 'added by owner' }); refs.push({ t: 'e', ref }); }
   });
   return refs;
