@@ -317,7 +317,7 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', typed: e.customerTyped && !e.pendingName ? e.customerTyped : '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', clearedDay, at: e.at, drawerAsk: e.drawerAsk || null, name: e.customer || '', pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', typed: e.customerTyped && !e.pendingName ? e.customerTyped : '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', noInvoice: !!e.noInvoice, clearedDay, at: e.at, drawerAsk: e.drawerAsk || null, name: e.customer || '', pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
   return out;
 }
@@ -356,7 +356,7 @@ export function closestMatch(item, records, openInvoices, aliasOf = () => '') {
  */
 export function swapCandidate(event, payments, aliasOf = () => '', timeZone = 'Asia/Dubai') {
   const amount = Number(event.amount) || 0;
-  if (!(amount > 0) || event.pendingName || event.acceptedMatch || event.rejectedMatch || event.swapAsked) return null;
+  if (!(amount > 0) || event.pendingName || event.acceptedMatch || event.rejectedMatch || event.swapAsked || event.noInvoice) return null;
   const names = [event.customer, event.customerTyped].filter(Boolean);
   if (!names.length) return null;
   const day = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(event.at));
@@ -392,7 +392,7 @@ export function receivedText(items, options) {
   };
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
   if (!items.length) return `💰 *Money received — ${title}*\nNo money was recorded.`;
-  const needsOk = []; let green = 0; let red = 0;
+  const needsOk = []; let green = 0; let red = 0; let stars = 0;
   const plain = (it) => String(it.shown || money(it.amount)).replace(/\*/g, '');
   const ddmm = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
   /** The invoice lines of a recorded receipt (cash, cheque or transfer alike): one invoice = its number after the amount; several = no number there, then the closed and the partly paid lines. */
@@ -408,7 +408,7 @@ export function receivedText(items, options) {
     return out;
   };
   const lineOf = (it) => {
-    const kind = it.kind; const rec = matched.get(it); let ok = false; let tail = ''; let extra = [];
+    const kind = it.kind; const rec = matched.get(it); let ok = false; let star = false; let tail = ''; let extra = [];
     const days = Math.max(0, Math.floor((nowMs - it.at) / 86400000));
     if (it.foreign) tail = '  ⚠ foreign currency: check in QuickBooks';
     else if (it.accepted) { ok = true; tail = '  accepted by you: ' + it.accepted.text; }
@@ -431,7 +431,7 @@ export function receivedText(items, options) {
       tail = inv.inline; // one invoice: its number on the same line, after the amount
       if (rec && Math.abs(Number(rec.TotalAmt) - it.amount) > 0.004 && ![...matched.values()].some((r, i, all) => r === rec && all.indexOf(r) !== i)) extra.push('      ↳ (QuickBooks ' + money(rec.TotalAmt) + ')'); // not when one payment stands for several posts
       extra.push(...inv.extra); // a payment spread over several invoices: no number on the amount line
-    }
+    } else if (it.noInvoice) { star = true; tail = '  no invoice needed'; } // marked with a star: never flagged, never asked about
     else {
       const best = it.rejected ? null : closestMatch(it, records, openInvoices, aliasOf);
       if (best && Math.abs(best.diff) <= 1 && best.kind === 'invoices') tail = '  not in QuickBooks yet (pays ' + best.label + ', ' + money(best.amount) + ')';
@@ -443,8 +443,8 @@ export function receivedText(items, options) {
         else { tail = '  not in QuickBooks yet'; if (best && Math.abs(best.diff) > 1) needsOk.push({ it, best }); }
       }
     }
-    const icon = ok ? '🟢' : it._inTime ? '⏳' : '🔴';
-    if (ok) green += 1; else red += 1;
+    const icon = ok ? '🟢' : star ? '⭐' : it._inTime ? '⏳' : '🔴';
+    if (ok) green += 1; else if (star) stars += 1; else red += 1;
     return icon + ' ' + plain(it) + (it.invoices.length && !tail.trim().startsWith('inv-') ? ' for ' + it.invoices.join(', ') : '') + tail + (extra.length ? '\n' + extra.join('\n') : '') + (it.note ? '\n⚠ ' + it.note : '');
   };
   const sections = [];
@@ -485,6 +485,7 @@ export function receivedText(items, options) {
     `*Total: ${money(total)} AED*`,
     `Cash ${money(sum('cash'))} | Cheques ${money(sum('cheque'))} | Transfers ${money(sum('bank'))}`,
     `🟢 Recorded: ${green}    🔴 Not recorded: ${red}`,
+    ...(stars ? [`⭐ No invoice needed: ${stars}`] : []),
     ...(foreign ? [`⚠ ${foreign} in a currency with no rate (not in the total)`] : []),
     ...(okLines.length ? [SEP, SEP, '❓ *Needs your OK*', ...okLines] : []),
   ].join('\n');

@@ -609,6 +609,7 @@ const swapPending = new Map(); // ref -> { at }: a payment to compare with Quick
 function tellPayment(event) {
   if (replayCtx.getStore()?.quiet) return; // a message read from the history is never announced
   if (CASH_OUT_KINDS.includes(event.kind)) return; // cash to the boss / a salary advance is no customer payment
+  if (event.noInvoice) return; // a post marked with a star needs no invoice: no proposal, no question
   if (qbo.connected && !qbo.paused && Number(event.amount) > 0 && event.kind !== 'cheque') swapPending.set(event.ref, { at: Date.now() });
   if (qbo.connected && !qbo.paused && (Number(event.amount) > 0 || event.invoices?.length || event.source === 'pdf') && config.paymentNotices) payPending.set(event.ref, { at: Date.now() }); // held a few minutes: the messages about one payment become ONE notice
 }
@@ -3251,7 +3252,7 @@ async function cashBoxMonth(month, depth = 0) {
           const text = 'payment ' + rec.TxnDate.slice(8, 10) + '/' + rec.TxnDate.slice(5, 7) + ' ' + Number(rec.TotalAmt).toFixed(2);
           return { code: payChecks.codeFor(ref, text, 'swap', { qboAmount: Number(rec.TotalAmt), posted: Number(ev.amount) }), qboAmount: Number(rec.TotalAmt), name: rec.CustomerRef?.name || '' };
         },
-        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref, accepted: i.accepted || null })), outs, expenses: [...expenseRows.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, method: e.method, added: e.added })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
+        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref, accepted: i.accepted || null, noInvoice: !!i.noInvoice })), outs, expenses: [...expenseRows.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, method: e.method, added: e.added })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
     } catch (e) { logger.warn('cash box: QuickBooks did not answer, the posts are shown instead: ' + e.message); }
   }
   const transfers = await qbRows('Transfer', dayPlus(from, -3), dayPlus(to, 3));

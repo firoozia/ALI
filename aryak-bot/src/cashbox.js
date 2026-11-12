@@ -192,7 +192,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const addedTail = (p) => (p.added ? '  (added by owner' + (p.also ? '; also posted ' + p.also.slice(8, 10) + '/' + p.also.slice(5, 7) : '') + ')' : '');
   const lineDate = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
   const dline = (icon, iso, amount, tail) => icon + ' ' + lineDate(iso) + money(amount).padStart(12) + (tail || '');
-  let green = 0; let red = 0; let white = 0; let yellow = 0;
+  let green = 0; let red = 0; let white = 0; let yellow = 0; let stars = 0; let starTotal = 0;
   const mark = (icon) => { if (icon === '🟢') green += 1; else if (icon === '🔴') red += 1; else white += 1; return icon; };
   const unmatchedLines = (pool, tailOf) => pool.filter((p) => !p.used).map((p) => dline(mark('🔴'), isoOf(p.at), p.amount, tailOf(p) + addedTail(p) + '  (posted, not in QuickBooks)'));
   // cash in
@@ -230,6 +230,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const sameName = (a, b) => !a || !b || sameCutCustomer(a, b);
   for (const p of inPosts.filter((x) => !x.used)) { // posted, but not among the Petty Cash cash payments: in another account (🟡), a swapped-digit question (❓), or not in QuickBooks at all (🔴)
     const iso = isoOf(p.at);
+    if (p.noInvoice) { stars += 1; starTotal += Number(p.amount); inExtra.push(dline('⭐', iso, p.amount, '  no invoice needed')); continue; } // marked with a star: counted in the cash in, never flagged
     const elsewhere = (data.elsewhere || []).find((r) => !r.used && Math.abs(r.amount - p.amount) <= 1 && Math.abs(dayOfIso(r.date) - dayNum(p.at, timeZone)) <= 3 && sameName(r.name, p.customer));
     if (elsewhere) { elsewhere.used = true; yellow += 1; inExtra.push(dline('🟡', iso, p.amount, '  (in QuickBooks, deposited to ' + elsewhere.account + ', not ' + accountName + ')')); }
     else if (p.accepted) { green += 1; inExtra.push(dline('🟢', iso, p.amount, '  (accepted by you: ' + p.accepted.text + ')')); }
@@ -258,15 +259,15 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const advL = tLines(advT, advPosts, true);
   if (advT.length || advPosts.some((p) => !p.used)) blocks.push([cell('👷 *Salary advances*', sum(advT)), ...advL].join('\n'));
   for (const n of [...new Set(otherT.map((t) => t.to))]) { const l = otherT.filter((t) => t.to === n); blocks.push([cell('↔️ *' + n + '*', sum(l)), ...l.map((t) => dline(mark('⚪'), t.date, t.amount, ''))].join('\n')); }
-  const totalIn = cashFromCustomers + transfersInTotal;
+  const totalIn = cashFromCustomers + transfersInTotal + starTotal;
   const totalOut = expTotal + sum(data.transfersOut);
   const remaining = Math.round((totalIn - totalOut) * 100) / 100;
   const text = [
     '📦 *Cash box — ' + label + '*', SEP, SEP,
-    '💵 *Cash in*', cell('Cash from customers', cashFromCustomers), ...(transfersInTotal ? [cell('Transfers in', transfersInTotal)] : []), ...inExtra, SEP, SEP,
+    '💵 *Cash in*', cell('Cash from customers', cashFromCustomers), ...(starTotal ? [cell('⭐ No invoice needed', starTotal)] : []), ...(transfersInTotal ? [cell('Transfers in', transfersInTotal)] : []), ...inExtra, SEP, SEP,
     '💸 *Cash out*', '', blocks.length ? blocks.join('\n' + SEP + '\n') : 'Nothing left the cash box.', SEP, SEP,
     '*Total in (month): ' + money(totalIn) + ' AED*', '*Total out (month): ' + money(totalOut) + ' AED*', '*Net for the month: ' + money(remaining) + ' AED*',
-    '🟢 Posted and in QuickBooks: ' + green + '    🔴 Not in QuickBooks: ' + red + '    ⚪ No post: ' + white + (yellow ? '    🟡 Other account: ' + yellow : ''),
+    '🟢 Posted and in QuickBooks: ' + green + '    🔴 Not in QuickBooks: ' + red + '    ⚪ No post: ' + white + (yellow ? '    🟡 Other account: ' + yellow : '') + (stars ? '    ⭐ No invoice needed: ' + stars : ''),
   ].join('\n');
   return { text, remaining };
 }

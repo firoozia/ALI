@@ -2,12 +2,21 @@
 // A PROPOSAL only, read only: nothing is ever recorded in QuickBooks from here (recording a payment would be its own owner-approved job). The account numbers of the bank messages are
 // never kept: only the amount.
 
-import { CASH_OUT_KINDS, rederiveCashOut } from './cashbox.js';
+import { CASH_OUT_KINDS, rederiveCashOut as rederiveOut } from './cashbox.js';
+/** An old stored row whose text (or name) ends with a star is read as «no invoice needed», the star taken off the words. */
+function rederiveStar(e) {
+  if (!e || e.type !== 'payment' || e.noInvoice) return e;
+  const words = [e.text, e.customerTyped, e.customer].filter(Boolean);
+  if (!words.some((w) => isStarred(w))) return e;
+  const strip = (w) => (w ? String(w).replace(STAR_END, '').trim() : w);
+  return { ...e, noInvoice: true, text: strip(e.text), customer: strip(e.customer), customerTyped: strip(e.customerTyped) };
+}
+const rederiveCashOut = (e) => rederiveStar(rederiveOut(e));
 const CASH_OUT = CASH_OUT_KINDS; // cash to the boss and salary advances are no customer payments
 import fs from 'node:fs';
 import path from 'node:path';
 import { withEnd } from './separator.js';
-import { CHEQUE_WORDS, isEstimateText, isReplyFiller, matchCod, parsePaymentCaption, stripPaymentWords } from './captions.js';
+import { STAR_END, isStarred, CHEQUE_WORDS, isEstimateText, isReplyFiller, matchCod, parsePaymentCaption, stripPaymentWords } from './captions.js';
 import { expandRecords, sameBrandForm } from './expenses.js';
 import { sameCutCustomer } from './cuts.js';
 
@@ -122,7 +131,7 @@ export function proposePayment({ event: raw, invoices, payments = [], aliasOf = 
 
 /** The report: [events] with an amount, newest first, at most [max] proposals; the footer says nothing was recorded. */
 export function paymentsText({ events, invoices, payments = [], aliasOf, timeZone, now = Date.now(), days = 14, max = 10, dups = new PaymentDups(''), only = '', lookup = new Map(), since = 0, questions = true }) {
-  const recent = events.map(rederiveCashOut).filter((e) => e.type === 'payment' && !CASH_OUT.includes(e.kind) && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
+  const recent = events.map(rederiveCashOut).filter((e) => e.type === 'payment' && !e.noInvoice && !CASH_OUT.includes(e.kind) && (Number(e.amount) > 0 || e.invoices?.length || e.source === 'pdf') && !e.simulated && e.at >= since && e.at >= now - days * 24 * 3600 * 1000).sort((a, b) => b.at - a.at);
   if (!recent.length) return `No payment was seen in the Confirmation group in the last ${days} days.`;
   // two payments with the same amount and customer: the first one is listed; the second is marked and the owner is asked (his answer is kept on the server)
   const marked = new Map(); const dropped = new Set();
@@ -272,7 +281,7 @@ export function cleanPaymentEvents({ events, since = 0, isKnown = () => false })
 function dedupePayments(list, { payments, aliasOf, timeZone, dups }) {
   const kept = [];
   for (const e of list) {
-    const original = kept.find((o) => repeats(e, o, timeZone, payments, aliasOf));
+    const original = e.noInvoice ? null : kept.find((o) => repeats(e, o, timeZone, payments, aliasOf)); // a starred post is never asked about
     if (original && dups.state(original, e) !== 'separate') { if (!original.customer && e.customer) { original.customer = e.customer; original.pendingName = false; } continue; } // counted once; the one that has a name keeps it
     kept.push(e);
   }

@@ -274,6 +274,9 @@ export function isCancelText(text) {
 }
 
 /** A text that is an estimate / quotation / offer / proforma (never a payment). */
+/** A post that ENDS with a star («Cash from X 3000 *», «★», «⭐», «**»): the money needs no invoice. */
+export const STAR_END = /\s*(?:\*+|★|⭐\uFE0F?)+\s*$/u;
+export const isStarred = (text) => STAR_END.test(String(text || '').trim()) && String(text || '').replace(STAR_END, '').trim() !== '';
 export const isEstimateText = (text) => /(?:^|[^A-Za-z])(?:estimates?|quotations?|quote|offer|pro-?forma)(?![A-Za-z])|پیش‌?فاکتور|پیشنهاد قیمت|برآورد/i.test(String(text || ''));
 
 const FILLER = new Set(['plz', 'pls', 'please', 'kindly', 'also', 'this', 'that', 'these', 'those', 'it', 'them', 'same', 'too', 'one', 'the', 'and', 'clear', 'cleared', 'clearing', 'done', 'ok', 'okay', 'yes', 'thanks', 'thank', 'you', 'confirm', 'confirmed', 'received', 'noted']);

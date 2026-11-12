@@ -6,9 +6,13 @@
 //   { ignore: true }               something to leave out (an expense)
 
 import { cashOutKind } from './cashbox.js';
-import { parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
+import { STAR_END, isStarred, parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
 
 export function eventsFromCaption(role, text) {
+  if (role === 'payment' && isStarred(text)) { // a star at the end: the star is taken off the name and the amount; the money needs no invoice
+    const r = eventsFromCaption(role, String(text).replace(STAR_END, '').trim());
+    return r?.events ? { ...r, events: r.events.map((e) => ({ ...e, noInvoice: true })) } : r;
+  }
   if (role === 'cut') {
     const c = parseCutCaption(text);
     if (!c || c.kind === 'name') return null;

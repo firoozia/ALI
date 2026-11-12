@@ -560,7 +560,7 @@ test('the fake rows made by filler replies and the estimates leave the lists; th
   assert.deepEqual([lone[0].customer, lone[0].cleared, lone[0].pendingName], ['', true, true]);
   // the received report: counted once, the drawer named
   const items = receivedItems(list, { from: '2026-11-11', to: '2026-11-11' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
-  const text = receivedText(items, { title: '11/11', records: [] });
+  const text = receivedText(items, { title: '11/11', records: [], now: at + 3600000 });
   assert.match(text, /\*AL AHLIA KITCHEN\*\n⏳ 3,500\.00  cheque not cleared \(0 days\) \(drawer AL MALTA KITCHENS LLC\)/); assert.doesNotMatch(text, /PLZ|ALSO THIS|WAHDAN/); assert.equal((text.match(/3,500\.00/g) || []).length >= 1, true);
 });
 
@@ -1152,4 +1152,28 @@ test('an item the owner added absorbs the posted row of the same kind (amount +-
   assert.doesNotMatch(text, /05\/11\s+157\.00/); // the old row is not shown again
   assert.match(text, /🔴 04\/11\s+18,000\.00 {2}\(added by owner; also posted 04\/11\) {2}\(posted, not in QuickBooks\)/); // absorbed once; its own lack of a transfer is still said
   assert.equal((text.match(/18,000\.00/g) || []).length, 1); // one line only: the posted twin is not shown again
+});
+
+test('a post ending with a star needs no invoice: the star is taken off, it is never flagged, asked about or listed to match, shown with its own mark and counted; old rows get the same on read', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const { isStarred } = await import('../src/captions.js');
+  const { sharedPaymentList, paymentsText } = await import('../src/payments.js');
+  const { receivedItems, receivedText } = await import('../src/expenses.js');
+  const { cashBoxReportQbo } = await import('../src/cashbox.js');
+  for (const t of ['Cash from ZETA CO 3000 *', 'Cash from ZETA CO 3000 ★', 'Cash from ZETA CO 3000 ⭐', 'Cash from ZETA CO 3000 **']) assert.ok(isStarred(t), t);
+  assert.ok(!isStarred('Cash from ZETA CO 3000') && !isStarred('*'));
+  const ev = eventsFromCaption('payment', 'Cash from ZETA CO 3000 *').events[0];
+  assert.deepEqual([ev.customer, ev.amount, ev.noInvoice], ['ZETA CO', 3000, true]); // the star is not in the name or the amount
+  const at = Date.parse('2026-11-12T08:00:00Z');
+  const oldRow = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'o', at, customer: 'NOVA CO *', amount: 750, text: 'Cash from NOVA CO 750 *' };
+  const list = sharedPaymentList({ events: [{ ...ev, at, ref: 's', currency: 'AED' }, oldRow] });
+  assert.deepEqual(list.map((e) => [e.customer, e.noInvoice]), [['ZETA CO', true], ['NOVA CO', true]]); // an old row is read the same way, the star off its name
+  assert.match(paymentsText({ events: [{ ...ev, at, ref: 's', currency: 'AED' }, oldRow], invoices: [], now: at }), /No payment was seen/); // not in «payments to match»
+  const items = receivedItems(list, { from: '2026-11-12', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  const text = receivedText(items, { title: '12/11', records: [], now: at });
+  assert.match(text, /⭐ 3,000\.00 {2}no invoice needed/); assert.doesNotMatch(text, /🔴 \d/); assert.match(text, /⭐ No invoice needed: 2$/);
+  assert.match(text, /\*Total: 3,750\.00 AED\*/); // counted in the totals
+  const data = { received: [], elsewhere: [], transfersIn: [], transfersOut: [], purchases: [] };
+  const cash = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [{ amount: 3000, at, customer: 'ZETA CO', ref: 's', noInvoice: true }], outs: [], expenses: [] } }).text;
+  assert.match(cash, /⭐ No invoice needed\s+3,000\.00/); assert.match(cash, /⭐ 12\/11\s+3,000\.00 {2}no invoice needed/); assert.match(cash, /\*Total in \(month\): 3,000\.00 AED\*/); assert.match(cash, /⭐ No invoice needed: 1/); assert.doesNotMatch(cash, /posted, not in QuickBooks/);
 });

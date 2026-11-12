@@ -349,7 +349,7 @@ export function isDuplicatePayment(tracker, ev, { windowMs = 10 * 60 * 1000 } = 
 
 /** Money items nobody has closed yet ("CLEARED" is the office's reply): cash, receipts, cheques and transfers, oldest first. */
 export function unclearedPayments(tracker, { now = Date.now(), minHours = 0 } = {}) {
-  return tracker.events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared && (!minHours || now - e.at >= minHours * 3600000));
+  return tracker.events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.noInvoice && !e.cleared && (!minHours || now - e.at >= minHours * 3600000));
 }
 
 /** The office replied "CLEARED": to the item replied to ([ref]), else to the oldest open item. Returns the event or null. */
