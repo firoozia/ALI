@@ -2,6 +2,7 @@
 // one by one with a random gap, a daily cap, nothing twice for the same day and group (remembered on disk, so a restart does
 // not resend), a catch-up window after the time, and no message on the days off. The wording is in data/morning-phrases.json.
 
+import { nameFallback } from './namelead.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -115,7 +116,10 @@ export async function runMorning({ day, weekend, groups, words, phrases, name, s
 }
 
 /** "صبح بخیر وضعیت" | "... خاموش" | "... روشن" | "... آزمایش" -> { type }; else null. */
-export function parseMorningCommand(text) {
+function parseMorningCommandImpl(text) {
   const m = /^صبح\s+بخیر\s+(وضعیت|خاموش|روشن|آزمایش)$/u.exec(String(text || '').replace(/[\s‌]+/g, ' ').trim());
   return m ? { type: { وضعیت: 'status', خاموش: 'off', روشن: 'on', آزمایش: 'test' }[m[1]] } : null;
 }
+
+/** parseMorningCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseMorningCommand = nameFallback(parseMorningCommandImpl);

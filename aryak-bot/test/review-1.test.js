@@ -1250,3 +1250,19 @@ test('a quote-reply «<name> cleared» names the bank SMS row it quotes; a namel
   const twice = receivedText([item], { title: '12/11', records: [], openInvoices: [...open, { Id: '3', DocNumber: 'inv-10014', Balance: 714, TotalAmt: 714, CustomerRef: { name: 'OMEGA CO' } }], now });
   assert.match(twice, /\*UNKNOWN\*/); // two invoices of that amount: not guessed
 });
+
+test('the assistant\'s name in front of a command changes nothing: every owner command reads the same with or without «Atossa»', async () => {
+  const { parseInvoiceCommand } = await import('../src/qboinvoice.js');
+  const { parseQboCommand } = await import('../src/qbodesk.js');
+  const { stripBotName } = await import('../src/namelead.js');
+  assert.equal(stripBotName('Atossa received today'), 'received today'); assert.equal(stripBotName('atusa, cash box'), 'cash box'); assert.equal(stripBotName('ATOSA: unbilled'), 'unbilled'); assert.equal(stripBotName('آتوسا صندوق'), 'صندوق');
+  assert.equal(stripBotName('Atossa'), 'Atossa'); assert.equal(stripBotName('hello Atossa received today'), 'hello Atossa received today'); // only a name at the start, followed by words
+  for (const t of ['received today', 'cash box', 'unbilled', 'expenses today', 'cuts 215 08/11', 'cut #Z1 drop', 'edit #E3 cash', 'add cash to boss 18000 04/11', 'yes #Q1', 'undo cut #X1', 'waiting']) {
+    const bare = parseInvoiceCommand(t); const named = parseInvoiceCommand('Atossa ' + t); const comma = parseInvoiceCommand('atossa, ' + t);
+    assert.ok(bare, t); assert.deepEqual(named, bare, t); assert.deepEqual(comma, bare, t);
+  }
+  assert.equal(parseInvoiceCommand('Atossa received today').type, 'received_report');
+  assert.deepEqual(parseQboCommand('Atossa ' + 'status'), parseQboCommand('status'));
+  const { parseCommand } = await import('../src/staff.js'); const { parseTrackerCommand } = await import('../src/tracker.js'); const { parseRuleCommand } = await import('../src/rules.js'); const { parseAliasCommand } = await import('../src/aliases.js');
+  for (const [fn, sample] of [[parseCommand, 'status'], [parseTrackerCommand, 'balance of ZETA'], [parseRuleCommand, 'rules'], [parseAliasCommand, 'aliases']]) assert.deepEqual(fn('Atossa ' + sample), fn(sample), sample); // the other command readers too
+});

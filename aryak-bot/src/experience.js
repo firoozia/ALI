@@ -6,6 +6,7 @@
 // "shapes": a message reduced to the few words that carry its pattern, every other word and every number replaced
 // ("# available ?", "_ - # mtr also"). No name, number, price, phone, address, photo or voice ever reaches the store.
 
+import { nameFallback } from './namelead.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { detectLang } from './lang.js';
@@ -371,7 +372,7 @@ export function formatStatus(exp) {
 }
 
 /** "یادگیری", "یادگیری خاموش", "بپذیر 3", "رد 3", "پیشنهادهای یادگیری", "بازگشت یادگیری", "گزارش یادگیری" -> a command or null. */
-export function parseLearnCommand(text) {
+function parseLearnCommandImpl(text) {
   const s = normalizeDigits(String(text || '')).trim();
   if (/^یادگیری$/.test(s)) return { type: 'status' };
   if (/^یادگیری\s+خاموش$/.test(s)) return { type: 'off' };
@@ -393,3 +394,6 @@ export function reportDue({ now = Date.now(), timeZone = 'Asia/Dubai', weekday =
   const idx = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd);
   return idx === weekday && h >= hour && last !== f ? f : null;
 }
+
+/** parseLearnCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseLearnCommand = nameFallback(parseLearnCommandImpl);

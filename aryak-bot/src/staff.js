@@ -1,6 +1,7 @@
 // The assistant for the ARYAK team: answers staff questions (stock with real figures, invoice checks, orders), and
 // takes simple commands from the owner. Customers never get anything from here.
 
+import { nameFallback } from './namelead.js';
 import { withSeparators } from './separator.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -130,7 +131,7 @@ const COMMANDS = {
 };
 
 /** "/status", "!وضعیت", or (where [bare]) just "وضعیت". Returns the command name or null. */
-export function parseCommand(text, { bare = false } = {}) {
+function parseCommandImpl(text, { bare = false } = {}) {
   const t = String(text || '').trim().replace(/[‌‏]/g, '').toLowerCase();
   const m = /^[/!]\s*(\S+)/.exec(t);
   const word = m ? m[1] : bare && /^\S+$/.test(t) ? t : '';
@@ -239,3 +240,6 @@ export function stockAsk(text, names = []) {
   if (!codes.length || !others.some((w) => QTY_WORD.test(w)) || !others.every((w) => QTY_WORD.test(w) || POLITE.test(w))) return null;
   return codes.map((c) => `Stock of code ${c}`).join('. ');
 }
+
+/** parseCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseCommand = nameFallback(parseCommandImpl);

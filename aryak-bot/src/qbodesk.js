@@ -2,6 +2,7 @@
 // "صورت‌حساب <customer>" and "صورت‌حساب همه" (at most 50, a gap between posts). READ ONLY: nothing is ever written to QuickBooks here. Every statement
 // is posted ONLY to the test group, whatever is asked: the desk has no target to choose, it asks for "the test group" and nothing else.
 
+import { nameFallback } from './namelead.js';
 import { withEnd, withSeparators } from './separator.js';
 import { isEnglishOut } from './outlang.js';
 import fs from 'node:fs';
@@ -21,7 +22,7 @@ const QB = 'کو[ئی]*یک\\s*بوکس';
 export const MAX_ALL = 50;
 
 /** What the owner wrote, or null: { type: 'status' | 'match' | 'pick' | 'skip' | 'statement' | 'all', ... }. */
-export function parseQboCommand(text) {
+function parseQboCommandImpl(text) {
   const s = plain(text).replace(/^آتوسا[ ,،:]*/u, '').replace(/[.!؟?]+$/u, '').trim();
   if (!s) return null;
   if (new RegExp(`^وضعیت\\s*${QB}$`, 'u').test(s)) return { type: 'status' };
@@ -468,3 +469,6 @@ export class QboDesk {
     return [head];
   }
 }
+
+/** parseQboCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseQboCommand = nameFallback(parseQboCommandImpl);

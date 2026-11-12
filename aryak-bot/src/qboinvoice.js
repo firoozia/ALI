@@ -7,6 +7,7 @@
 // write exists, and QBO_WRITE off refuses everything. Nothing here sends anything to a customer.
 
 import { parseCutCommand } from './cutedit.js';
+import { nameFallback } from './namelead.js';
 import { parseExpenseEdit } from './expenseedit.js';
 import { parseAddEntries, parseUndoAdd } from './addentries.js';
 import { parseCashBoxCommand } from './cashbox.js';
@@ -85,7 +86,7 @@ export function parseEditRequest(text) {
   return { number: head[1], ops, bad };
 }
 
-export function parseInvoiceCommand(text) {
+function parseInvoiceCommandImpl(text) {
   const asPersian = englishCommand(text);
   if (asPersian) return parseInvoiceCommand(asPersian);
   const raw = String(text || '').replace(/\r/g, '');
@@ -1387,3 +1388,5 @@ export class QboInvoiceDesk {
   }
 }
 
+/** parseInvoiceCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseInvoiceCommand = nameFallback(parseInvoiceCommandImpl);

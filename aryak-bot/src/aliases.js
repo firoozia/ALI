@@ -2,6 +2,7 @@
 // list the owner extends by command ("اسم دیگر <مشتری> = <نام>") maps every spelling to one name; without an entry the
 // match is by one name containing the other.
 
+import { nameFallback } from './namelead.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeLetters } from './text.js';
@@ -71,9 +72,12 @@ export class Aliases {
 }
 
 /** "اسم دیگر Bahar Design = بهار" -> { customer, alias }; "اسم‌های دیگر" -> { list: true }; else null. */
-export function parseAliasCommand(text) {
+function parseAliasCommandImpl(text) {
   const s = String(text || '').trim();
   if (/^اسم‌?های\s+دیگر$/.test(s)) return { list: true };
   const m = /^(?:اسم|نام)\s+دیگر\s+(.+?)\s*=\s*(.+)$/u.exec(s);
   return m ? { customer: m[1].trim(), alias: m[2].trim() } : null;
 }
+
+/** parseAliasCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseAliasCommand = nameFallback(parseAliasCommandImpl);

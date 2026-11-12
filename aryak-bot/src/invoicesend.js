@@ -4,6 +4,7 @@
 // single narrow exception is a one-shot token bound to the exact group and to the exact PDF message, created only by the approved flow
 // and used up by the send; no text can pass through it.
 
+import { nameFallback } from './namelead.js';
 import { withSeparators } from './separator.js';
 import { sameName } from './sheetcheck.js';
 import { shadowGroup } from './guard.js';
@@ -26,7 +27,7 @@ const INVOICE_WORDS = /فاکتور|فاكتور|فاتورة|الفاتورة|\
 const FILLER = new Set(['آتوسا', 'atossa', 'فاکتور', 'فاكتور', 'invoice', 'invoices', 'the', 'of', 'for', 'to', 'its', 'his', 'her', 'their', 'group', 'into', 'in', 'گروه', 'داخل', 'خود', 'مشتری', 'customer', 'customers', 'رو', 'را', 'ارسال', 'کن', 'کنید', 'بفرست', 'بفرستید', 'send', 'forward', 'post', 'please', 'pls', 'لطفا', 'لطفاً', 'فاتورة', 'الفاتورة', 'أرسل', 'ارسل', 'مجموعة', 'الى', 'إلى', 'في', 'عميل', 'this', 'that', 'it', 'همین', 'این', 'همان', 'آخرین', 'latest', 'last', 'one', 'هذه', 'هذا', 'و', 'به', 'برای', 'از', 'یک', 'هم', 'also']);
 
 /** "آتوسا فاکتور nuqoosh رو ارسال کن داخل گروه خود مشتری" -> { customer: 'nuqoosh' }; no verb or no invoice word -> null; "send this invoice" -> { customer: '' }. */
-export function parseSendCommand(text) {
+function parseSendCommandImpl(text) {
   const s = String(text || '');
   if (!SEND_WORDS.test(s) || !INVOICE_WORDS.test(s)) return null;
   const words = s.replace(/[؟?!.,،:;()«»"']/g, ' ').split(/\s+/).filter(Boolean).filter((w) => !FILLER.has(w.toLowerCase()) && !/^\d+$/.test(w));
@@ -191,3 +192,6 @@ export class OneShot {
     return true;
   }
 }
+
+/** parseSendCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseSendCommand = nameFallback(parseSendCommandImpl);

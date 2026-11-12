@@ -8,6 +8,7 @@
 // parsing, stock lookup, price and limit rules and the customer's language) is given in as [analyze] and has no side effects outside
 // the shadow state.
 
+import { nameFallback } from './namelead.js';
 import { withSeparators } from './separator.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -337,7 +338,7 @@ export function postingProblems(store) {
 }
 
 /** "سایه وضعیت" | "سایه خاموش" | "سایه روشن" -> { type }; else null. */
-export function parseShadowCommand(text) {
+function parseShadowCommandImpl(text) {
   const m = /^سایه\s+(وضعیت|خاموش|روشن)$/u.exec(String(text || '').replace(/[\s‌]+/g, ' ').trim());
   return m ? { type: { وضعیت: 'status', خاموش: 'off', روشن: 'on' }[m[1]] } : null;
 }
@@ -347,3 +348,6 @@ export function parseCardCorrection(text) {
   const m = /^#\s*(\d+)\s+(?:wrong|غلط)\s*[:：-]\s*([\s\S]+)$/iu.exec(String(text || '').trim());
   return m ? { id: Number(m[1]), right: m[2].trim() } : null;
 }
+
+/** parseShadowCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseShadowCommand = nameFallback(parseShadowCommandImpl);

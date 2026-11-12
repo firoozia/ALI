@@ -4,6 +4,7 @@
 //
 // Events carry customer, codes, quantities and amounts, never a photo, a bank detail or a message text.
 
+import { nameFallback } from './namelead.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { visionRead } from './vision.js';
@@ -435,7 +436,7 @@ export function openOrders(tracker, requests, { max = 15 } = {}) {
 // ---- the owner's commands ------------------------------------------------------------------------------------------------
 
 /** "تحویل نشود تا تأیید نقدی X", "رفع تحویل X", "مانده X", "سفارش‌های باز" -> a command or null. */
-export function parseTrackerCommand(text) {
+function parseTrackerCommandImpl(text) {
   const s = String(text || '').trim();
   let m = /^(?:تحویل\s+نشود\s+تا\s+تأیید\s+نقدی|تحویل\s+نشود\s+تا\s+تایید\s+نقدی|hold\s+delivery)\s+(.+)$/i.exec(s);
   if (m) return { type: 'hold', customer: m[1].trim() };
@@ -451,3 +452,6 @@ export function formatBalance(customer, b) {
   const d = (n) => `${Number(n).toFixed(2)} درهم`;
   return `مانده ${customer}: فاکتورها ${d(b.billed)}، پرداخت‌ها ${d(b.paid)}، مانده ${d(b.open)}\n(از آغاز ثبت در ربات، نه حساب کامل؛ فاکتورها با مالیات)`;
 }
+
+/** parseTrackerCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseTrackerCommand = nameFallback(parseTrackerCommandImpl);

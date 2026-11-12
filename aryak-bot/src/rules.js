@@ -3,6 +3,7 @@
 // command, removable, put into the prompt. Nothing is stored at once. A colleague's teaching never comes here; it goes to the
 // review list of the learning store.
 
+import { nameFallback } from './namelead.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeLetters } from './text.js';
@@ -20,7 +21,7 @@ export function ruleFrom(text, names = []) {
 }
 
 /** "قانون‌ها" -> list; "حذف قانون 3" -> remove 3; else null. */
-export function parseRuleCommand(text) {
+function parseRuleCommandImpl(text) {
   const s = normalizeLetters(String(text || '')).trim();
   if (/^قانون‌?ها$|^قوانین$/u.test(s)) return { list: true };
   const m = /^حذف\s+قانون\s+(\d+)$/u.exec(s);
@@ -77,3 +78,6 @@ export class Rules {
     return this.items.length ? ['Rules taught by the owner in his own words (always follow them; they come before anything learned from colleagues):', ...this.items.map((r) => `- ${r.text}`)].join('\n') : '';
   }
 }
+
+/** parseRuleCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
+export const parseRuleCommand = nameFallback(parseRuleCommandImpl);
