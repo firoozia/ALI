@@ -112,17 +112,16 @@ export function cashBoxReport({ month, opening, cashIn, expenses, outs, transfer
   const all = [...boss, ...adv];
   const matchedCount = used.size;
   const totalOut = expTotal + all.reduce((n, o) => n + Number(o.amount), 0);
-  const totalIn = (opening || 0) + inFrom;
-  const remaining = Math.round((totalIn - totalOut) * 100) / 100;
+  const totalIn = inFrom; // the month's own movements only: no opening balance
+  const remaining = Math.round((totalIn - totalOut) * 100) / 100; // the net of the month
   const expLines = expenses.length ? [cell('🧾 *Company expenses (cash)*', expTotal), '     ↳ ' + Object.keys(byType).map((k) => typeLabel(k) + ' ' + money(byType[k])).join(' | ')].join('\n') : '';
   const outBlocks = [expLines, bossText, advText].filter(Boolean);
   const text = [
     '📦 *Cash box — ' + label + '*', SEP, SEP,
-    '💵 *Cash in*', cell('Opening balance (' + first + ')', opening || 0), cell('Cash from customers', inFrom), SEP, SEP,
+    '💵 *Cash in*', cell('Cash from customers', inFrom), SEP, SEP,
     '💸 *Cash out*', '', outBlocks.length ? outBlocks.join('\n' + SEP + '\n') : 'Nothing left the cash box.', SEP, SEP,
-    '*Total in:  ' + money(totalIn) + ' AED*', '*Total out: ' + money(totalOut) + ' AED*', '*Remaining in cash box: ' + money(remaining) + ' AED*',
+    '*Total in (month): ' + money(totalIn) + ' AED*', '*Total out (month): ' + money(totalOut) + ' AED*', '*Net for the month: ' + money(remaining) + ' AED*',
     '🟢 In QuickBooks: ' + matchedCount + '    🔴 Not yet: ' + (all.length - matchedCount),
-    ...(opening === null ? ['', 'The opening balance is not known yet. Write: cash box opening ' + first + ' <amount>'] : []),
   ].join('\n');
   return { text, remaining };
 }
@@ -160,7 +159,7 @@ export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash
   const before = new Date(Date.parse(from + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
   const balance = async (day) => balanceFromReport(await qbo.get('reports/BalanceSheet', { start_date: day, end_date: day, accounting_method: 'Accrual' }), accountName);
   return {
-    id, opening: await balance(before).catch(() => null), closing: await balance(to).catch(() => null), received, elsewhere, purchases,
+    id, opening: null, closing: null, received, elsewhere, purchases, // the balances are not read any more: the report shows only the month's own movements
     transfersOut: transfers.filter((t) => String(t.FromAccountRef?.value) === id).map((t) => ({ amount: Number(t.Amount), date: t.TxnDate, to: t.ToAccountRef?.name || '', note: t.PrivateNote || '' })),
     transfersIn: transfers.filter((t) => String(t.ToAccountRef?.value) === id).map((t) => ({ amount: Number(t.Amount), date: t.TxnDate, from: t.FromAccountRef?.name || '' })),
   };
@@ -251,17 +250,14 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const advL = tLines(advT, advPosts, true);
   if (advT.length || advPosts.some((p) => !p.used)) blocks.push([cell('👷 *Salary advances*', sum(advT)), ...advL].join('\n'));
   for (const n of [...new Set(otherT.map((t) => t.to))]) { const l = otherT.filter((t) => t.to === n); blocks.push([cell('↔️ *' + n + '*', sum(l)), ...l.map((t) => dline(mark('⚪'), t.date, t.amount, ''))].join('\n')); }
-  const opening = openingOverride !== null ? openingOverride : data.opening;
-  const totalIn = (opening || 0) + cashFromCustomers + transfersInTotal;
+  const totalIn = cashFromCustomers + transfersInTotal;
   const totalOut = expTotal + sum(data.transfersOut);
   const remaining = Math.round((totalIn - totalOut) * 100) / 100;
-  const diff = data.closing === null || data.closing === undefined ? null : Math.round((remaining - data.closing) * 100) / 100;
   const text = [
     '📦 *Cash box — ' + label + '*', SEP, SEP,
-    '💵 *Cash in*', cell('Opening balance (' + first + ')', opening || 0), cell('Cash from customers', cashFromCustomers), ...(transfersInTotal ? [cell('Transfers in', transfersInTotal)] : []), ...inExtra, SEP, SEP,
+    '💵 *Cash in*', cell('Cash from customers', cashFromCustomers), ...(transfersInTotal ? [cell('Transfers in', transfersInTotal)] : []), ...inExtra, SEP, SEP,
     '💸 *Cash out*', '', blocks.length ? blocks.join('\n' + SEP + '\n') : 'Nothing left the cash box.', SEP, SEP,
-    '*Total in:  ' + money(totalIn) + ' AED*', '*Total out: ' + money(totalOut) + ' AED*', '*Remaining in cash box: ' + money(remaining) + ' AED*',
-    ...(diff !== null && Math.abs(diff) > 0.004 ? ['Computed remaining vs QuickBooks Petty Cash balance: difference ' + money(diff)] : []),
+    '*Total in (month): ' + money(totalIn) + ' AED*', '*Total out (month): ' + money(totalOut) + ' AED*', '*Net for the month: ' + money(remaining) + ' AED*',
     '🟢 Posted and in QuickBooks: ' + green + '    🔴 Not in QuickBooks: ' + red + '    ⚪ No post: ' + white + (yellow ? '    🟡 Other account: ' + yellow : ''),
   ].join('\n');
   return { text, remaining };

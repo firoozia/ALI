@@ -1163,7 +1163,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'price_remove': return qboBulk.removePrice(ic.code);
     case 'price_start': return qboBulk.planPrices();
     case 'cash_box': {
-      if (ic.cmd.op === 'opening') { cashBoxStore.setOpening(ic.cmd.month, ic.cmd.amount); return ['Cash box opening for ' + ic.cmd.month.slice(5, 7) + '/' + ic.cmd.month.slice(0, 4) + ' set to ' + Number(ic.cmd.amount).toFixed(2) + ' AED.']; }
+      if (ic.cmd.op === 'opening') return ['The cash box report shows only the month\'s own movements now: there is no opening balance to set.'];
       return [(await cashBoxMonth(todayDubai().slice(0, 7))).text];
     }
     case 'expense_edit': return [await expenseEditReply(ic.cmd, here.chatId || 'owner', 'owner')];
@@ -3183,11 +3183,7 @@ async function cashBoxMonth(month, depth = 0) {
   const from = month + '-01';
   const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const to = last < today ? last : today;
-  let opening = cashBoxStore.d.opening[month] ?? null;
-  if (opening === null && depth < 2) {
-    const prev = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
-    if (cashBoxStore.d.opening[prev] !== undefined) opening = (await cashBoxMonth(prev, depth + 1)).remaining; // the month-end remaining becomes the next month's opening
-  }
+  const opening = null; // only the month's own movements: no opening balance carries over
   const r = { from, to, label: month };
   const records = [...await qbRows('Payment', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('SalesReceipt', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('Deposit', dayPlus(from, -3), dayPlus(to, 3))];
   const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
@@ -3206,7 +3202,7 @@ async function cashBoxMonth(month, depth = 0) {
     try {
       const data = await fetchCashBoxQbo(qbo, { from, to });
       const swapRows = await qbRows('Payment', dayPlus(from, -7), dayPlus(to, 7));
-      if (data) return cashBoxReportQbo({ month, data, openingOverride: cashBoxStore.d.opening[month] ?? null, timeZone: config.timezone,
+      if (data) return cashBoxReportQbo({ month, data, timeZone: config.timezone,
         isCustomer: isOurCustomer,
         swapInfoOf: (ref) => { // a post whose digits look swapped against a QuickBooks payment of the same customer: its #G question (made now when none was asked yet)
           const known = payChecks.openIds().find((i) => payChecks.get(i)?.action === 'swap' && payChecks.get(i)?.ref === ref);

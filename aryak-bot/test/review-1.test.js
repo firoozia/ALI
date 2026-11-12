@@ -846,16 +846,16 @@ test('the cash box: cash to the boss and salary advances are their own kinds (ne
     transfers: [{ TxnDate: '2026-11-04', Amount: 10000 }, { TxnDate: '2026-11-18', Amount: 8000 }, { TxnDate: '2026-11-06', Amount: 500 }],
     typeLabel: (t) => ({ fuel: 'Fuel', food: 'Food', office: 'Office' }[t]),
   });
-  assert.equal(remaining, 6689.5);
-  assert.equal(text, ['📦 *Cash box — 11/2026*', SEP, SEP, '💵 *Cash in*', 'Opening balance (01/11)        2,000.00', 'Cash from customers           25,430.00', SEP, SEP, '💸 *Cash out*', '',
+  assert.equal(remaining, 4689.5); // the net of the month: 25,430.00 in, 20,740.50 out (no opening balance)
+  assert.equal(text, ['📦 *Cash box — 11/2026*', SEP, SEP, '💵 *Cash in*', 'Cash from customers           25,430.00', SEP, SEP, '💸 *Cash out*', '',
     '🧾 *Company expenses (cash)*   1,240.50', '     ↳ Fuel 610.00 | Food 380.50 | Office 250.00', SEP,
     '👔 *Cash to boss*             18,000.00', '🟢 04/11   10,000.00', '🟢 18/11    8,000.00', SEP,
     '👷 *Salary advances*           1,500.00', '🟢 06/11      500.00   RAJU', '🔴 09/11    1,000.00   AHMED  (not in QuickBooks)', SEP, SEP,
-    '*Total in:  27,430.00 AED*', '*Total out: 20,740.50 AED*', '*Remaining in cash box: 6,689.50 AED*', '🟢 In QuickBooks: 3    🔴 Not yet: 1'].join('\n'));
+    '*Total in (month): 25,430.00 AED*', '*Total out (month): 20,740.50 AED*', '*Net for the month: 4,689.50 AED*', '🟢 In QuickBooks: 3    🔴 Not yet: 1'].join('\n'));
   assert.deepEqual(parseCashBoxCommand('cash box'), { op: 'report' }); assert.deepEqual(parseCashBoxCommand('صندوق'), { op: 'report' });
   assert.deepEqual(parseCashBoxCommand('cash box opening 01/11 2000', new Date('2026-11-12T00:00:00Z')), { op: 'opening', month: '2026-11', amount: 2000 });
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.ok(index.includes("cashBoxStore.d.opening[prev] !== undefined) opening = (await cashBoxMonth(prev, depth + 1)).remaining")); // the month-end remaining is the next month's opening
+  assert.ok(!index.includes('cashBoxStore.d.opening[prev]')); // no opening balance carries over: the report is the month's own movements
   assert.ok(index.includes("once(`cashbox:${now.day.slice(0, 7)}`)")); // the last day of the month at 19:00, to the owner only
 });
 
@@ -888,23 +888,21 @@ test('the cash box from QuickBooks: the Petty Cash account, cash payments only, 
   const sheet = (n) => ({ Rows: { Row: [{ ColData: [{ value: 'Petty Cash' }, { value: String(n) }] }] } });
   const qbo = { query: async (sql) => rows[sql] || rows[/from (\w+)/.exec(sql)[1]] || [], get: async (path, q) => sheet(q.end_date === '2026-10-31' ? 2000 : 7200) };
   const data = await fetchCashBoxQbo(qbo, { from: '2026-11-01', to: '2026-11-30' });
-  assert.deepEqual([data.opening, data.closing, data.received.map((r) => r.amount), data.purchases.length, data.transfersOut.length], [2000, 7200, [750, 90], 1, 3]); // the cheque and the other account are out
+  assert.deepEqual([data.opening, data.closing, data.received.map((r) => r.amount), data.purchases.length, data.transfersOut.length], [null, null, [750, 90], 1, 3]); // the cheque and the other account are out; the balances are not read
   const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
   const { text, remaining } = cashBoxReportQbo({ month: '2026-11', data, timeZone: 'Asia/Dubai', posts: {
     cashIn: [{ amount: 750, at: day('05') }, { amount: 300, at: day('10') }],
     outs: [{ kind: 'cash_to_boss', amount: 18000, at: day('04') }, { kind: 'salary_advance', amount: 500, at: day('06'), employee: 'RAJU' }, { kind: 'salary_advance', amount: 1000, at: day('09'), employee: 'AHMED' }],
     expenses: [{ amount: 85.5, at: day('09'), vendor: 'ADNOC' }],
   } });
-  assert.equal(remaining, 2000 + 840 - (18000 + 500 + 40 + 85.5));
+  assert.equal(remaining, 840 - (18000 + 500 + 40 + 85.5)); // the net of the month
+  assert.match(text, /\*Net for the month: -17,785\.50 AED\*/); assert.doesNotMatch(text, /Opening balance|Remaining in cash box|Computed remaining/);
   assert.match(text, /Cash from customers\s+840\.00\n     ↳ ⚪ 1 receipt \(90\.00\) with no post in the group\n🔴 10\/11\s+300\.00  \(posted, not in QuickBooks\)/);
   assert.match(text, /🧾 \*Company expenses \(cash\)\*\s+85\.50\n     ↳ Fuel 85\.50\n🟢 09\/11\s+85\.50   ADNOC/);
   assert.match(text, /👔 \*Cash to boss\*\s+18,000\.00\n🟢 04\/11\s+18,000\.00/);
   assert.match(text, /👷 \*Salary advances\*\s+500\.00\n🟢 06\/11\s+500\.00   RAJU\n🔴 09\/11\s+1,000\.00   AHMED  \(posted, not in QuickBooks\)/);
   assert.match(text, /↔️ \*Bank Charges\*\s+40\.00\n⚪ 08\/11\s+40\.00/);
-  assert.match(text, /Computed remaining vs QuickBooks Petty Cash balance: difference -?[\d,]+\.\d\d/); // the computed remaining differs from the QuickBooks balance
   assert.match(text, /🟢 Posted and in QuickBooks: 4 {4}🔴 Not in QuickBooks: 2 {4}⚪ No post: 2/);
-  const override = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [], outs: [], expenses: [] }, openingOverride: 500 });
-  assert.match(override.text, /Opening balance \(01\/11\)\s+500\.00/); // the owner's override
 });
 
 test('the cash box matching: a receipt in another account is 🟡, a swapped-digit one asks with its code, «pay … for …» is a cash expense matched within 7 days, an empty boss section stays visible when a post exists', async () => {
@@ -939,7 +937,7 @@ test('one cash payment for two posts of one customer (926.10 = 749.70 + 176.40):
   for (const data of [withLines, { ...withLines, received: [{ ...withLines.received[0], lines: [] }] }]) { // with the invoice lines, and with only the total
     const { text, remaining } = cashBoxReportQbo({ month: '2026-11', data, posts });
     assert.doesNotMatch(text, /posted, not in QuickBooks|🟡|⚪ 1 receipt/);
-    assert.match(text, /Cash from customers\s+926\.10/); assert.equal(remaining, 1926.1); // counted once
+    assert.match(text, /Cash from customers\s+926\.10/); assert.equal(remaining, 926.1); // counted once
     assert.match(text, /🟢 Posted and in QuickBooks: 2 /);
   }
   const item = (amount, ref) => ({ amount, shown: '*' + amount.toFixed(2) + '*', foreign: false, unconverted: false, note: '', day: '2026-11-11', customer: 'ZETA WOOD PRESSING', typed: '', kind: 'cash', invoices: [], cleared: false, due: '', drawer: '', at: day('11'), ref, paid: null });
