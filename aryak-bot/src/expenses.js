@@ -304,7 +304,7 @@ const AED_PER = { OMR: 9.5516, USD: 3.6725, SAR: 0.97933 }; // the pegged curren
  * equivalent; one with no known rate is shown as it is and not added to the AED totals. Zero entries are left out.
  */
 export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup = new Map() } = {}) {
-  const out = [];
+  const out = []; const unread = [];
   for (const e of events) {
     if (e.type !== 'payment' || e.simulated) continue;
     const day = dayOf(e.at, timeZone); const clearedDay = e.clearedAt ? dayOf(e.clearedAt, timeZone) : '';
@@ -312,13 +312,14 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     const inv = (e.invoices || []).map((r) => lookup.get(String(r).toLowerCase())).find(Boolean);
     const cur = e.currency || 'AED';
     let amount = Number(e.amount) > 0 ? Number(e.amount) : Number(inv?.TotalAmt) || 0;
-    if (!(amount > 0)) continue;
+    if (!(amount > 0)) { if (e.source === 'pdf' || e.kind === 'transfer') unread.push(new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(e.at))); continue; } // a receipt whose amount was not read: said once, never a 0.00 row
     let shown = `*${money(amount)}*`; let foreign = false;
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
     const kind = e.kind === 'cheque' || e.receipt === 'cheque' ? 'cheque' : e.kind === 'transfer' || e.receipt === 'transfer receipt' || e.receipt === 'deposit slip' ? 'bank' : 'cash';
-    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', typed: e.customerTyped && !e.pendingName ? e.customerTyped : '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', noInvoice: !!e.noInvoice, clearedDay, at: e.at, drawerAsk: e.drawerAsk || null, name: e.customer || '', pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
+    out.push({ amount, shown, foreign, unconverted: foreign && amount === 0, note: e.currencyMentioned ? `check the amount: the message mentions ${e.currencyMentioned}` : '', day, customer: e.customer && !e.pendingName ? e.customer : inv?.CustomerRef?.name || '', typed: e.customerTyped && !e.pendingName ? e.customerTyped : '', kind, invoices: e.invoices || [], cleared: !!e.cleared, due: e.due || '', drawer: e.drawer || '', noInvoice: !!e.noInvoice, source: e.source || '', what: e.what || '', clearedDay, at: e.at, drawerAsk: e.drawerAsk || null, name: e.customer || '', pendingClearing: e.pendingClearing || null, clearingMismatch: e.clearingMismatch || null, accepted: e.acceptedMatch || null, rejected: e.rejectedMatch || null, paid: inv ? Number(inv.Balance) === 0 : null, ref: e.ref });
   }
+  out.unread = unread; // receipts whose amount was not read
   return out;
 }
 
@@ -377,7 +378,12 @@ const signed = (d) => (d > 0 ? '+' : d < 0 ? '−' : '') + money(Math.abs(d));
 
 export function receivedText(items, options) {
   const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
-  const matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
+  const unreadAt = items.unread || [];
+  let matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
+  // OUR OWN invoice forwarded as a PDF is no payment: a PDF row that no QuickBooks payment takes and whose amount is an invoice's total BEFORE tax (680 for 714.00 with 5 % VAT) is dropped
+  const recentInvoices = options.recentInvoices || [];
+  const ownInvoice = (it) => it.source === 'pdf' && !matched.has(it) && recentInvoices.some((inv) => Number(inv.TxnTaxDetail?.TotalTax) > 0 && Math.abs(Number(inv.TotalAmt) - Number(inv.TxnTaxDetail.TotalTax) - it.amount) <= 0.05);
+  if (items.some(ownInvoice)) { items = items.filter((it) => !ownInvoice(it)); matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf); }
   const inQb = (it) => matched.has(it) || it.paid === true;
   const invById = new Map([...(options.linkedInvoices || []), ...openInvoices].map((i) => [String(i.Id), i]));
   const docOf = (inv) => (/^inv-/i.test(String(inv.DocNumber)) ? String(inv.DocNumber) : 'inv-' + inv.DocNumber);
@@ -391,7 +397,8 @@ export function receivedText(items, options) {
     return out;
   };
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
-  if (!items.length) return `💰 *Money received — ${title}*\nNo money was recorded.`;
+  const unreadLines = unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check');
+  if (!items.length) return unreadLines.length ? ['💰 *Money received — ' + title + '*', ...unreadLines].join('\n') : `💰 *Money received — ${title}*\nNo money was recorded.`;
   const needsOk = []; let green = 0; let red = 0; let stars = 0;
   const plain = (it) => String(it.shown || money(it.amount)).replace(/\*/g, '');
   const ddmm = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
@@ -443,6 +450,7 @@ export function receivedText(items, options) {
         else { tail = '  not in QuickBooks yet'; if (best && Math.abs(best.diff) > 1) needsOk.push({ it, best }); }
       }
     }
+    if (it.what) tail += ' (' + it.what + ')'; // «3000 aed delivery»: no customer, the word kept as a question
     const icon = ok ? '🟢' : star ? '⭐' : it._inTime ? '⏳' : '🔴';
     if (ok) green += 1; else if (star) stars += 1; else red += 1;
     return icon + ' ' + plain(it) + (it.invoices.length && !tail.trim().startsWith('inv-') ? ' for ' + it.invoices.join(', ') : '') + tail + (extra.length ? '\n' + extra.join('\n') : '') + (it.note ? '\n⚠ ' + it.note : '');
@@ -452,7 +460,7 @@ export function receivedText(items, options) {
     const list = items.filter((i) => i.kind === kind);
     if (!list.length) continue;
     const byName = new Map();
-    for (const it of list) { const k = (it.customer || 'UNKNOWN').toUpperCase(); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(it); }
+    for (const it of list) { const k = (it.customer || matched.get(it)?.CustomerRef?.name || (it.what ? 'NO CUSTOMER' : 'UNKNOWN')).toUpperCase(); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(it); }
     const people = [...byName].map((x) => '*' + x[0] + '*\n' + x[1].map(lineOf).join('\n'));
     sections.push(label + '\n\n' + people.join('\n' + SEP + '\n'));
   }
@@ -485,6 +493,7 @@ export function receivedText(items, options) {
     `*Total: ${money(total)} AED*`,
     `Cash ${money(sum('cash'))} | Cheques ${money(sum('cheque'))} | Transfers ${money(sum('bank'))}`,
     `🟢 Recorded: ${green}    🔴 Not recorded: ${red}`,
+    ...unreadLines,
     ...(stars ? [`⭐ No invoice needed: ${stars}`] : []),
     ...(foreign ? [`⚠ ${foreign} in a currency with no rate (not in the total)`] : []),
     ...(okLines.length ? [SEP, SEP, '❓ *Needs your OK*', ...okLines] : []),

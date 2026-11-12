@@ -6,6 +6,7 @@
 //   { ignore: true }               something to leave out (an expense)
 
 import { cashOutKind } from './cashbox.js';
+import { bankSmsAmount, isGenericBankSms, isStockQuestion } from './paymentfix.js';
 import { STAR_END, isStarred, parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
 
 export function eventsFromCaption(role, text) {
@@ -31,6 +32,10 @@ export function eventsFromCaption(role, text) {
       })),
     };
   }
+  if (role === 'payment' && isGenericBankSms(text) && bankSmsAmount(text) > 0) { // the bank's SMS: a transfer (a cheque clearing keeps its own handling); its sentence is never a customer
+    return { events: [{ type: 'payment', kind: /outward cheque clearing/i.test(text) ? 'cash' : 'transfer', customer: '', amount: bankSmsAmount(text), currency: 'AED', lines: [], pendingName: true, bankSms: true }] };
+  }
+  if (role === 'payment' && isStockQuestion(text)) return { ignore: true }; // «307 available one roll in China stock?» is a question, not money
   if (role === 'payment') {
     const out = cashOutKind(text); // cash leaving the cash box (to the boss, a salary advance): its own kind, never a customer payment
     if (out) return { events: [{ type: 'payment', kind: out.kind, customer: '', amount: out.amount, currency: 'AED', lines: [], ...(out.employee ? { employee: out.employee } : {}) }] };

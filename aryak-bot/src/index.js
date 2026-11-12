@@ -74,6 +74,7 @@ import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, rederiveCashOut } from './cashbox.js';
 import { answerAdd, requestAdd, undoAdd } from './addentries.js';
+import { isInvoiceFile } from './paymentfix.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
@@ -665,7 +666,10 @@ async function trackPaymentPdf(raw, groupId) {
   let buf;
   try { buf = await downloadMedia(raw); } catch (e) { logger.warn(`tracker: the receipt pdf could not be downloaded: ${e.message}`); return; }
   if (buf.length > 10 * 1024 * 1024) { logger.warn(`tracker: a receipt pdf is too large in ${groupId}`); return; }
-  const merged = mergePayment(baseOfReceipt(receiptOfPdf(buf)), {});
+  const fileName = normalizeMessageContent(raw.message)?.documentMessage?.fileName || '';
+  const read = receiptOfPdf(buf);
+  if (isInvoiceFile(fileName, String(read?.text || '').slice(0, 400))) { trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a forwarded invoice pdf is no payment'); return; }
+  const merged = mergePayment(baseOfReceipt(read), {});
   const event = { ...withCustomer(merged), at: nowAt(), ref: payRef(groupId, raw.key.id) };
   if (!tracker.add(event)) return;
   trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', `payment evidence read from a pdf${event.amount ? ' (an amount)' : ' (no readable amount)'}`);
@@ -3421,7 +3425,8 @@ async function receivedReportText(kind) {
   const openInvoices = kind === 'today' ? await qbo.query("select * from Invoice where Balance > '0'").catch(() => []) : [];
   const linkedIds = [...new Set(records.filter((x) => x._type === 'Payment').flatMap((x) => (x.Line || []).flatMap((l) => (l.LinkedTxn || []).filter((t) => t.TxnType === 'Invoice').map((t) => String(t.TxnId)))))].filter((id) => /^[0-9]+$/.test(id) && !openInvoices.some((i) => String(i.Id) === id)).slice(0, 60);
   const linkedInvoices = linkedIds.length ? await qbo.query("select * from Invoice where Id in ('" + linkedIds.join("','") + "')").catch(() => []) : []; // the number of every invoice a payment of the day is linked to (fully paid ones too)
-  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, linkedInvoices, checks: kind === 'today' ? payChecks : null });
+  const recentInvoices = await qbRows('Invoice', dayPlus(r.from, -3), dayPlus(r.to, 1));
+  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, linkedInvoices, recentInvoices, checks: kind === 'today' ? payChecks : null });
   return text; // the «payments to match» list is gone: its information is inside each line of the report
 }
 async function weeklyCheckReport() {

@@ -1177,3 +1177,36 @@ test('a post ending with a star needs no invoice: the star is taken off, it is n
   const cash = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [{ amount: 3000, at, customer: 'ZETA CO', ref: 's', noInvoice: true }], outs: [], expenses: [] } }).text;
   assert.match(cash, /⭐ No invoice needed\s+3,000\.00/); assert.match(cash, /⭐ 12\/11\s+3,000\.00 {2}no invoice needed/); assert.match(cash, /\*Total in \(month\): 3,000\.00 AED\*/); assert.match(cash, /⭐ No invoice needed: 1/); assert.doesNotMatch(cash, /posted, not in QuickBooks/);
 });
+
+test('today\'s six stored rows are re-read: a stock question is no money, the bank SMS is a nameless transfer that takes its name from the receipt PDF or the matching QuickBooks payment, our invoice PDF is no payment, an unread receipt is said once, «delivery» has no customer', async () => {
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const { receivedItems, receivedText } = await import('../src/expenses.js');
+  const { isInvoiceFile } = await import('../src/paymentfix.js');
+  const t = (hhmm) => Date.parse('2026-11-12T' + hhmm + ':00+04:00');
+  const row = (ref, hhmm, extra) => ({ type: 'payment', currency: 'AED', ref, at: t(hhmm), lines: [], ...extra });
+  const events = [
+    row('r1', '10:00', { kind: 'cash', customer: 'available one roll in China stock?', amount: 307, text: '307 available one roll in China stock?' }),
+    row('r2', '16:30', { kind: 'cash', customer: 'details', amount: 708.75, text: 'Your AC No:XXXX is credited with AED 708.75 for Aani Instant Payments (Local IPP Transfer). Login to Online Banking for details.' }),
+    row('r2b', '16:44', { kind: 'transfer', customer: 'ALWAN SHAM--', amount: 708, source: 'pdf' }),
+    row('r3', '16:50', { kind: 'cash', customer: 'An amount of has been credited to your Mashreq account … Inward …', amount: 714 }),
+    row('r4', '17:07', { kind: 'cheque', customer: 'PCC work', amount: 680, source: 'pdf' }),
+    row('r5', '15:24', { kind: 'transfer', customer: '', amount: 0, source: 'pdf' }),
+    row('r6', '13:00', { kind: 'cash', customer: 'delivery', amount: 3000, text: '3000 aed delivery' }),
+  ];
+  const list = sharedPaymentList({ events });
+  assert.ok(!list.some((e) => /stock/.test(e.customer)));  // the stock question is gone
+  const sms = list.find((e) => e.ref === 'r2');
+  assert.deepEqual([sms.kind, sms.amount, sms.customer], ['transfer', 708.75, 'ALWAN SHAM']); assert.ok(!list.some((e) => e.ref === 'r2b')); // ONE row: the SMS amount, the PDF's name (dashes off)
+  assert.deepEqual([list.find((e) => e.ref === 'r3').kind, list.find((e) => e.ref === 'r3').customer], ['transfer', '']); // never cash, the sentence is no name
+  const items = receivedItems(list, { from: '2026-11-12', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  assert.deepEqual(items.unread, ['15:24']);
+  const records = [{ _type: 'Payment', TxnDate: '2026-11-12', TotalAmt: 714, CustomerRef: { name: 'PVC WORK CARPENTER LLC' }, Line: [] }, { _type: 'Payment', TxnDate: '2026-11-12', TotalAmt: 708.75, CustomerRef: { name: 'ALWAN ALSHAM' }, Line: [] }];
+  const invoices = [{ DocNumber: 'inv-10012', TotalAmt: 714, TxnDate: '2026-11-12', TxnTaxDetail: { TotalTax: 34 } }]; // 680 before 5 % VAT is 714
+  const text = receivedText(items, { title: '12/11', records, recentInvoices: invoices, now: t('18:00') });
+  assert.match(text, /\*PVC WORK CARPENTER LLC\*\n🟢 714\.00/); // the nameless transfer takes the name of the QuickBooks payment it matches
+  assert.match(text, /\*ALWAN SHAM\*\n🟢 708\.75/);
+  assert.doesNotMatch(text, /680\.00|PCC|stock|credited/); // our own invoice PDF is no payment
+  assert.match(text, /⚠ receipt PDF 15:24, amount not read — check/); assert.doesNotMatch(text, /^[🟢🔴⏳⭐] 0\.00/mu); // no 0.00 row
+  assert.match(text, /\*NO CUSTOMER\*\n🔴 3,000\.00 {2}not in QuickBooks yet \(delivery\?\)/);
+  assert.ok(isInvoiceFile('Invoice inv-10012.pdf') && isInvoiceFile('inv-10012.pdf') && !isInvoiceFile('receipt 123.pdf'));
+});
