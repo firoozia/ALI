@@ -53,6 +53,18 @@ export function parseExpenseEdit(text) {
 }
 
 const FIELD_LINES = [['method', 'Payment:  ', (v) => methodName(v)], ['amount', 'Amount:   ', (v) => money(v)], ['type', 'Type:     ', (v) => typeLabel(v)], ['note', 'Note:     ', (v) => v || '—']];
+/** How QuickBooks paid a matched purchase: 'cash' | 'card' | '' (unknown). */
+const qbMethodOf = (rec) => (rec.PaymentType === 'CreditCard' ? 'card' : rec.PaymentType === 'Cash' ? 'cash' : /petty|cash/i.test(String(rec.AccountRef?.name || '')) ? 'cash' : '');
+/** The line about QuickBooks for an edit: when the edited method / amount equal the matched QuickBooks purchase, the edit only makes the post match it; otherwise QuickBooks needs the same fix. [qb]: the matched purchase or null. */
+function qbLine(e, changes, who) {
+  if (who.qb) {
+    const method = changes.method !== undefined ? changes.method : e.method; const amount = changes.amount !== undefined ? changes.amount : e.amount;
+    const qm = qbMethodOf(who.qb);
+    const same = (!qm || qm === method) && Math.abs(Number(who.qb.TotalAmt) - Number(amount)) <= 1;
+    return same ? ['✔ now matches QuickBooks.'] : ['This expense is already 🟢 in QuickBooks: also fix it in QuickBooks.'];
+  }
+  return who.inQb ? ['This expense is already 🟢 in QuickBooks: also fix it in QuickBooks.'] : [];
+}
 const keyOf = (chat, sender) => String(chat) + '|' + String(sender);
 
 /** The preview of an edit or delete; the change waits for the person's 1 / 2. [inQb]: the expense is already 🟢 in QuickBooks. */
@@ -63,12 +75,12 @@ export function requestExpenseEdit(store, cmd, who) {
   store.d.pending = store.d.pending || {};
   if (cmd.op === 'delete') {
     store.d.pending[keyOf(who.chat, who.sender)] = { id: e.id, op: 'delete', at: store.now() }; store.save();
-    return [head, 'Amount:   ' + money(e.amount) + ', ' + typeLabel(e.type) + ', ' + methodName(e.method), 'Nothing is changed in QuickBooks.', ...(who.inQb ? ['This expense is already 🟢 in QuickBooks: also delete it in QuickBooks yourself.'] : []), '1. Yes, delete it', '2. No, keep it'].join('\n');
+    return [head, 'Amount:   ' + money(e.amount) + ', ' + typeLabel(e.type) + ', ' + methodName(e.method), 'Nothing is changed in QuickBooks.', ...(who.qb || who.inQb ? ['This expense is already 🟢 in QuickBooks: also delete it in QuickBooks yourself.'] : []), '1. Yes, delete it', '2. No, keep it'].join('\n');
   }
   const changed = FIELD_LINES.filter((f) => cmd.changes[f[0]] !== undefined && cmd.changes[f[0]] !== e[f[0]]);
   if (!changed.length) return 'Nothing to change on #' + e.id + '. Write: edit #' + e.id + ' then card / cash / amount 42.50 / type car / note …' + ((cmd.bad || []).length ? '\nNot understood: ' + cmd.bad.join('; ') : '');
   store.d.pending[keyOf(who.chat, who.sender)] = { id: e.id, op: 'edit', changes: cmd.changes, at: store.now() }; store.save();
-  return [head, ...changed.map((f) => f[1] + f[2](e[f[0]]) + ' → *' + f[2](cmd.changes[f[0]]) + '*'), ...((cmd.bad || []).length ? ['Not understood: ' + cmd.bad.join('; ')] : []), 'Nothing is changed in QuickBooks.', ...(who.inQb ? ['This expense is already 🟢 in QuickBooks: also fix it in QuickBooks.'] : []), '1. Yes, change it', '2. No, keep it'].join('\n');
+  return [head, ...changed.map((f) => f[1] + f[2](e[f[0]]) + ' → *' + f[2](cmd.changes[f[0]]) + '*'), ...((cmd.bad || []).length ? ['Not understood: ' + cmd.bad.join('; ')] : []), 'Nothing is changed in QuickBooks.', ...qbLine(e, cmd.changes, who), '1. Yes, change it', '2. No, keep it'].join('\n');
 }
 
 /** The person's 1 / 2 on the waiting preview; null when none waits (the digit is not ours). Logged on the expense, with its undo. */

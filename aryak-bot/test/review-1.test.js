@@ -1023,3 +1023,16 @@ test('a deleted message takes its records away; the invoice preview pairs like Â
   assert.deepEqual([rev[0].kind, rev[0].severity], ['revision', 'info']);
   assert.ok(index.includes('function isRevision(number, customer, raw)') && index.includes('desk.history.some'));
 });
+
+test('an expense edit that makes the post equal the matched QuickBooks purchase says so; it asks to fix QuickBooks only when the edit creates a difference', async () => {
+  const { ExpenseStore } = await import('../src/expenses.js');
+  const { requestExpenseEdit } = await import('../src/expenseedit.js');
+  const store = new ExpenseStore('', () => 1000);
+  const e = store.add({ by: 'u1', amount: 22.48, type: 'office', day: '2026-11-11', date: '2026-11-11', state: 'done', method: 'card', vendor: 'DAY TO DAY' });
+  const qb = { TotalAmt: 22.48, PaymentType: 'Cash', AccountRef: { name: 'Petty Cash' } };
+  const same = requestExpenseEdit(store, { op: 'edit', id: e.id, changes: { method: 'cash' }, bad: [] }, { chat: 'g', sender: 'u1', qb });
+  assert.match(same, /âœ” now matches QuickBooks\./); assert.doesNotMatch(same, /also fix it in QuickBooks/);
+  const differs = requestExpenseEdit(store, { op: 'edit', id: e.id, changes: { amount: 40 }, bad: [] }, { chat: 'g', sender: 'u1', qb });
+  assert.match(differs, /also fix it in QuickBooks/); assert.doesNotMatch(differs, /now matches/);
+  assert.doesNotMatch(requestExpenseEdit(store, { op: 'edit', id: e.id, changes: { method: 'cash' }, bad: [] }, { chat: 'g', sender: 'u1', qb: null }), /QuickBooks\.\n1\./.source ? /now matches|also fix/ : /x/); // not in QuickBooks: no line
+});

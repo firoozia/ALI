@@ -3119,7 +3119,7 @@ async function afterExpenseEntry(entry, say, silentDone = false) {
 async function expenseEditReply(ex, chat, sender) {
   if (ex.op === 'undo') return undoExpense(expenseStore, ex.id);
   const e = expenseStore.get(ex.id);
-  return requestExpenseEdit(expenseStore, ex, { chat, sender, inQb: e ? await expenseInQb(e) : false });
+  return requestExpenseEdit(expenseStore, ex, { chat, sender, qb: e ? await expenseInQb(e) : null });
 }
 
 /** A message in the expenses group: a receipt photo (with the amount as caption), the answers (1 / 2 / card / cash / a type word / an amount), or a caption-only expense. true = it was an expense message. */
@@ -3219,7 +3219,7 @@ async function cashBoxMonth(month, depth = 0) {
   return cashBoxReport({ month, opening, cashIn, expenses, outs, transfers, timeZone: config.timezone, typeLabel: (t) => (TYPES[t]?.label || 'Other') });
 }
 /** Is this expense already recorded in QuickBooks (vendor + amount ±1 + date ±3 days)? */
-const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return false; return matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -3), dayPlus(e.day, 3))).found.length > 0; };
+const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return null; return matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -3), dayPlus(e.day, 3))).found[0]?.record || null; }; // the matched QuickBooks purchase, or null
 /** The approved aliases for a posted name: the cutting-group aliases, then the QuickBooks names the owner told for the sheet (sheet names), before any fuzzy match. */
 const nameAlias = (n) => cutAliases.resolve(n) || overrideFor(sheetNameStore, n);
 
