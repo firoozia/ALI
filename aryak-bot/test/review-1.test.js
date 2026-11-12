@@ -1036,3 +1036,35 @@ test('an expense edit that makes the post equal the matched QuickBooks purchase 
   assert.match(differs, /also fix it in QuickBooks/); assert.doesNotMatch(differs, /now matches/);
   assert.doesNotMatch(requestExpenseEdit(store, { op: 'edit', id: e.id, changes: { method: 'cash' }, bad: [] }, { chat: 'g', sender: 'u1', qb: null }), /QuickBooks\.\n1\./.source ? /now matches|also fix/ : /x/); // not in QuickBooks: no line
 });
+
+test('the owner adds items the bot never saw: several lines, one preview, one 1/2, logged with an undo; they count like group posts and are marked (added by owner)', async () => {
+  const { parseAddEntries, requestAdd, answerAdd, undoAdd, parseUndoAdd, dayFrom } = await import('../src/addentries.js');
+  const { ExpenseStore } = await import('../src/expenses.js');
+  const { expensesReport } = await import('../src/expenseedit.js');
+  const { parseInvoiceCommand } = await import('../src/qboinvoice.js');
+  assert.equal(dayFrom('04/11', '2026-11-12'), '2026-11-04'); assert.equal(dayFrom('20/12', '2026-11-12'), '2025-12-20'); // a month still ahead is last year's
+  const text = 'Atossa add expense 140.07 fuel 10/11 cash ENOC\nadd expense 19.90 food 10/11 card\nadd cash to boss 18000 04/11\nadd advance 500 RAJU 06/11\nadd something odd';
+  const parsed = parseAddEntries(text, '2026-11-12');
+  assert.deepEqual(parsed.entries, [
+    { kind: 'expense', amount: 140.07, day: '2026-11-10', type: 'fuel', method: 'cash', vendor: 'ENOC' },
+    { kind: 'expense', amount: 19.9, day: '2026-11-10', type: 'food', method: 'card', vendor: '' },
+    { kind: 'cash_to_boss', amount: 18000, day: '2026-11-04' },
+    { kind: 'salary_advance', amount: 500, day: '2026-11-06', employee: 'RAJU' }]);
+  assert.deepEqual(parsed.bad, ['add something odd']); assert.equal(parseAddEntries('hello there'), null);
+  assert.equal(parseInvoiceCommand('add cash to boss 18000 04/11').type, 'add_entries'); assert.deepEqual(parseInvoiceCommand('undo add #AD2'), { type: 'add_undo', id: 'AD2' }); assert.equal(parseUndoAdd('undo add #ad2'), 'AD2');
+  const store = new ExpenseStore('', () => Date.parse('2026-11-12T08:00:00Z'));
+  const preview = requestAdd(store, parsed, 'owner');
+  assert.match(preview, /➕ Add 4 items \(added by owner\)\n10\/11 {2}Expense 140\.07 {2}Fuel {2}cash {2}ENOC\n[\s\S]*04\/11 {2}Cash to boss 18,000\.00\n06\/11 {2}Salary advance 500\.00 {2}RAJU\nNot understood: add something odd[\s\S]*1\. Yes, add them\n2\. No$/);
+  assert.equal(store.d.items.length, 0); // nothing before the answer
+  const events = [];
+  const apply = (entries, batch) => entries.map((en, i) => { if (en.kind === 'expense') return { t: 'x', id: store.add({ ...en, by: 'owner', ref: 'added-' + batch + '-' + i, date: en.day, state: 'done', addedByOwner: true }).id }; events.push(en); return { t: 'e', ref: 'added-' + batch + '-' + i }; });
+  assert.equal(answerAdd(store, 'other-chat', '1', apply), null); // another chat's digit is not ours
+  assert.match(answerAdd(store, 'owner', '1', apply), /^Added #AD1: 4 items \(added by owner\)\. To take them back: undo add #AD1$/);
+  assert.equal(store.done({ from: '2026-11-10', to: '2026-11-10' }).length, 2);
+  assert.match(expensesReport(store.done({ from: '2026-11-10', to: '2026-11-10' }), [], '10/11/2026'), /#E1 \(added by owner\)/);
+  const removed = []; assert.match(undoAdd(store, 'AD1', (refs) => removed.push(...refs)), /^Taken back #AD1/); assert.equal(removed.length, 4);
+  assert.match(undoAdd(store, 'AD1', () => {}), /no batch/);
+  requestAdd(store, parseAddEntries('add cash to boss 100 03/11', '2026-11-12'), 'owner'); assert.equal(answerAdd(store, 'owner', '2', apply), 'Nothing was added.');
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes('answerAdd(expenseStore, here.chatId || \'owner\', String(ic.choice), applyAdded)')); // the 1 / 2 reaches the batch
+});

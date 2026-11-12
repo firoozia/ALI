@@ -18,7 +18,7 @@ export function expensesReport(entries, records, title) {
     if (!list.length) continue;
     blocks.push([TYPES[key].emoji + ' *' + TYPES[key].label + '*', ...list.map((e) => {
       const who = String(e.vendor || (e.note || ''));
-      return (found.has(e) ? '🟢 ' : '🔴 ') + money(e.amount).padEnd(8) + methodName(e.method).padEnd(7) + who.padEnd(10) + (who.length >= 10 ? ' ' : '') + '#' + e.id;
+      return (found.has(e) ? '🟢 ' : '🔴 ') + money(e.amount).padEnd(8) + methodName(e.method).padEnd(7) + who.padEnd(10) + (who.length >= 10 ? ' ' : '') + '#' + e.id + (e.addedByOwner ? ' (added by owner)' : '');
     })].join('\n'));
   }
   const total = entries.reduce((n, e) => n + Number(e.amount), 0);

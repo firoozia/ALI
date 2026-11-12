@@ -73,6 +73,7 @@ import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWit
 import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, rederiveCashOut } from './cashbox.js';
+import { answerAdd, requestAdd, undoAdd } from './addentries.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
@@ -1166,8 +1167,11 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       if (ic.cmd.op === 'opening') return ['The cash box report shows only the month\'s own movements now: there is no opening balance to set.'];
       return [(await cashBoxMonth(todayDubai().slice(0, 7))).text];
     }
+    case 'add_entries': return [requestAdd(expenseStore, ic.parsed, here.chatId || 'owner')];
+    case 'add_undo': return [undoAdd(expenseStore, ic.id, removeAdded)];
     case 'expense_edit': return [await expenseEditReply(ic.cmd, here.chatId || 'owner', 'owner')];
     case 'swap_answer': {
+      { const aa = answerAdd(expenseStore, here.chatId || 'owner', String(ic.choice), applyAdded); if (aa) return [aa]; } // the 1 / 2 of an «add …» preview
       { const xa = answerExpenseEdit(expenseStore, here.chatId || 'owner', 'owner', String(ic.choice)); if (xa) return [xa]; } // the 1 / 2 of an expense edit preview
       const waiting = payChecks.openIds().filter((i) => ['swap', 'cashkind'].includes(payChecks.get(i)?.action));
       const id = ic.id ? ic.id.toUpperCase() : waiting.length === 1 ? waiting[0] : '';
@@ -3115,6 +3119,22 @@ async function afterExpenseEntry(entry, say, silentDone = false) {
   await say(entryText(entry));
 }
 
+/** The items the owner added by hand (posts the bot never saw): recorded like group posts, marked as added by him; the references let the batch be taken back. */
+function applyAdded(entries, batch) {
+  const refs = [];
+  entries.forEach((en, i) => {
+    const at = Date.parse(en.day + 'T12:00:00+04:00'); const ref = 'added-' + batch + '-' + i;
+    if (en.kind === 'expense') refs.push({ t: 'x', id: expenseStore.add({ by: 'owner', byName: 'Owner', ref, day: en.day, date: en.day, type: en.type, vendor: en.vendor, amount: en.amount, method: en.method, state: 'done', hasReceipt: false, hasPhoto: false, addedByOwner: true, at }).id });
+    else { tracker.add({ type: 'payment', kind: en.kind, customer: '', amount: en.amount, currency: 'AED', lines: [], ...(en.employee ? { employee: en.employee } : {}), at, ref, addedByOwner: true, text: 'added by owner' }); refs.push({ t: 'e', ref }); }
+  });
+  return refs;
+}
+function removeAdded(refs) {
+  for (const r of refs) {
+    if (r.t === 'x') { const e = expenseStore.get(r.id); if (e) { e.state = 'cancelled'; expenseStore.save(); } } else tracker.removeWhere((e) => e.ref === r.ref);
+  }
+}
+
 /** The preview (or the undo) of an expense edit / delete command. */
 async function expenseEditReply(ex, chat, sender) {
   if (ex.op === 'undo') return undoExpense(expenseStore, ex.id);
@@ -3193,10 +3213,10 @@ async function cashBoxMonth(month, depth = 0) {
   for (const e of tracker.events.map(rederiveCashOut)) {
     if (e.type !== 'payment' || !['cash_to_boss', 'salary_advance'].includes(e.kind) || e.simulated || e.at < startMs || e.at > endMs) continue;
     if (outs.some((o) => o.kind === e.kind && o.amount === Number(e.amount) && Math.abs(o.at - e.at) <= 30 * 60 * 1000)) continue;
-    outs.push({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '' });
+    outs.push({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '', added: !!e.addedByOwner });
   }
   const cashPays = tracker.events.map(rederiveCashOut).filter((e) => e.type === 'payment' && e.kind === 'cash_expense' && !e.simulated && e.at >= startMs && e.at <= endMs).map((e) => ({ amount: Number(e.amount), at: e.at, vendor: e.employee || '' })); // «Pay by cash 157 for garbage box» in the Confirmation group: a cash expense, matched within 7 days
-  const expenseRows = expenseStore.done(r).map((e) => ({ amount: e.amount, type: e.type, at: e.at, vendor: e.vendor || '', method: e.method })); // card ones too: QuickBooks may have paid them from the cash box
+  const expenseRows = expenseStore.done(r).map((e) => ({ amount: e.amount, type: e.type, at: e.at, vendor: e.vendor || '', method: e.method, added: !!e.addedByOwner })); // card ones too: QuickBooks may have paid them from the cash box
   const expenses = expenseRows.filter((e) => e.method === 'cash');
   if (qbo.connected && !qbo.paused) { // QuickBooks is the source (owner decision): the Petty Cash account, cash payments only; the WhatsApp posts are only compared
     try {
@@ -3212,7 +3232,7 @@ async function cashBoxMonth(month, depth = 0) {
           const text = 'payment ' + rec.TxnDate.slice(8, 10) + '/' + rec.TxnDate.slice(5, 7) + ' ' + Number(rec.TotalAmt).toFixed(2);
           return { code: payChecks.codeFor(ref, text, 'swap', { qboAmount: Number(rec.TotalAmt), posted: Number(ev.amount) }), qboAmount: Number(rec.TotalAmt), name: rec.CustomerRef?.name || '' };
         },
-        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref, accepted: i.accepted || null })), outs, expenses: [...expenseRows.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, method: e.method })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
+        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref, accepted: i.accepted || null })), outs, expenses: [...expenseRows.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, method: e.method, added: e.added })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
     } catch (e) { logger.warn('cash box: QuickBooks did not answer, the posts are shown instead: ' + e.message); }
   }
   const transfers = await qbRows('Transfer', dayPlus(from, -3), dayPlus(to, 3));

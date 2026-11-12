@@ -186,7 +186,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const dline = (icon, iso, amount, tail) => icon + ' ' + lineDate(iso) + money(amount).padStart(12) + (tail || '');
   let green = 0; let red = 0; let white = 0; let yellow = 0;
   const mark = (icon) => { if (icon === '🟢') green += 1; else if (icon === '🔴') red += 1; else white += 1; return icon; };
-  const unmatchedLines = (pool, tailOf) => pool.filter((p) => !p.used).map((p) => dline(mark('🔴'), isoOf(p.at), p.amount, tailOf(p) + '  (posted, not in QuickBooks)'));
+  const unmatchedLines = (pool, tailOf) => pool.filter((p) => !p.used).map((p) => dline(mark('🔴'), isoOf(p.at), p.amount, tailOf(p) + (p.added ? '  (added by owner)' : '') + '  (posted, not in QuickBooks)'));
   // cash in
   const cashFromCustomers = data.received.reduce((n, r) => n + r.amount, 0);
   const transfersInTotal = data.transfersIn.reduce((n, r) => n + r.amount, 0);
@@ -232,13 +232,13 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const expTotal = data.purchases.reduce((n, p) => n + p.amount, 0);
   const byCat = {};
   for (const p of data.purchases) byCat[p.category] = (byCat[p.category] || 0) + p.amount;
-  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') : '  (no post in the group)')); });
+  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + (post.added ? '  (added by owner)' : '') : '  (no post in the group)')); });
   expLines.push(...unmatchedLines(expPosts.filter((p) => p.method !== 'card'), (p) => '   ' + (p.vendor || '')));
   const bossT = data.transfersOut.filter((t) => /owner/i.test(t.to));
   const advT = data.transfersOut.filter((t) => /advance/i.test(t.to));
   const otherT = data.transfersOut.filter((t) => !bossT.includes(t) && !advT.includes(t));
   const tLines = (list, pool, who) => {
-    const lines = list.map((t) => { const post = claim(pool, t.amount, t.date); return dline(mark(post ? '🟢' : '⚪'), t.date, t.amount, (who ? '   ' + ((post && post.employee) || t.note || '') : '') + (post ? '' : '  (no post in the group)')); });
+    const lines = list.map((t) => { const post = claim(pool, t.amount, t.date); return dline(mark(post ? '🟢' : '⚪'), t.date, t.amount, (who ? '   ' + ((post && post.employee) || t.note || '') : '') + (post ? (post.added ? '  (added by owner)' : '') : '  (no post in the group)')); });
     lines.push(...unmatchedLines(pool, (p) => (who && p.employee ? '   ' + p.employee : '')));
     return lines;
   };
