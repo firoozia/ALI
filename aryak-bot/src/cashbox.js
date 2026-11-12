@@ -182,11 +182,19 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const advPosts = posts.outs.filter((o) => o.kind === 'salary_advance').map((o) => ({ ...o }));
   const expPosts = posts.expenses.map((o) => ({ ...o }));
   const inPosts = posts.cashIn.map((o) => ({ ...o }));
+  // An item the OWNER added absorbs a posted row of the same kind (amount +-1 AED, date +-7 days): they are the same thing, shown once as «(added by owner; also posted 05/11)», never as «not in QuickBooks».
+  for (const pool of [bossPosts, advPosts, expPosts]) {
+    for (const a of pool.filter((x) => x.added)) {
+      const twin = pool.find((q) => !q.added && !q.used && Math.abs(Number(q.amount) - Number(a.amount)) <= 1 && Math.abs(dayNum(q.at, timeZone) - dayNum(a.at, timeZone)) <= 7);
+      if (twin) { twin.used = true; a.also = isoOf(twin.at); }
+    }
+  }
+  const addedTail = (p) => (p.added ? '  (added by owner' + (p.also ? '; also posted ' + p.also.slice(8, 10) + '/' + p.also.slice(5, 7) : '') + ')' : '');
   const lineDate = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
   const dline = (icon, iso, amount, tail) => icon + ' ' + lineDate(iso) + money(amount).padStart(12) + (tail || '');
   let green = 0; let red = 0; let white = 0; let yellow = 0;
   const mark = (icon) => { if (icon === '🟢') green += 1; else if (icon === '🔴') red += 1; else white += 1; return icon; };
-  const unmatchedLines = (pool, tailOf) => pool.filter((p) => !p.used).map((p) => dline(mark('🔴'), isoOf(p.at), p.amount, tailOf(p) + (p.added ? '  (added by owner)' : '') + '  (posted, not in QuickBooks)'));
+  const unmatchedLines = (pool, tailOf) => pool.filter((p) => !p.used).map((p) => dline(mark('🔴'), isoOf(p.at), p.amount, tailOf(p) + addedTail(p) + '  (posted, not in QuickBooks)'));
   // cash in
   const cashFromCustomers = data.received.reduce((n, r) => n + r.amount, 0);
   const transfersInTotal = data.transfersIn.reduce((n, r) => n + r.amount, 0);
@@ -232,13 +240,13 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const expTotal = data.purchases.reduce((n, p) => n + p.amount, 0);
   const byCat = {};
   for (const p of data.purchases) byCat[p.category] = (byCat[p.category] || 0) + p.amount;
-  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + (post.added ? '  (added by owner)' : '') : '  (no post in the group)')); });
+  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + addedTail(post) : '  (no post in the group)')); });
   expLines.push(...unmatchedLines(expPosts.filter((p) => p.method !== 'card'), (p) => '   ' + (p.vendor || '')));
   const bossT = data.transfersOut.filter((t) => /owner/i.test(t.to));
   const advT = data.transfersOut.filter((t) => /advance/i.test(t.to));
   const otherT = data.transfersOut.filter((t) => !bossT.includes(t) && !advT.includes(t));
   const tLines = (list, pool, who) => {
-    const lines = list.map((t) => { const post = claim(pool, t.amount, t.date); return dline(mark(post ? '🟢' : '⚪'), t.date, t.amount, (who ? '   ' + ((post && post.employee) || t.note || '') : '') + (post ? (post.added ? '  (added by owner)' : '') : '  (no post in the group)')); });
+    const lines = list.map((t) => { const post = claim(pool, t.amount, t.date); return dline(mark(post ? '🟢' : '⚪'), t.date, t.amount, (who ? '   ' + ((post && post.employee) || t.note || '') : '') + (post ? addedTail(post) : '  (no post in the group)')); });
     lines.push(...unmatchedLines(pool, (p) => (who && p.employee ? '   ' + p.employee : '')));
     return lines;
   };

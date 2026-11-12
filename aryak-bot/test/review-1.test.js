@@ -1140,3 +1140,16 @@ test('a receipt photo is dated by the date printed on it; a late-posted receipt 
   assert.match(text, /🔴 219\.05 {2}card {3}ENOC {6}#E3\n     ↳ this looks like the amount before VAT of ENOC 07\/11 230\.00/);
   assert.equal(matchExpenses([ent('E9', 85.5, '2026-11-01', 'fuel', '')], [{ TxnDate: '2026-11-06', TotalAmt: 85.5 }]).missing.length, 1); // no vendor or category to agree: stays missing
 });
+
+test('an item the owner added absorbs the posted row of the same kind (amount +-1, date +-7): shown once as (added by owner; also posted dd/mm), never as not in QuickBooks', async () => {
+  const { cashBoxReportQbo } = await import('../src/cashbox.js');
+  const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
+  const data = { received: [], elsewhere: [], transfersIn: [], transfersOut: [{ amount: 9000, date: '2026-11-12', to: 'OWNER CASH AMOUNT', note: '' }], purchases: [{ amount: 157.5, date: '2026-11-10', vendor: 'CITY CLEAN', category: 'Cleaning' }] };
+  const { text } = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [], expenses: [
+    { amount: 157.5, at: day('10'), vendor: 'CITY CLEAN', method: 'cash', added: true }, { amount: 157, at: day('05'), vendor: '', method: 'cash', days: 7 }],
+  outs: [{ kind: 'cash_to_boss', amount: 18000, at: day('04'), added: true }, { kind: 'cash_to_boss', amount: 18000, at: day('04') }, { kind: 'cash_to_boss', amount: 9000, at: day('12') }] } });
+  assert.match(text, /🟢 10\/11\s+157\.50 {3}CITY CLEAN {2}\(added by owner; also posted 05\/11\)/);
+  assert.doesNotMatch(text, /05\/11\s+157\.00/); // the old row is not shown again
+  assert.match(text, /🔴 04\/11\s+18,000\.00 {2}\(added by owner; also posted 04\/11\) {2}\(posted, not in QuickBooks\)/); // absorbed once; its own lack of a transfer is still said
+  assert.equal((text.match(/18,000\.00/g) || []).length, 1); // one line only: the posted twin is not shown again
+});
