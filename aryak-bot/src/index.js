@@ -380,7 +380,7 @@ setInterval(async () => {
     const now = localParts(Date.now(), config.timezone);
     if (now.day === lastEvening || Math.floor(now.minutes / 60) < config.eveningReportHour) return;
     lastEvening = now.day;
-    const text = await unbilledReport();
+    const text = await unbilledReport(tracker.events, { cached: true }); // the automatic run
     if (config.eveningReportTo === 'info' && config.infoGroupName) await sendTo(config.infoGroupName, `${text}\n— ${config.displayName}`);
     else await sock.sendMessage(ownIds()[0], { text: `🤖 ${text}` });
     logger.info(`evening report for ${now.day} sent (${config.eveningReportTo})`);
@@ -885,9 +885,9 @@ const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = aw
 /** The text of the report «cut or delivered, not invoiced»: the posts against ALL of the customers' QuickBooks invoices of the last 40 days. Read only. */
 /** The OUT rows of the stock sheet for the last [days] days (read only): [{ customer, code, qty, unit, at }], or null when the sheet could not give them all (then nothing is claimed about what left). */
 const sheetPages = { at: 0, key: '', rows: null }; // the OUT rows read for the last report: a second «unbilled» or the evening report within ten minutes does not read them again
-async function sheetOutRows(days) {
+async function sheetOutRows(days, cached = false) { // [cached]: only the automatic evening run may use the copy read minutes ago; a report somebody asks for reads the sheet now
   const key = `${todayDubai()}|${days}`;
-  if (sheetPages.rows && sheetPages.key === key && Date.now() - sheetPages.at < 10 * 60 * 1000) return sheetPages.rows;
+  if (cached && sheetPages.rows && sheetPages.key === key && Date.now() - sheetPages.at < 10 * 60 * 1000) return sheetPages.rows;
   try {
     const to = todayDubai(); const rows = []; const returned = []; let returnsKnown = true;
     for (let back = days; back > 0; back -= 10) { // ten days at a time: a page is at most 500 rows
@@ -912,7 +912,7 @@ async function unbilledReport(events = tracker.events, opts = {}) {
   // only what the sheet tracks: the films. Edge banding («EDGE 0.8x22 - 1810»), services (delivery, parking) and samples are no part of this comparison.
   const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), itemCodesOf(it)])); // film by its code, edge banding by its colour, nothing else
   const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
-  const outs = events === tracker.events ? await sheetOutRows(days) : null; // the test group never reads the real sheet
+  const outs = events === tracker.events ? await sheetOutRows(days, !!opts.cached) : null; // the test group never reads the real sheet
   const sharedNames = customerGroups.rows().filter((r) => rowGroups(r).some((g) => /\s(?:&|and|\+)\s/i.test(String(g.subject || '')))).map((r) => r.customer).filter(Boolean); // a group shared by two customers is mapped to one of them
   const result = threeWay({ events: repairSharedCuts(events, outs, sharedNames, { timeZone: config.timezone }), outs, returns: outs?.returns, invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days, timeZone: config.timezone, trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') || 0 : 0 });
   for (const l of result.trace || []) logger.info(l); // what each line came from
@@ -1034,7 +1034,7 @@ const qboInvoices = new QboInvoiceDesk({
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
   // the final cut of the customer and code, from the tracker (what the cutting group posted); marked with the invoice number once it is made
   cutsOf: (customer, codes) => cutRecords(tracker, customer, codes, { log: (s) => logger.info(s) }), markCuts: (refs, number) => markCutsInvoiced(tracker, refs, number),
-  crossOf: (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x), aliasOf: (n) => cutAliases.resolve(n) }), // a preview made in the test group is checked against the TEST data only
+  crossOf: async (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x), aliasOf: (n) => cutAliases.resolve(n), trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') : 0, outs: opts.test ? null : await sheetOutRows(35).catch(() => null) }), // a preview made in the test group is checked against the TEST data only
   // the free stock of a code, for a warning line in an invoice preview (the sheet is read, nobody is told)
   stockOf: async (code) => { try { const r = await fetchStock(config, { code }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } },
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
@@ -1168,10 +1168,12 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       return [(await cashBoxMonth(todayDubai().slice(0, 7))).text];
     }
     case 'add_entries': {
-      for (const en of ic.parsed.entries) { // no method written: the account of the matched QuickBooks purchase says cash or card
-        if (en.kind !== 'expense' || en.method || !qbo.connected || qbo.paused) continue;
-        const rec = matchExpenses([{ amount: en.amount, day: en.day, date: en.day, vendor: en.vendor }], await qbRows('Purchase', dayPlus(en.day, -3), dayPlus(en.day, 3))).found[0]?.record;
-        if (rec && qbKindOf(rec)) { en.method = qbKindOf(rec); en.qbAccount = rec.AccountRef?.name || ''; }
+      for (const en of ic.parsed.entries) { // every expense is looked up in ALL the purchase accounts: amount +-1 AED, date +-7 days (the vendor too when written), the nearest day first; the account says cash or card
+        if (en.kind !== 'expense' || !qbo.connected || qbo.paused) continue;
+        const rows = await qbRows('Purchase', dayPlus(en.day, -7), dayPlus(en.day, 7));
+        const dayNo = (iso) => Math.floor(Date.parse(iso + 'T00:00:00Z') / 86400000);
+        const rec = rows.filter((r) => Math.abs(Number(r.TotalAmt) - en.amount) <= 1 && (!en.vendor || sameStop(en.vendor, r.EntityRef?.name || '', nameAlias))).sort((a, b) => Math.abs(dayNo(a.TxnDate) - dayNo(en.day)) - Math.abs(dayNo(b.TxnDate) - dayNo(en.day)))[0];
+        if (rec) { en.qbAccount = rec.AccountRef?.name || 'account'; en.qbVendor = rec.EntityRef?.name || ''; if (!en.method && qbKindOf(rec)) en.method = qbKindOf(rec); } else en.qbNone = true;
       }
       return [requestAdd(expenseStore, ic.parsed, here.chatId || 'owner')];
     }
@@ -3637,10 +3639,13 @@ async function start() {
   sock.ev.on('groups.update', (updates) => { for (const u of updates || []) if (u?.id && u.subject && watchList.rename(u.id, u.subject, config)) logger.info(`watched group renamed to "${u.subject}" (kept watched)`); });
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     let history = 0;
-    for (const raw of messages) {
+    for (let raw of messages) {
       { // a message the person DELETED («This message was deleted»): every record made from it goes too (a wrong cut post, a wrong payment)
         const rv = normalizeMessageContent(raw?.message)?.protocolMessage;
         if (rv && (rv.type === 0 || rv.type === 'REVOKE') && rv.key?.id) { try { voidMessage(rv.key.remoteJid || raw.key.remoteJid, rv.key.id); } catch (e) { logger.warn('deleted message: ' + e.message); } continue; }
+        if (rv && (rv.type === 14 || rv.type === 'MESSAGE_EDIT') && rv.key?.id && rv.editedMessage) { // an EDITED message (amount, code, customer, caption): what was recorded from the old text goes, the new text is read as that message
+          try { const gid = rv.key.remoteJid || raw.key.remoteJid; voidMessage(gid, rv.key.id); handled.delete(rv.key.id); raw = { ...raw, key: { ...raw.key, id: rv.key.id, remoteJid: gid }, message: rv.editedMessage }; logger.info('edited message ' + rv.key.id + ': re-read'); } catch (e) { logger.warn('edited message: ' + e.message); continue; }
+        }
       }
       const verdict = shouldProcess({ type, raw, seen: handled, ownerSeen });
       if (!verdict.ok) {

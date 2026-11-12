@@ -234,6 +234,8 @@ export function looksLikeInvoiceRequest(text) {
 const PRICE_PART = String.raw`(?:(?:\s*[/@]\s*|\s+(?=\d+(?:\.\d+)?\s*(?:aed|dhs?|dirhams?)\b))(\d+(?:\.\d+)?)\s*(?:aed|dhs?|dirhams?)?)?`; // «/10aed», «/10 aed», «@10», and «10aed» / «10 aed» right after the quantity: the unit price asked for this line
 const QTY_LINE = new RegExp(String.raw`^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}\s*$`, 'iu');
 const INLINE_ITEM = new RegExp(String.raw`(?:^|[\s,;])([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|x|×)\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}(?=$|[\s,;])`, 'giu');
+const SPACED_ITEM = new RegExp(String.raw`([A-Za-z]?\d{2,5}[A-Za-z-]*)\s+(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}(?=$|[\s,;])`, 'giu');
+const SPACED_TAIL = /(?:\s+[A-Za-z]?\d{2,5}[A-Za-z-]*\s+\d+(?:\.\d+)?\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?)+\s*$/iu;
 const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?(?:invoice|inv(?=\s+(?:for|to)\s))\s+(?:for\s+|to\s+)?(.+?)\s*$/iu;
 
 /**
@@ -253,8 +255,12 @@ export function readEnglishInvoice(text) {
   const head = EN_HEAD.exec(rows[0]);
   if (!head) return null;
   // items written on the same line, after the customer: «INVOICE FOR AL EBDA 215=97M 220=12M» (a code, = or : or x, a quantity, an optional unit)
-  const inline = [...head[1].matchAll(INLINE_ITEM)];
-  const cut = inline.length ? inline[0].index + inline[0][0].indexOf(inline[0][1]) : head[1].length;
+  let inline = [...head[1].matchAll(INLINE_ITEM)];
+  let cut = inline.length ? inline[0].index + inline[0][0].indexOf(inline[0][1]) : head[1].length;
+  if (!inline.length) { // «Atossa invoice derwazaa 221 20m»: the name, then pairs of a code and a quantity separated by spaces only, at the end of the line
+    const tail = SPACED_TAIL.exec(head[1]);
+    if (tail && tail.index > 0) { inline = [...tail[0].matchAll(SPACED_ITEM)]; cut = tail.index; }
+  }
   const named = head[1].slice(0, cut).replace(/[\s,;]+$/u, '').replace(/\s+(?:and|with)$/iu, '');
   if (/\b(?:send|forward|check|delete|number|no\.?|inv-?\d+|#)\b/i.test(named) || /^\d/.test(named)) return null;
   const customer = named.replace(/\b(?:please|pls|thanks)\b/gi, '').replace(/\s+/g, ' ').trim();
@@ -1038,7 +1044,7 @@ export class QboInvoiceDesk {
       guesses: (guesses.customer || guesses.lines.length || guesses.tax) ? guesses : null,
       // what the owner's yes will remember, so that the next time it is exact and not a guess
       aliases: { customer: (cust.guessed || cust.chosen) ? { text: customerText, id: cust.id, name: cust.name } : null, items: out.filter((l) => (l.via === 'guess' || l.chosen) && l.typed).map((l) => ({ typed: l.typed, itemId: l.itemId, name: l.name })) },
-      cross: this.crossOf ? this.crossOf(cutName, out.map((l) => ({ code: l.typed, sku: l.sku, name: l.name, qty: l.qty })), await this.customerInvoiceLines(cust.id, cat), { test }) : null, // against the cutting group: warnings only
+      cross: this.crossOf ? await this.crossOf(cutName, out.map((l) => ({ code: l.typed, sku: l.sku, name: l.name, qty: l.qty })), await this.customerInvoiceLines(cust.id, cat), { test }) : null, // against the cutting group: warnings only
       req: { customerText, entries, overrides, po },
       ...(po ? { po } : {}),
       ...(origin ? { origin } : {}), // the chat the request came from: the PDF goes back there
@@ -1095,7 +1101,7 @@ export class QboInvoiceDesk {
       ...(p.po ? [`PO: *${p.po}*`] : []),
       ...p.lines.map((l, i) => `${i + 1}. ${named(l)} (${l.qty} ×${l.price} = ${money(l.amount)})${l.override ? ` ✎ your price (system ${Number(l.override.system).toFixed(2)})` : ''}`),
       `Total: *${money(p.total)}${p.currency ? ` ${p.currency}` : ''}*`,
-      ...(p.cross?.problems?.length ? ['Cross-check (Aryak Orders):', ...p.cross.problems.map((x) => `⚠ ${x}`), ...(p.cross.more ? [`+${p.cross.more} more`] : [])] : []), // nothing at all when everything matches
+      ...((p.cross?.problems?.length || p.cross?.covered?.length) ? ['Cross-check (Aryak Orders):', ...(p.cross.covered || []).map((x) => `✔ ${x}`), ...(p.cross.problems || []).map((x) => `⚠ ${x}`), ...(p.cross.more ? [`+${p.cross.more} more`] : [])] : []), // nothing at all when everything matches
       ...flags,
       answer,
     ].join('\n');

@@ -29,18 +29,18 @@ test('the cross-check with the cutting group: no order, already invoiced, a diff
   ];
   const { problems } = crossCheck(tr, 'MASTER WOOD', lines, { now: NOW, invoiced: [] }); // QuickBooks read: no invoice line carries any of these cuts
   assert.deepEqual(problems, [
-    '211: no order found',
+    '211: not cut yet (no orders-group post)',
     '507: already invoiced (inv-9981) on 07/11',
     '503: cut 8m on 07/11, not invoiced',
   ]); // 509: cut 12m against an invoice of 10 is normal (the invoice follows the order, not the cut)
   const clean = new Tracker({ dir: '' });
   cut(clean, 'k1', 'MASTER WOOD', '505', 10, 1);
   assert.deepEqual(crossCheck(clean, 'MASTER WOOD', [{ code: '505', qty: 10 }], { now: NOW, invoiced: [] }).problems, []);
-  assert.deepEqual(crossCheck(new Tracker({ dir: '' }), 'MASTER WOOD', [{ code: '505', qty: 10 }], { now: NOW, invoiced: [] }).problems, ['505: no order found']);
+  assert.deepEqual(crossCheck(new Tracker({ dir: '' }), 'MASTER WOOD', [{ code: '505', qty: 10 }], { now: NOW, invoiced: [] }).problems, ['505: not cut yet (no orders-group post)']);
   // old cuts (outside the window) and the team's internal entries are not orders
   const old = new Tracker({ dir: '' });
   cut(old, 'o1', 'MASTER WOOD', '505', 10, 90); cut(old, 'o2', 'MASTER WOOD', '505', 10, 1, { internal: true });
-  assert.deepEqual(crossCheck(old, 'MASTER WOOD', [{ code: '505', qty: 10 }], { now: NOW }).problems, ['505: no order found']);
+  assert.deepEqual(crossCheck(old, 'MASTER WOOD', [{ code: '505', qty: 10 }], { now: NOW }).problems, ['505: not cut yet (no orders-group post)']);
 });
 
 test('the owner\'s rule: an invoice line of the same customer and code on or after the cut day counts as invoiced WHATEVER its quantity; a cut larger than the invoice is never a warning; an invoice larger than the cut is', () => {
@@ -116,7 +116,7 @@ test('cut posts: several pieces added, a stated total kept, 1.8×2 as two pieces
   // the roll prepared for cutting is never a customer's cut in the cross-check
   const tr = new Tracker({ dir: '' });
   tr.add({ type: 'cut', at: NOW - DAY, ...roll, ref: 'r1' }); tr.add({ type: 'cut', at: NOW - DAY, ...event, ref: 'r2' });
-  assert.deepEqual(crossCheck(tr, 'AR-RAD INTERNATIONAL', [{ code: '235', qty: 20 }], { now: NOW, invoiced: [] }).problems, ['235: no order found', '105: cut 14.5m on 07/11, not invoiced']); // the AR RAD cut belongs to AR-RAD INTERNATIONAL: it is listed, not hidden
+  assert.deepEqual(crossCheck(tr, 'AR-RAD INTERNATIONAL', [{ code: '235', qty: 20 }], { now: NOW, invoiced: [] }).problems, ['235: not cut yet (no orders-group post)', '105: cut 14.5m on 07/11, not invoiced']); // the AR RAD cut belongs to AR-RAD INTERNATIONAL: it is listed, not hidden
   // the post says 14.5 was invoiced: an invoice of 14.5 or less is fine, more than that is not
   assert.deepEqual(crossCheck(tr, 'AR RAD', [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, []);
   assert.deepEqual(crossCheck(tr, 'AR RAD', [{ code: '105', qty: 15 }], { now: NOW, invoiced: [] }).problems, ['105: invoice has 15, cut 14.5m on 07/11']);
@@ -140,7 +140,7 @@ test('AR RAD, AR-RAD and ARRAD are one customer; the test tracker is the one rea
   const test = new Tracker({ dir: '' }); const real = new Tracker({ dir: '' });
   test.add({ type: 'cut', at: NOW - 3600000, customer: 'AR RAD', customerTyped: 'AR RAD', lines: [{ code: '105', quantity: 15.4, unit: 'm', invoiceQuantity: 14.5 }], ref: 't1', simulated: true });
   assert.deepEqual(crossCheck(test, books, [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, []); // found in the test data
-  assert.deepEqual(crossCheck(real, books, [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, ['105: no order found']); // the real data has none
+  assert.deepEqual(crossCheck(real, books, [{ code: '105', qty: 14.5 }], { now: NOW, invoiced: [] }).problems, ['105: not cut yet (no orders-group post)']); // the real data has none
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(index, /crossCheck\(trackerOf\(!!opts\.test\), customer, lines/);
 });

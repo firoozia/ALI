@@ -1016,7 +1016,7 @@ test('a deleted message takes its records away; the invoice preview pairs like �
   const r1 = crossCheck(cutter, 'ZETA WOOD', [{ code: '207', qty: 12 }], { now: NOW, invoiced: [early] });
   assert.ok(!r1.problems.some((p) => /^511: cut 9m/.test(p))); // the 9 m cut pairs with its earlier invoice
   assert.ok(r1.problems.some((p) => /^511: cut 5m/.test(p))); // the line is used up by the first cut: the second is not invoiced
-  assert.ok(r1.problems.includes('207: no order found'));
+  assert.ok(r1.problems.includes('207: not cut yet (no orders-group post)'));
   // a duplicate number is urgent; the same number posted again as an update is only a note
   assert.equal(checkNumber('inv-9997', ['inv-9996', 'inv-9997'], new Set(), false)[0].kind, 'duplicate');
   const rev = checkNumber('inv-9997', ['inv-9996', 'inv-9997'], new Set(), true);
@@ -1086,4 +1086,37 @@ test('expenses against ALL QuickBooks purchases: the account is shown, cash or c
   assert.equal(parseAddEntries('add expense 140.07 fuel 10/11 ENOC', '2026-11-12').entries[0].method, ''); // no method written
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("en.method = qbKindOf(rec)")); assert.ok(index.includes("state: en.method ? 'done' : 'ask_method'")); // taken from the account, else asked 1 card / 2 cash
+});
+
+test('owner review: «invoice NAME 221 20m» is read; the preview pairs by the nearest date and never with a line from before the tracking began, says the invoice covers today\'s cut and warns about not-cut / not-left; a report the owner asks for reads fresh; an edited message is re-read; an added expense is looked up in all accounts', async () => {
+  const { readEnglishInvoice } = await import('../src/qboinvoice.js');
+  const { crossCheck } = await import('../src/cuts.js');
+  const { Tracker } = await import('../src/tracker.js');
+  const { requestAdd, parseAddEntries } = await import('../src/addentries.js');
+  assert.deepEqual(readEnglishInvoice('Atossa invoice derwazaa 221 20m'), { customer: 'derwazaa', lines: ['221 20'], unread: [] });
+  assert.deepEqual(readEnglishInvoice('Atossa invoice high point 207 12m').lines, ['207 12']); assert.equal(readEnglishInvoice('Atossa invoice high point 207 12m').customer, 'high point');
+  assert.deepEqual(readEnglishInvoice('invoice zeta co 221 20m 222 5').lines, ['221 20', '222 5']);
+  assert.deepEqual(readEnglishInvoice('invoice zeta co 215=97m').lines, ['215 97']); // the old form still works
+  const NOW = Date.parse('2026-11-12T08:00:00Z'); const DAY = 86400000;
+  const tr = new Tracker({ dir: '' });
+  tr.add({ type: 'cut', at: NOW - 3600000, customer: 'GOLDEN DOOR', lines: [{ code: '505', quantity: 105, unit: 'm' }], ref: 'c1' });
+  tr.add({ type: 'cut', at: NOW - 3000000, customer: 'GOLDEN DOOR', lines: [{ code: '201', quantity: 30, unit: 'm' }], ref: 'c2' });
+  const tracked = Date.parse('2026-11-01T00:00:00+04:00');
+  const october = { codes: ['PVC FILM505'], qty: 100, number: 'inv-9762', at: Date.parse('2026-10-17T00:00:00Z') };
+  const r = crossCheck(tr, 'GOLDEN DOOR', [{ code: '505', qty: 105 }, { code: '201', qty: 30 }, { code: '999', qty: 5 }], { now: NOW, invoiced: [october], trackedSince: tracked, outs: [{ customer: 'GOLDEN DOOR', code: '505', qty: 105, at: NOW - 1800000 }] });
+  assert.ok(!r.problems.some((p) => /already invoiced/.test(p))); // the October line (before the tracking began) does not take today's cuts
+  assert.ok(r.covered.includes('505: cut today, this invoice covers it') && r.covered.includes('201: cut today, this invoice covers it'));
+  assert.ok(r.problems.includes('999: not cut yet (no orders-group post)') && r.problems.includes('201: not left the warehouse yet')); assert.ok(!r.problems.includes('505: not left the warehouse yet'));
+  // the nearest date pairs first
+  const near = new Tracker({ dir: '' });
+  near.add({ type: 'cut', at: NOW - 2 * DAY, customer: 'GOLDEN DOOR', lines: [{ code: '300', quantity: 10, unit: 'm' }], ref: 'n1' });
+  const far = { codes: ['300'], qty: 10, number: 'far', at: NOW - 20 * DAY }; const close = { codes: ['300'], qty: 10, number: 'close', at: NOW - 3 * DAY };
+  const n = crossCheck(near, 'GOLDEN DOOR', [{ code: '300', qty: 10 }], { now: NOW, invoiced: [far, close], trackedSince: 0 });
+  assert.match(n.problems.join('|'), /already invoiced \(close\)/);
+  const gate = (s) => s.includes('async function sheetOutRows(days, cached = false)') && s.includes('unbilledReport(tracker.events, { cached: true })');
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(gate(index)); // only the automatic evening run may use the copy read minutes ago
+  assert.ok(index.includes("rv.type === 'MESSAGE_EDIT'") && index.includes('handled.delete(rv.key.id)')); // an edit takes back what the old text made and re-reads the new one
+  const add = parseAddEntries('add expense 140.07 fuel 10/11', '2026-11-12'); add.entries[0].qbAccount = 'ADCB Bank'; add.entries[0].qbVendor = 'ENOC'; add.entries[0].method = 'card';
+  assert.match(requestAdd(new (await import('../src/expenses.js')).ExpenseStore('', () => 1), add, 'o'), /140\.07 {2}Fuel {2}card \(QuickBooks: ADCB Bank, ENOC\)/);
 });

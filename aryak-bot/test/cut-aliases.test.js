@@ -46,10 +46,10 @@ test('an approved alias makes the cross-check count a post of that name for the 
   const tr = new Tracker({ dir: '' });
   tr.add({ type: 'cut', at: NOW - DAY, customer: 'HAMID TRD', customerTyped: 'HAMID TRD', lines: [{ code: '303', quantity: 6, unit: 'm' }], ref: 'h1' });
   const without = crossCheck(tr, 'HAMED TRADING', [{ code: '303', qty: 6 }], { now: NOW, invoiced: [] }).problems;
-  assert.deepEqual(without, ['303: no order found']);
+  assert.deepEqual(without, ['303: not cut yet (no orders-group post)']);
   const store = new CutAliases('', () => NOW); store.decide(store.propose([{ post: 'HAMID TRD', qbo: 'HAMED TRADING', score: 100 }]).id, 'yes');
   assert.deepEqual(crossCheck(tr, 'HAMED TRADING', [{ code: '303', qty: 6 }], { now: NOW, invoiced: [], aliasOf: (n) => store.resolve(n) }).problems, []);
-  assert.deepEqual(crossCheck(tr, 'ZED CARPENTRY', [{ code: '303', qty: 6 }], { now: NOW, invoiced: [], aliasOf: (n) => store.resolve(n) }).problems, ['303: no order found']); // another customer is not affected
+  assert.deepEqual(crossCheck(tr, 'ZED CARPENTRY', [{ code: '303', qty: 6 }], { now: NOW, invoiced: [], aliasOf: (n) => store.resolve(n) }).problems, ['303: not cut yet (no orders-group post)']); // another customer is not affected
 });
 
 test('the words and the wiring: «cut aliases», «drop 2,3 #A1», «yes #A1»; the alias list stays on the server', () => {
