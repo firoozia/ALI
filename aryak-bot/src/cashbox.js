@@ -14,6 +14,7 @@ const ADVANCE = /(?:^|[^a-z])(?:advance|salary)(?![a-z])|سلف|مساعده/i;
 // «Pay by cash 157 aed for garbage box»: a cash EXPENSE of the company (never customer cash). An invoice, «from …» or «received» makes it a customer's payment instead.
 const PAYFOR = /(?:^|[^a-z])(?:pay|pays|paid|payment)(?![a-z])[\s\S]*?(?:^|[^a-z])for(?![a-z])\s+(.+)$/i;
 const NOT_EXPENSE = /invoice|(?:^|[^a-z])inv[-\s#]?\d|(?:^|[^a-z])(?:from|received|receipt|customer|cheque|check)(?![a-z])/i;
+const VERB_ONLY = /^(?:pay|pays|paid|paying|payment|for|by)$/i;
 const UNCLEAR = /(?:^|[^a-z])(?:handed|gave|given|withdraw|withdrawal|loan)(?![a-z])/i;
 const NOISE = new Set(['advance', 'salary', 'to', 'for', 'cash', 'deposit', 'aed', 'dhs', 'dh', 'the', 'of', 'and', 'paid', 'pay', 'given', 'gave', 'handed', 'boss', 'سلف', 'مساعده', 'درهم']);
 
@@ -38,6 +39,8 @@ export function cashOutKind(text) {
 export function rederiveCashOut(e) {
   if (!e || e.type !== 'payment' || CASH_OUT_KINDS.includes(e.kind) || e.kind === 'cheque' || e.kind === 'transfer') return e;
   const words = [e.text, e.customerTyped, e.customer].filter(Boolean).join(' ');
+  // An old row that kept only the first word of «Pay by cash 157 aed for garbage box» («Pay»): a verb is no customer, so it is a cash expense of the company.
+  if (e.kind === 'cash' && !e.text && VERB_ONLY.test(String(e.customerTyped || e.customer || '').trim())) return { ...e, kind: 'cash_expense', employee: '', customer: '', customerTyped: '', pendingName: false, reclassified: true };
   if (!/(?:^|[^a-z])to\s+boss(?![a-z])|^\s*boss(?![a-z])/i.test(words) && !ADVANCE.test(words) && !(PAYFOR.test(words) && !NOT_EXPENSE.test(words))) return e;
   const amount = Number(e.amount) > 0 ? Number(e.amount) : null;
   const out = cashOutKind(e.text ? e.text : words + ' ' + (amount || '')); // the posted words as they are; with none, the name and the amount

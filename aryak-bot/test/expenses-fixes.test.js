@@ -64,16 +64,16 @@ test('ONE parsed list for payments, money received and the weekly check: the sam
   const events = [pay({ customer: 'RECEIPT + CLEAR', amount: 115, ref: 'a' }), pay({ customer: 'PAY', amount: 157, ref: 'b' }), pay({ customer: 'ALWAN ALSHAM', amount: 115, ref: 'c', at: NOW + 1000 }), pay({ customer: 'ALWAN ALSHAM', amount: 115, ref: 'd', at: NOW + 2000 }), pay({ customer: 'TEST', amount: 9, simulated: true, ref: 'e' })];
   const qb = [{ Id: '1', TxnDate: '2026-11-10', TotalAmt: 115, CustomerRef: { name: 'ALWAN ALSHAM' } }];
   const list = sharedPaymentList({ events, payments: qb });
-  assert.deepEqual(list.map((e) => [e.ref, e.customer]), [['a', 'ALWAN ALSHAM'], ['b', '']]); // junk names are gone; the nameless 115 and the ALWAN 115 are the same QuickBooks payment: one entry that keeps the name; the test entry is out
+  assert.deepEqual(list.map((e) => [e.ref, e.customer]), [['a', 'ALWAN ALSHAM']]); // junk names are gone; «PAY» (a verb) is a cash expense of the company, not a payment; the nameless 115 and the ALWAN 115 are the same QuickBooks payment: one entry that keeps the name; the test entry is out
   // the owner says «separate»: both are kept; «dup»: the repeat is gone for good
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dups-')); const dups = new PaymentDups(dir);
   dups.ask(events[0], events[2]); dups.decide('D1', 'separate');
-  assert.equal(sharedPaymentList({ events, payments: qb, dups }).length, 3); // the owner said these two are separate payments: both kept
+  assert.equal(sharedPaymentList({ events, payments: qb, dups }).length, 2); // the owner said these two are separate payments: both kept («PAY» is a cash expense, not in the list)
   const items = receivedItems(list, day);
   const text = receivedText(items, { title: '10/11/2026', records: qb });
   assert.ok(text.includes('*ALWAN ALSHAM*\n🟢 115.00')); // the nameless 115 is the recorded ALWAN payment, as «payments» says
   const week = weeklyCheckText({ expenses: [], purchases: [], items, payments: qb, title: 'w' });
-  assert.ok(!/RECEIPT|CLEAR|PAY\b/.test(week)); assert.match(week, /\*UNKNOWN\*\n🔴 157\.00/); assert.ok(!/115\.00/.test(week)); // 115 is recorded; only 157 is missing, with no junk name
+  assert.ok(!/RECEIPT|CLEAR|PAY\b/.test(week)); assert.ok(!/157\.00|115\.00/.test(week)); // 115 is recorded; the 157 «PAY» is a cash expense of the company, never money received
 });
 
 test('a separator between every entry in the money received and the weekly check, not only before the total', () => {

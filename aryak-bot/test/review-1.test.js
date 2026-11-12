@@ -979,3 +979,19 @@ test('a cash post whose name is no customer and that fits a Petty Cash purchase 
   assert.match(text, /🟢 10\/11\s+157\.50 {3}CITY CLEAN\n/); assert.doesNotMatch(text, /157\.00 {2}\(posted/); // the garbage box is an expense, matched to the purchase
   assert.match(text, /🔴 06\/11\s+90\.00 {2}\(posted, not in QuickBooks\)/); // a real customer stays cash in
 });
+
+test('the stored row {customer: "Pay", amount 157, cleared} is a cash expense (a verb is no customer): out of the customer lists, matched to the Petty Cash purchase 5 days later, else an expense not in QuickBooks', async () => {
+  const { rederiveCashOut, cashBoxReportQbo } = await import('../src/cashbox.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const row = { type: 'payment', kind: 'cash', customer: 'Pay', amount: 157, currency: 'AED', at: 1793866567380, ref: 'made-up-ref-1', cleared: true };
+  assert.equal(rederiveCashOut(row).kind, 'cash_expense');
+  assert.equal(sharedPaymentList({ events: [row] }).length, 0); // never customer cash
+  assert.equal(rederiveCashOut({ ...row, customer: 'ZETA CO' }).kind, 'cash'); // a customer stays one
+  const base = { opening: 0, closing: null, received: [], elsewhere: [], transfersIn: [], transfersOut: [] };
+  const post = { amount: 157, at: row.at, vendor: '', method: 'cash', days: 7 };
+  const hit = cashBoxReportQbo({ month: '2026-11', data: { ...base, purchases: [{ amount: 157.5, date: '2026-11-10', vendor: 'CITY CLEAN', category: 'Cleaning' }] }, posts: { cashIn: [], outs: [], expenses: [post] } }).text;
+  assert.match(hit, /🟢 10\/11\s+157\.50 {3}CITY CLEAN\n/); assert.doesNotMatch(hit, /posted, not in QuickBooks/);
+  const miss = cashBoxReportQbo({ month: '2026-11', data: { ...base, purchases: [] }, posts: { cashIn: [], outs: [], expenses: [post] } }).text;
+  assert.match(miss, /Company expenses \(cash\)[\s\S]*🔴 05\/11\s+157\.00\s+\(posted, not in QuickBooks\)/); // an expense not in QuickBooks, under the cash out
+  assert.doesNotMatch(miss, /Cash from customers[\s\S]{0,80}157\.00/);
+});
