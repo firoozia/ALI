@@ -6,6 +6,7 @@ import path from 'node:path';
 import { SEP } from './separator.js';
 import { normalizeDigits } from './text.js';
 import { sameCutCustomer } from './cuts.js';
+import { typedFitsName } from './qboname.js';
 
 export const CASH_OUT_KINDS = ['cash_to_boss', 'salary_advance', 'cash_unclear', 'cash_expense'];
 const AMOUNT = /(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/;
@@ -241,7 +242,14 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, c
   const expTotal = data.purchases.reduce((n, p) => n + p.amount, 0);
   const byCat = {};
   for (const p of data.purchases) byCat[p.category] = (byCat[p.category] || 0) + p.amount;
-  const expLines = data.purchases.map((p) => { const post = claim(expPosts, p.amount, p.date); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + addedTail(post) : '  (no post in the group)')); });
+  // the same expense <-> QuickBooks match as the weekly check: the expense's own (receipt) date, up to 14 days apart, the amount, the vendor when both have one
+  const vendorsAgree = (a, b) => !a || !b || typedFitsName(a, b) || typedFitsName(b, a);
+  const claimExp = (pu) => {
+    const at = expPosts.findIndex((q) => !q.used && Math.abs(Number(q.amount) - Number(pu.amount)) <= 1 && Math.abs(dayNum(q.at, timeZone) - dayOfIso(pu.date)) <= (q.days || 3) && (!q.strict || vendorsAgree(q.vendor, pu.vendor)));
+    if (at < 0) return null;
+    expPosts[at].used = true; return expPosts[at];
+  };
+  const expLines = data.purchases.map((p) => { const post = claimExp(p); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + addedTail(post) : '  (no post in the group)')); });
   expLines.push(...unmatchedLines(expPosts.filter((p) => p.method !== 'card'), (p) => '   ' + (p.vendor || '')));
   const bossT = data.transfersOut.filter((t) => /owner/i.test(t.to));
   const advT = data.transfersOut.filter((t) => /advance/i.test(t.to));

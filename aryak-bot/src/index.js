@@ -3350,7 +3350,7 @@ async function cashBoxMonth(month, depth = 0) {
     outs.push({ kind: e.kind, amount: Number(e.amount), at: e.at, employee: e.employee || '', added: !!e.addedByOwner });
   }
   const cashPays = tracker.events.map(rederiveCashOut).filter((e) => e.type === 'payment' && e.kind === 'cash_expense' && !e.simulated && e.at >= startMs && e.at <= endMs).map((e) => ({ amount: Number(e.amount), at: e.at, vendor: e.employee || '' })); // «Pay by cash 157 for garbage box» in the Confirmation group: a cash expense, matched within 7 days
-  const expenseRows = expenseStore.done(r).map((e) => ({ amount: e.amount, type: e.type, at: e.at, vendor: e.vendor || '', method: e.method, added: !!e.addedByOwner })); // card ones too: QuickBooks may have paid them from the cash box
+  const expenseRows = expenseStore.done(r).map((e) => ({ amount: e.amount, type: e.type, at: Date.parse((e.date || e.day) + 'T12:00:00+04:00') || e.at, days: 14, strict: true, vendor: e.vendor || '', method: e.method, added: !!e.addedByOwner })); // card ones too: QuickBooks may have paid them from the cash box; matched by the receipt date within 14 days, as the weekly check does
   const expenses = expenseRows.filter((e) => e.method === 'cash');
   if (qbo.connected && !qbo.paused) { // QuickBooks is the source (owner decision): the Petty Cash account, cash payments only; the WhatsApp posts are only compared
     try {
@@ -3366,7 +3366,7 @@ async function cashBoxMonth(month, depth = 0) {
           const text = 'payment ' + rec.TxnDate.slice(8, 10) + '/' + rec.TxnDate.slice(5, 7) + ' ' + Number(rec.TotalAmt).toFixed(2);
           return { code: payChecks.codeFor(ref, text, 'swap', { qboAmount: Number(rec.TotalAmt), posted: Number(ev.amount) }), qboAmount: Number(rec.TotalAmt), name: rec.CustomerRef?.name || '' };
         },
-        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref, accepted: i.accepted || null, noInvoice: !!i.noInvoice })), outs, expenses: [...expenseRows.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, method: e.method, added: e.added })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
+        posts: { cashIn: cashIn.map((i) => ({ amount: i.amount, at: i.at, customer: i.customer, ref: i.ref, accepted: i.accepted || null, noInvoice: !!i.noInvoice })), outs, expenses: [...expenseRows.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, method: e.method, added: e.added, days: e.days, strict: e.strict })), ...cashPays.map((e) => ({ amount: e.amount, at: e.at, vendor: e.vendor, days: 7 }))] } });
     } catch (e) { logger.warn('cash box: QuickBooks did not answer, the posts are shown instead: ' + e.message); }
   }
   const transfers = await qbRows('Transfer', dayPlus(from, -3), dayPlus(to, 3));

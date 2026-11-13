@@ -1430,3 +1430,18 @@ test('in the expenses group only a message that starts with her name is answered
   assert.ok(index.includes("if (mayEdit && startsWithName(text, config.botNames) && parseCashBoxCommand(stripBotName(text))?.op === 'report')")); // the name at the start AND the owner / allowed staff
   assert.ok(index.includes('const asked = mayEdit ? expenseAsk(text) : null;')); // the report asks are for them only
 });
+
+test('the cash box pairs an expense with its QuickBooks purchase the way the weekly check does: by the receipt date, up to 14 days apart, the amount and the vendor; ENOC 230 is one line', async () => {
+  const { cashBoxReportQbo } = await import('../src/cashbox.js');
+  const day = (d) => Date.parse('2026-11-' + d + 'T12:00:00+04:00');
+  const data = { received: [], elsewhere: [], transfersIn: [], transfersOut: [], purchases: [{ amount: 230, date: '2026-11-07', vendor: 'ENOC', category: 'Fuel' }, { amount: 230, date: '2026-11-08', vendor: 'OTHER SHOP', category: 'Fuel' }] };
+  const { text } = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [], outs: [], expenses: [{ amount: 230, at: day('07'), days: 14, strict: true, vendor: 'ENOC', method: 'cash' }] } });
+  assert.match(text, /🟢 07\/11\s+230\.00 {3}ENOC\n/); // the expense is the purchase of the same vendor
+  assert.match(text, /⚪ 08\/11\s+230\.00 {3}OTHER SHOP {2}\(no post in the group\)/); // the other vendor's purchase stays without a post
+  assert.doesNotMatch(text, /posted, not in QuickBooks/);
+  assert.match(text, /🟢 Posted and in QuickBooks: 1 /);
+  const posted12 = cashBoxReportQbo({ month: '2026-11', data: { ...data, purchases: [data.purchases[0]] }, posts: { cashIn: [], outs: [], expenses: [{ amount: 230, at: day('12'), days: 14, strict: true, vendor: 'ENOC', method: 'cash' }] } }).text;
+  assert.match(posted12, /🟢 07\/11\s+230\.00 {3}ENOC\n/); // posted five days later: still the same expense within the 14 days
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("at: Date.parse((e.date || e.day) + 'T12:00:00+04:00') || e.at, days: 14")); // the receipt date, 14 days
+});
