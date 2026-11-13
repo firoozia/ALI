@@ -25,7 +25,11 @@ export function describeEvent(ev) {
     return 'payment: ' + parts.filter(Boolean).join(', ');
   }
   if (ev.type === 'delivery') return 'delivery: ' + (ev.customer || '-') + (ev.status ? ', ' + ev.status : '') + (ev.delivered ? ', ' + ev.delivered.quantity + ' ' + (ev.delivered.unit || '') : '') + (ev.cod ? ', COD ' + money(ev.cod) : '') + (ev.collected ? ', driver collected ' + money(ev.collected) + ' AED cash (kept as driver cash)' : '') + (ev.by ? ', by ' + ev.by : '');
-  if (ev.type === 'cut') return 'cut' + (ev.internal ? ' (internal)' : '') + ': ' + (ev.customer || '-') + ' ' + (ev.lines || []).map((l) => l.code + (l.note ? ' ' + l.note : '') + ' ' + l.quantity + (l.unit || '')).join(' + ');
+  if (ev.type === 'cut') {
+    const same = !ev.customerTyped || String(ev.customerTyped).toLowerCase() === String(ev.customer || '').toLowerCase();
+    const lines = (ev.lines || []).map((l) => l.code + ' = ' + l.quantity + ' ' + (l.unit || 'm') + (l.note ? ' (' + l.note + ')' : ''));
+    return 'cut' + (ev.internal ? ' (internal)' : '') + ': customer ' + (ev.customer || '-') + (same ? '' : ' (typed "' + ev.customerTyped + '")') + '; ' + (lines.length ? lines.length + ' line' + (lines.length === 1 ? '' : 's') + ': ' + lines.join('; ') : 'no lines were read');
+  }
   return String(ev.type) + ': ' + (ev.customer || '-');
 }
 
@@ -46,14 +50,14 @@ export function orderWhereText(events, name, timeZone = 'Asia/Dubai', memory = '
     delivered ? '✅ ' + delivered + ' delivery post' + (delivered === 1 ? '' : 's') + ' marked delivered.' : 'Not delivered yet (no delivered post).'].join('\n');
 }
 
-const RANGE_WORDS = /\b(today|this week|week|weekly|this month|month)\b/i;
-const rangeOf = (t) => { const w = (RANGE_WORDS.exec(t) || [])[1] || 'today'; return /month/i.test(w) ? 'month' : /week/i.test(w) ? 'week' : 'today'; };
+const RANGE_WORDS = /\b(?:today|yesterday|this week|week|weekly|this month|month)\b|دیروز|امروز/i;
+const rangeOf = (t) => { const w = (RANGE_WORDS.exec(t) || [])[0] || 'today'; return /yesterday|دیروز/i.test(w) ? 'yesterday' : /month/i.test(w) ? 'month' : /week/i.test(w) ? 'week' : 'today'; };
 /** A plain question or a typo of the owner, routed to a report that exists: { type, ... } (the same shape the owner's commands use) or null. */
 export function plainReportAsk(text) {
   const t = String(text || '').replace(/^\s*(?:atossa|atosa|atousa|آتوسا|اتوسا)[ ,:]+/i, '').replace(/[?!.]+\s*$/, '').trim().toLowerCase();
   if (!t || t.length > 90 || /\d{3,}/.test(t)) return null;
   const ask = /^(?:how|what|which|show|tell|give|list|any|is there|are there|do we|did)\b/.test(t);
-  if (/^rec(?:ie|ei|e)?v\w*\s+(?:today|this week|week|this month|month)$/.test(t) || (ask && /\b(?:money|cash|payments?)\b.*\b(?:came|come|coming|received|recieved|in)\b|\b(?:received|recieved)\b/.test(t) && !/\bcash\s*box\b|\bpetty\b|\bin the box\b/.test(t))) return { type: 'received_report', range: rangeOf(t) };
+  if (/^(?:money\s+)?(?:rec(?:ie|ei|e)?v\w*\s+)?(?:today|yesterday|this week|week|this month|month)$/.test(t) && /rec\w*v|^money/.test(t) || /^دریافتی\s*(?:ها)?\s+(?:امروز|دیروز)$/.test(t) || (ask && /\b(?:money|cash|payments?)\b.*\b(?:came|come|coming|received|recieved|in)\b|\b(?:received|recieved)\b/.test(t) && !/\bcash\s*box\b|\bpetty\b|\bin the box\b/.test(t))) return { type: 'received_report', range: rangeOf(t) };
   if (ask && (/\bcash\s*box\b|\bpetty\b|\bin the box\b|\bhow much cash\b/.test(t))) return { type: 'cash_box', cmd: parseCashBoxCommand('cash box') };
   if (ask && (/\bnot\s+(?:yet\s+)?(?:invoiced|billed)\b|\bunbilled\b|\buninvoiced\b|\bwithout (?:an )?invoice\b/.test(t))) return { type: 'unbilled' };
   if (/^(?:weekly|week) check$/.test(t) || (ask && /\bweekly check\b|\bnot in quickbooks\b/.test(t))) return { type: 'weekly_check' };

@@ -83,6 +83,7 @@ import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
 import { PersianNames, hasPersianLetters, seedPersianNames } from './persiannames.js';
 import { pickSpoken } from './translit.js';
+import { GENERIC } from './qboname.js';
 import { describeEvent, orderWhereText, parseOrderWhere, plainReportAsk } from './simtext.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
@@ -439,8 +440,19 @@ const canon = (name) => { // the approved list and the approved aliases first; a
   const row = rowOfName(name)?.customer; if (row) return row;
   const r = aliases.resolve(name, knownCustomers());
   const approved = Object.entries(aliases.map).some(([c, others]) => c === r && others.includes(name));
-  return r === name || approved || typedFitsName(name, r) ? r : name;
+  const res = r === name || approved || typedFitsName(name, r) ? r : name;
+  return res === name ? qboFit(name) || name : res;
 };
+/** A partial name («tiger») that fits ONE QuickBooks customer word by word (and has a word that is not generic): that customer; else ''. Needs the customer list read (warmCustomers). */
+const qboFit = (name) => {
+  const names = (qboDesk.cache?.customers || []).map((x) => x.DisplayName).filter(Boolean);
+  const words = String(name).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
+  if (!names.length || !words.length) return '';
+  const hits = names.filter((n) => typedFitsName(name, n));
+  return hits.length === 1 ? hits[0] : '';
+};
+/** The QuickBooks customer list, read now when it is old (a payer is judged against it); a failed read keeps what there is. */
+const warmCustomers = async () => { if (qbo.connected && !qbo.paused) await qboDesk.customers().catch(() => {}); };
 // An order written in a customer's group belongs to the customer of the approved row that holds that group (by its id), else to the group's label.
 const customerOfGroup = (groupId, label) => rowOfGroup(customerGroups, groupId)?.customer || canon(label);
 
@@ -852,6 +864,7 @@ async function trackGroup(raw, groupId, role) {
       if (before) { tracker.update(before.ref, { customer: canon(det.name), customerTyped: det.name, pendingName: false }); trace(whereDet, 'tracker', 'a name was given to the payment just before it'); }
       return;
     }
+    if (role === 'payment') await warmCustomers();
     for (const [i, ev] of det.events.entries()) {
       const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: nowAt(), ref: refOf(raw.key.id, i), ...(role === 'delivery' ? { msg: raw.key.id, text: String(text).slice(0, 200) } : {}), ...(role === 'payment' ? { text: String(text).slice(0, 300) } : {}), ...(role === 'cut' ? { text: String(text).slice(0, 160) } : {}) };
       const pn = lastPayName.get(groupId); // the name posted just before a nameless payment
@@ -1635,6 +1648,7 @@ async function simulatedPost({ raw, text, where, role, reply }) {
   if (det?.noCustomer) { await reply(`SIMULATION: a cut with nobody named (code ${det.noCustomer.code}, ${det.noCustomer.quantity} m): not recorded. In the real orders group the owner is told once: «cut without customer».`); return true; }
   if (!det?.events?.length) { await reply(`SIMULATION: that text was not read as a post of the ${kind} group (nothing recorded).`); return true; }
   const lines = [];
+  if (asRole === 'payment') await warmCustomers();
   for (const [i, ev] of det.events.entries()) {
     const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`test|${raw.key.id}|${i}`).digest('hex').slice(0, 24), simulated: true, ...(asRole === 'delivery' ? { msg: raw.key.id } : {}) };
     if (asRole === 'payment' && unknownPayer(event)) event.unknownCustomer = true;
@@ -2829,6 +2843,7 @@ async function handleStaffChat(raw, chatId, group) {
   });
   trace(where, role, `${answerText ? 'answered' : 'no reply (the model chose silence)'}, reply language ${lang}`);
   if (answerText) await reply(answerText);
+  else if (!group && ownerPerson) await reply('I did not understand that. For a report write: received today|yesterday|week, cash box, unbilled, weekly check, expenses today|yesterday|week.'); // never silent to the owner in his own chat
   return true;
 }
 

@@ -1507,7 +1507,7 @@ test('live test fixes: money out is shown as money out, a cheque date leaves the
   assert.equal(del.collected, 1500); assert.match(describeEvent(del), /delivery: Master wood, delivered, driver collected 1,500\.00 AED cash \(kept as driver cash\)/);
   const cut = eventsFromCaption('cut', 'Golden door 1810 3m + 215 edge 50m').events[0];
   assert.equal(cut.customer, 'Golden door'); assert.deepEqual(cut.lines.map((l) => [l.code, l.quantity]), [['1810', 3], ['215', 50]]);
-  assert.match(describeEvent(cut), /cut: Golden door 1810 3m \+ 215 edge 50m/);
+  assert.match(describeEvent(cut), /cut: customer Golden door; 2 lines: 1810 = 3 m; 215 = 50 m \(edge\)/);
   assert.deepEqual(eventsFromCaption('cut', '303 6.4').noCustomer, { code: '303', quantity: 6.4, unit: 'm' });
   assert.equal(eventsFromCaption('cut', 'good morning 5m'), null);
   assert.equal(eventsFromCaption('cut', 'ART NO 303 MUNICH 6.4M').events[0].customer, 'MUNICH'); // the old shape is unchanged
@@ -1518,7 +1518,7 @@ test('plain words: where is a customer order (from the memory of the place), pla
   assert.equal(parseOrderWhere('Atossa where is master wood order?'), 'master wood'); assert.equal(parseOrderWhere('where is the driver'), '');
   const events = [{ type: 'cut', customer: 'MASTER WOOD', lines: [{ code: '303', quantity: 6.4, unit: 'm' }], at: Date.parse('2026-11-13T08:00:00Z') }, { type: 'delivery', customer: 'MASTER WOOD', status: 'delivered', collected: 1500, at: Date.parse('2026-11-13T09:00:00Z') }];
   const said = orderWhereText(events, 'MASTER WOOD', 'Asia/Dubai', 'test memory');
-  assert.match(said, /📦 MASTER WOOD \(test memory\)/); assert.match(said, /cut: MASTER WOOD 303 6\.4m/); assert.match(said, /delivery: MASTER WOOD, delivered/); assert.match(said, /✅ 1 delivery post marked delivered/);
+  assert.match(said, /📦 MASTER WOOD \(test memory\)/); assert.match(said, /cut: customer MASTER WOOD; 1 line: 303 = 6\.4 m/); assert.match(said, /delivery: MASTER WOOD, delivered/); assert.match(said, /✅ 1 delivery post marked delivered/);
   assert.match(orderWhereText([], 'GHOST', 'Asia/Dubai', 'test memory'), /No cut or delivery post of GHOST was found in the test memory/);
   assert.deepEqual(plainReportAsk('how much money came in today?'), { type: 'received_report', range: 'today' });
   assert.deepEqual(plainReportAsk('recieved today'), { type: 'received_report', range: 'today' });
@@ -1556,4 +1556,32 @@ test('«Atossa edit #E2» alone is a waiting question: 1 = card, 2 = cash or a c
   assert.ok(!/13aed|add 102|remove 303/.test(ie) && ie.includes('/<price>aed') && ie.includes('add <code> <metres>m'));
   const ix = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(!ix.includes('215=97m 220=12m') && !ix.includes('example: 85.5 fuel')); // no real-looking numbers in help texts
+});
+
+test('owner reports: yesterday and one given day (typos and Persian too), the same question is never silent, an empty report says when it was checked, an unchanged edit answer closes the question, an unknown payer is checked, a partial name is resolved', async () => {
+  const { plainReportAsk, describeEvent } = await import('../src/simtext.js');
+  const { parseInvoiceCommand } = await import('../src/qboinvoice.js');
+  const { rangeOf, receivedText } = await import('../src/expenses.js');
+  assert.deepEqual(plainReportAsk('recieved yesterday'), { type: 'received_report', range: 'yesterday' });
+  assert.deepEqual(plainReportAsk('money yesterday'), { type: 'received_report', range: 'yesterday' });
+  assert.deepEqual(plainReportAsk('دریافتی دیروز'), { type: 'received_report', range: 'yesterday' });
+  assert.deepEqual(parseInvoiceCommand('received yesterday'), { type: 'received_report', range: 'yesterday' });
+  assert.deepEqual(parseInvoiceCommand('expenses yesterday'), { type: 'expenses_report', range: 'yesterday' });
+  assert.match(parseInvoiceCommand('received 10/11').range, /^date:\d{4}-11-10$/);
+  assert.deepEqual(rangeOf('yesterday', '2026-11-14'), { from: '2026-11-13', to: '2026-11-13', label: '13/11/2026' });
+  assert.deepEqual(rangeOf('date:2026-11-10', '2026-11-14'), { from: '2026-11-10', to: '2026-11-10', label: '10/11/2026' });
+  const empty = receivedText([], { checkedAt: '14:05', title: '14/11/2026' }) || '';
+  assert.match(String(empty), /Money received — 14\/11\/2026\*\nchecked now 14:05\nNo money was recorded\./);
+  const { requestExpenseEdit, parseExpenseEdit, viewAnswer, pendingView } = await import('../src/expenseedit.js');
+  const e = { id: 'E2', amount: 10, day: '2026-11-10', date: '2026-11-10', type: 'other', vendor: 'Part Zone', method: 'cash', state: 'done' };
+  const store = { get: () => e, d: {}, save() {}, now: () => 1 };
+  requestExpenseEdit(store, parseExpenseEdit('Atossa edit #E2'), { chat: 'g', sender: 's', qb: null });
+  const same = requestExpenseEdit(store, viewAnswer(pendingView(store, 'g', 's'), '2'), { chat: 'g', sender: 's', qb: null });
+  assert.equal(same, '#E2 is already cash — nothing changed.'); assert.equal(pendingView(store, 'g', 's'), null);
+  const cut = describeEvent({ type: 'cut', customer: 'GOLDEN DOOR INDUSTRIES LLC', customerTyped: 'Golden door', lines: [{ code: '1810', quantity: 3, unit: 'm' }, { code: '215', quantity: 50, unit: 'm', note: 'edge' }] });
+  assert.equal(cut, 'cut: customer GOLDEN DOOR INDUSTRIES LLC (typed "Golden door"); 2 lines: 1810 = 3 m; 215 = 50 m (edge)');
+  assert.match(describeEvent({ type: 'cut', customer: 'X', lines: [] }), /no lines were read/);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(src.includes('const qboFit = (name)') && src.includes('qboFit(name) || name') && src.includes('const warmCustomers') && src.includes("if (asRole === 'payment') await warmCustomers();") && src.includes("if (role === 'payment') await warmCustomers();"));
+  assert.ok(src.includes('else if (!group && ownerPerson) await reply(')); // never silent to the owner in his own chat
 });

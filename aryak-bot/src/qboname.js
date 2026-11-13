@@ -27,7 +27,7 @@ export function qboNameFor(post, names, aliasOf = () => '') {
 }
 
 const STOP = new Set(['al', 'el', 'the', 'and', 'llc', 'l', 'c', 'trading', 'co', 'company', 'est', 'fze', 'fzco', 'ind', 'ltd', 'of', 'for']);
-const GENERIC = new Set(['kitchen', 'kitchens', 'door', 'doors', 'wood', 'works', 'work', 'design', 'designs', 'furniture', 'carpentry', 'group', 'industries', 'industrial', 'international', 'intl', 'general', 'contracting']); // words a poster may add or drop: never decisive on their own
+export const GENERIC = new Set(['kitchen', 'kitchens', 'door', 'doors', 'wood', 'works', 'work', 'design', 'designs', 'furniture', 'carpentry', 'group', 'industries', 'industrial', 'international', 'intl', 'general', 'contracting']); // words a poster may add or drop: never decisive on their own
 const subseq = (w, c) => { let i = 0; for (const ch of c) if (ch === w[i]) i += 1; return i === w.length; };
 const lcs = (a, b) => { const m = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0)); for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) m[i][j] = a[i - 1] === b[j - 1] ? m[i - 1][j - 1] + 1 : Math.max(m[i - 1][j], m[i][j - 1]); return m[a.length][b.length]; };
 const lev1 = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0; let j = 0; let miss = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; } else { miss++; if (miss > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } } return miss + (a.length - i) + (b.length - j) <= 1; };

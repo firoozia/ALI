@@ -166,9 +166,9 @@ function parseInvoiceCommandImpl(text) {
   }
   { const dm = /^(dup|duplicate|separate)\s*#?\s*(D\d+)$/i.exec(s); if (dm) return { type: 'payment_dup', verb: dm[1].toLowerCase() === 'separate' ? 'separate' : 'dup', id: dm[2].toUpperCase() }; } // the owner's answer about a repeated payment
   { // the expenses and the money received, on request (owner only, read only)
-    const rangeWord = (w) => ({ today: 'today', امروز: 'today', week: 'week', هفته: 'week', month: 'month', ماه: 'month' })[String(w).toLowerCase()] || 'today';
-    let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
-    em = /^(?:money\s+received|received|دریافتی(?:‌?ها)?)\s+(today|week|month|امروز|هفته|ماه)$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
+    const rangeWord = (w) => { const dm = /^(\d{1,2})[/.-](\d{1,2})$/.exec(String(w)); if (dm) { const now = new Date(); let y = now.getUTCFullYear(); const iso = (yy) => yy + '-' + String(dm[2]).padStart(2, '0') + '-' + String(dm[1]).padStart(2, '0'); if (iso(y) > now.toISOString().slice(0, 10)) y -= 1; return 'date:' + iso(y); } return ({ today: 'today', امروز: 'today', yesterday: 'yesterday', دیروز: 'yesterday', week: 'week', هفته: 'week', month: 'month', ماه: 'month' })[String(w).toLowerCase()] || 'today'; };
+    let em = /^(?:expenses?|هزینه(?:‌?ها)?)\s+(today|yesterday|week|month|امروز|دیروز|هفته|ماه|\d{1,2}[/.-]\d{1,2})$/iu.exec(s); if (em) return { type: 'expenses_report', range: rangeWord(em[1]) };
+    em = /^(?:money\s+rec(?:ie|ei)ved|rec(?:ie|ei)ved|دریافتی(?:‌?ها)?)\s+(today|yesterday|week|month|امروز|دیروز|هفته|ماه|\d{1,2}[/.-]\d{1,2})$/iu.exec(s); if (em) return { type: 'received_report', range: rangeWord(em[1]) };
     if (/^(?:weekly\s+check|بررسی\s*هفتگی)$/iu.test(s)) return { type: 'weekly_check' };
     { // several corrections in one message: a line each, «OLD -> NEW», «name OLD (3) -> NEW», NEW = none / cancel / wrong / leave: keep that name as it is
       const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);

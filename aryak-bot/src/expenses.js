@@ -73,6 +73,8 @@ export function rangeOf(kind, today) {
   const to = today;
   if (kind === 'week') return { from: new Date((dayNum(today) - 6) * 86400000).toISOString().slice(0, 10), to, label: `${dmy(new Date((dayNum(today) - 6) * 86400000).toISOString())} – ${dmy(to)}` };
   if (kind === 'month') return { from: `${today.slice(0, 7)}-01`, to, label: `${today.slice(5, 7)}/${today.slice(0, 4)}` };
+  if (kind === 'yesterday') { const y = new Date((dayNum(today) - 1) * 86400000).toISOString().slice(0, 10); return { from: y, to: y, label: dmy(y) }; }
+  if (/^date:\d{4}-\d{2}-\d{2}$/.test(String(kind))) { const d = String(kind).slice(5); return { from: d, to: d, label: dmy(d) }; } // one given day
   return { from: today, to, label: dmy(today) };
 }
 
@@ -437,7 +439,7 @@ export function receivedText(items, options) {
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
   const checked = options.checkedAt ? ['checked now ' + options.checkedAt] : [];
   const unreadLines = unreadAt.map((u) => '⚠ receipt PDF ' + u.label + ' (Confirmation group), amount not read — check');
-  if (!items.length) return unreadLines.length ? ['💰 *Money received — ' + title + '*', ...unreadLines].join('\n') : `💰 *Money received — ${title}*\nNo money was recorded.`;
+  if (!items.length) return unreadLines.length ? ['💰 *Money received — ' + title + '*', ...checked, ...unreadLines].join('\n') : `💰 *Money received — ${title}*${checked.length ? '\n' + checked[0] : ''}\nNo money was recorded.`;
   const needsOk = []; let green = 0; let red = 0; let stars = 0;
   const plain = (it) => String(it.shown || money(it.amount)).replace(/\*/g, '');
   const ddmm = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);

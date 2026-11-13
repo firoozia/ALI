@@ -87,6 +87,11 @@ export function requestExpenseEdit(store, cmd, who) {
     return [head, 'Amount:   ' + money(e.amount) + ', ' + typeLabel(e.type) + ', ' + methodName(e.method), 'Nothing is changed in QuickBooks.', ...(who.qb || who.inQb ? ['This expense is already 🟢 in QuickBooks: also delete it in QuickBooks yourself.'] : []), '1. Yes, delete it', '2. No, keep it'].join('\n');
   }
   const changed = FIELD_LINES.filter((f) => cmd.changes[f[0]] !== undefined && cmd.changes[f[0]] !== e[f[0]]);
+  const asked = FIELD_LINES.filter((f) => cmd.changes[f[0]] !== undefined);
+  if (!changed.length && asked.length) { // a change that equals what is stored: said, and the waiting question is closed
+    delete (store.d.pending || {})[keyOf(who.chat, who.sender)]; store.save();
+    return '#' + e.id + ' is already ' + asked.map((f) => f[2](e[f[0]])).join(', ') + ' — nothing changed.';
+  }
   if (!changed.length) { // the expense as stored first, then how to change it (no example numbers); the view WAITS for the reply
     store.d.pending = store.d.pending || {}; store.d.pending[keyOf(who.chat, who.sender)] = { id: e.id, op: 'view', at: store.now() }; store.save();
     const rec = who.qb; const qbText = rec && rec.AccountRef?.name ? ' (QuickBooks: ' + rec.AccountRef.name + ' ' + dmy(rec.TxnDate).slice(0, 5) + ' ' + money(rec.TotalAmt) + ')' : '';
