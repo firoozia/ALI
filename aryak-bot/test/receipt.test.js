@@ -58,7 +58,7 @@ test('the report shows the source and the invoice from QuickBooks (paid or open)
   assert.equal(proposePayment({ event: { ...receipt, invoices: ['inv-1'] }, invoices: [], lookup })[1], '→ inv-1 not found in QuickBooks');
   const noAmount = proposePayment({ event: { type: 'payment', kind: 'cash', currency: 'AED', customer: 'Munich door kitchen', amount: 0, noAmount: true, invoices: ['inv-9940'], at: NOW }, invoices: [], lookup });
   assert.equal(noAmount[0], 'amount not read — cash for inv-9940 from Munich door kitchen (09/11)');
-  const text = paymentsText({ events: [receipt, { ...receipt, ref: 'r2', source: 'pdf', amount: 0, noAmount: true, invoices: [], customer: '', pendingName: true, at: NOW - 7200000 }], invoices: [], now: NOW, lookup });
+  const text = paymentsText({ events: [receipt, { ...receipt, ref: 'r2', source: 'pdf', amount: 0, noAmount: true, invoices: [], customer: '', pendingName: true, at: NOW - 3 * 86400000 }], invoices: [], now: NOW, lookup }); // three days earlier: no later named receipt explains it within a day and a half
   assert.match(text, /^Payments to match \(2\):\n1\. 9,940\.00 AED — transfer receipt \(PDF\) for inv-9940/); assert.match(text, /amount not read — transfer receipt \(PDF\)/); // an unreadable PDF is still listed
 });
 

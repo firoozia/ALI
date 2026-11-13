@@ -312,7 +312,7 @@ export function receivedItems(events, range, { timeZone = 'Asia/Dubai', lookup =
     const inv = (e.invoices || []).map((r) => lookup.get(String(r).toLowerCase())).find(Boolean);
     const cur = e.currency || 'AED';
     let amount = Number(e.amount) > 0 ? Number(e.amount) : Number(inv?.TotalAmt) || 0;
-    if (!(amount > 0)) { if (e.source === 'pdf' || e.kind === 'transfer') unread.push(new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(e.at))); continue; } // a receipt whose amount was not read: said once, never a 0.00 row
+    if (!(amount > 0)) { if (e.source === 'pdf' || e.kind === 'transfer') unread.push({ ref: e.ref, label: day.slice(8, 10) + '/' + day.slice(5, 7) + ' ' + new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(e.at)) }); continue; } // a receipt whose amount was not read: said once, never a 0.00 row
     let shown = `*${money(amount)}*`; let foreign = false;
     if (cur !== 'AED') { foreign = true; const rate = AED_PER[cur]; shown = rate ? `*${money(amount)} ${cur}* (≈ ${money(amount * rate)} AED)` : `*${money(amount)} ${cur}*`; amount = rate ? round2(amount * rate) : 0; }
     else if (e.foreign) shown = `*${money(amount)}* (${money(e.foreign.amount)} ${e.foreign.currency})`;
@@ -393,7 +393,7 @@ export function driverBreakdown(item, deliveries, timeZone = 'Asia/Dubai') {
 export function prepareReceived(items0, options) {
   const { records = [], aliasOf = () => '', openInvoices = [] } = options;
   let items = items0;
-  const unreadAt = items0.unread || [];
+  const unreadAt = (items0.unread || []).filter((u) => !(options.unreadSeen && options.unreadSeen.has(u.ref))); // said once, not in every report
   let matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   // OUR OWN invoice forwarded as a PDF is no payment: a PDF row that no QuickBooks payment takes and whose amount is an invoice's total BEFORE tax (680 for 714.00 with 5 % VAT) is dropped
   const recentInvoices = options.recentInvoices || [];
@@ -425,7 +425,7 @@ export function receivedText(items, options) {
   };
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
   const checked = options.checkedAt ? ['checked now ' + options.checkedAt] : [];
-  const unreadLines = unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check');
+  const unreadLines = unreadAt.map((u) => '⚠ receipt PDF ' + u.label + ' (Confirmation group), amount not read — check');
   if (!items.length) return unreadLines.length ? ['💰 *Money received — ' + title + '*', ...unreadLines].join('\n') : `💰 *Money received — ${title}*\nNo money was recorded.`;
   const needsOk = []; let green = 0; let red = 0; let stars = 0;
   const plain = (it) => String(it.shown || money(it.amount)).replace(/\*/g, '');
@@ -478,6 +478,7 @@ export function receivedText(items, options) {
         else { tail = '  not in QuickBooks yet'; if (best && Math.abs(best.diff) > 1) needsOk.push({ it, best }); }
       }
     }
+    if (!ok && !star && it.cleared && kind !== 'cheque') tail += '  cleared by the office'; // the office answered CLEARED: said beside the lack of a QuickBooks record
     if (it.what) tail += ' (' + it.what + ')'; // «3000 aed delivery»: no customer, the word kept as a question
     const icon = ok ? '🟢' : star ? '⭐' : it._inTime ? '⏳' : '🔴';
     if (ok) green += 1; else if (star) stars += 1; else red += 1;
@@ -542,9 +543,9 @@ export function receivedText(items, options) {
 }
 
 /** The Thursday check: what the office has not recorded in QuickBooks yet (expenses and money received of the week). */
-export function weeklyCheckText({ expenses, purchases, items: items0, payments, aliasOf = () => '', title, openInvoices = [], recentInvoices = [], checkedAt = '' }) {
+export function weeklyCheckText({ expenses, purchases, items: items0, payments, aliasOf = () => '', title, openInvoices = [], recentInvoices = [], checkedAt = '', unreadSeen = null }) {
   const exp = matchExpenses(expenses, purchases);
-  const prep = prepareReceived(items0, { records: payments, aliasOf, openInvoices, recentInvoices }); // the same reading of the rows as «received today»
+  const prep = prepareReceived(items0, { records: payments, aliasOf, openInvoices, recentInvoices, unreadSeen }); // the same reading of the rows as «received today»
   const items = prep.items; const got = prep.matched;
   // not recorded = no QuickBooks payment takes it, nobody accepted a pairing, it is not marked «no invoice needed», it is not the driver's hand-in
   const lostMoney = items.filter((i) => !i.foreign && !got.has(i) && i.paid !== true && !i.accepted && !i.noInvoice && i.source !== 'driver');
@@ -554,7 +555,7 @@ export function weeklyCheckText({ expenses, purchases, items: items0, payments, 
   if (exp.missing.length) blocks.push(['Expenses not found in QuickBooks:', withSeparators(exp.missing.map((e, i) => `${i + 1}. ${dmy(e.date || e.day)} — ${who(e)} — *${money(e.amount)}* — ${typeLine(e)}`))].join('\n'));
   if (methodDiffs.length) blocks.push(['⚠ *To fix: the payment method differs from QuickBooks*', ...methodDiffs.map((f) => '#' + f.entry.id + ' posted ' + f.entry.method + ', QuickBooks ' + (f.record.AccountRef?.name || 'account') + ' (' + qbKindOf(f.record) + ') — please fix')].join('\n'));
   if (lostMoney.length) blocks.push(['💰 *Money received not found in QuickBooks*', '', withSeparators(lostMoney.map((it) => { const best = it.rejected ? null : closestMatch(it, payments, openInvoices, aliasOf); return `*${(it.customer || 'UNKNOWN').toUpperCase()}*\n🔴 ${money(it.amount)}  ${it.kind === 'bank' ? 'transfer' : it.kind} ${dmy(it.day)}${best && Math.abs(best.diff) <= 1 && best.kind === 'invoices' ? ' (pays ' + best.label + ')' : ''}`; }))].join('\n'));
-  if ((prep.unreadAt || []).length) blocks.push(prep.unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check').join('\n'));
+  if ((prep.unreadAt || []).length) blocks.push(prep.unreadAt.map((u) => '⚠ receipt PDF ' + u.label + ' (Confirmation group), amount not read — check').join('\n'));
   return [`*Weekly check — ${title}*`, ...(checkedAt ? ['checked now ' + checkedAt] : []), blocks.join(`\n${SEP}\n`)].join('\n');
 }
 

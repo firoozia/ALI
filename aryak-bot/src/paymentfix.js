@@ -4,6 +4,13 @@
 import { createHash } from 'node:crypto';
 import { isClearingText } from './payments.js';
 import { eventsFromCaption } from './captionevents.js';
+import { typedFitsName } from './qboname.js';
+
+/** «DERWAZAA BANK TRANSFER 294 AED» -> { name, amount } or null (the office's words on a receipt, as its caption or as a reply). */
+export function replyNameAmount(text) {
+  const m = /^\s*([A-Za-z\u0600-\u06ff][^\d]{1,40}?)\s+(?:bank\s+)?transfer\s+([\d,]+(?:\.\d+)?)\s*(?:aed|dhs?)?\s*$/i.exec(String(text || ''));
+  return m ? { name: String(m[1]).replace(/\s+bank$/i, '').replace(/[-_.\s]+$/g, '').trim(), amount: Number(m[2].replace(/,/g, '')) } : null;
+}
 
 export const isStockQuestion = (text) => /(?:^|[^a-z])(?:available|stock|qty|quantity)(?![a-z])/i.test(String(text || '')) || /\?\s*$/.test(String(text || ''));
 const BANK = /credited (?:with|to your)|has been credited|\bAani\b|\bIPP\b|inward (?:remittance|transfer)|outward cheque clearing|login to online banking/i;
@@ -32,7 +39,7 @@ const cleanName = (n) => String(n || '').replace(/[-_.\s]+$/g, '').trim();
 const dayKey = (ms, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 
 /** The stored payment rows as they really are (a changed copy; the stored ones are untouched). */
-export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages = []) {
+export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages = [], approved = () => false) {
   // RE-JUDGED from the raw message: a row made from a plain text message that today's rules say is no money (an amount beside order words, a stock question, «3000 aed delivery») is dropped, whatever the
   // code that stored it thought; the message is read as it stands now (edits applied, deleted ones gone). The owner's answers on the row are not touched (the row is only dropped or kept).
   if (rawMessages.length) {
@@ -55,7 +62,8 @@ export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages =
       const named = e.customer && !BAD_NAME.test(e.customer) && String(e.customer).length <= 40 && !e.pendingName; // «… credited with AED 197.93 for AR RAD»: a real name stays
       return { ...e, text: e.text || words, ...(named ? {} : { customer: '', customerTyped: '', pendingName: true, bankSms: true }), ...(clearing ? {} : { kind: 'transfer' }), amount: Number(e.amount) > 0 ? e.amount : bankSmsAmount(words) };
     }
-    if (e.kind === 'cash' && !e.cleared0 && (driverCashAmount(e.text) > 0 || (WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()) && !e.text))) return { ...e, customer: '', customerTyped: '', pendingName: false, source: 'driver', amount: Number(e.amount) > 0 ? e.amount : driverCashAmount(e.text) }; // «3000 aed delivery»: the cash the driver handed in, never a customer
+    if (e.customerTyped && e.customer && e.customer !== e.customerTyped && !approved(e.customerTyped, e.customer) && !typedFitsName(e.customerTyped, e.customer)) return { ...e, customer: e.customerTyped }; // the name TYPED does not fit the customer an old code chose («Al masar» was «MASTER WOOD»): the typed name stands
+    if (e.kind === 'cash' && WORD_ONLY.has((e.text) > 0 || (WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()) && !e.text))) return { ...e, customer: '', customerTyped: '', pendingName: false, source: 'driver', amount: Number(e.amount) > 0 ? e.amount : driverCashAmount(e.text) }; // «3000 aed delivery»: the cash the driver handed in, never a customer
     return e;
   });
   // the office's reply «NAME BANK TRANSFER 294 AED» to a receipt PDF / photo whose amount was not read: the name and the amount fill that receipt, and the reply is not a payment of its own
@@ -70,6 +78,18 @@ export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages =
     if (target) { filled.set(target, { ...target, ...fill }); spent.add(r); } else filled.set(r, { ...r, ...fill });
   }
   if (filled.size || spent.size) list = list.filter((e) => !spent.has(e)).map((e) => filled.get(e) || e);
+  if (rawMessages.length) {
+    const byRef = new Map(rawMessages.map((m) => [createHash('sha256').update(m.chat + '|' + m.id).digest('hex').slice(0, 24), m]));
+    list = list.map((e) => {
+      if (e.type !== 'payment' || !(e.source === 'pdf' || e.source === 'photo') || Number(e.amount) > 0) return e;
+      const own = byRef.get(e.ref);
+      const words = own ? replyNameAmount(own.caption || own.text) || rawMessages.map((m) => (m.quoted === own.id ? replyNameAmount(m.text) : null)).find(Boolean) : null;
+      return words ? { ...e, customer: words.name, customerTyped: words.name, amount: words.amount, kind: 'transfer', pendingName: false } : e;
+    });
+  }
+  // an old receipt whose amount was never read and that has no name, followed within a day and a half by a NAMED payment with an amount, is that payment: it is dropped, not said in every report
+  list = list.filter((e) => !(e.type === 'payment' && (e.source === 'pdf' || e.source === 'photo') && !(Number(e.amount) > 0) && !e.customer && !(e.invoices || []).length
+    && list.some((l) => l !== e && l.type === 'payment' && l.customer && Number(l.amount) > 0 && l.at > e.at && l.at - e.at <= 36 * 3600000)));
   // a bank SMS has no name: the receipt PDF of the same amount (+-1 AED) the same day gives it, and the two are ONE row (the SMS keeps its exact amount)
   const gone = new Set();
   for (const sms of list.filter((e) => e.bankSms && e.pendingName)) {

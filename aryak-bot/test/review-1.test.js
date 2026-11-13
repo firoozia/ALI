@@ -1190,7 +1190,7 @@ test('today\'s six stored rows are re-read: a stock question is no money, the ba
     row('r2b', '16:44', { kind: 'transfer', customer: 'ALWAN SHAM--', amount: 708, source: 'pdf' }),
     row('r3', '16:50', { kind: 'cash', customer: 'An amount of has been credited to your Mashreq account … Inward …', amount: 714 }),
     row('r4', '17:07', { kind: 'cheque', customer: 'PCC work', amount: 680, source: 'pdf' }),
-    row('r5', '15:24', { kind: 'transfer', customer: '', amount: 0, source: 'pdf' }),
+    row('r5', '19:30', { kind: 'transfer', customer: '', amount: 0, source: 'pdf' }),
     row('r6', '13:00', { kind: 'cash', customer: 'delivery', amount: 3000, text: '3000 aed delivery' }),
   ];
   const list = sharedPaymentList({ events });
@@ -1199,14 +1199,14 @@ test('today\'s six stored rows are re-read: a stock question is no money, the ba
   assert.deepEqual([sms.kind, sms.amount, sms.customer], ['transfer', 708.75, 'ALWAN SHAM']); assert.ok(!list.some((e) => e.ref === 'r2b')); // ONE row: the SMS amount, the PDF's name (dashes off)
   assert.deepEqual([list.find((e) => e.ref === 'r3').kind, list.find((e) => e.ref === 'r3').customer], ['transfer', '']); // never cash, the sentence is no name
   const items = receivedItems(list, { from: '2026-11-12', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
-  assert.deepEqual(items.unread, ['15:24']);
+  assert.deepEqual(items.unread, [{ ref: 'r5', label: '12/11 19:30' }]);
   const records = [{ _type: 'Payment', TxnDate: '2026-11-12', TotalAmt: 714, CustomerRef: { name: 'PVC WORK CARPENTER LLC' }, Line: [] }, { _type: 'Payment', TxnDate: '2026-11-12', TotalAmt: 708.75, CustomerRef: { name: 'ALWAN ALSHAM' }, Line: [] }];
   const invoices = [{ DocNumber: 'inv-10012', TotalAmt: 714, TxnDate: '2026-11-12', TxnTaxDetail: { TotalTax: 34 } }]; // 680 before 5 % VAT is 714
   const text = receivedText(items, { title: '12/11', records, recentInvoices: invoices, now: t('18:00') });
   assert.match(text, /\*PVC WORK CARPENTER LLC\*\n🟢 714\.00/); // the nameless transfer takes the name of the QuickBooks payment it matches
   assert.match(text, /\*ALWAN SHAM\*\n🟢 708\.75/);
   assert.doesNotMatch(text, /680\.00|PCC|stock|credited/); // our own invoice PDF is no payment
-  assert.match(text, /⚠ receipt PDF 15:24, amount not read — check/); assert.doesNotMatch(text, /^[🟢🔴⏳⭐] 0\.00/mu); // no 0.00 row
+  assert.match(text, /⚠ receipt PDF 12\/11 19:30 \(Confirmation group\), amount not read — check/); assert.doesNotMatch(text, /^[🟢🔴⏳⭐] 0\.00/mu); // no 0.00 row
   assert.doesNotMatch(text, /Driver cash|3,000\.00/); assert.match(text, /\*Total: 1,422\.75 AED\*/); // «3000 aed delivery» is the amount to collect on delivery of an order: no payment row at all
   assert.ok(isInvoiceFile('Invoice inv-10012.pdf') && isInvoiceFile('inv-10012.pdf') && !isInvoiceFile('receipt 123.pdf'));
 });
@@ -1320,4 +1320,42 @@ test('reports are built NOW from the raw messages: a row stored by old code is d
   assert.doesNotMatch(text, /3,000\.00/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("raw: rawLog.messages('', Date.now() - 45 * 86400000)") && index.includes('await qboDesk.customers(true)')); // every report reads the raw log and QuickBooks' names now
+});
+
+test('stored rows are re-judged on read: a name typed «Al masar» stands over a wrong stored customer, a receipt\'s caption or the reply that quotes it fills its name and amount, an old unread receipt a later named one explains is dropped, the rest are said once with their date; "fix receipt" fills one by hand', async () => {
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const { receivedItems, receivedText, weeklyCheckText } = await import('../src/expenses.js');
+  const { replyNameAmount } = await import('../src/paymentfix.js');
+  const { parseInvoiceCommand } = await import('../src/qboinvoice.js');
+  const { createHash } = await import('node:crypto');
+  const chat = '55@g.us'; const t = (day, hhmm) => Date.parse('2026-11-' + day + 'T' + hhmm + ':00+04:00');
+  const ref = (id) => createHash('sha256').update(chat + '|' + id).digest('hex').slice(0, 24);
+  const row = (id, day, hhmm, extra) => ({ type: 'payment', currency: 'AED', ref: ref(id), at: t(day, hhmm), lines: [], ...extra });
+  assert.deepEqual(replyNameAmount('DERWAZAA BANK TRANSFER 294 AED'), { name: 'DERWAZAA', amount: 294 }); assert.equal(replyNameAmount('cash from X 5'), null);
+  // 1: the stored customer was chosen by old code from «Al masar»
+  const masar = sharedPaymentList({ events: [row('m1', '12', '14:43', { kind: 'transfer', customer: 'MASTER WOOD', customerTyped: 'Al masar', amount: 918.75, cleared: true, source: 'pdf' })] });
+  assert.equal(masar[0].customer, 'Al masar'); // the typed name stands
+  assert.equal(sharedPaymentList({ events: [row('m2', '12', '14:43', { kind: 'transfer', customer: 'AL MASAR AL SAI', customerTyped: 'Al masar', amount: 5, source: 'pdf' })] })[0].customer, 'AL MASAR AL SAI'); // a fitting name is kept
+  assert.equal(sharedPaymentList({ events: [row('m3', '12', '14:43', { kind: 'transfer', customer: 'OTHER NAME', customerTyped: 'Mr Ali', amount: 5, source: 'pdf' })], approved: (typed, customer) => typed === 'Mr Ali' && customer === 'OTHER NAME' })[0].customer, 'OTHER NAME'); // an alias the owner approved is kept
+  // 2: the caption of the receipt (in the raw log) fills it; so does a reply that quotes it
+  const raw = [{ t: 'msg', id: 'd1', chat, at: t('12', '15:24'), text: '', caption: 'DERWAZAA BANK TRANSFER 294 AED', file: 'BankReport.pdf', sender: 'u' }, { t: 'msg', id: 'e1', chat, at: t('12', '15:30'), text: 'ZETA WOOD BANK TRANSFER 77 AED', quoted: 'e0', sender: 'u' }, { t: 'msg', id: 'e0', chat, at: t('12', '15:29'), text: '', file: 'Other.pdf', sender: 'u2' }];
+  const filled = sharedPaymentList({ events: [row('d1', '12', '15:24', { kind: 'transfer', customer: '', amount: 0, source: 'pdf' }), row('e0', '12', '15:29', { kind: 'transfer', customer: '', amount: 0, source: 'pdf' })], raw });
+  assert.deepEqual(filled.map((e) => [e.customer, e.amount, e.kind]), [['DERWAZAA', 294, 'transfer'], ['ZETA WOOD', 77, 'transfer']]);
+  // 3: an old unread receipt a later named payment explains is dropped; one nothing explains stays, said once with its date and group
+  const events = [row('u1', '10', '12:38', { kind: 'transfer', customer: '', amount: 0, source: 'pdf' }), row('n1', '11', '10:45', { kind: 'transfer', customer: 'SAJ INTERNATIONAL', amount: 196.35, source: 'pdf' }), row('u2', '12', '19:30', { kind: 'transfer', customer: '', amount: 0, source: 'pdf' })];
+  const list = sharedPaymentList({ events });
+  assert.deepEqual(list.map((e) => e.ref), [ref('n1'), ref('u2')]);
+  const items = receivedItems(list, { from: '2026-11-01', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  assert.deepEqual(items.unread, [{ ref: ref('u2'), label: '12/11 19:30' }]);
+  const first = receivedText(items, { title: 't', records: [], now: t('13', '09:00') });
+  assert.match(first, /⚠ receipt PDF 12\/11 19:30 \(Confirmation group\), amount not read — check/);
+  const again = receivedText(items, { title: 't', records: [], now: t('13', '09:00'), unreadSeen: new Set([ref('u2')]) });
+  assert.doesNotMatch(again, /amount not read/); // said once
+  assert.doesNotMatch(weeklyCheckText({ expenses: [], purchases: [], items, payments: [], title: 'w', unreadSeen: new Set([ref('u2')]) }), /amount not read/);
+  // the office said CLEARED: said beside the lack of a QuickBooks record
+  const cleared = receivedText(receivedItems(sharedPaymentList({ events: [row('c1', '12', '15:22', { kind: 'transfer', customer: 'ZETA CO', amount: 100, cleared: true })] }), { from: '2026-11-12', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() }), { title: 't', records: [], now: t('13', '09:00') });
+  assert.match(cleared, /🔴 100\.00 {2}not in QuickBooks yet {2}cleared by the office/);
+  assert.deepEqual(parseInvoiceCommand('fix receipt 15:24 12/11 DERWAZAA 294'), { type: 'fix_receipt', hh: 15, mm: 24, day: '11-12', name: 'DERWAZAA', amount: 294 });
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("replyNameAmount(normalizeMessageContent(raw.message)?.documentMessage?.caption") && index.includes("case 'fix_receipt'")); // a new receipt reads its caption; an old one can be filled by hand
 });
