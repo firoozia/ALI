@@ -1582,6 +1582,19 @@ test('owner reports: yesterday and one given day (typos and Persian too), the sa
   assert.equal(cut, 'cut: customer GOLDEN DOOR INDUSTRIES LLC (typed "Golden door"); 2 lines: 1810 = 3 m; 215 = 50 m (edge)');
   assert.match(describeEvent({ type: 'cut', customer: 'X', lines: [] }), /no lines were read/);
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.ok(src.includes('const qboFit = (name)') && src.includes('qboFit(name) || name') && src.includes('const warmCustomers') && src.includes("if (asRole === 'payment') await warmCustomers();") && src.includes("if (role === 'payment') await warmCustomers();"));
+  assert.ok(src.includes('const qboFit = (name)') && src.includes('qboFit(name) || name') && src.includes('const warmCustomers') && src.includes("if (role === 'payment') await warmCustomers();"));
   assert.ok(src.includes('else if (!group && ownerPerson) await reply(')); // never silent to the owner in his own chat
+});
+
+test('the payer check runs on a customer list: an unknown company is flagged, a partial name resolves to the one customer it fits, a known name stays; the simulation says whether the QuickBooks check was done', async () => {
+  const { payerCheck } = await import('../src/simtext.js');
+  const names = ['MASTER WOOD', 'TIGER INDUSTRIES COMPANY LLC', 'AL AHLIA KITCHEN', 'BLUE SKY TRADING LLC'];
+  assert.deepEqual(payerCheck('Blue Ocean Trading', names), { resolved: 'Blue Ocean Trading', known: false, how: 'no such customer' });
+  assert.deepEqual(payerCheck('tiger', names), { resolved: 'TIGER INDUSTRIES COMPANY LLC', known: true, how: 'same name' });
+  assert.equal(payerCheck('MASTER WOOD', names).known, true); assert.equal(payerCheck('master wood', names).how, 'same name');
+  assert.equal(payerCheck('wood', names).known, false); // only a generic word: never guessed
+  assert.equal(payerCheck('anyone', []).how, 'no list');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(src.includes("const listState = asRole === 'payment' ? await warmCustomers() : null;") && src.includes('QuickBooks customer check: ') && src.includes("NOT done — ") && src.includes('payerCheck(event.customer, qboCustomerNames())'));
+  assert.ok(src.includes("if (asRole === 'payment' && unknownPayer(event)) event.unknownCustomer = true;") && src.includes('canon(ev.customer)') && src.includes("if (role === 'payment') await warmCustomers();")); // the simulation and the real group both read the list and judge the payer
 });

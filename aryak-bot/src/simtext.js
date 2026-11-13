@@ -2,6 +2,7 @@
 // delivery posts, and plain questions of the owner («how much money came in today?», «recieved today») routed to the reports that already exist. Pure functions.
 import { parseCashBoxCommand } from './cashbox.js';
 import { sameCutCustomer } from './cuts.js';
+import { GENERIC, typedFitsName } from './qboname.js';
 
 const money = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const KIND_TEXT = {
@@ -48,6 +49,23 @@ export function orderWhereText(events, name, timeZone = 'Asia/Dubai', memory = '
   const delivered = mine.filter((e) => e.type === 'delivery' && e.status === 'delivered').length;
   return ['📦 ' + name.toUpperCase() + (memory ? ' (' + memory + ')' : ''), ...last.map((e) => when(e.at, timeZone) + '  ' + describeEvent(e)),
     delivered ? '✅ ' + delivered + ' delivery post' + (delivered === 1 ? '' : 's') + ' marked delivered.' : 'Not delivered yet (no delivered post).'].join('\n');
+}
+
+const squeeze = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+/**
+ * A payer's typed name judged against the QuickBooks customer names: { resolved, known, how }.
+ * known = a customer of that name (the same letters, or each fits the other word by word); a partial name («tiger») that fits ONE customer and has a word that is not generic resolves to that customer.
+ * Without a list nothing is judged (how = 'no list').
+ */
+export function payerCheck(typed, customerNames) {
+  const names = [...new Set((customerNames || []).filter(Boolean))];
+  if (!typed || !names.length) return { resolved: typed || '', known: false, how: 'no list' };
+  const exact = names.find((q) => squeeze(q) === squeeze(typed)) || names.find((q) => typedFitsName(typed, q) && typedFitsName(q, typed));
+  if (exact) return { resolved: exact, known: true, how: 'same name' };
+  const decisive = String(typed).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
+  const hits = decisive.length ? names.filter((q) => typedFitsName(typed, q)) : [];
+  if (hits.length === 1) return { resolved: hits[0], known: true, how: 'partial name fits one customer' };
+  return { resolved: typed, known: false, how: hits.length > 1 ? 'fits several customers' : 'no such customer' };
 }
 
 const RANGE_WORDS = /\b(?:today|yesterday|this week|week|weekly|this month|month)\b|دیروز|امروز/i;

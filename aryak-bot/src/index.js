@@ -84,7 +84,7 @@ import { lidLookup } from './lidmap.js';
 import { PersianNames, hasPersianLetters, seedPersianNames } from './persiannames.js';
 import { pickSpoken } from './translit.js';
 import { GENERIC } from './qboname.js';
-import { describeEvent, orderWhereText, parseOrderWhere, plainReportAsk } from './simtext.js';
+import { describeEvent, orderWhereText, parseOrderWhere, payerCheck, plainReportAsk } from './simtext.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
 import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, overrideFor, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
@@ -444,15 +444,14 @@ const canon = (name) => { // the approved list and the approved aliases first; a
   return res === name ? qboFit(name) || name : res;
 };
 /** A partial name («tiger») that fits ONE QuickBooks customer word by word (and has a word that is not generic): that customer; else ''. Needs the customer list read (warmCustomers). */
-const qboFit = (name) => {
-  const names = (qboDesk.cache?.customers || []).map((x) => x.DisplayName).filter(Boolean);
-  const words = String(name).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
-  if (!names.length || !words.length) return '';
-  const hits = names.filter((n) => typedFitsName(name, n));
-  return hits.length === 1 ? hits[0] : '';
-};
+const qboCustomerNames = () => (qboDesk.cache?.customers || []).map((x) => x.DisplayName).filter(Boolean);
+const qboFit = (name) => { const c = payerCheck(name, qboCustomerNames()); return c.known && c.resolved !== name ? c.resolved : ''; };
 /** The QuickBooks customer list, read now when it is old (a payer is judged against it); a failed read keeps what there is. */
-const warmCustomers = async () => { if (qbo.connected && !qbo.paused) await qboDesk.customers().catch(() => {}); };
+const warmCustomers = async () => { // { n, why }: how many customer names the check had, or why it had none (said in the simulation reply)
+  if (!qbo.connected) return { n: 0, why: 'QuickBooks is not connected' };
+  if (qbo.paused) return { n: 0, why: 'QuickBooks is paused' };
+  try { const rows = await qboDesk.customers(); return { n: rows.length, why: rows.length ? '' : 'the customer list came back empty' }; } catch (e) { logger.warn('customer list read failed: ' + e.message); return { n: 0, why: 'the read failed: ' + e.message }; }
+};
 // An order written in a customer's group belongs to the customer of the approved row that holds that group (by its id), else to the group's label.
 const customerOfGroup = (groupId, label) => rowOfGroup(customerGroups, groupId)?.customer || canon(label);
 
@@ -660,7 +659,11 @@ function tellPayment(event) {
 const payPending = new Map(); // ref -> { at }
 const payNoticed = new Map(); // ref -> the amount announced
 /** A payer's name that is not one of the QuickBooks customers (a list that is known, a name that is typed, not a cash-out kind). */
-const unknownPayer = (event) => !!event.customer && !CASH_OUT_KINDS.includes(event.kind) && (qboDesk.cache?.customers || []).length > 0 && !isOurCustomer(event.customer) && !event.multi;
+const unknownPayer = (event) => {
+  if (!event.customer || CASH_OUT_KINDS.includes(event.kind) || event.multi || !qboCustomerNames().length) return false;
+  const told = cutAliases.resolve(event.customer); // an approved alias of a customer counts
+  return !payerCheck(event.customer, qboCustomerNames()).known && !(told && payerCheck(told, qboCustomerNames()).known);
+};
 /** A payment with nobody named, or with a name that is not our customer: ONE question to the owner's own chat (never a group), marked on the entry so it is asked once. */
 async function paymentFollowUps(event) {
   if (CASH_OUT_KINDS.includes(event.kind) || replayCtx.getStore()?.quiet || event.askedName) return;
@@ -1648,7 +1651,7 @@ async function simulatedPost({ raw, text, where, role, reply }) {
   if (det?.noCustomer) { await reply(`SIMULATION: a cut with nobody named (code ${det.noCustomer.code}, ${det.noCustomer.quantity} m): not recorded. In the real orders group the owner is told once: «cut without customer».`); return true; }
   if (!det?.events?.length) { await reply(`SIMULATION: that text was not read as a post of the ${kind} group (nothing recorded).`); return true; }
   const lines = [];
-  if (asRole === 'payment') await warmCustomers();
+  const listState = asRole === 'payment' ? await warmCustomers() : null;
   for (const [i, ev] of det.events.entries()) {
     const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`test|${raw.key.id}|${i}`).digest('hex').slice(0, 24), simulated: true, ...(asRole === 'delivery' ? { msg: raw.key.id } : {}) };
     if (asRole === 'payment' && unknownPayer(event)) event.unknownCustomer = true;
@@ -1657,7 +1660,7 @@ async function simulatedPost({ raw, text, where, role, reply }) {
     trace(where, role, `simulated ${kind} post recorded as test data`);
     lines.push(describeEvent(event) + (event.lines?.some((l) => l.invoiceQuantity !== undefined) ? ' (' + event.lines.filter((l) => l.invoiceQuantity !== undefined).map((l) => 'invoiced ' + l.invoiceQuantity).join(', ') + ')' : ''));
   }
-  await reply(`SIMULATION (test data only, never in the real reports): recorded ${lines.length} ${kind} item(s)${lines.length ? `\n${lines.join('\n')}` : ''}`);
+  await reply(`SIMULATION (test data only, never in the real reports): recorded ${lines.length} ${kind} item(s)${lines.length ? `\n${lines.join('\n')}` : ''}${listState ? `\nQuickBooks customer check: ${listState.n ? listState.n + ' customer names read' : 'NOT done — ' + listState.why}` : ''}`);
   return true;
 }
 
