@@ -3227,9 +3227,9 @@ function removeAdded(refs) {
 async function pickMethodOnDone(pick, id, at = Date.now()) {
   const target = expenseStore.get(id);
   if (!target || target.state !== 'done') return null;
-  const rec = await expenseInQb(target); const qk = rec ? qbKindOf(rec) : '';
-  if (!qk || qk === target.method) return '#' + target.id + ' has no open question; use: Atossa edit #' + target.id + ' + cash/card';
   const method = pick === '1' ? 'card' : 'cash';
+  if (method === target.method) return '#' + target.id + ' is already ' + method + '.';
+  // the owner's word wins whether or not QuickBooks can be checked: the old value stays in the history
   target.history = target.history || []; target.history.push({ at: Math.min(at, Date.now()), before: { method: target.method } }); target.method = method; expenseStore.save();
   return '#' + target.id + ' ' + (TYPES[target.type]?.label || 'Other').toLowerCase() + ' ' + String(Number(target.amount)) + ' → ' + method + ' ✔';
 }
@@ -3370,7 +3370,7 @@ async function cashBoxMonth(month, depth = 0) {
   return cashBoxReport({ month, opening, cashIn, expenses, outs, transfers, timeZone: config.timezone, typeLabel: (t) => (TYPES[t]?.label || 'Other') });
 }
 /** Is this expense already recorded in QuickBooks (vendor + amount ±1 + date ±3 days)? */
-const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return null; return matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -3), dayPlus(e.day, 3))).found[0]?.record || null; }; // the matched QuickBooks purchase, or null
+const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return null; return matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -14), dayPlus(e.day, 14))).found[0]?.record || null; }; // the matched QuickBooks purchase, or null
 /** The approved aliases for a posted name: the cutting-group aliases, then the QuickBooks names the owner told for the sheet (sheet names), before any fuzzy match. */
 const nameAlias = (n) => cutAliases.resolve(n) || overrideFor(sheetNameStore, n);
 

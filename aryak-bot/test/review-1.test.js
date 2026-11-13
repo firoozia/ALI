@@ -1403,7 +1403,8 @@ test('«2 #E5» / «2#E5» / «#E5 2» on a done expense whose method differs fr
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("if (!target || target.state !== 'done') return null;") && index.includes("const method = pick === '1' ? 'card' : 'cash';")); // 1 card, 2 cash on a done entry
   assert.ok(index.includes("target.history.push({ at: Math.min(at, Date.now()), before: { method: target.method } })")); // with history, like an edit
-  assert.ok(index.includes("' has no open question; use: Atossa edit #'")); // no flag: said so
+  assert.ok(index.includes("' is already ' + method + '.'") && !index.includes("' has no open question; use: Atossa edit #'")); // the owner's word wins whether or not QuickBooks can be checked; an unchanged value is said so
+  assert.ok(index.includes("matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -14), dayPlus(e.day, 14)))")); // the flag is read with the same live window as the reports
   assert.ok(index.includes("' → ' + method + ' ✔'")); // answered once, briefly
 });
 
