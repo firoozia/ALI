@@ -1607,3 +1607,16 @@ test('payer check on live-shaped customer names: a leading part of the QuickBook
   assert.equal(payerCheck('Blue Ocean Trading', names).known, false); assert.equal(payerCheck('Al masar', ['MASTER WOOD']).known, false); // «Al masar» never becomes MASTER WOOD
   assert.equal(payerCheck('alia', names).how, 'fits several customers'); assert.equal(payerCheck('wood', names).known, false);
 });
+
+test('the kind of a payment comes from its method words: transfer / bank / TT / IPP / Aani / deposit / online / wire / حواله = transfer, cheque / PDC = cheque, nothing or cash / نقد = cash; the method words never stay in the name', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const { describeEvent } = await import('../src/simtext.js');
+  const one = (t) => eventsFromCaption('payment', t).events[0];
+  const tr = one('Al masar transfer 918.75 aed'); assert.equal(tr.kind, 'transfer'); assert.equal(tr.customer, 'Al masar'); assert.equal(tr.amount, 918.75);
+  const bk = one('bank transfer from atlas 1575 aed'); assert.equal(bk.kind, 'transfer'); assert.equal(bk.customer, 'atlas'); assert.match(describeEvent(bk), /^payment: bank transfer, 1,575\.00 AED, from atlas/);
+  for (const t of ['Master wood 500 TT', 'master wood 500 IPP', 'master wood 500 Aani', 'master wood 500 deposited', 'online payment master wood 500', 'master wood 500 wire', 'حواله از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'transfer', t);
+  for (const t of ['cheque from tiger 2000 aed PDC', 'tiger 2000 pdc', 'چک ۲۰۰۰ از ببر']) assert.equal(one(t).kind, 'cheque', t);
+  for (const t of ['cash received from alia wood 250 aed', 'master wood 300', 'نقد از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'cash', t);
+  assert.equal(one('cash received from alia wood 250 aed').customer, 'alia wood');
+  assert.equal(one('18000 deposit to boss').kind, 'cash_to_boss'); // a deposit to the boss is still cash leaving the box
+});

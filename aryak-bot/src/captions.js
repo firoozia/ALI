@@ -143,11 +143,13 @@ const AMOUNT = /(?:^|[^\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d,
  */
 /** The words of a payment message that are never a customer («cash», «clear», «receipt», «inv», «pay» …) taken out of a name; '' when nothing is left. */
 export function stripPaymentWords(name) {
-  return String(name || '').replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور)(?![\p{L}])/gu, ' ').replace(/\bBY\b.*$/i, ' ').replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|TRANSFER|RECEIVED?|PAID|FROM|PAYMENTS?|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ').replace(/[=/.]+/g, ' ').replace(/^[\s+&-]+|[\s+&-]+$/g, '').replace(/\s*\+\s*(?=\+|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  return String(name || '').replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|حواله|انتقال|بانکی|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور)(?![\p{L}])/gu, ' ').replace(/\bBY\b.*$/i, ' ').replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|PDC|TRANSFER(?:RED)?|BANK|ONLINE|WIRE|IPP|AANI|DEPOSIT(?:ED)?|NAQD|RECEIVED?|PAID|FROM|PAYMENTS?|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ').replace(/[=/.]+/g, ' ').replace(/^[\s+&-]+|[\s+&-]+$/g, '').replace(/\s*\+\s*(?=\+|$)/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** True when the words of a message say it is a cheque (cheque, cheaque, chq, check, شيك, چک). */
-export const CHEQUE_WORDS = /\bche+a?ques?\b|\bcheq\b|\bchqs?\b|\bchecks?\b|شيك|شیک|چک/i;
+export const CHEQUE_WORDS = /\bche+a?ques?\b|\bcheq\b|\bchqs?\b|\bchecks?\b|\bpdc\b|شيك|شیک|چک/i;
+/** The words of a bank transfer (transfer, bank, TT, IPP, Aani, deposit, online, wire, حواله, واریز, انتقال): such a payment is a transfer, not cash. */
+export const TRANSFER_WORDS = /\btransfer(?:red)?\b|\bbank\b|\btt\b|\bipp\b|\baani\b|\bdeposit(?:ed)?\b|\bonline\b|\bwire\b|حواله|واریز|انتقال/i;
 const FOREIGN = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
 
 export function parsePaymentCaption(text) {
@@ -187,6 +189,7 @@ export function parsePaymentCaption(text) {
     if (!aedAfterEquals) currency = code;
   }
   const cheque = CHEQUE_WORDS.test(work);
+  const transfer = !cheque && TRANSFER_WORDS.test(work); // «transfer», «bank transfer from ...», «TT»: money by the bank, never cash
   // «dated 20/11», «due 20-11-2026», «on 20/11»: the date of a cheque (or of a promised payment); it leaves the name and is kept as the date
   let chequeDay = '';
   work = work.replace(/(?:\b(?:dated?|due(?:\s+on)?|on|for|date)\s*[:=]?\s*)?(?<![\d.\/-])(\d{1,2})\s*[\/-]\s*(\d{1,2})(?:\s*[\/-]\s*(\d{2,4}))?(?![\d\/-])/gi, (all, d, m, y) => {
@@ -211,11 +214,11 @@ export function parsePaymentCaption(text) {
   if (!(amount > 0)) return null;
   let rest = (work.slice(0, a ? a.index : 0) + ' ' + (a ? work.slice(a.index + a[0].length) : work))
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer
-    .replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور)(?![\p{L}])/gu, ' ')
-    .replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
+    .replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|حواله|انتقال|بانکی|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور)(?![\p{L}])/gu, ' ')
+    .replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|PDC|TRANSFER(?:RED)?|BANK|ONLINE|WIRE|IPP|AANI|DEPOSIT(?:ED)?|NAQD|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
     .replace(/[=\/.]+/g, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
-  return { kind: 'cash', amount, customers, ...(foreign && !a ? { currency: foreign.currency } : {}), ...(foreign && a ? { foreign } : {}), ...(eqPair ? { foreign: eqPair.foreign } : {}), ...(cheque ? { cheque: true } : {}), ...(chequeDay ? { chequeDate: chequeDay } : {}), ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
+  return { kind: 'cash', amount, customers, ...(foreign && !a ? { currency: foreign.currency } : {}), ...(foreign && a ? { foreign } : {}), ...(eqPair ? { foreign: eqPair.foreign } : {}), ...(cheque ? { cheque: true } : {}), ...(transfer ? { transfer: true } : {}), ...(chequeDay ? { chequeDate: chequeDay } : {}), ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
 }
 
 // ---- goods groups (accessories, saw blades, glue) --------------------------------------------------------------------------
