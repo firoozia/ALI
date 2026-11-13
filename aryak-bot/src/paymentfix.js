@@ -32,6 +32,7 @@ const dayKey = (ms, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year
 /** The stored payment rows as they really are (a changed copy; the stored ones are untouched). */
 export function fixStoredPayments(events, timeZone = 'Asia/Dubai') {
   let list = events.filter((e) => !(e.type === 'payment' && isStockQuestion(e.text || e.customer) && !isBankSms(e.text || e.customer) && !/cheque|chq/i.test(e.text || ''))); // a question about stock is no money
+  list = list.filter((e) => !(e.type === 'payment' && e.kind === 'cash' && (driverCashAmount(e.text) > 0 || (!e.text && WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()))))); // «3000 aed delivery»: the amount to collect on delivery, not money received
   list = list.map((e) => {
     if (e.type !== 'payment') return e;
     const words = e.text || e.customer || '';
@@ -43,6 +44,18 @@ export function fixStoredPayments(events, timeZone = 'Asia/Dubai') {
     if (e.kind === 'cash' && !e.cleared0 && (driverCashAmount(e.text) > 0 || (WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()) && !e.text))) return { ...e, customer: '', customerTyped: '', pendingName: false, source: 'driver', amount: Number(e.amount) > 0 ? e.amount : driverCashAmount(e.text) }; // «3000 aed delivery»: the cash the driver handed in, never a customer
     return e;
   });
+  // the office's reply «NAME BANK TRANSFER 294 AED» to a receipt PDF / photo whose amount was not read: the name and the amount fill that receipt, and the reply is not a payment of its own
+  const REPLY = /^\s*([A-Za-z\u0600-\u06ff][^\d]{1,40}?)\s+(?:bank\s+)?transfer\s+([\d,]+(?:\.\d+)?)\s*(?:aed|dhs?)?\s*$/i;
+  const filled = new Map(); const spent = new Set();
+  for (const r of list.filter((e) => e.type === 'payment' && e.source !== 'pdf' && e.source !== 'photo' && REPLY.test(String(e.text || e.customer || '')))) {
+    const m = REPLY.exec(String(r.text || r.customer || '')) || REPLY.exec(String(r.customer || ''));
+    if (!m) continue;
+    const name = cleanName(m[1].replace(/\s+bank$/i, '')); const amount = Number(m[2].replace(/,/g, ''));
+    const target = [...list].reverse().find((o) => o !== r && o.type === 'payment' && (o.source === 'pdf' || o.source === 'photo') && !(Number(o.amount) > 0) && o.at <= r.at && r.at - o.at <= 6 * 3600000 && !filled.has(o));
+    const fill = { customer: name, customerTyped: name, amount, kind: 'transfer', pendingName: false, noAmount: false };
+    if (target) { filled.set(target, { ...target, ...fill }); spent.add(r); } else filled.set(r, { ...r, ...fill });
+  }
+  if (filled.size || spent.size) list = list.filter((e) => !spent.has(e)).map((e) => filled.get(e) || e);
   // a bank SMS has no name: the receipt PDF of the same amount (+-1 AED) the same day gives it, and the two are ONE row (the SMS keeps its exact amount)
   const gone = new Set();
   for (const sms of list.filter((e) => e.bankSms && e.pendingName)) {

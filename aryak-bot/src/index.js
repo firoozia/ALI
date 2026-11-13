@@ -75,6 +75,7 @@ import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, rederiveCashOut } from './cashbox.js';
 import { answerAdd, requestAdd, undoAdd } from './addentries.js';
 import { isInvoiceFile } from './paymentfix.js';
+import { typedFitsName } from './qboname.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
@@ -425,7 +426,12 @@ async function translateTo(text, lang) {
 const knownCustomers = () => [...groups.values()].map((g) => String(g.subject || '').replace(config.groupSuffix, '').trim()).filter(Boolean);
 // The one name of a customer: his approved row first (a name, an alias or a near spelling of it), else the aliases and the group labels.
 const rowOfName = (name) => customerRowFor(name, { list: customerGroups, aliases });
-const canon = (name) => rowOfName(name)?.customer || aliases.resolve(name, knownCustomers());
+const canon = (name) => { // the approved list and the approved aliases first; a loose match must fit the typed name word by word («Al masar» never becomes «MASTER WOOD»)
+  const row = rowOfName(name)?.customer; if (row) return row;
+  const r = aliases.resolve(name, knownCustomers());
+  const approved = Object.entries(aliases.map).some(([c, others]) => c === r && others.includes(name));
+  return r === name || approved || typedFitsName(name, r) ? r : name;
+};
 // An order written in a customer's group belongs to the customer of the approved row that holds that group (by its id), else to the group's label.
 const customerOfGroup = (groupId, label) => rowOfGroup(customerGroups, groupId)?.customer || canon(label);
 
@@ -746,6 +752,20 @@ async function trackGroup(raw, groupId, role) {
       if (hit.length) {
         for (const e of hit) tracker.update(e.ref, { customer: canon(named[1].trim()), customerTyped: named[1].trim(), pendingName: false, cleared: true });
         trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply named the payment it quotes: ' + named[1].trim());
+        return;
+      }
+    }
+  }
+  // The office's reply «DERWAZAA BANK TRANSFER 294 AED» to a receipt whose amount was not read: its name and amount fill that receipt; no payment of its own.
+  if (role === 'payment' && quotedId && text) {
+    const tr = /^\s*([^\d]{2,40}?)\s+(?:bank\s+)?transfer\s+([\d,]+(?:\.\d+)?)\s*(?:aed|dhs?)?\s*$/i.exec(String(text));
+    if (tr) {
+      const refs = new Set([payRef(groupId, quotedId), ...Array.from({ length: 12 }, (_, i) => refOf(quotedId, i))]);
+      const hit = tracker.events.filter((e) => e.type === 'payment' && refs.has(e.ref));
+      if (hit.length) {
+        const nm = tr[1].replace(/\s+bank$/i, '').trim();
+        for (const e of hit) tracker.update(e.ref, { customer: canon(nm), customerTyped: nm, pendingName: false, amount: Number(e.amount) > 0 ? e.amount : Number(tr[2].replace(/,/g, '')), kind: 'transfer', noAmount: false });
+        trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a reply gave the name and amount of the receipt it quotes: ' + nm);
         return;
       }
     }
@@ -3453,7 +3473,9 @@ async function weeklyCheckReport() {
   const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
-  return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label });
+  const openInvoices = await qbo.query("select * from Invoice where Balance > '0'").catch(() => []);
+  const recentInvoices = await qbRows('Invoice', dayPlus(r.from, -3), dayPlus(r.to, 1));
+  return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label, openInvoices, recentInvoices });
 }
 async function monthlyFullReport() {
   const r = rangeOf('month', todayDubai());

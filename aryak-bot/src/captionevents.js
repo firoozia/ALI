@@ -35,7 +35,8 @@ export function eventsFromCaption(role, text) {
   if (role === 'payment' && isGenericBankSms(text) && bankSmsAmount(text) > 0) { // the bank's SMS: a transfer (a cheque clearing keeps its own handling); its sentence is never a customer
     return { events: [{ type: 'payment', kind: /outward cheque clearing/i.test(text) ? 'cash' : 'transfer', customer: '', amount: bankSmsAmount(text), currency: 'AED', lines: [], pendingName: true, bankSms: true }] };
   }
-  if (role === 'payment' && driverCashAmount(text) > 0) return { events: [{ type: 'payment', kind: 'cash', source: 'driver', customer: '', amount: driverCashAmount(text), currency: 'AED', lines: [] }] }; // the cash the driver collected and handed in
+  if (role === 'payment' && driverCashAmount(text) > 0) return { ignore: true }; // «3000 aed delivery»: the amount to collect on delivery of an order, not money received
+  if (role === 'payment' && !/received?|receive|cash|paid|\bpay\b|payment|cleared?|credited|cheque|chq|check|transfer|deposit|bank|inv(?:oice)?[-\s]?\d|statement/i.test(String(text)) && /deliver\w*|confirm|\broll\b|\bsend\b|\border\b|\bpcs\b|pieces|meters?|\bmtr\b/i.test(String(text))) return { ignore: true }; // an amount beside order words, with no word of money coming in, is no payment
   if (role === 'payment' && isStockQuestion(text)) return { ignore: true }; // «307 available one roll in China stock?» is a question, not money
   if (role === 'payment') {
     const out = cashOutKind(text); // cash leaving the cash box (to the boss, a salary advance): its own kind, never a customer payment

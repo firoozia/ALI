@@ -389,14 +389,28 @@ export function driverBreakdown(item, deliveries, timeZone = 'Asia/Dubai') {
   return { parts, found, diff, ok: parts.length > 0 && Math.abs(diff) <= 1 };
 }
 
-export function receivedText(items, options) {
-  const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
-  const unreadAt = items.unread || [];
+/** The money rows as every report must see them (received today, the end of the day, the weekly check): own invoice PDFs out, nameless rows named by the one open invoice of their amount, the QuickBooks match of each. */
+export function prepareReceived(items0, options) {
+  const { records = [], aliasOf = () => '', openInvoices = [] } = options;
+  let items = items0;
+  const unreadAt = items0.unread || [];
   let matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf);
   // OUR OWN invoice forwarded as a PDF is no payment: a PDF row that no QuickBooks payment takes and whose amount is an invoice's total BEFORE tax (680 for 714.00 with 5 % VAT) is dropped
   const recentInvoices = options.recentInvoices || [];
   const ownInvoice = (it) => it.source === 'pdf' && !matched.has(it) && recentInvoices.some((inv) => Number(inv.TxnTaxDetail?.TotalTax) > 0 && Math.abs(Number(inv.TotalAmt) - Number(inv.TxnTaxDetail.TotalTax) - it.amount) <= 0.05);
   if (items.some(ownInvoice)) { items = items.filter((it) => !ownInvoice(it)); matched = matchReceipts(items.filter((i) => !i.foreign), records, aliasOf); }
+  // a nameless row (a bank SMS nobody named) equal to exactly ONE open invoice of the customers is that customer's payment, said as a proposal
+  items = items.map((it) => {
+    if (it.customer || matched.has(it) || it.source === 'driver' || it.noInvoice) return it;
+    const hits = openInvoices.filter((inv) => Number(inv.Balance) > 0 && Math.abs(Number(inv.Balance) - it.amount) <= 0.01);
+    return hits.length === 1 && hits[0].CustomerRef?.name ? { ...it, customer: hits[0].CustomerRef.name } : it;
+  });
+  return { items, matched, unreadAt };
+}
+
+export function receivedText(items, options) {
+  const { title, records = [], aliasOf = () => '', openInvoices = [] } = options; const checks = options.checks || null; const nowMs = options.now || Date.now();
+  const prep = prepareReceived(items, options); items = prep.items; const matched = prep.matched; const unreadAt = prep.unreadAt;
   const inQb = (it) => matched.has(it) || it.paid === true;
   const invById = new Map([...(options.linkedInvoices || []), ...openInvoices].map((i) => [String(i.Id), i]));
   const docOf = (inv) => (/^inv-/i.test(String(inv.DocNumber)) ? String(inv.DocNumber) : 'inv-' + inv.DocNumber);
@@ -410,12 +424,6 @@ export function receivedText(items, options) {
     return out;
   };
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
-  // a nameless row (a bank SMS nobody named) equal to exactly ONE open invoice of the customers is that customer's payment, said as a proposal
-  items = items.map((it) => {
-    if (it.customer || matched.has(it) || it.source === 'driver' || it.noInvoice) return it;
-    const hits = openInvoices.filter((inv) => Number(inv.Balance) > 0 && Math.abs(Number(inv.Balance) - it.amount) <= 0.01);
-    return hits.length === 1 && hits[0].CustomerRef?.name ? { ...it, customer: hits[0].CustomerRef.name } : it;
-  });
   const unreadLines = unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check');
   if (!items.length) return unreadLines.length ? ['💰 *Money received — ' + title + '*', ...unreadLines].join('\n') : `💰 *Money received — ${title}*\nNo money was recorded.`;
   const needsOk = []; let green = 0; let red = 0; let stars = 0;
@@ -533,16 +541,19 @@ export function receivedText(items, options) {
 }
 
 /** The Thursday check: what the office has not recorded in QuickBooks yet (expenses and money received of the week). */
-export function weeklyCheckText({ expenses, purchases, items, payments, aliasOf = () => '', title }) {
+export function weeklyCheckText({ expenses, purchases, items: items0, payments, aliasOf = () => '', title, openInvoices = [], recentInvoices = [] }) {
   const exp = matchExpenses(expenses, purchases);
-  const got = matchReceipts(items.filter((i) => !i.foreign), payments, aliasOf);
-  const lostMoney = items.filter((i) => !i.foreign && !got.has(i) && i.paid !== true);
+  const prep = prepareReceived(items0, { records: payments, aliasOf, openInvoices, recentInvoices }); // the same reading of the rows as «received today»
+  const items = prep.items; const got = prep.matched;
+  // not recorded = no QuickBooks payment takes it, nobody accepted a pairing, it is not marked «no invoice needed», it is not the driver's hand-in
+  const lostMoney = items.filter((i) => !i.foreign && !got.has(i) && i.paid !== true && !i.accepted && !i.noInvoice && i.source !== 'driver');
   const methodDiffs = exp.found.filter((f) => f.entry.method && qbKindOf(f.record) && qbKindOf(f.record) !== f.entry.method); // posted card but QuickBooks paid it from the cash box, or the other way round
-  if (!exp.missing.length && !lostMoney.length && !methodDiffs.length) return `*Weekly check — ${title}*\n✔ All recorded in QuickBooks this week.`;
+  if (!exp.missing.length && !lostMoney.length && !methodDiffs.length && !(prep.unreadAt || []).length) return `*Weekly check — ${title}*\n✔ All recorded in QuickBooks this week.`;
   const blocks = [];
   if (exp.missing.length) blocks.push(['Expenses not found in QuickBooks:', withSeparators(exp.missing.map((e, i) => `${i + 1}. ${dmy(e.date || e.day)} — ${who(e)} — *${money(e.amount)}* — ${typeLine(e)}`))].join('\n'));
   if (methodDiffs.length) blocks.push(['⚠ *To fix: the payment method differs from QuickBooks*', ...methodDiffs.map((f) => '#' + f.entry.id + ' posted ' + f.entry.method + ', QuickBooks ' + (f.record.AccountRef?.name || 'account') + ' (' + qbKindOf(f.record) + ') — please fix')].join('\n'));
-  if (lostMoney.length) blocks.push(['💰 *Money received not found in QuickBooks*', '', withSeparators(lostMoney.map((it) => `*${(it.customer || 'UNKNOWN').toUpperCase()}*\n🔴 ${money(it.amount)}  ${it.kind === 'bank' ? 'transfer' : it.kind} ${dmy(it.day)}`))].join('\n'));
+  if (lostMoney.length) blocks.push(['💰 *Money received not found in QuickBooks*', '', withSeparators(lostMoney.map((it) => { const best = it.rejected ? null : closestMatch(it, payments, openInvoices, aliasOf); return `*${(it.customer || 'UNKNOWN').toUpperCase()}*\n🔴 ${money(it.amount)}  ${it.kind === 'bank' ? 'transfer' : it.kind} ${dmy(it.day)}${best && Math.abs(best.diff) <= 1 && best.kind === 'invoices' ? ' (pays ' + best.label + ')' : ''}`; }))].join('\n'));
+  if ((prep.unreadAt || []).length) blocks.push(prep.unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check').join('\n'));
   return [`*Weekly check — ${title}*`, blocks.join(`\n${SEP}\n`)].join('\n');
 }
 
