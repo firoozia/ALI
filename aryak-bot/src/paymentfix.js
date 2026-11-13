@@ -88,8 +88,14 @@ export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages =
     });
   }
   // an old receipt whose amount was never read and that has no name, followed within a day and a half by a NAMED payment with an amount, is that payment: it is dropped, not said in every report
-  list = list.filter((e) => !(e.type === 'payment' && (e.source === 'pdf' || e.source === 'photo') && !(Number(e.amount) > 0) && !e.customer && !(e.invoices || []).length
-    && list.some((l) => l !== e && l.type === 'payment' && l.customer && Number(l.amount) > 0 && l.at > e.at && l.at - e.at <= 36 * 3600000)));
+  list = list.filter((e) => {
+    if (!(e.type === 'payment' && (e.source === 'pdf' || e.source === 'photo') && !(Number(e.amount) > 0)) || (e.invoices || []).length) return true;
+    const names = [e.customer, e.customerTyped, String(e.file || '').replace(/\.pdf$/i, '')].map((n) => String(n || '').trim()).filter(Boolean);
+    const usable = names.some((n) => n.replace(/[^\p{L}]/gu, '').length >= 4); // «sen» is a fragment, «saj» fits by itself
+    const explained = list.some((l) => l !== e && l.type === 'payment' && l.customer && Number(l.amount) > 0 && l.at > e.at && l.at - e.at <= 36 * 3600000
+      && (names.some((n) => n.replace(/[^\p{L}]/gu, '').length >= 2 && typedFitsName(n, l.customer)) || !usable));
+    return !explained;
+  });
   // a bank SMS has no name: the receipt PDF of the same amount (+-1 AED) the same day gives it, and the two are ONE row (the SMS keeps its exact amount)
   const gone = new Set();
   for (const sms of list.filter((e) => e.bankSms && e.pendingName)) {

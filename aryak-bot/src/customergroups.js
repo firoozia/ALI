@@ -5,6 +5,7 @@
 // sends nothing: the list only tells the owner-ordered invoice send (invoicesend.js) WHICH group, which still passes the customer-group rule
 // and the owner's own yes at send time. The imported names (his accounting export, names only) live on the VM, never in the repository or a log.
 
+import { typedFitsName } from './qboname.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { editDistance, isTestCustomer } from './invoicesend.js';
@@ -330,7 +331,7 @@ export function settleDuplicates(names, seen = []) {
 /** The approved row of a customer by any of his names: the name itself, his other names (aliases), or a near duplicate of a stored name. */
 export function customerRowFor(name, { list, aliases }) {
   if (!name || !nameKey(name)) return null;
-  return list.find(name, altNames(aliases.map, name)) || list.rows().find((r) => nearDuplicate(r.customer, name)) || null;
+  return list.find(name, altNames(aliases.map, name)) || list.rows().find((r) => nearDuplicate(r.customer, name) && typedFitsName(name, r.customer)) || null;
 }
 
 /** The approved row that holds this group (by its id): an order in that group belongs to that row's customer. */

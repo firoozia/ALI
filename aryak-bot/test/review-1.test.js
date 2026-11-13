@@ -1359,3 +1359,39 @@ test('stored rows are re-judged on read: a name typed «Al masar» stands over a
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("replyNameAmount(normalizeMessageContent(raw.message)?.documentMessage?.caption") && index.includes("case 'fix_receipt'")); // a new receipt reads its caption; an old one can be filled by hand
 });
+
+test('the live shapes: the approved list\'s loose match must fit the typed name («Al masar» is never «MASTER WOOD»), a customer named by QuickBooks, and old amountless receipts (named or by file name) explained by a later payment', async () => {
+  const { customerRowFor, CustomerGroups } = await import('../src/customergroups.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const { receivedItems } = await import('../src/expenses.js');
+  const { qboNameFor } = await import('../src/qboname.js');
+  const list = new CustomerGroups('');
+  list.d.rows = { 'master wood': { customer: 'MASTER WOOD', groups: [] } };
+  const aliases = { map: {} };
+  assert.equal(customerRowFor('Al masar', { list, aliases }), null); // the approved list no longer hands «Al masar» to «MASTER WOOD»
+  assert.equal(customerRowFor('Master Wood', { list, aliases })?.customer, 'MASTER WOOD'); // the exact name still finds its row
+  const qbo = ['MASTER WOOD', 'AL MASAR SAHIH', 'ATLAS KITCHEN', 'SAJ INTERNATIONAL INVESTMENT COMPANY'];
+  assert.equal(qboNameFor('Al masar', qbo), 'AL MASAR SAHIH'); // QuickBooks names him
+  const t = (day, hhmm) => Date.parse('2026-11-' + day + 'T' + hhmm + ':00+04:00');
+  const row = (id, day, hhmm, extra) => ({ type: 'payment', currency: 'AED', ref: 'r' + id, at: t(day, hhmm), lines: [], ...extra });
+  // the exact live shapes (fake numbers)
+  const events = [
+    row(1, '12', '14:43', { kind: 'transfer', receipt: 'receipt', source: 'pdf', customer: 'MASTER WOOD', customerTyped: 'Al masar', amount: 900.5, cleared: false }),
+    row(2, '10', '12:38', { kind: 'transfer', source: 'pdf', customer: 'saj', amount: 0 }),
+    row(3, '11', '10:45', { kind: 'transfer', source: 'pdf', customer: 'SAJ INTERNATIONAL INVESTMENT COMPANY', amount: 100 }),
+    row(4, '11', '10:37', { kind: 'transfer', source: 'pdf', customer: 'sen', amount: 0 }),
+    row(5, '11', '14:15', { kind: 'cash', customer: 'ATLAS KITCHEN', amount: 150, text: 'cleared atlas kitchen' }),
+  ];
+  const out = sharedPaymentList({ events, approved: (typed, customer) => false });
+  assert.deepEqual(out.map((e) => [e.ref, e.customer]), [['r3', 'SAJ INTERNATIONAL INVESTMENT COMPANY'], ['r5', 'ATLAS KITCHEN'], ['r1', 'Al masar']]); // both old PDFs are gone, the typed name stands
+  const items = receivedItems(out, { from: '2026-11-01', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  assert.deepEqual(items.unread, []);
+  // a named receipt nothing later explains stays, and so does one that fits no later payment but has a usable name
+  const keep = sharedPaymentList({ events: [row(6, '10', '09:00', { kind: 'transfer', source: 'pdf', customer: 'zeta wood pressing', amount: 0 }), row(7, '11', '10:00', { kind: 'transfer', source: 'pdf', customer: 'OMEGA CO', amount: 50 })] });
+  assert.deepEqual(keep.map((e) => e.ref), ['r6', 'r7']);
+  // the file name carries the name: «al atlas.pdf» with a fragment as its customer
+  const byFile = sharedPaymentList({ events: [row(8, '11', '10:37', { kind: 'transfer', source: 'pdf', customer: 'sen', file: 'al atlas.pdf', amount: 0 }), row(9, '11', '14:15', { kind: 'cash', customer: 'ATLAS KITCHEN', amount: 150, text: 'cleared' }), row(10, '11', '15:00', { kind: 'cash', customer: 'NOVA CO', amount: 10, text: 'cash from NOVA CO 10' })] });
+  assert.ok(!byFile.some((e) => e.ref === 'r8'));
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes('async function nameByQbo(items)') && index.includes('...(fileName ? { file: fileName } : {})')); // the report names customers as QuickBooks does; the receipt keeps its file name
+});
