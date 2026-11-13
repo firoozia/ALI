@@ -1598,3 +1598,12 @@ test('the payer check runs on a customer list: an unknown company is flagged, a 
   assert.ok(src.includes("const listState = asRole === 'payment' ? await warmCustomers() : null;") && src.includes('QuickBooks customer check: ') && src.includes("NOT done — ") && src.includes('payerCheck(event.customer, qboCustomerNames())'));
   assert.ok(src.includes("if (asRole === 'payment' && unknownPayer(event)) event.unknownCustomer = true;") && src.includes('canon(ev.customer)') && src.includes("if (role === 'payment') await warmCustomers();")); // the simulation and the real group both read the list and judge the payer
 });
+
+test('payer check on live-shaped customer names: a leading part of the QuickBooks name matches (words in order), another order of the same words matches, a different brand never does', async () => {
+  const { payerCheck } = await import('../src/simtext.js');
+  const names = ['ALIA WOOD PRESSING L.L.C', 'ALIA KITCHEN DOORS', 'MASTER WOOD', 'TIGER INDUSTRIES COMPANY LLC', 'AL MASAR SAHIH', 'MUNICH DOOR KITCHEN TRADING LLC', 'ATLAS KITCHEN', 'BLUE SKY TRADING LLC', 'AL AHLIA KITCHEN'];
+  const want = { 'Alia wood': 'ALIA WOOD PRESSING L.L.C', tiger: 'TIGER INDUSTRIES COMPANY LLC', 'MASTER WOOD': 'MASTER WOOD', 'Al masar': 'AL MASAR SAHIH', 'Munich kitchen door': 'MUNICH DOOR KITCHEN TRADING LLC', atlas: 'ATLAS KITCHEN' };
+  for (const [typed, full] of Object.entries(want)) { const c = payerCheck(typed, names); assert.equal(c.known, true, typed); assert.equal(c.resolved, full, typed); }
+  assert.equal(payerCheck('Blue Ocean Trading', names).known, false); assert.equal(payerCheck('Al masar', ['MASTER WOOD']).known, false); // «Al masar» never becomes MASTER WOOD
+  assert.equal(payerCheck('alia', names).how, 'fits several customers'); assert.equal(payerCheck('wood', names).known, false);
+});
