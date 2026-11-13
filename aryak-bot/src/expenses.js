@@ -86,6 +86,10 @@ export function expenseAsk(text) {
   if (!named) return null;
   const rest = s.replace(/(?:^|[^a-z])(?:atossa|atosa|atousa|atoosa)(?![a-z])|آتوسا|اتوسا/gi, ' ').trim();
   if (!rest) return 'today'; // only her name: the day's list
+  { // «Atossa report», «Atossa expenses week», «اتوسا گزارش ماه»
+    const rm = /^(?:reports?|expenses?|گزارش(?:\s+هزینه(?:‌ها)?)?|هزینه(?:‌ها)?)\s*(today|week|weekly|month|monthly|all|امروز|هفته|ماه|همه)?$/iu.exec(rest);
+    if (rm) { const w = String(rm[1] || 'today').toLowerCase(); return /week|هفته/.test(w) ? 'week' : /month|ماه/.test(w) ? 'month' : /all|همه/.test(w) ? 'all' : 'today'; }
+  }
   if (!/(?:expenses?|هزینه)/i.test(rest) || !/(?:check|show|list|report|summary|total|what|how much|all|every|بررسی|نشان|لیست|گزارش|مجموع|همه|کل)/i.test(rest)) return null;
   if (/(?:^|[^a-z])(?:month|monthly)(?![a-z])|ماه/i.test(rest)) return 'month';
   if (/(?:^|[^a-z])(?:week|weekly)(?![a-z])|هفته/i.test(rest)) return 'week';

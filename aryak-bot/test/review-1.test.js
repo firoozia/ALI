@@ -1417,3 +1417,16 @@ test('the same expense picks work in the owner\'s own chat (every form), and a p
   assert.ok(index.includes("const said = await pickMethodOnDone(ic.pick, ic.id); if (said) return [said];")); // the owner's chat answers in the owner's chat
   assert.ok(index.includes('async function replayExpensePicks()') && index.includes("(e.history || []).some((h) => h.at > m.at)") && index.includes('if (done[m.id]) continue;')); // once, and never over a later change
 });
+
+test('in the expenses group only a message that starts with her name is answered: «Atossa report [week|month]» and «Atossa cash box» for the owner and the allowed staff, built now', async () => {
+  const { expenseAsk } = await import('../src/expenses.js');
+  const { parseCashBoxCommand } = await import('../src/cashbox.js');
+  const { stripBotName } = await import('../src/namelead.js');
+  for (const [t, r] of [['Atossa report', 'today'], ['Atossa expenses', 'today'], ['Atossa report today', 'today'], ['Atossa report week', 'week'], ['atossa report month', 'month'], ['Atossa, expenses week', 'week'], ['اتوسا گزارش', 'today'], ['اتوسا گزارش هفته', 'week'], ['اتوسا گزارش ماه', 'month'], ['Atossa', 'today'], ['Atossa check all expenses in this group', 'all']]) assert.equal(expenseAsk(t), r, t);
+  for (const t of ['Report', 'Cash box', 'report week', 'hello Atossa report']) assert.equal(expenseAsk(t), null, t); // without her name at the start: silence
+  for (const t of ['Atossa cash box', 'Atossa cashbox', 'اتوسا صندوق', 'atossa, cash box']) assert.equal(parseCashBoxCommand(stripBotName(t))?.op, 'report', t);
+  assert.equal(parseCashBoxCommand(stripBotName('Cash box'))?.op, 'report'); // the command itself is the same as in the owner's chat; the name is what the group requires
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("if (mayEdit && startsWithName(text, config.botNames) && parseCashBoxCommand(stripBotName(text))?.op === 'report')")); // the name at the start AND the owner / allowed staff
+  assert.ok(index.includes('const asked = mayEdit ? expenseAsk(text) : null;')); // the report asks are for them only
+});

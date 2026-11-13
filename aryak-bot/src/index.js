@@ -72,9 +72,10 @@ import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
-import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, rederiveCashOut } from './cashbox.js';
+import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, parseCashBoxCommand, rederiveCashOut } from './cashbox.js';
 import { answerAdd, requestAdd, undoAdd } from './addentries.js';
 import { isInvoiceFile, replyNameAmount } from './paymentfix.js';
+import { stripBotName } from './namelead.js';
 import { RawLog } from './rawlog.js';
 import { typedFitsName } from './qboname.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
@@ -3281,9 +3282,9 @@ async function expensesTurn(raw, groupId, info) {
   }
   if (!text) return false;
   // editing / deleting by number and the 1 / 2 on its preview: only a message that starts with her name, only the owner and the people he authorized
+  const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
+  const mayEdit = !!raw.key.fromMe || staffChecker(config.ownerNumbers, lids(info.lidToPhone))(who) === true || qboAuth.has(who, 'invoice', lids(info.lidToPhone)) || qboAuth.has(who, 'statement', lids(info.lidToPhone));
   {
-    const who = { sender: raw.key.participant, senderAlt: raw.key.participantAlt };
-    const mayEdit = !!raw.key.fromMe || staffChecker(config.ownerNumbers, lids(info.lidToPhone))(who) === true || qboAuth.has(who, 'invoice', lids(info.lidToPhone)) || qboAuth.has(who, 'statement', lids(info.lidToPhone));
     const ex = parseExpenseEdit(text);
     if (ex && startsWithName(text, config.botNames) && mayEdit) { await say(await expenseEditReply(ex, groupId, by)); return true; }
     if (/^\s*[12]\s*$/.test(text) && mayEdit) { const answer = answerExpenseEdit(expenseStore, groupId, by, text.trim()); if (answer) { await say(answer); return true; } }
@@ -3296,7 +3297,9 @@ async function expensesTurn(raw, groupId, info) {
   }
   const done = handleReply(expenseStore, by, parseExpenseReply(text), config.timezone);
   if (done) { await say(done.text); if (done.dupCheck) await afterExpenseEntry(done.entry, say, true); return true; }
-  const asked = expenseAsk(text); // «Atossa check all expenses in this group» / only her name: the list, in the group
+  // «Atossa cash box» / «اتوسا صندوق»: the month's cash box, built now (only the owner and the allowed staff, only when the message starts with her name)
+  if (mayEdit && startsWithName(text, config.botNames) && parseCashBoxCommand(stripBotName(text))?.op === 'report') { await say((await cashBoxMonth(todayDubai().slice(0, 7))).text); return true; }
+  const asked = mayEdit ? expenseAsk(text) : null; // «Atossa report [week|month]», «Atossa expenses», only her name: the list, in the group, for the owner and the allowed staff only
   if (asked) {
     await say(await expensesReportText(asked));
     return true;
