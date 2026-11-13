@@ -169,7 +169,7 @@ export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash
  * The cash box report with QuickBooks as the source. Every QBO line is compared with the WhatsApp posts (amount +-1 AED, date +-3 days): 🟢 posted and in QuickBooks; ⚪ in QuickBooks with no post;
  * 🔴 posted and not in QuickBooks. [posts]: { cashIn: [{ amount, at }], outs: [{ kind, amount, at, employee }], expenses: [{ amount, at, vendor }] }.
  */
-export function cashBoxReportQbo({ month, data, posts, openingOverride = null, timeZone = 'Asia/Dubai', swapCodeOf = () => '', accountName = 'Petty Cash', swapInfoOf = () => null, isCustomer = null }) {
+export function cashBoxReportQbo({ month, data, posts, openingOverride = null, checkedAt = '', timeZone = 'Asia/Dubai', swapCodeOf = () => '', accountName = 'Petty Cash', swapInfoOf = () => null, isCustomer = null }) {
   const label = month.slice(5, 7) + '/' + month.slice(0, 4); const first = '01/' + month.slice(5, 7);
   const dayOfIso = (iso) => Math.floor(Date.parse(iso + 'T00:00:00Z') / 86400000);
   const isoOf = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
@@ -263,7 +263,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, t
   const totalOut = expTotal + sum(data.transfersOut);
   const remaining = Math.round((totalIn - totalOut) * 100) / 100;
   const text = [
-    '📦 *Cash box — ' + label + '*', SEP, SEP,
+    '📦 *Cash box — ' + label + '*', ...(checkedAt ? ['checked now ' + checkedAt] : []), SEP, SEP,
     '💵 *Cash in*', cell('Cash from customers', cashFromCustomers), ...(starTotal ? [cell('⭐ No invoice needed', starTotal)] : []), ...(transfersInTotal ? [cell('Transfers in', transfersInTotal)] : []), ...inExtra, SEP, SEP,
     '💸 *Cash out*', '', blocks.length ? blocks.join('\n' + SEP + '\n') : 'Nothing left the cash box.', SEP, SEP,
     '*Total in (month): ' + money(totalIn) + ' AED*', '*Total out (month): ' + money(totalOut) + ' AED*', '*Net for the month: ' + money(remaining) + ' AED*',

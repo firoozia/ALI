@@ -75,6 +75,7 @@ import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, rederiveCashOut } from './cashbox.js';
 import { answerAdd, requestAdd, undoAdd } from './addentries.js';
 import { isInvoiceFile } from './paymentfix.js';
+import { RawLog } from './rawlog.js';
 import { typedFitsName } from './qboname.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
@@ -590,6 +591,19 @@ function voidMessage(groupId, id) {
   if (expenses) expenseStore.save();
   logger.info('deleted message ' + id + ': ' + gone + ' record(s) removed' + (expenses ? ', ' + expenses + ' expense(s) cancelled' : ''));
   return gone + expenses;
+}
+const rawLog = new RawLog(path.join(config.authDir, 'rawlog')); // the group messages as delivered, with later edits and deletions: a report is judged from these, never from an earlier verdict
+const hhmm = () => new Intl.DateTimeFormat('en-GB', { timeZone: config.timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+function logRaw(raw) {
+  const jid = raw?.key?.remoteJid || '';
+  if (!jid.endsWith('@g.us')) return;
+  const content = normalizeMessageContent(raw.message);
+  if (!content || content.protocolMessage || content.reactionMessage) return;
+  const doc = content.documentMessage; const img = imageOf(content);
+  const ctx = (content.extendedTextMessage || content.documentMessage || content.imageMessage || content.videoMessage || {}).contextInfo || {};
+  rawLog.add({ t: 'msg', id: raw.key.id, chat: jid, at: (Number(raw.messageTimestamp) || 0) * 1000 || Date.now(), sender: raw.key.participant || '', name: raw.pushName || '', fromMe: !!raw.key.fromMe,
+    text: String(textOf(content) || '').slice(0, 1000), caption: String(img?.caption || doc?.caption || '').slice(0, 500), file: doc?.fileName || '', mime: doc?.mimetype || img?.mimetype || '',
+    quoted: ctx.stanzaId || '', quotedText: String(textOf(normalizeMessageContent(ctx.quotedMessage)) || '').slice(0, 200) });
 }
 const payRef = (groupId, id) => createHash('sha256').update(`${groupId}|${id}`).digest('hex').slice(0, 24); // the reference of a payment entry made from message [id]
 
@@ -3252,10 +3266,11 @@ async function invoiceLookupFor(events) {
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
   return lookup;
 }
-const expensesReportText = async (kind) => { const r = kind === 'all' ? { from: config.monitorFrom, to: todayDubai(), label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(todayDubai()) } : rangeOf(kind, todayDubai()); return expensesReport(expenseStore.done(r), qbo.connected && !qbo.paused ? await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)) : [], r.label); };
+const expensesReportText = async (kind) => { const r = kind === 'all' ? { from: config.monitorFrom, to: todayDubai(), label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(todayDubai()) } : rangeOf(kind, todayDubai()); return expensesReport(expenseStore.done(r), qbo.connected && !qbo.paused ? await qbRows('Purchase', dayPlus(r.from, -14), dayPlus(r.to, 14)) : [], r.label, hhmm()); };
 const cashBoxStore = new CashBoxStore(path.join(config.authDir, 'qbo'));
 /** The cash box of a month (month to date for the running month): the opening balance (the owner's, else the previous month's remaining), cash in, cash out, the QuickBooks Transfers. */
 async function cashBoxMonth(month, depth = 0) {
+  await qboDesk.customers(true).catch(() => {});
   const today = todayDubai();
   const from = month + '-01';
   const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
@@ -3263,7 +3278,7 @@ async function cashBoxMonth(month, depth = 0) {
   const opening = null; // only the month's own movements: no opening balance carries over
   const r = { from, to, label: month };
   const records = [...await qbRows('Payment', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('SalesReceipt', dayPlus(from, -3), dayPlus(to, 3)), ...await qbRows('Deposit', dayPlus(from, -3), dayPlus(to, 3))];
-  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer, raw: rawLog.messages('', Date.now() - 45 * 86400000) });
   const deliveries = tracker.events.filter((e) => e.type === 'delivery');
   const cashIn = receivedItems(events, r, { timeZone: config.timezone, lookup: new Map() }).filter((i) => i.kind === 'cash' && !i.foreign).flatMap((i) => { // the driver's cash is split by the customers of his «collected» posts, each compared with QuickBooks on its own
     if (i.source !== 'driver') return [i];
@@ -3284,7 +3299,7 @@ async function cashBoxMonth(month, depth = 0) {
     try {
       const data = await fetchCashBoxQbo(qbo, { from, to });
       const swapRows = await qbRows('Payment', dayPlus(from, -7), dayPlus(to, 7));
-      if (data) return cashBoxReportQbo({ month, data, timeZone: config.timezone,
+      if (data) return cashBoxReportQbo({ month, data, timeZone: config.timezone, checkedAt: hhmm(),
         isCustomer: isOurCustomer,
         swapInfoOf: (ref) => { // a post whose digits look swapped against a QuickBooks payment of the same customer: its #G question (made now when none was asked yet)
           const known = payChecks.openIds().find((i) => payChecks.get(i)?.action === 'swap' && payChecks.get(i)?.ref === ref);
@@ -3343,7 +3358,7 @@ function logNotFound(items, records) {
 async function receivedCheck(name) {
   const to = todayDubai(); const from = clampRange({ from: dayPlus(to, -14), to }).from;
   const records = [...await qbRows('Payment', dayPlus(from, -5), dayPlus(to, 5)), ...await qbRows('SalesReceipt', dayPlus(from, -5), dayPlus(to, 5)), ...await qbRows('Deposit', dayPlus(from, -5), dayPlus(to, 5))];
-  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer, raw: rawLog.messages('', Date.now() - 45 * 86400000) });
   const items = receivedItems(events, { from, to }, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) }).filter((i) => sameBrandName(name, i.customer));
   if (!items.length) return `No received entry of "${name}" was found from ${from.split('-').reverse().join('/')} on.`;
   const got = matchReceipts(items, records, (n) => cutAliases.resolve(n));
@@ -3455,27 +3470,29 @@ async function sheetNamesUndo(id) {
 }
 
 async function receivedReportText(kind) {
+  await qboDesk.customers(true).catch(() => {}); // QuickBooks' customer names are read now, not from a copy
   const r = clampRange(rangeOf(kind, todayDubai()));
   const records = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
-  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer }); // the same list as «payments»: names, repeats, cheques
+  const events = sharedPaymentList({ events: tracker.events, payments: records, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer, raw: rawLog.messages('', Date.now() - 45 * 86400000) }); // the same list as «payments»: names, repeats, cheques
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   logNotFound(items, records);
   const openInvoices = kind === 'today' ? await qbo.query("select * from Invoice where Balance > '0'").catch(() => []) : [];
   const linkedIds = [...new Set(records.filter((x) => x._type === 'Payment').flatMap((x) => (x.Line || []).flatMap((l) => (l.LinkedTxn || []).filter((t) => t.TxnType === 'Invoice').map((t) => String(t.TxnId)))))].filter((id) => /^[0-9]+$/.test(id) && !openInvoices.some((i) => String(i.Id) === id)).slice(0, 60);
   const linkedInvoices = linkedIds.length ? await qbo.query("select * from Invoice where Id in ('" + linkedIds.join("','") + "')").catch(() => []) : []; // the number of every invoice a payment of the day is linked to (fully paid ones too)
   const recentInvoices = await qbRows('Invoice', dayPlus(r.from, -3), dayPlus(r.to, 1));
-  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, linkedInvoices, recentInvoices, deliveries: tracker.events.filter((e) => e.type === 'delivery'), timeZone: config.timezone, checks: kind === 'today' ? payChecks : null });
+  const text = receivedText(items, { title: r.label, records, aliasOf: (n) => cutAliases.resolve(n), openInvoices, linkedInvoices, recentInvoices, deliveries: tracker.events.filter((e) => e.type === 'delivery'), timeZone: config.timezone, checkedAt: hhmm(), checks: kind === 'today' ? payChecks : null });
   return text; // the «payments to match» list is gone: its information is inside each line of the report
 }
 async function weeklyCheckReport() {
+  await qboDesk.customers(true).catch(() => {});
   const r = clampRange(rangeOf('week', todayDubai()));
   const purchases = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
-  const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer });
+  const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer, raw: rawLog.messages('', Date.now() - 45 * 86400000) });
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });
   const openInvoices = await qbo.query("select * from Invoice where Balance > '0'").catch(() => []);
   const recentInvoices = await qbRows('Invoice', dayPlus(r.from, -3), dayPlus(r.to, 1));
-  return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label, openInvoices, recentInvoices });
+  return weeklyCheckText({ expenses: expenseStore.done(r), purchases, items, payments, aliasOf: (n) => cutAliases.resolve(n), title: r.label, openInvoices, recentInvoices, checkedAt: hhmm() });
 }
 async function monthlyFullReport() {
   const r = rangeOf('month', todayDubai());
@@ -3696,11 +3713,12 @@ async function start() {
     for (let raw of messages) {
       { // a message the person DELETED («This message was deleted»): every record made from it goes too (a wrong cut post, a wrong payment)
         const rv = normalizeMessageContent(raw?.message)?.protocolMessage;
-        if (rv && (rv.type === 0 || rv.type === 'REVOKE') && rv.key?.id) { try { voidMessage(rv.key.remoteJid || raw.key.remoteJid, rv.key.id); } catch (e) { logger.warn('deleted message: ' + e.message); } continue; }
+        if (rv && (rv.type === 0 || rv.type === 'REVOKE') && rv.key?.id) { try { rawLog.add({ t: 'revoke', id: rv.key.id, chat: rv.key.remoteJid || raw.key.remoteJid }); voidMessage(rv.key.remoteJid || raw.key.remoteJid, rv.key.id); } catch (e) { logger.warn('deleted message: ' + e.message); } continue; }
         if (rv && (rv.type === 14 || rv.type === 'MESSAGE_EDIT') && rv.key?.id && rv.editedMessage) { // an EDITED message (amount, code, customer, caption): what was recorded from the old text goes, the new text is read as that message
-          try { const gid = rv.key.remoteJid || raw.key.remoteJid; voidMessage(gid, rv.key.id); handled.delete(rv.key.id); raw = { ...raw, key: { ...raw.key, id: rv.key.id, remoteJid: gid }, message: rv.editedMessage }; logger.info('edited message ' + rv.key.id + ': re-read'); } catch (e) { logger.warn('edited message: ' + e.message); continue; }
+          try { const gid = rv.key.remoteJid || raw.key.remoteJid; rawLog.add({ t: 'edit', id: rv.key.id, chat: gid, text: String(textOf(normalizeMessageContent(rv.editedMessage)) || '').slice(0, 1000) }); voidMessage(gid, rv.key.id); handled.delete(rv.key.id); raw = { ...raw, key: { ...raw.key, id: rv.key.id, remoteJid: gid }, message: rv.editedMessage, edited: true }; logger.info('edited message ' + rv.key.id + ': re-read'); } catch (e) { logger.warn('edited message: ' + e.message); continue; }
         }
       }
+      if (!raw.edited) { try { logRaw(raw); } catch (e) { logger.warn('raw log: ' + e.message); } }
       const verdict = shouldProcess({ type, raw, seen: handled, ownerSeen });
       if (!verdict.ok) {
         // A refused message is never silent, except bulk history after a restart (counted in one line).

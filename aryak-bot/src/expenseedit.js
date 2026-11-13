@@ -9,7 +9,7 @@ const methodName = (m) => (m === 'card' ? 'card' : 'cash');
 const typeLabel = (t) => TYPES[t]?.label || 'Other';
 
 /** The expenses report: a block per type, a line per expense (🟢 matched to a QuickBooks expense: vendor + amount ±1 + date ±3 days; 🔴 not yet), then the totals. [records]: the QuickBooks Purchase rows. */
-export function expensesReport(entries, records, title) {
+export function expensesReport(entries, records, title, checkedAt = '') {
   if (!entries.length) return '🧾 *Expenses — ' + title + '*\nNo expense was recorded.';
   const matched = matchExpenses(entries, records || []);
   const matches = matched.found;
@@ -33,7 +33,7 @@ export function expensesReport(entries, records, title) {
   const total = entries.reduce((n, e) => n + Number(e.amount), 0);
   const card = entries.filter((e) => e.method === 'card').reduce((n, e) => n + Number(e.amount), 0);
   const cash = total - card;
-  return ['🧾 *Expenses — ' + title + '*', SEP, SEP, blocks.join('\n' + SEP + '\n'), SEP, SEP, '*Total: ' + money(total) + ' AED*', 'Cash box ' + money(cash) + ' | Bank card ' + money(card), '🟢 In QuickBooks: ' + found.size + '    🔴 Not yet: ' + (entries.length - found.size), ...(toFix.length ? [SEP, '⚠ *To fix*', ...toFix] : [])].join('\n');
+  return ['🧾 *Expenses — ' + title + '*', ...(checkedAt ? ['checked now ' + checkedAt] : []), SEP, SEP, blocks.join('\n' + SEP + '\n'), SEP, SEP, '*Total: ' + money(total) + ' AED*', 'Cash box ' + money(cash) + ' | Bank card ' + money(card), '🟢 In QuickBooks: ' + found.size + '    🔴 Not yet: ' + (entries.length - found.size), ...(toFix.length ? [SEP, '⚠ *To fix*', ...toFix] : [])].join('\n');
 }
 
 /**

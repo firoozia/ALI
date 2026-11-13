@@ -202,8 +202,8 @@ export function migrateOldPayments({ events, invoiceRows = [], aliasOf = () => '
  * The payment entries as ONE list for every report (payments, money received, the Thursday check): the same cleaned names (no «receipt + clear», «cheaque», «OMR =»), a cheque
  * recognised by its word, the same repeats dropped (a repeat the owner answered «dup» is gone; one not yet answered counts once; «separate» keeps both). Simulated entries are left out.
  */
-export function sharedPaymentList({ events: storedEvents, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0, isKnown = () => false }) {
-  const list = cleanPaymentEvents({ events: fixStoredPayments(storedEvents).map(rederiveCashOut), since, isKnown }); // an old row «18000 deposit to boss» is re-read as cash to the boss, not as customer cash
+export function sharedPaymentList({ events: storedEvents, payments = [], aliasOf = () => '', timeZone = 'Asia/Dubai', dups = new PaymentDups(''), since = 0, isKnown = () => false, raw = [] }) {
+  const list = cleanPaymentEvents({ events: fixStoredPayments(storedEvents, timeZone, raw).map(rederiveCashOut), since, isKnown }); // an old row «18000 deposit to boss» is re-read as cash to the boss, not as customer cash
   return dedupePayments(list, { payments, aliasOf, timeZone, dups });
 }
 

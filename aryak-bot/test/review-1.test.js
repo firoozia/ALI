@@ -1294,3 +1294,30 @@ test('one reading of the money rows for every report: the weekly check says what
   const red = (text) => [...text.matchAll(/\*([^*\n]+)\*\n🔴 ([\d,.]+)/g)].map((m) => m[1] + m[2]).sort();
   assert.deepEqual(red(week), red(day));
 });
+
+test('reports are built NOW from the raw messages: a row stored by old code is dropped when today\'s rules say its message is no money; edits and deletions of the raw message count; the header says when it was checked', async () => {
+  const { RawLog } = await import('../src/rawlog.js');
+  const { sharedPaymentList } = await import('../src/payments.js');
+  const { receivedItems, receivedText } = await import('../src/expenses.js');
+  const { createHash } = await import('node:crypto');
+  const chat = '1203@g.us'; const at = Date.parse('2026-11-12T12:54:00+04:00');
+  const ref = (id) => createHash('sha256').update(chat + '|' + id).digest('hex').slice(0, 24);
+  const log = new RawLog('', () => at);
+  log.add({ t: 'msg', id: 'M1', chat, at, text: '3000 aed delivery', sender: 'u1' });
+  log.add({ t: 'msg', id: 'M2', chat, at, text: 'cash from ZETA CO 500', sender: 'u1' });
+  log.add({ t: 'msg', id: 'M3', chat, at, text: 'cash from NOVA CO 9000', sender: 'u2' });
+  log.add({ t: 'edit', id: 'M3', chat, text: 'cash from NOVA CO 900' }); log.add({ t: 'msg', id: 'M4', chat, at, text: 'cash from OMEGA CO 40', sender: 'u2' }); log.add({ t: 'revoke', id: 'M4', chat });
+  const msgs = log.messages(chat);
+  assert.deepEqual(msgs.map((m) => [m.id, m.text]), [['M1', '3000 aed delivery'], ['M2', 'cash from ZETA CO 500'], ['M3', 'cash from NOVA CO 900']]); // the edit applied, the deleted one gone
+  const old = (id, customer, amount) => ({ type: 'payment', kind: 'cash', currency: 'AED', ref: ref(id), at, customer, amount, lines: [] }); // rows stored by OLD code: no text kept
+  const stored = [old('M1', 'UNKNOWN', 3000), old('M2', 'ZETA CO', 500), old('M3', 'NOVA CO', 900)];
+  const list = sharedPaymentList({ events: stored, raw: msgs });
+  assert.deepEqual(list.map((e) => e.customer), ['ZETA CO', 'NOVA CO']); // «3000 aed delivery» no longer shows, though the stored row never kept its words
+  assert.equal(sharedPaymentList({ events: stored }).length, 3); // without the raw log nothing can be re-judged: the stored row stays
+  const items = receivedItems(list, { from: '2026-11-12', to: '2026-11-12' }, { timeZone: 'Asia/Dubai', lookup: new Map() });
+  const text = receivedText(items, { title: '12/11', records: [], now: at + 3600000, checkedAt: '18:42' });
+  assert.match(text, /^💰 \*Money received — 12\/11\*\nchecked now 18:42\n/);
+  assert.doesNotMatch(text, /3,000\.00/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("raw: rawLog.messages('', Date.now() - 45 * 86400000)") && index.includes('await qboDesk.customers(true)')); // every report reads the raw log and QuickBooks' names now
+});

@@ -424,6 +424,7 @@ export function receivedText(items, options) {
     return out;
   };
   const groups = [['cash', '💵 *Cash*'], ['cheque', '🧾 *Cheques*'], ['bank', '🏦 *Bank transfers*']];
+  const checked = options.checkedAt ? ['checked now ' + options.checkedAt] : [];
   const unreadLines = unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check');
   if (!items.length) return unreadLines.length ? ['💰 *Money received — ' + title + '*', ...unreadLines].join('\n') : `💰 *Money received — ${title}*\nNo money was recorded.`;
   const needsOk = []; let green = 0; let red = 0; let stars = 0;
@@ -527,7 +528,7 @@ export function receivedText(items, options) {
     }),
   ];
   return [
-    `💰 *Money received — ${title}*`, SEP, SEP,
+    `💰 *Money received — ${title}*`, ...checked, SEP, SEP,
     sections.join('\n' + SEP + '\n' + SEP + '\n'),
     SEP, SEP,
     `*Total: ${money(total)} AED*`,
@@ -541,7 +542,7 @@ export function receivedText(items, options) {
 }
 
 /** The Thursday check: what the office has not recorded in QuickBooks yet (expenses and money received of the week). */
-export function weeklyCheckText({ expenses, purchases, items: items0, payments, aliasOf = () => '', title, openInvoices = [], recentInvoices = [] }) {
+export function weeklyCheckText({ expenses, purchases, items: items0, payments, aliasOf = () => '', title, openInvoices = [], recentInvoices = [], checkedAt = '' }) {
   const exp = matchExpenses(expenses, purchases);
   const prep = prepareReceived(items0, { records: payments, aliasOf, openInvoices, recentInvoices }); // the same reading of the rows as «received today»
   const items = prep.items; const got = prep.matched;
@@ -554,7 +555,7 @@ export function weeklyCheckText({ expenses, purchases, items: items0, payments, 
   if (methodDiffs.length) blocks.push(['⚠ *To fix: the payment method differs from QuickBooks*', ...methodDiffs.map((f) => '#' + f.entry.id + ' posted ' + f.entry.method + ', QuickBooks ' + (f.record.AccountRef?.name || 'account') + ' (' + qbKindOf(f.record) + ') — please fix')].join('\n'));
   if (lostMoney.length) blocks.push(['💰 *Money received not found in QuickBooks*', '', withSeparators(lostMoney.map((it) => { const best = it.rejected ? null : closestMatch(it, payments, openInvoices, aliasOf); return `*${(it.customer || 'UNKNOWN').toUpperCase()}*\n🔴 ${money(it.amount)}  ${it.kind === 'bank' ? 'transfer' : it.kind} ${dmy(it.day)}${best && Math.abs(best.diff) <= 1 && best.kind === 'invoices' ? ' (pays ' + best.label + ')' : ''}`; }))].join('\n'));
   if ((prep.unreadAt || []).length) blocks.push(prep.unreadAt.map((t) => '⚠ receipt PDF ' + t + ', amount not read — check').join('\n'));
-  return [`*Weekly check — ${title}*`, blocks.join(`\n${SEP}\n`)].join('\n');
+  return [`*Weekly check — ${title}*`, ...(checkedAt ? ['checked now ' + checkedAt] : []), blocks.join(`\n${SEP}\n`)].join('\n');
 }
 
 /** The owner's monthly report: the group expenses by type, what only QuickBooks has (salaries, rent …), what both have (counted once), the total of the company. */

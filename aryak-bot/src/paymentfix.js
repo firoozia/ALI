@@ -1,7 +1,9 @@
 // What is NOT customer money, read from the Confirmation group's own words, for new posts and for rows already stored (re-derived on read, nothing rewritten):
 //   a question about stock («307 available one roll in China stock?»), the bank's SMS («… is credited with AED 708.75 for Aani Instant Payments …») whose sentence is never a customer and which is
 //   a TRANSFER (or a cheque clearing), our own invoice PDF forwarded, and a word like «delivery» in the place of a customer.
+import { createHash } from 'node:crypto';
 import { isClearingText } from './payments.js';
+import { eventsFromCaption } from './captionevents.js';
 
 export const isStockQuestion = (text) => /(?:^|[^a-z])(?:available|stock|qty|quantity)(?![a-z])/i.test(String(text || '')) || /\?\s*$/.test(String(text || ''));
 const BANK = /credited (?:with|to your)|has been credited|\bAani\b|\bIPP\b|inward (?:remittance|transfer)|outward cheque clearing|login to online banking/i;
@@ -30,7 +32,19 @@ const cleanName = (n) => String(n || '').replace(/[-_.\s]+$/g, '').trim();
 const dayKey = (ms, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
 
 /** The stored payment rows as they really are (a changed copy; the stored ones are untouched). */
-export function fixStoredPayments(events, timeZone = 'Asia/Dubai') {
+export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages = []) {
+  // RE-JUDGED from the raw message: a row made from a plain text message that today's rules say is no money (an amount beside order words, a stock question, «3000 aed delivery») is dropped, whatever the
+  // code that stored it thought; the message is read as it stands now (edits applied, deleted ones gone). The owner's answers on the row are not touched (the row is only dropped or kept).
+  if (rawMessages.length) {
+    const bad = new Set();
+    for (const m of rawMessages) {
+      const text = String(m.text || m.caption || '').trim();
+      if (!text || m.quoted || m.file) continue; // a reply or a document is read with what it quotes
+      const verdict = eventsFromCaption('payment', text);
+      if (verdict?.ignore) bad.add(createHash('sha256').update(m.chat + '|' + m.id).digest('hex').slice(0, 24));
+    }
+    if (bad.size) events = events.filter((e) => !(e.type === 'payment' && bad.has(e.ref)));
+  }
   let list = events.filter((e) => !(e.type === 'payment' && isStockQuestion(e.text || e.customer) && !isBankSms(e.text || e.customer) && !/cheque|chq/i.test(e.text || ''))); // a question about stock is no money
   list = list.filter((e) => !(e.type === 'payment' && e.kind === 'cash' && (driverCashAmount(e.text) > 0 || (!e.text && WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()))))); // «3000 aed delivery»: the amount to collect on delivery, not money received
   list = list.map((e) => {

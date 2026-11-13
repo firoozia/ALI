@@ -91,8 +91,8 @@ export class QboDesk {
     this.cache = { at: 0, customers: [] };
   }
 
-  async customers() {
-    if (Date.now() - this.cache.at < 10 * 60 * 1000 && this.cache.customers.length) return this.cache.customers;
+  async customers(fresh = false) { // [fresh]: a report somebody asked for reads the customer list now
+    if (!fresh && Date.now() - this.cache.at < 10 * 60 * 1000 && this.cache.customers.length) return this.cache.customers;
     const rows = await this.qbo.query('select Id, DisplayName, CompanyName, FullyQualifiedName, Balance, Active from Customer');
     this.cache = { at: Date.now(), customers: rows };
     return rows;
