@@ -3253,6 +3253,19 @@ async function expensesTurn(raw, groupId, info) {
     const ex = parseExpenseEdit(text);
     if (ex && startsWithName(text, config.botNames) && mayEdit) { await say(await expenseEditReply(ex, groupId, by)); return true; }
     if (/^\s*[12]\s*$/.test(text) && mayEdit) { const answer = answerExpenseEdit(expenseStore, groupId, by, text.trim()); if (answer) { await say(answer); return true; } }
+    // «2 #E5» / «2#E5» / «#E5 2» on a DONE expense whose method differs from QuickBooks (the flag of the reports): 1 = card, 2 = cash, applied with history, answered once; no flag = said so
+    const pk = parseExpenseReply(text);
+    if (pk && pk.pick && pk.id && mayEdit) {
+      const target = expenseStore.get(pk.id);
+      if (target && target.state === 'done') {
+        const rec = await expenseInQb(target); const qk = rec ? qbKindOf(rec) : '';
+        if (!qk || qk === target.method) { await say('#' + target.id + ' has no open question; use: Atossa edit #' + target.id + ' + cash/card'); return true; }
+        const method = pk.pick === '1' ? 'card' : 'cash';
+        target.history = target.history || []; target.history.push({ at: Date.now(), before: { method: target.method } }); target.method = method; expenseStore.save();
+        await say('#' + target.id + ' ' + (TYPES[target.type]?.label || 'Other').toLowerCase() + ' ' + String(Number(target.amount)) + ' → ' + method + ' ✔');
+        return true;
+      }
+    }
   }
   const done = handleReply(expenseStore, by, parseExpenseReply(text), config.timezone);
   if (done) { await say(done.text); if (done.dupCheck) await afterExpenseEntry(done.entry, say, true); return true; }

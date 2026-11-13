@@ -26,7 +26,7 @@ export function expensesReport(entries, records, title, checkedAt = '') {
       const rec = recordOf.get(e); const kind = rec ? qbKindOf(rec) : '';
       const acct = rec && rec.AccountRef?.name ? '  (QuickBooks: ' + rec.AccountRef.name + ')' : '';
       const wrong = kind && e.method && kind !== e.method ? '  ⚠ posted ' + e.method + ', QuickBooks ' + (rec.AccountRef?.name || 'account') + ' (' + kind + ') — please fix' : '';
-      if (wrong) toFix.push('#' + e.id + ' posted ' + e.method + ', QuickBooks ' + (rec.AccountRef?.name || 'account') + ' (' + kind + ')');
+      if (wrong) toFix.push('#' + e.id + ' posted ' + e.method + ', QuickBooks ' + (rec.AccountRef?.name || 'account') + ' (' + kind + ') — reply 1 #' + e.id + ' = card, 2 #' + e.id + ' = cash (as QuickBooks)');
       return (found.has(e) ? '🟢 ' : '🔴 ') + money(e.amount).padEnd(8) + methodName(e.method).padEnd(7) + who.padEnd(10) + (who.length >= 10 ? ' ' : '') + '#' + e.id + (e.addedByOwner ? ' (added by owner)' : '') + (found.has(e) ? acct : '') + wrong + (hintOf.has(e) ? '\n     ↳ this looks like the amount before VAT of ' + (hintOf.get(e).EntityRef?.name || 'a QuickBooks expense') + ' ' + hintOf.get(e).TxnDate.slice(8, 10) + '/' + hintOf.get(e).TxnDate.slice(5, 7) + ' ' + money(hintOf.get(e).TotalAmt) : '');
     })].join('\n'));
   }

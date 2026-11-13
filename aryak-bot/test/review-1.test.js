@@ -1080,9 +1080,9 @@ test('expenses against ALL QuickBooks purchases: the account is shown, cash or c
   const text = expensesReport(entries, records, '11/11/2026');
   assert.match(text, /🟢 85\.50 {3}card {3}ADNOC {5}#E7 {2}\(QuickBooks: ADCB Bank\)\n/); // matches: the account is shown, no warning
   assert.match(text, /🟢 22\.48 {3}card {3}Day to Day #E3 {2}\(QuickBooks: Petty Cash\) {2}⚠ posted card, QuickBooks Petty Cash \(cash\) — please fix/);
-  assert.match(text, /⚠ \*To fix\*\n#E3 posted card, QuickBooks Petty Cash \(cash\)$/);
+  assert.match(text, /⚠ \*To fix\*\n#E3 posted card, QuickBooks Petty Cash \(cash\) — reply 1 #E3 = card, 2 #E3 = cash \(as QuickBooks\)$/);
   const week = weeklyCheckText({ expenses: entries, purchases: records, items: [], payments: [], title: 'w' });
-  assert.match(week, /⚠ \*To fix: the payment method differs from QuickBooks\*\n#E3 posted card, QuickBooks Petty Cash \(cash\) — please fix/); assert.doesNotMatch(week, /All recorded/);
+  assert.match(week, /⚠ \*To fix: the payment method differs from QuickBooks\*\n#E3 posted card, QuickBooks Petty Cash \(cash\) — reply 1 #E3 = card, 2 #E3 = cash \(as QuickBooks\)/); assert.doesNotMatch(week, /All recorded/);
   assert.equal(parseAddEntries('add expense 140.07 fuel 10/11 ENOC', '2026-11-12').entries[0].method, ''); // no method written
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("en.method = qbKindOf(rec)")); assert.ok(index.includes("state: en.method ? 'done' : 'ask_method'")); // taken from the account, else asked 1 card / 2 cash
@@ -1394,4 +1394,15 @@ test('the live shapes: the approved list\'s loose match must fit the typed name 
   assert.ok(!byFile.some((e) => e.ref === 'r8'));
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes('async function nameByQbo(items)') && index.includes('...(fileName ? { file: fileName } : {})')); // the report names customers as QuickBooks does; the receipt keeps its file name
+});
+
+test('«2 #E5» / «2#E5» / «#E5 2» on a done expense whose method differs from QuickBooks: 1 = card, 2 = cash, applied with history and answered once; the report tells how to fix it', async () => {
+  const { parseExpenseReply } = await import('../src/expenses.js');
+  for (const t of ['2 #E5', '2#E5', '#E5 2', '2 E5']) assert.deepEqual(parseExpenseReply(t), { pick: '2', id: 'E5' }, t);
+  assert.deepEqual(parseExpenseReply('1 #E5'), { pick: '1', id: 'E5' });
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("if (target && target.state === 'done') {") && index.includes("const method = pk.pick === '1' ? 'card' : 'cash';")); // 1 card, 2 cash on a done entry
+  assert.ok(index.includes("target.history.push({ at: Date.now(), before: { method: target.method } })")); // with history, like an edit
+  assert.ok(index.includes("' has no open question; use: Atossa edit #'")); // no flag: said so
+  assert.ok(index.includes("' → ' + method + ' ✔'")); // answered once, briefly
 });
