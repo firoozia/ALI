@@ -3323,7 +3323,8 @@ async function invoiceLookupFor(events) {
   if (named.length) for (const row of await qbo.query(`select * from Invoice where DocNumber in (${named.map((n) => `'${qboEscape(n)}'`).join(',')})`).catch(() => [])) lookup.set(String(row.DocNumber).toLowerCase(), row);
   return lookup;
 }
-const expensesReportText = async (kind) => { const r = kind === 'all' ? { from: config.monitorFrom, to: todayDubai(), label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(todayDubai()) } : rangeOf(kind, todayDubai()); return expensesReport(expenseStore.done(r), qbo.connected && !qbo.paused ? await qbRows('Purchase', dayPlus(r.from, -14), dayPlus(r.to, 14)) : [], r.label, hhmm()); };
+const qbExpenseRows = async (from, to) => [...await qbRows('Purchase', dayPlus(from, -14), dayPlus(to, 14)), ...await qbRows('Bill', dayPlus(from, -14), dayPlus(to, 14))]; // the one set of QuickBooks expenses every view matches against
+const expensesReportText = async (kind) => { const r = kind === 'all' ? { from: config.monitorFrom, to: todayDubai(), label: dayLabel(config.monitorFrom) + ' – ' + dayLabel(todayDubai()) } : rangeOf(kind, todayDubai()); return expensesReport(expenseStore.done(r), qbo.connected && !qbo.paused ? await qbExpenseRows(r.from, r.to) : [], r.label, hhmm()); };
 const cashBoxStore = new CashBoxStore(path.join(config.authDir, 'qbo'));
 /** The cash box of a month (month to date for the running month): the opening balance (the owner's, else the previous month's remaining), cash in, cash out, the QuickBooks Transfers. */
 async function cashBoxMonth(month, depth = 0) {
@@ -3373,7 +3374,7 @@ async function cashBoxMonth(month, depth = 0) {
   return cashBoxReport({ month, opening, cashIn, expenses, outs, transfers, timeZone: config.timezone, typeLabel: (t) => (TYPES[t]?.label || 'Other') });
 }
 /** Is this expense already recorded in QuickBooks (vendor + amount ±1 + date ±3 days)? */
-const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return null; return matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -14), dayPlus(e.day, 14))).found[0]?.record || null; }; // the matched QuickBooks purchase, or null
+const expenseInQb = async (e) => { if (!qbo.connected || qbo.paused) return null; return matchExpenses([e], await qbExpenseRows(e.day, e.day)).found[0]?.record || null; }; // the matched QuickBooks purchase, or null
 /** The approved aliases for a posted name: the cutting-group aliases, then the QuickBooks names the owner told for the sheet (sheet names), before any fuzzy match. */
 const nameAlias = (n) => cutAliases.resolve(n) || overrideFor(sheetNameStore, n);
 
@@ -3552,7 +3553,7 @@ async function receivedReportText(kind) {
 async function weeklyCheckReport() {
   await qboDesk.customers(true).catch(() => {});
   const r = clampRange(rangeOf('week', todayDubai()));
-  const purchases = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))];
+  const purchases = await qbExpenseRows(r.from, r.to);
   const payments = [...await qbRows('Payment', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('SalesReceipt', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Deposit', dayPlus(r.from, -3), dayPlus(r.to, 3))];
   const events = sharedPaymentList({ events: tracker.events, payments, aliasOf: (n) => cutAliases.resolve(n), timeZone: config.timezone, dups: paymentDups, since: monitorStartMs(), isKnown: isOurCustomer, raw: rawLog.messages('', Date.now() - 45 * 86400000), approved: approvedName });
   const items = receivedItems(events, r, { timeZone: config.timezone, lookup: await invoiceLookupFor(events) });

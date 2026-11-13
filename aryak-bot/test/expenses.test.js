@@ -105,7 +105,7 @@ test('money received, private to the owner: cash, cheques, bank transfers, each 
 
 test('the Thursday check: expenses and money of the week that the office has NOT recorded (amount ±1, date ±3 days, the vendor or customer when known); all recorded says so', () => {
   const expenses = [E('2026-11-05', 85.5, 'fuel', 'card', { vendor: 'ENOC' }), E('2026-11-06', 40, 'food', 'cash'), E('2026-11-07', 200, 'vehicles', 'card')];
-  const purchases = [{ TxnDate: '2026-11-07', TotalAmt: 85, EntityRef: { name: 'ENOC STATION' } }, { TxnDate: '2026-11-06', TotalAmt: 200, EntityRef: { name: 'GARAGE' } }];
+  const purchases = [{ TxnDate: '2026-11-07', TotalAmt: 85.5, EntityRef: { name: 'ENOC STATION' } }, { TxnDate: '2026-11-06', TotalAmt: 200, EntityRef: { name: 'GARAGE' } }];
   const m = matchExpenses(expenses, purchases);
   assert.deepEqual(m.found.map((f) => f.entry.amount), [85.5, 200]); assert.deepEqual(m.missing.map((e) => e.amount), [40]); assert.equal(m.unused.length, 0);
   assert.equal(matchExpenses([E('2026-11-05', 85.5, 'fuel', 'card', { vendor: 'ENOC' })], [{ TxnDate: '2026-11-05', TotalAmt: 85.5, EntityRef: { name: 'OTHER SHOP' } }]).missing.length, 1); // the vendor is known and differs

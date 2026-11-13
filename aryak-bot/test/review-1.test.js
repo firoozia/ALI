@@ -1404,7 +1404,7 @@ test('«2 #E5» / «2#E5» / «#E5 2» on a done expense whose method differs fr
   assert.ok(index.includes("if (!target || target.state !== 'done') return null;") && index.includes("const method = pick === '1' ? 'card' : 'cash';")); // 1 card, 2 cash on a done entry
   assert.ok(index.includes("target.history.push({ at: Math.min(at, Date.now()), before: { method: target.method } })")); // with history, like an edit
   assert.ok(index.includes("' is already ' + method + '.'") && !index.includes("' has no open question; use: Atossa edit #'")); // the owner's word wins whether or not QuickBooks can be checked; an unchanged value is said so
-  assert.ok(index.includes("matchExpenses([e], await qbRows('Purchase', dayPlus(e.day, -14), dayPlus(e.day, 14)))")); // the flag is read with the same live window as the reports
+  assert.ok(index.includes("matchExpenses([e], await qbExpenseRows(e.day, e.day))")); // the flag is read with the same live window as the reports
   assert.ok(index.includes("' → ' + method + ' ✔'")); // answered once, briefly
 });
 
@@ -1444,4 +1444,19 @@ test('the cash box pairs an expense with its QuickBooks purchase the way the wee
   assert.match(posted12, /🟢 07\/11\s+230\.00 {3}ENOC\n/); // posted five days later: still the same expense within the 14 days
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("at: Date.parse((e.date || e.day) + 'T12:00:00+04:00') || e.at, days: 14")); // the receipt date, 14 days
+});
+
+test('one matcher for every expense view: the exact amount, the receipt date first, each QuickBooks purchase once, the same vendor preferred; a 10.00 post with no 10.00 purchase is not found (no wrong match to a near amount), the same set of records feeds the report, the weekly check and the method pick; an empty report says when it was checked', async () => {
+  const { matchExpenses } = await import('../src/expenses.js');
+  const { expensesReport } = await import('../src/expenseedit.js');
+  const ent = (id, amount, day, vendor, type) => ({ id, amount, day, date: day, type: type || 'other', vendor, method: 'cash', state: 'done' });
+  const rec = (d, amt, v) => ({ TxnDate: d, TotalAmt: amt, EntityRef: { name: v }, AccountRef: { name: 'Petty Cash' } });
+  const records = [rec('2026-11-05', 21, 'A SHOP'), rec('2026-11-06', 22.48, 'B SHOP'), rec('2026-11-07', 230, 'ENOC'), rec('2026-11-09', 11, 'Z SHOP'), rec('2026-11-10', 29.4, 'C SHOP')];
+  const m = matchExpenses([ent('E2', 10, '2026-11-10', 'Part Zone'), ent('E5', 230, '2026-11-07', 'ENOC', 'fuel')], records);
+  assert.deepEqual(m.found.map((f) => f.entry.id), ['E5']); assert.deepEqual(m.missing.map((e) => e.id), ['E2']); // 10.00 is not 11.00
+  const twice = matchExpenses([ent('E7', 230, '2026-11-12', 'ENOC', 'fuel'), ent('E8', 230, '2026-11-07', 'ENOC', 'fuel')], [rec('2026-11-07', 230, 'ENOC'), rec('2026-11-12', 230, 'ENOC')]);
+  assert.deepEqual(twice.found.map((f) => [f.entry.id, f.record.TxnDate]).sort(), [['E7', '2026-11-12'], ['E8', '2026-11-07']]); // each purchase once, the nearest date
+  assert.match(expensesReport([], [], 'Today', '11:40'), /checked now 11:40\nNo expense was recorded\./);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.equal((index.match(/await qbExpenseRows\(/g) || []).length, 3); // report, weekly check, method pick
 });

@@ -245,7 +245,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, c
   // the same expense <-> QuickBooks match as the weekly check: the expense's own (receipt) date, up to 14 days apart, the amount, the vendor when both have one
   const vendorsAgree = (a, b) => !a || !b || typedFitsName(a, b) || typedFitsName(b, a);
   const claimExp = (pu) => {
-    const at = expPosts.findIndex((q) => !q.used && Math.abs(Number(q.amount) - Number(pu.amount)) <= 1 && Math.abs(dayNum(q.at, timeZone) - dayOfIso(pu.date)) <= (q.days || 3) && (!q.strict || vendorsAgree(q.vendor, pu.vendor)));
+    const at = expPosts.findIndex((q) => !q.used && Math.abs(Number(q.amount) - Number(pu.amount)) <= (q.strict ? 0.01 : 1) && Math.abs(dayNum(q.at, timeZone) - dayOfIso(pu.date)) <= (q.days || 3) && (!q.strict || vendorsAgree(q.vendor, pu.vendor)));
     if (at < 0) return null;
     expPosts[at].used = true; return expPosts[at];
   };

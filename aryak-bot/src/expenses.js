@@ -224,18 +224,25 @@ export function qbKindOf(rec) {
 }
 export function matchExpenses(entries, records) {
   const used = new Set(); const found = []; const missing = [];
-  for (const e of entries) {
-    const at = records.findIndex((r, i) => !used.has(i) && near(r.TotalAmt, e.amount) && closeDay(r.TxnDate, e.date || e.day) && nameOk(e.vendor, r.EntityRef?.name || r.VendorRef?.name || ''));
-    if (at >= 0) { used.add(at); found.push({ entry: e, record: records[at] }); } else missing.push(e);
-  }
-  // a second look before «not found»: up to 14 days apart (a receipt posted late), the amount within 0.05 AND the vendor or the category agreeing
   const vendorOf = (r) => r.EntityRef?.name || r.VendorRef?.name || '';
   const categoryOf = (r) => String((r.Line || []).map((l) => l.AccountBasedExpenseLineDetail?.AccountRef?.name || '').find(Boolean) || '');
-  const agrees = (e, r) => (e.vendor ? nameOk(e.vendor, vendorOf(r)) : !!e.type && !!categoryOf(r) && typeFromWords(categoryOf(r)) === e.type);
-  for (const e of [...missing]) {
-    const at = records.findIndex((r, i) => !used.has(i) && Math.abs(Number(r.TotalAmt) - Number(e.amount)) <= 0.05 && closeDay(r.TxnDate, e.date || e.day, 14) && agrees(e, r));
-    if (at >= 0) { used.add(at); found.push({ entry: e, record: records[at] }); missing.splice(missing.indexOf(e), 1); }
+  // ONE matcher for every view (reports, weekly check, cash box, method pick): the exact amount (±0.01), the receipt date first (same day, then ±3 days, then ±14 days), the same vendor preferred; a record is used once.
+  // Same day and ±3 days: a vendor that is unknown on either side is fine; ±14 days: the vendor must agree, or (no vendor typed) the category.
+  const agrees14 = (e, r) => (e.vendor ? nameOk(e.vendor, vendorOf(r)) : !!e.type && !!categoryOf(r) && typeFromWords(categoryOf(r)) === e.type);
+  const pick = (e, tol) => {
+    const free = records.map((r, i) => i).filter((i) => !used.has(i) && near(records[i].TotalAmt, e.amount, 0.011) && closeDay(records[i].TxnDate, e.date || e.day, tol));
+    const ok = free.filter((i) => (tol > 3 ? agrees14(e, records[i]) : nameOk(e.vendor, vendorOf(records[i]))));
+    const gap = (i) => Math.abs(dayNum(records[i].TxnDate) - dayNum(e.date || e.day));
+    const same = (i) => (e.vendor && vendorOf(records[i]) && nameOk(e.vendor, vendorOf(records[i])) ? 0 : 1);
+    return ok.sort((x, y) => same(x) - same(y) || gap(x) - gap(y))[0] ?? -1;
+  };
+  for (const tol of [0, 3, 14]) {
+    for (const e of [...entries.filter((x) => !found.some((f) => f.entry === x))]) {
+      const at = pick(e, tol);
+      if (at >= 0) { used.add(at); found.push({ entry: e, record: records[at] }); }
+    }
   }
+  for (const e of entries) if (!found.some((f) => f.entry === e)) missing.push(e);
   // an amount that equals a QuickBooks expense's total BEFORE tax («219.05» for ENOC 230.00): not matched, but pointed at
   const hints = [];
   for (const e of missing) {

@@ -10,7 +10,7 @@ const typeLabel = (t) => TYPES[t]?.label || 'Other';
 
 /** The expenses report: a block per type, a line per expense (🟢 matched to a QuickBooks expense: vendor + amount ±1 + date ±3 days; 🔴 not yet), then the totals. [records]: the QuickBooks Purchase rows. */
 export function expensesReport(entries, records, title, checkedAt = '') {
-  if (!entries.length) return '🧾 *Expenses — ' + title + '*\nNo expense was recorded.';
+  if (!entries.length) return '🧾 *Expenses — ' + title + '*' + (checkedAt ? '\nchecked now ' + checkedAt : '') + '\nNo expense was recorded.';
   const matched = matchExpenses(entries, records || []);
   const matches = matched.found;
   const hintOf = new Map((matched.hints || []).map((h) => [h.entry, h.record]));
