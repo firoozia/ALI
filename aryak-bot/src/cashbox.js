@@ -155,8 +155,9 @@ export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash
   const accountNames = new Map((await qbo.query('select * from Account').catch(() => [])).map((a) => [String(a.Id), String(a.Name || '')]));
   const elsewhere = every.filter((r) => !isCash(r)).map((r) => ({ amount: Number(r.TotalAmt), date: r.TxnDate, name: r.CustomerRef?.name || '', account: accountNames.get(String(r.DepositToAccountRef?.value)) || 'another account' })); // recorded, but not in this account
   const transfers = (await qbo.query('select * from Transfer where ' + range)).filter((t) => String(t.FromAccountRef?.value) === id || String(t.ToAccountRef?.value) === id);
-  const purchases = (await qbo.query('select * from Purchase where ' + range)).filter((p) => String(p.AccountRef?.value) === id)
-    .map((p) => ({ amount: Number(p.TotalAmt), date: p.TxnDate, vendor: p.EntityRef?.name || '', category: p.Line?.find((l) => l.AccountBasedExpenseLineDetail)?.AccountBasedExpenseLineDetail?.AccountRef?.name || 'Other' }));
+  const wanted = String(accountName).toLowerCase();
+  const purchases = (await qbo.query('select * from Purchase where ' + range)).filter((p) => String(p.AccountRef?.value) === id || String(p.AccountRef?.name || '').toLowerCase().includes(wanted)) // the account itself, and any other account whose name has it (said on the line)
+    .map((p) => ({ account: String(p.AccountRef?.value) === id ? '' : String(p.AccountRef?.name || ''), method: p.PaymentType || '', amount: Number(p.TotalAmt), date: p.TxnDate, vendor: p.EntityRef?.name || '', category: p.Line?.find((l) => l.AccountBasedExpenseLineDetail)?.AccountBasedExpenseLineDetail?.AccountRef?.name || 'Other' }));
   const before = new Date(Date.parse(from + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
   const balance = async (day) => balanceFromReport(await qbo.get('reports/BalanceSheet', { start_date: day, end_date: day, accounting_method: 'Accrual' }), accountName);
   return {
@@ -249,7 +250,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, c
     if (at < 0) return null;
     expPosts[at].used = true; return expPosts[at];
   };
-  const expLines = data.purchases.map((p) => { const post = claimExp(p); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + addedTail(post) : '  (no post in the group)')); });
+  const expLines = data.purchases.map((p) => { const post = claimExp(p); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (p.account ? '  ⚠ account: ' + p.account + ' — check' : '') + (p.method && !/^cash$/i.test(p.method) ? '  ⚠ Petty Cash, method: ' + p.method + ' — check' : '') + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + addedTail(post) : '  (no post in the group)')); });
   expLines.push(...unmatchedLines(expPosts.filter((p) => p.method !== 'card'), (p) => '   ' + (p.vendor || '')));
   const bossT = data.transfersOut.filter((t) => /owner/i.test(t.to));
   const advT = data.transfersOut.filter((t) => /advance/i.test(t.to));
