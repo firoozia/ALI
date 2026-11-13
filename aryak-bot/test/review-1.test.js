@@ -1480,10 +1480,80 @@ test('«Atossa edit #E2» alone shows the expense as stored and how to change it
   const e = { id: 'E2', amount: 10, day: '2026-11-10', date: '2026-11-10', type: 'other', vendor: 'Part Zone', method: 'cash', state: 'done' };
   const store = { get: () => e, d: {}, save() {}, now: () => 1 };
   const text = requestExpenseEdit(store, parseExpenseEdit('Atossa edit #E2'), { chat: 'g', sender: 's', qb: { TxnDate: '2026-10-29', TotalAmt: 10, AccountRef: { name: 'Petty Cash' } } });
-  assert.match(text, /^#E2 — 10\/11, Part Zone, Other, 10\.00 AED, cash \(QuickBooks: Petty Cash 29\/10 10\.00\)\nTo change it, send in one message:\nAtossa edit #E2\nthen one line: card \| cash \| amount <new amount> \| type fuel\/food\/office\/car\/other \| note <text>$/);
+  assert.match(text, /^#E2 — 10\/11, Part Zone, Other, 10\.00 AED, cash \(QuickBooks: Petty Cash 29\/10 10\.00\)\nReply now: 1 = card, 2 = cash, or one line: amount <new amount> \| type fuel\/food\/office\/car\/other \| note <text>$/);
   for (const f of ['expenseedit.js', 'expenses.js', 'index.js']) assert.ok(!fs.readFileSync(path.join(import.meta.dirname, '..', 'src', f), 'utf8').includes('42.50'), f); // no made-up example amount in any help text
   for (const t of ['No', 'no all', 'Cancel', 'yes', '1', 'Atossa no', 'نه']) assert.equal(isBareAnswer(t), true, t);
   for (const t of ['no problem with the door', 'edit #E2', '230 fuel', 'Atossa report']) assert.equal(isBareAnswer(t), false, t);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("if (mayEdit && isBareAnswer(text)) { await say('Nothing is waiting for an answer.'); return true; }"));
+});
+
+test('live test fixes: money out is shown as money out, a cheque date leaves the name, a Persian name is matched by sound, orders in the customer-first shape, a cut with nobody named, driver cash, what a simulation says', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const { describeEvent } = await import('../src/simtext.js');
+  const pay = (t) => eventsFromCaption('payment', t).events[0];
+  assert.match(describeEvent(pay('paid 300 aed for lunch of workers')), /^payment: company cash expense \(not customer money\), 300\.00 AED, for LUNCH OF WORKERS/);
+  assert.match(describeEvent(pay('salary advance 500 aed to Ahmed driver')), /^payment: salary advance \(not customer money\), 500\.00 AED, to AHMED DRIVER/);
+  const chq = pay('cheque from tiger 2000 aed dated 20/11');
+  assert.equal(chq.customer, 'tiger'); assert.equal(chq.kind, 'cheque'); assert.match(chq.chequeDate, /^\d{4}-11-20$/);
+  assert.match(describeEvent(chq), /cheque, 2,000\.00 AED, from tiger, cheque date 20\/11\/\d{4}/);
+  assert.equal(pay('cheque 2000 tiger due on 20-11-2026').chequeDate, '2026-11-20');
+  assert.equal(pay('نقد از مستر وود ۵۰۰ درهم دریافت شد').customer, 'مستر وود'); // the payment words leave the name
+  assert.equal(pay('چک ۱۲۰۰ از ببر چوب').kind, 'cheque');
+  assert.match(describeEvent(pay('cash received 450')), /from nobody named \(the owner is asked: from whom\?\)/);
+  assert.match(describeEvent({ ...pay('Received 500 aed from Blue Ocean Trading'), unknownCustomer: true }), /not our customer\? — check/);
+  const star = eventsFromCaption('payment', 'master wood 500 cash *').events[0]; assert.match(describeEvent(star), /⭐ no invoice needed/);
+  const del = eventsFromCaption('delivery', 'Master wood delivered, collected 1500 cash').events[0];
+  assert.equal(del.collected, 1500); assert.match(describeEvent(del), /delivery: Master wood, delivered, driver collected 1,500\.00 AED cash \(kept as driver cash\)/);
+  const cut = eventsFromCaption('cut', 'Golden door 1810 3m + 215 edge 50m').events[0];
+  assert.equal(cut.customer, 'Golden door'); assert.deepEqual(cut.lines.map((l) => [l.code, l.quantity]), [['1810', 3], ['215', 50]]);
+  assert.match(describeEvent(cut), /cut: Golden door 1810 3m \+ 215 edge 50m/);
+  assert.deepEqual(eventsFromCaption('cut', '303 6.4').noCustomer, { code: '303', quantity: 6.4, unit: 'm' });
+  assert.equal(eventsFromCaption('cut', 'good morning 5m'), null);
+  assert.equal(eventsFromCaption('cut', 'ART NO 303 MUNICH 6.4M').events[0].customer, 'MUNICH'); // the old shape is unchanged
+});
+
+test('plain words: where is a customer order (from the memory of the place), plain questions and typos of the owner reach the reports that exist', async () => {
+  const { parseOrderWhere, orderWhereText, plainReportAsk } = await import('../src/simtext.js');
+  assert.equal(parseOrderWhere('Atossa where is master wood order?'), 'master wood'); assert.equal(parseOrderWhere('where is the driver'), '');
+  const events = [{ type: 'cut', customer: 'MASTER WOOD', lines: [{ code: '303', quantity: 6.4, unit: 'm' }], at: Date.parse('2026-11-13T08:00:00Z') }, { type: 'delivery', customer: 'MASTER WOOD', status: 'delivered', collected: 1500, at: Date.parse('2026-11-13T09:00:00Z') }];
+  const said = orderWhereText(events, 'MASTER WOOD', 'Asia/Dubai', 'test memory');
+  assert.match(said, /📦 MASTER WOOD \(test memory\)/); assert.match(said, /cut: MASTER WOOD 303 6\.4m/); assert.match(said, /delivery: MASTER WOOD, delivered/); assert.match(said, /✅ 1 delivery post marked delivered/);
+  assert.match(orderWhereText([], 'GHOST', 'Asia/Dubai', 'test memory'), /No cut or delivery post of GHOST was found in the test memory/);
+  assert.deepEqual(plainReportAsk('how much money came in today?'), { type: 'received_report', range: 'today' });
+  assert.deepEqual(plainReportAsk('recieved today'), { type: 'received_report', range: 'today' });
+  assert.equal(plainReportAsk('how much cash is in the cash box?').type, 'cash_box');
+  assert.equal(plainReportAsk('which orders are cut but not invoiced yet?').type, 'unbilled');
+  assert.equal(plainReportAsk('show expenses this week').type, 'expenses_report');
+  assert.equal(plainReportAsk('weekly check').type, 'weekly_check');
+  assert.equal(plainReportAsk('cash received 450'), null); // a note about money is no question
+  assert.equal(plainReportAsk('good morning'), null);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(src.includes('parseInvoiceCommand(text) || plainReportAsk(text)') && src.includes('parseOrderWhere(text)') && src.includes("persona === 'customer'") && src.includes('simulateCustomerText'));
+  assert.ok(src.includes('hasPersianLetters(name)') && src.includes('pickSpoken(String(name).trim(), names)') && src.includes('paymentFollowUps(event)') && src.includes('det.noCustomer'));
+});
+
+test('«Atossa edit #E2» alone is a waiting question: 1 = card, 2 = cash or a change line; then the usual preview; the old help and the cash box across the month edge', async () => {
+  const { requestExpenseEdit, parseExpenseEdit, pendingView, viewAnswer, answerExpenseEdit } = await import('../src/expenseedit.js');
+  const { cashBoxReportQbo } = await import('../src/cashbox.js');
+  const e = { id: 'E2', amount: 10, day: '2026-11-10', date: '2026-11-10', type: 'other', vendor: 'Part Zone', method: 'cash', state: 'done' };
+  const store = { get: () => e, d: {}, save() {}, now: () => 1 };
+  const text = requestExpenseEdit(store, parseExpenseEdit('Atossa edit #E2'), { chat: 'g', sender: 's', qb: { TxnDate: '2026-10-29', TotalAmt: 10, AccountRef: { name: 'Petty Cash' } } });
+  assert.match(text, /^#E2 — 10\/11, Part Zone, Other, 10\.00 AED, cash \(QuickBooks: Petty Cash 29\/10 10\.00\)\nReply now: 1 = card, 2 = cash, or one line: amount <new amount> \| type fuel\/food\/office\/car\/other \| note <text>$/);
+  const view = pendingView(store, 'g', 's'); assert.equal(view.id, 'E2');
+  assert.equal(answerExpenseEdit(store, 'g', 's', '2'), null); // a view is not a confirmation
+  assert.deepEqual(viewAnswer(view, '1').changes, { method: 'card' }); assert.deepEqual(viewAnswer(view, '2').changes, { method: 'cash' });
+  assert.deepEqual(viewAnswer(view, 'amount 12').changes, { amount: 12 }); assert.equal(viewAnswer(view, 'hello there'), null);
+  const preview = requestExpenseEdit(store, viewAnswer(view, '1'), { chat: 'g', sender: 's', qb: null });
+  assert.match(preview, /Payment: {2}cash → \*card\*/); assert.equal(pendingView(store, 'g', 's'), null); // the preview replaced the view
+  const day = (d) => Date.parse('2026-11-' + d + 'T12:00:00+04:00');
+  const data = { received: [], elsewhere: [], transfersIn: [], transfersOut: [], purchases: [], purchasesNear: [{ amount: 10, date: '2026-10-29', vendor: 'PART ZONE', category: 'Other' }] };
+  const { text: box } = cashBoxReportQbo({ month: '2026-11', data, posts: { cashIn: [], outs: [], expenses: [{ amount: 10, at: day('10'), days: 14, strict: true, vendor: 'Part Zone', method: 'cash' }] } });
+  assert.match(box, /🟢 10\/11\s+10\.00 {3}Part Zone {2}\(QuickBooks 29\/10\)/); assert.doesNotMatch(box, /posted, not in QuickBooks/);
+  const cb = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'cashbox.js'), 'utf8');
+  assert.ok(cb.includes('purchasesNear') && cb.includes('shiftDay(from, -14)'));
+  const ie = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'invoiceedit.js'), 'utf8');
+  assert.ok(!/13aed|add 102|remove 303/.test(ie) && ie.includes('/<price>aed') && ie.includes('add <code> <metres>m'));
+  const ix = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(!ix.includes('215=97m 220=12m') && !ix.includes('example: 85.5 fuel')); // no real-looking numbers in help texts
 });

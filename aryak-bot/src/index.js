@@ -71,7 +71,7 @@ import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, rep
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
-import { answerExpenseEdit, isBareAnswer, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
+import { answerExpenseEdit, isBareAnswer, pendingView, viewAnswer, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, parseCashBoxCommand, rederiveCashOut } from './cashbox.js';
 import { answerAdd, requestAdd, undoAdd } from './addentries.js';
 import { isInvoiceFile, replyNameAmount } from './paymentfix.js';
@@ -81,7 +81,9 @@ import { typedFitsName } from './qboname.js';
 import { CutEdits, decideCutEdit, listCuts, requestCutEdit } from './cutedit.js';
 import { repairSharedCuts } from './cutrepair.js';
 import { lidLookup } from './lidmap.js';
-import { PersianNames, seedPersianNames } from './persiannames.js';
+import { PersianNames, hasPersianLetters, seedPersianNames } from './persiannames.js';
+import { pickSpoken } from './translit.js';
+import { describeEvent, orderWhereText, parseOrderWhere, plainReportAsk } from './simtext.js';
 import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
 import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, overrideFor, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
@@ -429,6 +431,11 @@ const knownCustomers = () => [...groups.values()].map((g) => String(g.subject ||
 // The one name of a customer: his approved row first (a name, an alias or a near spelling of it), else the aliases and the group labels.
 const rowOfName = (name) => customerRowFor(name, { list: customerGroups, aliases });
 const canon = (name) => { // the approved list and the approved aliases first; a loose match must fit the typed name word by word («Al masar» never becomes «MASTER WOOD»)
+  if (hasPersianLetters(name)) { // «مستر وود» is MASTER WOOD: matched by sound to the customer names, never translated; no clear match keeps the written name
+    const names = [...new Set([...(qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean), ...knownCustomers()])];
+    const pick = names.length ? pickSpoken(String(name).trim(), names) : null;
+    return pick?.kind === 'one' ? pick.best.name : name;
+  }
   const row = rowOfName(name)?.customer; if (row) return row;
   const r = aliases.resolve(name, knownCustomers());
   const approved = Object.entries(aliases.map).some(([c, others]) => c === r && others.includes(name));
@@ -640,6 +647,20 @@ function tellPayment(event) {
 // One notice per payment: an entry waits 3 minutes (8 while its amount is still unread), then the entries of one amount are announced together, once.
 const payPending = new Map(); // ref -> { at }
 const payNoticed = new Map(); // ref -> the amount announced
+/** A payer's name that is not one of the QuickBooks customers (a list that is known, a name that is typed, not a cash-out kind). */
+const unknownPayer = (event) => !!event.customer && !CASH_OUT_KINDS.includes(event.kind) && (qboDesk.cache?.customers || []).length > 0 && !isOurCustomer(event.customer) && !event.multi;
+/** A payment with nobody named, or with a name that is not our customer: ONE question to the owner's own chat (never a group), marked on the entry so it is asked once. */
+async function paymentFollowUps(event) {
+  if (CASH_OUT_KINDS.includes(event.kind) || replayCtx.getStore()?.quiet || event.askedName) return;
+  const nameless = !event.customer && Number(event.amount) > 0 && event.pendingName;
+  const unknown = unknownPayer(event);
+  if (!nameless && !unknown) return;
+  const hm = new Intl.DateTimeFormat('en-GB', { timeZone: config.timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(event.at));
+  if (unknown) tracker.update(event.ref, { unknownCustomer: true, askedName: true }); else tracker.update(event.ref, { askedName: true });
+  const head = nameless ? 'From whom? ' + Number(event.amount).toFixed(2) + ' AED (' + (event.kind || 'cash') + ') posted at ' + hm + ' in the confirmation group has no name.'
+    : Number(event.amount).toFixed(2) + ' AED from "' + event.customer + '": not one of our QuickBooks customers? — check.';
+  await sock.sendMessage(ownIds()[0], { text: '🤖 ' + head + '\nTo name it here: fix receipt ' + hm + ' <customer name> ' + Number(event.amount).toFixed(2) }).catch((e) => logger.warn('payment question failed: ' + e.message));
+}
 async function flushPaymentNotices() {
   if (!qbo.connected || qbo.paused || !payPending.size) return;
   const due = [...payPending].filter(([ref, p]) => { const e = tracker.events.find((x) => x.ref === ref); return Date.now() - p.at >= (e && Number(e.amount) > 0 ? 3 : 8) * 60000; }).map(([ref]) => ref);
@@ -818,6 +839,11 @@ async function trackGroup(raw, groupId, role) {
     }
     if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    if (det.noCustomer) { // «303 6.4»: a cut with nobody named: not recorded; the owner is told once
+      trace(whereDet, 'tracker', 'a cut post without a customer: the owner is told');
+      if (!replayCtx.getStore()?.quiet && !officeAsked.has('nc|' + raw.key.id)) { officeAsked.add('nc|' + raw.key.id); await sock.sendMessage(ownIds()[0], { text: '🤖 Cut without customer in the orders group: code ' + det.noCustomer.code + ', ' + det.noCustomer.quantity + ' m (' + (raw.pushName || 'someone') + '). Nothing was recorded; ask them for the customer.' }).catch((e) => logger.warn('cut note failed: ' + e.message)); }
+      return;
+    }
     if (det.name && !looksLikeName(det.name)) { trace(whereDet, 'tracker', 'a filler word is no customer name'); return; }
     if (det.name && role === 'payment' && quotedId && await replyToPayment({ raw, groupId, content, quotedId, event: { customer: det.name, amount: 0, invoices: [] } })) return; // «Awab» as a reply to a receipt photo or PDF: the name belongs to that receipt
     if (det.name) { // a bare name: it belongs to the nameless payment just before it (ten minutes), or to the one that comes just after
@@ -835,6 +861,7 @@ async function trackGroup(raw, groupId, role) {
       if (event.customer && ev.customer && !sameStop(ev.customer, event.customer, nameAlias)) logger.info(`tracker: "${ev.customer}" was recorded as "${event.customer}" (${rowOfName(ev.customer) ? 'customer-group row' : 'alias map'}) — say "explain name ${ev.customer}" to see why`);
       if (!tracker.add(event)) continue;
       trace(whereDet, 'tracker', `${role} recorded from the caption${event.internal ? ' (internal, not a sale)' : ''}`);
+      if (role === 'payment') await paymentFollowUps(event).catch((e) => logger.warn('payment follow-up failed: ' + e.message));
       // goods that arrive ("received") close the sourcing requests for their code: it is not a mistake that they came in
       if (role === 'goods' && event.kind === 'received') for (const m of String(event.item || '').matchAll(/\d{2,5}/g)) markSourcingReceived(tracker, m[0]);
       if (role === 'cut' && !event.internal) await cutReconcile(event.customer);
@@ -1257,6 +1284,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'expense_edit': return [await expenseEditReply(ic.cmd, here.chatId || 'owner', 'owner')];
     case 'swap_answer': {
       { const aa = answerAdd(expenseStore, here.chatId || 'owner', String(ic.choice), applyAdded); if (aa) { const waiting = expenseStore.openFor('owner'); return [aa + (waiting.length ? '\nCard or cash? ' + waiting.map((x) => '#' + x.id).join(', ') + ': answer 1 card / 2 cash' + (waiting.length > 1 ? ' with the code, for example: 1 #' + waiting[0].id : '') : '')]; } } // the 1 / 2 of an «add …» preview
+      { const vw = pendingView(expenseStore, here.chatId || 'owner', 'owner'); const vc = vw && ic.choice < 3 ? viewAnswer(vw, String(ic.choice)) : null; if (vc) return [await expenseEditReply(vc, here.chatId || 'owner', 'owner')]; } // the reply to a waiting expense view
       { const xa = answerExpenseEdit(expenseStore, here.chatId || 'owner', 'owner', String(ic.choice)); if (xa) return [xa]; } // the 1 / 2 of an expense edit preview
       { const hr = ic.choice < 3 ? handleReply(expenseStore, 'owner', { pick: String(ic.choice), id: '' }) : null; if (hr && !/^No expense/.test(hr.text)) return [hr.text]; } // 1 card / 2 cash for the one added expense still waiting for its method
       const waiting = payChecks.openIds().filter((i) => ['swap', 'cashkind'].includes(payChecks.get(i)?.action));
@@ -1580,6 +1608,18 @@ const addressedIn = (text, ctx, strict = false) => isAddressed({
  * «[orders] ART NO 303 MUNICH DOOR KITCHEN 6.4M», «[delivery] NUQOOSH 2 ROLLS DISPATCHED», «[confirm] … credited with AED 500.00 …», typed by the owner in the TEST group:
  * read exactly like a post of that group and stored in the TEST tracker, which no real report reads. Nothing is posted anywhere else.
  */
+/** «as customer: hi, how much is 303 per meter? and send me an invoice» in the test group: what a customer's message in a customer group would cause, said line by line (nothing is posted anywhere). */
+async function simulateCustomerText({ raw, text }) {
+  const subject = 'TEST CUSTOMER';
+  const out = [];
+  const drafted = await customerAsksAvailability({ messageId: raw.key.id, groupId: raw.key.remoteJid, subject, text, simulated: true });
+  out.push(drafted ? 'an availability question: the draft and the sheet figures went to your own chat' : 'not an availability question (no stock code asked as a question): no draft');
+  const need = parseOfficeRequest(text);
+  if (need) { await sock.sendMessage(ownIds()[0], { text: '🤖 ' + officeNote(subject, text, need) }).catch((e) => logger.warn('office note failed: ' + e.message)); out.push('an office request: one note went to your own chat'); } else out.push('no office request (invoice, statement, goods) found');
+  out.push('a price or any other question: she never answers in a customer group; the staff answer it');
+  return 'SIMULATION as a customer in a customer group (nothing is posted there):\n- ' + out.join('\n- ');
+}
+
 async function simulatedPost({ raw, text, where, role, reply }) {
   const cm = /^\s*\[customer\s+([^\]]+)\]\s*([\s\S]+)$/i.exec(text); // «[customer MASTER WOOD] 209 available?»: a message in that customer's group
   if (cm) {
@@ -1592,14 +1632,16 @@ async function simulatedPost({ raw, text, where, role, reply }) {
   const kind = m[1].toLowerCase();
   const asRole = { orders: 'cut', delivery: 'delivery', confirm: 'payment' }[kind];
   const det = eventsFromCaption(asRole, m[2].trim());
+  if (det?.noCustomer) { await reply(`SIMULATION: a cut with nobody named (code ${det.noCustomer.code}, ${det.noCustomer.quantity} m): not recorded. In the real orders group the owner is told once: «cut without customer».`); return true; }
   if (!det?.events?.length) { await reply(`SIMULATION: that text was not read as a post of the ${kind} group (nothing recorded).`); return true; }
   const lines = [];
   for (const [i, ev] of det.events.entries()) {
     const event = { ...ev, customer: canon(ev.customer), customerTyped: ev.customer, at: Date.now(), ref: createHash('sha256').update(`test|${raw.key.id}|${i}`).digest('hex').slice(0, 24), simulated: true, ...(asRole === 'delivery' ? { msg: raw.key.id } : {}) };
+    if (asRole === 'payment' && unknownPayer(event)) event.unknownCustomer = true;
     if (!testTracker.add(event)) continue;
     if (asRole === 'delivery') await announceRunDone(testTracker.events, event, (t) => reply(`SIMULATION: ${t}`));
     trace(where, role, `simulated ${kind} post recorded as test data`);
-    lines.push(`${event.type}${event.internal ? ' (internal)' : ''}: ${event.customer || '-'} ${(event.lines || []).map((l) => `${l.code} ${l.quantity}${l.invoiceQuantity !== undefined ? ` (invoiced ${l.invoiceQuantity})` : ''}`).join(', ')}${event.amount ? ` ${event.amount}` : ''}`.trim());
+    lines.push(describeEvent(event) + (event.lines?.some((l) => l.invoiceQuantity !== undefined) ? ' (' + event.lines.filter((l) => l.invoiceQuantity !== undefined).map((l) => 'invoiced ' + l.invoiceQuantity).join(', ') + ')' : ''));
   }
   await reply(`SIMULATION (test data only, never in the real reports): recorded ${lines.length} ${kind} item(s)${lines.length ? `\n${lines.join('\n')}` : ''}`);
   return true;
@@ -2351,6 +2393,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   // THE OWNER SIMULATES THE OTHER GROUPS in the test group: «[orders] ART NO 303 MUNICH 6.4M», «[delivery] …», «[confirm] …». Read like a post of that group, kept as TEST data only.
   if (group?.test && ownerPerson && text && !audio && !image && (await simulatedPost({ raw, text, where, role, reply }))) return true;
+  if (group?.test && ownerPerson && persona === 'customer' && text && !audio && !image) { await reply(await simulateCustomerText({ raw, text })); return true; }
   // A statement asked for in an internal group (the owner or an authorized person): answered in that group.
   if (group && text && !audio && !image && (await groupStatementTurn({ raw, chatId, text, ctx: (content.extendedTextMessage || {}).contextInfo || {}, owner: ownerPerson, authorized: authorizedPerson, canInvoice: invoicePerson, where, role, test: !!group?.test }))) return true;
   // A numbered question just asked waits for its answer: «1», «۱», «یک», «اولی», «شماره یک درست است» or the name itself. Nothing else may take this message.
@@ -2425,6 +2468,12 @@ async function handleStaffChat(raw, chatId, group) {
   if (text && !audio && !image && addressed && isDriverQuestion(text)) {
     trace(where, role, 'the driver question, answered from the delivery posts');
     await reply(whereText(trackerOf(group?.test).events, { timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: await driverNamer() }));
+    return true;
+  }
+  // «where is master wood order?»: the customer's cut and delivery posts, from the memory of this place (the test group reads the TEST memory)
+  if (text && !audio && !image && addressed && parseOrderWhere(text)) {
+    trace(where, role, 'an order question, answered from the cut and delivery posts');
+    await reply(orderWhereText(trackerOf(group?.test).events, canon(parseOrderWhere(text)), config.timezone, group?.test ? 'test memory' : ''));
     return true;
   }
   // «delivery report for the whole day» (and, in the delivery group, «for the full day?» after it): the day's DELIVERY report, not the goods-out sheet; a short thanks gets a short word.
@@ -2516,7 +2565,7 @@ async function handleStaffChat(raw, chatId, group) {
   // The owner's invoice commands (his own chat, owner only): the request, his yes or no, the kill switch, the audit report, the authorized people.
   if (text && !audio && !image && !group && isSelf) {
     if (await styleReplyFlow({ text, by: 'owner', say: (t) => reply(t), choicePending: !!choiceDesk.get(`pc:${chatId}`) })) return true; // «1» / «2» / «No» for a statement preview
-    let ic = parseInvoiceCommand(text);
+    let ic = parseInvoiceCommand(text) || plainReportAsk(text); // plain questions and typos («how much money came in today?», «recieved today») go to the reports that exist
     // a bare yes or no answers the question the assistant asked last in this chat (a photo, a voice note, a follow-up); only without one does it look at open previews
     if (bareAnswerYieldsToPending(ic, !!(voiceDesk.get(`s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) || followDesk.get(`s:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`)))) ic = null;
     if (ic && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(ctx.isForwarded || ctx.forwardingScore > 0) })) {
@@ -2772,7 +2821,7 @@ async function handleStaffChat(raw, chatId, group) {
   // An invoice request that could not be read never becomes a stock question: no sales-manager report, no «low stock» card.
   if (looksLikeInvoiceRequest(asked)) {
     trace(where, role, 'invoice intent that was not taken by the invoice flow: told how to write it, never sent to the stock flow');
-    await reply(ownerPerson ? 'I could not read that invoice request. Write: invoice for <customer> and then one item per line or on the same line, for example 215=97m 220=12m.' : 'Invoice requests need the permission of the owner. Ask him to grant it.');
+    await reply(ownerPerson ? 'I could not read that invoice request. Write: invoice for <customer> and then one item per line or on the same line, for example <code>=<metres>m <code>=<metres>m.' : 'Invoice requests need the permission of the owner. Ask him to grant it.');
     return true;
   }
   const answerText = await staffAnswer({
@@ -3179,7 +3228,7 @@ async function maybeSetExpensesGroup(raw, groupId, info) {
   const word = String(info.subject).toLowerCase();
   if (!config.expensesGroupNames.includes(word)) config.expensesGroupNames.push(word);
   logger.info(`expenses: the group "${info.subject}" was set by the owner`);
-  await sock.sendMessage(groupId, { text: `✅ This is now the expenses group ("${info.subject}"). Post a receipt photo with the amount as the caption, for example: 85.5 fuel` });
+  await sock.sendMessage(groupId, { text: `✅ This is now the expenses group ("${info.subject}"). Post a receipt photo with the amount as the caption, for example: <amount> fuel` });
   return true;
 }
 
@@ -3287,6 +3336,7 @@ async function expensesTurn(raw, groupId, info) {
   {
     const ex = parseExpenseEdit(text);
     if (ex && startsWithName(text, config.botNames) && mayEdit) { await say(await expenseEditReply(ex, groupId, by)); return true; }
+    if (mayEdit) { const vw = pendingView(expenseStore, groupId, by); const vc = vw ? viewAnswer(vw, text) : null; if (vc) { await say(await expenseEditReply(vc, groupId, by)); return true; } } // the reply to «Atossa edit #E2» alone: 1 card, 2 cash, or a change line
     if (/^\s*[12]\s*$/.test(text) && mayEdit) { const answer = answerExpenseEdit(expenseStore, groupId, by, text.trim()); if (answer) { await say(answer); return true; } }
     // «2 #E5» / «2#E5» / «#E5 2» on a DONE expense whose method differs from QuickBooks (the flag of the reports): 1 = card, 2 = cash, applied with history, answered once; no flag = said so
     const pk = parseExpenseReply(text);

@@ -1,7 +1,7 @@
 // EDIT an existing QuickBooks invoice by message (owner-approved feature), with a preview and the owner's yes:
 //   edit invoice 10003
-//   add 102 5m            (a code not on the invoice: a NEW line at the system price, or the price given: add 102=5m /13aed; a code on it: its quantity grows, its rate stays)
-//   remove 303 5m         (the quantity shrinks; at 0 the line is deleted; «remove 303» alone takes the whole line)
+//   add <code> <m>         (a code not on the invoice: a NEW line at the system price, or the price given: add <code>=<m>m /<price>aed; a code on it: its quantity grows, its rate stays)
+//   remove <code> <m>        (the quantity shrinks; at 0 the line is deleted; «remove <code>» alone takes the whole line)
 // Nothing is applied until the WHOLE request is valid (a code that is not on the invoice, a removal larger than the quantity: that line is refused with the reason and nothing is applied).
 // Everything else on the invoice (customer, date, number, notes, memo, form style, tax settings, every other field) stays: a SPARSE update with the current SyncToken, and the invoice is read
 // again just before the apply: if it changed since the preview, the edit is refused. The result is the updated invoice PDF with its caption, as after a create.
@@ -79,7 +79,7 @@ export function planEdit({ inv, items, taxRate = null, ops }) {
     const picked = pickItem(op.code, { items, history });
     if (!picked.item) { problems.push(`${head}: no single QuickBooks item has that code${picked.stop ? ' (it is missing, or it fits several items: name it exactly)' : ''}.`); continue; }
     const item = picked.item; const listed = Number(item.UnitPrice) > 0 ? Number(item.UnitPrice) : null; const price = op.price ?? listed;
-    if (price === null) { problems.push(`${head}: "${item.Name}" has no price in QuickBooks; write it: add ${op.code}=${qty(op.qty)}m /13aed`); continue; }
+    if (price === null) { problems.push(`${head}: "${item.Name}" has no price in QuickBooks; write it: add ${op.code}=${qty(op.qty)}m /<price>aed`); continue; }
     if (!taxRef) { problems.push(`${head}: the invoice has no tax code to copy for the new line.`); continue; }
     lines.push({ DetailType: 'SalesItemLineDetail', Amount: r2(op.qty * price), ...(item.Description ? { Description: String(item.Description).slice(0, 4000) } : {}),
       SalesItemLineDetail: { ItemRef: { value: String(item.Id) }, Qty: op.qty, UnitPrice: price, TaxCodeRef: { value: taxRef } } });
@@ -111,8 +111,8 @@ export class InvoiceEdits {
   /** A request «edit invoice N» + lines -> a PREVIEW (never applied here). Returns the text for the chat. */
   async request({ number, ops, bad = [], requester, origin = null }) {
     const blocked = this.invoices.guard(); if (blocked) return blocked;
-    if (!ops.length && !bad.length) return 'Edit invoice: write the changes one per line after "edit invoice <number>", for example: add 102 5m / remove 303 5m';
-    if (bad.length) return `I could not read these lines, so nothing was prepared:\n${bad.map((b) => `- ${b}`).join('\n')}\nUse: add 102 5m, add 102=5m /13aed, remove 303 5m, remove 303`;
+    if (!ops.length && !bad.length) return 'Edit invoice: write the changes one per line after "edit invoice <number>", for example: add <code> <metres>m / remove <code> <metres>m';
+    if (bad.length) return `I could not read these lines, so nothing was prepared:\n${bad.map((b) => `- ${b}`).join('\n')}\nUse: add <code> <metres>m, add <code>=<metres>m /<price>aed, remove <code> <metres>m, remove <code>`;
     const inv = await this.findInvoice(number);
     if (!inv) return `No invoice numbered ${number} (inv-${number}) was found in QuickBooks.`;
     if (inv.ambiguous) return `${inv.ambiguous} invoices carry the number ${number}; nothing was prepared.`;

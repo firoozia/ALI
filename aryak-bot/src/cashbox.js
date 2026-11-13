@@ -156,12 +156,16 @@ export async function fetchCashBoxQbo(qbo, { from, to, accountName = 'Petty Cash
   const elsewhere = every.filter((r) => !isCash(r)).map((r) => ({ amount: Number(r.TotalAmt), date: r.TxnDate, name: r.CustomerRef?.name || '', account: accountNames.get(String(r.DepositToAccountRef?.value)) || 'another account' })); // recorded, but not in this account
   const transfers = (await qbo.query('select * from Transfer where ' + range)).filter((t) => String(t.FromAccountRef?.value) === id || String(t.ToAccountRef?.value) === id);
   const wanted = String(accountName).toLowerCase();
-  const purchases = (await qbo.query('select * from Purchase where ' + range)).filter((p) => String(p.AccountRef?.value) === id || String(p.AccountRef?.name || '').toLowerCase().includes(wanted)) // the account itself, and any other account whose name has it (said on the line)
+  const shiftDay = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const wide = "TxnDate >= '" + shiftDay(from, -14) + "' and TxnDate <= '" + shiftDay(to, 14) + "'"; // 14 days either side: an expense posted in this month may be the purchase of the month before (or after)
+  const allPurchases = (await qbo.query('select * from Purchase where ' + wide)).filter((p) => String(p.AccountRef?.value) === id || String(p.AccountRef?.name || '').toLowerCase().includes(wanted)) // the account itself, and any other account whose name has it (said on the line)
     .map((p) => ({ account: String(p.AccountRef?.value) === id ? '' : String(p.AccountRef?.name || ''), method: p.PaymentType || '', amount: Number(p.TotalAmt), date: p.TxnDate, vendor: p.EntityRef?.name || '', category: p.Line?.find((l) => l.AccountBasedExpenseLineDetail)?.AccountBasedExpenseLineDetail?.AccountRef?.name || 'Other' }));
+  const purchases = allPurchases.filter((p) => p.date >= from && p.date <= to);
+  const purchasesNear = allPurchases.filter((p) => p.date < from || p.date > to); // outside the month: only for pairing a post, never counted in the month
   const before = new Date(Date.parse(from + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
   const balance = async (day) => balanceFromReport(await qbo.get('reports/BalanceSheet', { start_date: day, end_date: day, accounting_method: 'Accrual' }), accountName);
   return {
-    id, opening: null, closing: null, received, elsewhere, purchases, // the balances are not read any more: the report shows only the month's own movements
+    id, opening: null, closing: null, received, elsewhere, purchases, purchasesNear, // the balances are not read any more: the report shows only the month's own movements
     transfersOut: transfers.filter((t) => String(t.FromAccountRef?.value) === id).map((t) => ({ amount: Number(t.Amount), date: t.TxnDate, to: t.ToAccountRef?.name || '', note: t.PrivateNote || '' })),
     transfersIn: transfers.filter((t) => String(t.ToAccountRef?.value) === id).map((t) => ({ amount: Number(t.Amount), date: t.TxnDate, from: t.FromAccountRef?.name || '' })),
   };
@@ -251,6 +255,12 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, c
     expPosts[at].used = true; return expPosts[at];
   };
   const expLines = data.purchases.map((p) => { const post = claimExp(p); return dline(mark(post ? '🟢' : '⚪'), p.date, p.amount, '   ' + (p.vendor || p.category) + (p.account ? '  ⚠ account: ' + p.account + ' — check' : '') + (p.method && !/^cash$/i.test(p.method) ? '  ⚠ Petty Cash, method: ' + p.method + ' — check' : '') + (post ? (post.method === 'card' ? '  ⚠ method differs: posted card, QuickBooks Petty Cash (cash)' : '') + addedTail(post) : '  (no post in the group)')); });
+  for (const q of expPosts.filter((x) => !x.used && x.strict)) { // an expense posted in this month whose purchase is in the month before (or after): paired, shown with the purchase's own date, not counted in this month
+    const pu = (data.purchasesNear || []).find((x) => !x.used && Math.abs(Number(q.amount) - Number(x.amount)) <= 0.01 && Math.abs(dayNum(q.at, timeZone) - dayOfIso(x.date)) <= (q.days || 3) && vendorsAgree(q.vendor, x.vendor));
+    if (!pu) continue;
+    pu.used = true; q.used = true;
+    expLines.push(dline(mark('🟢'), isoOf(q.at), q.amount, '   ' + (q.vendor || pu.vendor) + '  (QuickBooks ' + lineDate(pu.date) + ')'));
+  }
   expLines.push(...unmatchedLines(expPosts.filter((p) => p.method !== 'card'), (p) => '   ' + (p.vendor || '')));
   const bossT = data.transfersOut.filter((t) => /owner/i.test(t.to));
   const advT = data.transfersOut.filter((t) => /advance/i.test(t.to));
@@ -262,7 +272,7 @@ export function cashBoxReportQbo({ month, data, posts, openingOverride = null, c
   };
   const sum = (l) => l.reduce((n, t) => n + t.amount, 0);
   const blocks = [];
-  if (data.purchases.length || expPosts.some((p) => !p.used && p.method !== 'card')) blocks.push([cell('🧾 *Company expenses (cash)*', expTotal), ...(data.purchases.length ? ['     ↳ ' + Object.keys(byCat).map((k) => k + ' ' + money(byCat[k])).join(' | ')] : []), ...expLines].join('\n'));
+  if (data.purchases.length || expLines.length || expPosts.some((p) => !p.used && p.method !== 'card')) blocks.push([cell('🧾 *Company expenses (cash)*', expTotal), ...(data.purchases.length ? ['     ↳ ' + Object.keys(byCat).map((k) => k + ' ' + money(byCat[k])).join(' | ')] : []), ...expLines].join('\n'));
   const bossL = tLines(bossT, bossPosts, false);
   if (bossT.length || bossPosts.length) blocks.push([bossT.length ? cell('👔 *Cash to boss*', sum(bossT)) : '👔 *Cash to boss*: none recorded in QuickBooks this month', ...bossL].join('\n')); // kept visible when a post says it happened
   const advL = tLines(advT, advPosts, true);

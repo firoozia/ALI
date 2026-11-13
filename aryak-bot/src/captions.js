@@ -28,6 +28,19 @@ export function parseCutCaption(text) {
   const s = clean(text);
   if (!s) return null;
   const m = /^ART\.?\s*NO\.?\s*(\d{2,5})(?:\s+([A-Z])(?=\s|$))?\s*(.*)$/i.exec(s);
+  if (!m) {
+    // «Golden door 1810 3m + 215 edge 50m»: the customer first, then «code quantity» pairs joined by «+» (a word between code and quantity, like «edge», is a note)
+    const seg = String.raw`(\d{2,5})(?:\s+([A-Za-z]+))?\s+(\d+(?:\.\d+)?)\s*(?:M|MTRS?|METERS?|METRES?)\b`;
+    const cf = new RegExp(String.raw`^([\p{L}][\p{L} &.'-]{1,38}?)\s+${seg}((?:\s*\+\s*${seg})*)$`, 'iu').exec(s);
+    if (cf) {
+      const lines = [{ code: cf[2], quantity: num(cf[4]), unit: 'm', ...(cf[3] ? { note: cf[3].toLowerCase() } : {}) }];
+      for (const x of String(cf[5] || '').matchAll(new RegExp(seg, 'giu'))) lines.push({ code: x[1], quantity: num(x[3]), unit: 'm', ...(x[2] ? { note: x[2].toLowerCase() } : {}) });
+      return { kind: 'cut', code: lines[0].code, customer: title(cf[1]), quantity: lines[0].quantity, unit: 'm', lines };
+    }
+    // «303 6.4»: a code and a length, nobody named: not recorded; the owner is told once (the caller decides)
+    const nc = /^(\d{2,5})(?:\s+([A-Z]))?\s+(\d+(?:\.\d+)?)\s*(?:M|MTRS?|METERS?|METRES?)?$/i.exec(s);
+    if (nc) return { kind: 'no-customer', code: nc[2] ? nc[1] + ' ' + nc[2].toUpperCase() : nc[1], quantity: num(nc[3]), unit: 'm' };
+  }
   if (!m) return /^[\p{L} &.'-]{3,40}$/u.test(s) && !/\b(ok|yes|no|thanks|hi|hello)\b/i.test(s) ? { kind: 'name', customer: title(s) } : null;
   const code = m[2] ? `${m[1]} ${m[2].toUpperCase()}` : m[1];
   let rest = m[3];
@@ -130,7 +143,7 @@ const AMOUNT = /(?:^|[^\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d,
  */
 /** The words of a payment message that are never a customer («cash», «clear», «receipt», «inv», «pay» …) taken out of a name; '' when nothing is left. */
 export function stripPaymentWords(name) {
-  return String(name || '').replace(/\bBY\b.*$/i, ' ').replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|TRANSFER|RECEIVED?|PAID|FROM|PAYMENTS?|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ').replace(/[=/.]+/g, ' ').replace(/^[\s+&-]+|[\s+&-]+$/g, '').replace(/\s*\+\s*(?=\+|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  return String(name || '').replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور)(?![\p{L}])/gu, ' ').replace(/\bBY\b.*$/i, ' ').replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|TRANSFER|RECEIVED?|PAID|FROM|PAYMENTS?|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ').replace(/[=/.]+/g, ' ').replace(/^[\s+&-]+|[\s+&-]+$/g, '').replace(/\s*\+\s*(?=\+|$)/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** True when the words of a message say it is a cheque (cheque, cheaque, chq, check, شيك, چک). */
@@ -174,6 +187,14 @@ export function parsePaymentCaption(text) {
     if (!aedAfterEquals) currency = code;
   }
   const cheque = CHEQUE_WORDS.test(work);
+  // «dated 20/11», «due 20-11-2026», «on 20/11»: the date of a cheque (or of a promised payment); it leaves the name and is kept as the date
+  let chequeDay = '';
+  work = work.replace(/(?:\b(?:dated?|due(?:\s+on)?|on|for|date)\s*[:=]?\s*)?(?<![\d.\/-])(\d{1,2})\s*[\/-]\s*(\d{1,2})(?:\s*[\/-]\s*(\d{2,4}))?(?![\d\/-])/gi, (all, d, m, y) => {
+    if (!(Number(d) >= 1 && Number(d) <= 31 && Number(m) >= 1 && Number(m) <= 12)) return all;
+    if (!cheque && !/^(?:dated?|due|on|for|date)/i.test(all)) return all; // a bare fraction in a plain payment is left alone
+    const now = new Date(); const year = y ? (y.length === 2 ? 2000 + Number(y) : Number(y)) : now.getUTCFullYear();
+    chequeDay = year + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0'); return ' ';
+  }).replace(/\b(?:dated?|due)\b/gi, ' ').replace(/\s+/g, ' ').trim();
   const a = AMOUNT.exec(work);
   if (invoices.length && !a) { // a message about an invoice only («Munich door kitchen inv 9940»): the customer and the invoice, the amount comes from the document it replies to
     const rest0 = stripPaymentWords(work);
@@ -190,10 +211,11 @@ export function parsePaymentCaption(text) {
   if (!(amount > 0)) return null;
   let rest = (work.slice(0, a ? a.index : 0) + ' ' + (a ? work.slice(a.index + a[0].length) : work))
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer
+    .replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور)(?![\p{L}])/gu, ' ')
     .replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|TRANSFER|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
     .replace(/[=\/.]+/g, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
-  return { kind: 'cash', amount, customers, ...(foreign && !a ? { currency: foreign.currency } : {}), ...(foreign && a ? { foreign } : {}), ...(eqPair ? { foreign: eqPair.foreign } : {}), ...(cheque ? { cheque: true } : {}), ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
+  return { kind: 'cash', amount, customers, ...(foreign && !a ? { currency: foreign.currency } : {}), ...(foreign && a ? { foreign } : {}), ...(eqPair ? { foreign: eqPair.foreign } : {}), ...(cheque ? { cheque: true } : {}), ...(chequeDay ? { chequeDate: chequeDay } : {}), ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
 }
 
 // ---- goods groups (accessories, saw blades, glue) --------------------------------------------------------------------------

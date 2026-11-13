@@ -87,10 +87,11 @@ export function requestExpenseEdit(store, cmd, who) {
     return [head, 'Amount:   ' + money(e.amount) + ', ' + typeLabel(e.type) + ', ' + methodName(e.method), 'Nothing is changed in QuickBooks.', ...(who.qb || who.inQb ? ['This expense is already 🟢 in QuickBooks: also delete it in QuickBooks yourself.'] : []), '1. Yes, delete it', '2. No, keep it'].join('\n');
   }
   const changed = FIELD_LINES.filter((f) => cmd.changes[f[0]] !== undefined && cmd.changes[f[0]] !== e[f[0]]);
-  if (!changed.length) { // the expense as stored first, then how to change it (no example numbers)
+  if (!changed.length) { // the expense as stored first, then how to change it (no example numbers); the view WAITS for the reply
+    store.d.pending = store.d.pending || {}; store.d.pending[keyOf(who.chat, who.sender)] = { id: e.id, op: 'view', at: store.now() }; store.save();
     const rec = who.qb; const qbText = rec && rec.AccountRef?.name ? ' (QuickBooks: ' + rec.AccountRef.name + ' ' + dmy(rec.TxnDate).slice(0, 5) + ' ' + money(rec.TotalAmt) + ')' : '';
     return ['#' + e.id + ' — ' + dmy(e.date || e.day).slice(0, 5) + (e.vendor ? ', ' + e.vendor : '') + ', ' + typeLabel(e.type) + ', ' + money(e.amount) + ' AED, ' + methodName(e.method) + qbText + (e.note ? ', ' + e.note : ''),
-      'To change it, send in one message:', 'Atossa edit #' + e.id, 'then one line: card | cash | amount <new amount> | type fuel/food/office/car/other | note <text>',
+      'Reply now: 1 = card, 2 = cash, or one line: amount <new amount> | type fuel/food/office/car/other | note <text>',
       ...((cmd.bad || []).length ? ['Not understood: ' + cmd.bad.join('; ')] : [])].join('\n');
   }
   store.d.pending[keyOf(who.chat, who.sender)] = { id: e.id, op: 'edit', changes: cmd.changes, at: store.now() }; store.save();
@@ -100,10 +101,23 @@ export function requestExpenseEdit(store, cmd, who) {
 /** A bare answer word (yes / no / cancel / 1 / 2, optionally after her name) that no question is waiting for. */
 export const isBareAnswer = (text) => /^(?:(?:atossa|atosa|atousa|آتوسا|اتوسا)[ ,:]+)?(?:yes|no|no all|cancel|ok|[12]|لغو|نه|بله)\s*[.!]?$/iu.test(normalizeDigits(String(text || '')).trim());
 
+/** The expense view that waits for a reply from this person ({ id }), or null. */
+export function pendingView(store, chat, sender) {
+  const p = (store.d.pending || {})[keyOf(chat, sender)];
+  return p && p.op === 'view' && store.now() - p.at <= 10 * 60 * 1000 ? p : null;
+}
+/** The reply to a waiting view as an edit command: 1 = card, 2 = cash, or the change lines («amount <n>», «type <t>», «note <t>»); null when it is none of these. */
+export function viewAnswer(view, text) {
+  const t = normalizeDigits(String(text || '')).trim();
+  if (t === '1' || t === '2') return { op: 'edit', id: view.id, changes: { method: t === '1' ? 'card' : 'cash' }, bad: [] };
+  const cmd = parseExpenseEdit('edit #' + view.id + '\n' + t);
+  return cmd && cmd.op === 'edit' && Object.keys(cmd.changes).length ? cmd : null;
+}
+
 /** The person's 1 / 2 on the waiting preview; null when none waits (the digit is not ours). Logged on the expense, with its undo. */
 export function answerExpenseEdit(store, chat, sender, pick) {
   const k = keyOf(chat, sender); const p = (store.d.pending || {})[k];
-  if (!p || store.now() - p.at > 10 * 60 * 1000) return null;
+  if (!p || p.op === 'view' || store.now() - p.at > 10 * 60 * 1000) return null; // a view waits for its own reply (viewAnswer)
   delete store.d.pending[k];
   const e = store.get(p.id);
   if (!e) { store.save(); return 'No expense #' + p.id + ' was found.'; }

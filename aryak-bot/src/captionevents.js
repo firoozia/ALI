@@ -17,7 +17,8 @@ export function eventsFromCaption(role, text) {
   if (role === 'cut') {
     const c = parseCutCaption(text);
     if (!c || c.kind === 'name') return null;
-    const lines = [{ code: c.code, quantity: c.quantity, unit: c.unit, ...(c.invoiceQuantity !== undefined ? { invoiceQuantity: c.invoiceQuantity } : {}) }];
+    if (c.kind === 'no-customer') return { noCustomer: { code: c.code, quantity: c.quantity, unit: c.unit } }; // a cut with nobody named: not recorded, the owner is told
+    const lines = c.lines || [{ code: c.code, quantity: c.quantity, unit: c.unit, ...(c.invoiceQuantity !== undefined ? { invoiceQuantity: c.invoiceQuantity } : {}) }];
     // an opened roll or a damaged piece is kept (the cutters' log) but is never a sale: no customer, flagged internal
     if (c.kind === 'open-roll' || c.kind === 'damage') return { events: [{ type: 'cut', internal: true, kind: c.kind, customer: c.kind === 'damage' ? c.customer : '', lines }] };
     return { events: [{ type: 'cut', customer: c.customer, lines, ...(c.pieces ? { pieces: c.pieces } : {}) }] };
@@ -48,7 +49,7 @@ export function eventsFromCaption(role, text) {
     if (p.kind === 'expense') return { ignore: true };
     if (p.kind === 'bank-credit') return { events: [{ type: 'payment', kind: 'transfer', customer: p.customer || '', amount: p.amount, currency: 'AED', lines: [], ...(p.customer ? {} : { pendingName: true }) }] };
     if (p.kind === 'name') return { name: p.customer }; // a bare name: it may belong to the payment just before or just after it
-    const withInvoices = { ...(p.cheque ? { kind: 'cheque' } : {}), ...(p.currency ? { currency: p.currency } : {}), ...(p.foreign ? { foreign: p.foreign } : {}), ...(p.invoices?.length ? { invoices: p.invoices, ...(p.amount > 0 ? {} : { noAmount: true }) } : {}), ...(p.cleared ? { cleared: true } : {}) };
+    const withInvoices = { ...(p.cheque ? { kind: 'cheque' } : {}), ...(p.chequeDate ? { chequeDate: p.chequeDate } : {}), ...(p.currency ? { currency: p.currency } : {}), ...(p.foreign ? { foreign: p.foreign } : {}), ...(p.invoices?.length ? { invoices: p.invoices, ...(p.amount > 0 ? {} : { noAmount: true }) } : {}), ...(p.cleared ? { cleared: true } : {}) };
     if (p.kind === 'cash' && !p.customers.length) return { events: [{ type: 'payment', kind: 'cash', customer: '', amount: p.amount, currency: 'AED', lines: [], pendingName: true, ...withInvoices }] };
     if (p.kind === 'cash' && p.customers.length) {
       // several customers in one caption: one event with the names joined; the amount is not split between them
