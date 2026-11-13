@@ -1401,8 +1401,18 @@ test('«2 #E5» / «2#E5» / «#E5 2» on a done expense whose method differs fr
   for (const t of ['2 #E5', '2#E5', '#E5 2', '2 E5']) assert.deepEqual(parseExpenseReply(t), { pick: '2', id: 'E5' }, t);
   assert.deepEqual(parseExpenseReply('1 #E5'), { pick: '1', id: 'E5' });
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.ok(index.includes("if (target && target.state === 'done') {") && index.includes("const method = pk.pick === '1' ? 'card' : 'cash';")); // 1 card, 2 cash on a done entry
-  assert.ok(index.includes("target.history.push({ at: Date.now(), before: { method: target.method } })")); // with history, like an edit
+  assert.ok(index.includes("if (!target || target.state !== 'done') return null;") && index.includes("const method = pick === '1' ? 'card' : 'cash';")); // 1 card, 2 cash on a done entry
+  assert.ok(index.includes("target.history.push({ at: Math.min(at, Date.now()), before: { method: target.method } })")); // with history, like an edit
   assert.ok(index.includes("' has no open question; use: Atossa edit #'")); // no flag: said so
   assert.ok(index.includes("' → ' + method + ' ✔'")); // answered once, briefly
+});
+
+test('the same expense picks work in the owner\'s own chat (every form), and a pick typed before the fix is replayed once from the raw log unless the method changed since', async () => {
+  const { parseInvoiceCommand } = await import('../src/qboinvoice.js');
+  for (const t of ['2#E5', '2 #E5', '#E5 2', 'E5 2', '1 E5']) { const c = parseInvoiceCommand(t); assert.equal(c.type, 'expense_pick', t); assert.equal(c.id, 'E5'); assert.equal(c.pick, /^1/.test(t) ? '1' : '2', t); }
+  assert.equal(parseInvoiceCommand('Atossa 2#E5').type, 'expense_pick'); // with the name in front too
+  assert.equal(parseInvoiceCommand('edit #E5 cash').type, 'expense_edit'); assert.equal(parseInvoiceCommand('Atossa delete #E5').type, 'expense_edit'); assert.equal(parseInvoiceCommand('undo #E5').type, 'expense_edit'); // edit / delete / undo already work there
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("const said = await pickMethodOnDone(ic.pick, ic.id); if (said) return [said];")); // the owner's chat answers in the owner's chat
+  assert.ok(index.includes('async function replayExpensePicks()') && index.includes("(e.history || []).some((h) => h.at > m.at)") && index.includes('if (done[m.id]) continue;')); // once, and never over a later change
 });

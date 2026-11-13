@@ -1251,7 +1251,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       }
       return [requestAdd(expenseStore, ic.parsed, here.chatId || 'owner')];
     }
-    case 'expense_pick': { const hr = handleReply(expenseStore, 'owner', { pick: ic.pick, id: ic.id }); return hr ? [hr.text] : null; }
+    case 'expense_pick': { const said = await pickMethodOnDone(ic.pick, ic.id); if (said) return [said]; const hr = handleReply(expenseStore, 'owner', { pick: ic.pick, id: ic.id }); return hr ? [hr.text] : null; }
     case 'add_undo': return [undoAdd(expenseStore, ic.id, removeAdded)];
     case 'expense_edit': return [await expenseEditReply(ic.cmd, here.chatId || 'owner', 'owner')];
     case 'swap_answer': {
@@ -3220,6 +3220,40 @@ function removeAdded(refs) {
   }
 }
 
+/**
+ * «2 #E5» on a DONE expense whose method differs from QuickBooks (the flag of the reports): 1 = card, 2 = cash, applied with history. Returns the answer text, or null when [id] is no done expense
+ * (then an open question of that expense, if any, is answered by the ordinary reply). [at]: the time of the owner's message (a pick made after a later change of the method is not applied).
+ */
+async function pickMethodOnDone(pick, id, at = Date.now()) {
+  const target = expenseStore.get(id);
+  if (!target || target.state !== 'done') return null;
+  const rec = await expenseInQb(target); const qk = rec ? qbKindOf(rec) : '';
+  if (!qk || qk === target.method) return '#' + target.id + ' has no open question; use: Atossa edit #' + target.id + ' + cash/card';
+  const method = pick === '1' ? 'card' : 'cash';
+  target.history = target.history || []; target.history.push({ at: Math.min(at, Date.now()), before: { method: target.method } }); target.method = method; expenseStore.save();
+  return '#' + target.id + ' ' + (TYPES[target.type]?.label || 'Other').toLowerCase() + ' ' + String(Number(target.amount)) + ' → ' + method + ' ✔';
+}
+
+/** After a restart: the owner's latest pick of a flagged done expense that was never applied (typed before this answered), taken from the raw log, once. Skipped when the method was changed after the message. */
+async function replayExpensePicks() {
+  const done = expenseStore.d.replayed || (expenseStore.d.replayed = {});
+  const latest = new Map();
+  for (const m of rawLog.messages('', Date.now() - 3 * 86400000)) {
+    if (!m.fromMe) continue; // typed on the owner's own account
+    const pk = parseExpenseReply(String(m.text || ''));
+    if (pk && pk.pick && pk.id) latest.set(pk.id, { ...m, pk });
+  }
+  for (const [id, m] of latest) {
+    if (done[m.id]) continue;
+    const e = expenseStore.get(id);
+    if (!e || e.state !== 'done' || (e.history || []).some((h) => h.at > m.at)) { done[m.id] = Date.now(); continue; } // changed since: not applied
+    const said = await pickMethodOnDone(m.pk.pick, id, m.at);
+    done[m.id] = Date.now(); expenseStore.save();
+    logger.info('expense pick replayed from the raw log: ' + id + ' -> ' + said);
+  }
+}
+setTimeout(() => { const tryIt = () => { if (!qbo.connected) return setTimeout(tryIt, 30000).unref(); void replayExpensePicks().catch((e) => logger.warn('expense picks replay: ' + e.message)); }; tryIt(); }, 45000).unref();
+
 /** The preview (or the undo) of an expense edit / delete command. */
 async function expenseEditReply(ex, chat, sender) {
   if (ex.op === 'undo') return undoExpense(expenseStore, ex.id);
@@ -3256,15 +3290,8 @@ async function expensesTurn(raw, groupId, info) {
     // «2 #E5» / «2#E5» / «#E5 2» on a DONE expense whose method differs from QuickBooks (the flag of the reports): 1 = card, 2 = cash, applied with history, answered once; no flag = said so
     const pk = parseExpenseReply(text);
     if (pk && pk.pick && pk.id && mayEdit) {
-      const target = expenseStore.get(pk.id);
-      if (target && target.state === 'done') {
-        const rec = await expenseInQb(target); const qk = rec ? qbKindOf(rec) : '';
-        if (!qk || qk === target.method) { await say('#' + target.id + ' has no open question; use: Atossa edit #' + target.id + ' + cash/card'); return true; }
-        const method = pk.pick === '1' ? 'card' : 'cash';
-        target.history = target.history || []; target.history.push({ at: Date.now(), before: { method: target.method } }); target.method = method; expenseStore.save();
-        await say('#' + target.id + ' ' + (TYPES[target.type]?.label || 'Other').toLowerCase() + ' ' + String(Number(target.amount)) + ' → ' + method + ' ✔');
-        return true;
-      }
+      const said = await pickMethodOnDone(pk.pick, pk.id);
+      if (said) { await say(said); return true; }
     }
   }
   const done = handleReply(expenseStore, by, parseExpenseReply(text), config.timezone);
