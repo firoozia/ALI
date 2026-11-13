@@ -1474,3 +1474,16 @@ test('an expense line shows the QuickBooks purchase it matched (account, date, p
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'cashbox.js'), 'utf8');
   assert.ok(src.includes('PaymentType') && src.includes('.includes(wanted)'));
 });
+
+test('«Atossa edit #E2» alone shows the expense as stored and how to change it, with no example amount; a bare «no» / «no all» / «cancel» with nothing waiting is answered once (owner and allowed staff only)', async () => {
+  const { requestExpenseEdit, parseExpenseEdit, isBareAnswer } = await import('../src/expenseedit.js');
+  const e = { id: 'E2', amount: 10, day: '2026-11-10', date: '2026-11-10', type: 'other', vendor: 'Part Zone', method: 'cash', state: 'done' };
+  const store = { get: () => e, d: {}, save() {}, now: () => 1 };
+  const text = requestExpenseEdit(store, parseExpenseEdit('Atossa edit #E2'), { chat: 'g', sender: 's', qb: { TxnDate: '2026-10-29', TotalAmt: 10, AccountRef: { name: 'Petty Cash' } } });
+  assert.match(text, /^#E2 — 10\/11, Part Zone, Other, 10\.00 AED, cash \(QuickBooks: Petty Cash 29\/10 10\.00\)\nTo change it, send in one message:\nAtossa edit #E2\nthen one line: card \| cash \| amount <new amount> \| type fuel\/food\/office\/car\/other \| note <text>$/);
+  for (const f of ['expenseedit.js', 'expenses.js', 'index.js']) assert.ok(!fs.readFileSync(path.join(import.meta.dirname, '..', 'src', f), 'utf8').includes('42.50'), f); // no made-up example amount in any help text
+  for (const t of ['No', 'no all', 'Cancel', 'yes', '1', 'Atossa no', 'نه']) assert.equal(isBareAnswer(t), true, t);
+  for (const t of ['no problem with the door', 'edit #E2', '230 fuel', 'Atossa report']) assert.equal(isBareAnswer(t), false, t);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("if (mayEdit && isBareAnswer(text)) { await say('Nothing is waiting for an answer.'); return true; }"));
+});

@@ -71,7 +71,7 @@ import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, rep
 import { helloOnce } from './hello.js';
 import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
-import { answerExpenseEdit, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
+import { answerExpenseEdit, isBareAnswer, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, parseCashBoxCommand, rederiveCashOut } from './cashbox.js';
 import { answerAdd, requestAdd, undoAdd } from './addentries.js';
 import { isInvoiceFile, replyNameAmount } from './paymentfix.js';
@@ -3304,6 +3304,7 @@ async function expensesTurn(raw, groupId, info) {
     await say(await expensesReportText(asked));
     return true;
   }
+  if (mayEdit && isBareAnswer(text)) { await say('Nothing is waiting for an answer.'); return true; } // only the owner and the allowed staff; nothing else in the group is answered
   const cap = parseExpenseCaption(text);
   if (cap.amount && /^[\s\d.,]+(?:aed|dhs?|درهم)?\s*[\p{L}]{0,12}\s*$/iu.test(normalizeDigits(text))) { // only an amount (and a type word): an expense with no receipt
     await afterExpenseEntry(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData })), say);
