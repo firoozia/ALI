@@ -91,7 +91,7 @@ export function parsePeriod(text, today) {
 }
 
 const SIMPLE_WORDS = /(?:^|\s)(?:آتوسا|اتوسا|آدرس|لطفا|لطفاً|سلام|atossa|atosa|atousa|atusa|atoosa|hello|hi|hey)(?=\s|$)/giu;
-const FILLERS = /(?:^|\s)(?:را|رو|برای|برام|برایم|به|من|ما|از|تا|بفرست|بفرستید|بفرستین|بده|بدید|می‌?خواهم|میخواهم|می‌?خوام|میخوام|لازم|دارم|ارسال|کن|بزن|بساز|ماه|برج|میلادی|کنید|صورت\s*حساب|صورتحساب|حساب|statement|statements|soa|account|accounts|please|send|give|make|get|show|issue|me|the|of|for|my|to|a)(?=\s|$)/giu;
+const FILLERS = /(?:^|\s)(?:را|رو|برای|برام|برایم|به|من|ما|از|تا|بفرست|بفرستید|بفرستین|بده|بدید|می‌?خواهم|میخواهم|می‌?خوام|میخوام|لازم|دارم|ارسال|کن|بزن|بساز|ماه|برج|میلادی|کنید|صورت\s*حساب|صورتحساب|حساب|statement|statements|soa|account|accounts|please|send|give|make|get|show|issue|me|the|of|for|my|to|a|in|on|i|need|want|can|you|could|would|like)(?=\s|$)/giu;
 
 /**
  * A free-form request for a statement ("آتوسا صورتحساب شرکت پالم برد را برای ماه ۱۰ میلادی برام بفرست"): { customer, period, label } or null when the text does not

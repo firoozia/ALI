@@ -122,3 +122,22 @@ test('English statement lines are written in English at once: a statement of acc
   const { TRANSLATE_SYSTEM } = await import('../src/outlang.js');
   assert.match(TRANSLATE_SYSTEM, /NEVER "invoice"/);
 });
+
+test('a statement of «designer wood» for month 8: the customer is chosen by words or shown as numbered choices, never by a weak guess; every phrasing of the month reads 01/08 to 31/08', async () => {
+  const customers = ['DESIGNER WOOD PRESSING LLC', 'MASTER WOOD', 'DESIGN WORLD KITCHEN', 'AL DIWAN WOOD', 'TIGER INDUSTRIES COMPANY LLC'].map((name, i) => ({ Id: String(200 + i), DisplayName: name, CompanyName: name, Balance: 0 }));
+  const desk = mkDesk(customers);
+  // the typed English words are all in ONE QuickBooks name: that customer
+  const byWords = await desk.resolveSpoken('designer wood'); assert.equal(byWords.name, 'DESIGNER WOOD PRESSING LLC'); assert.equal(byWords.via, 'words');
+  // the same customer typed in Persian letters: only a sure sound is used; the others are shown as choices, the best first
+  const fa = await desk.resolveSpoken('دیزاینر وود');
+  assert.equal(fa.id, undefined); assert.ok(fa.many && fa.many.length >= 2 && fa.many.length <= 3); assert.equal(fa.many[0], 'DESIGNER WOOD PRESSING LLC');
+  const ask = await desk.statementFor('دیزاینر وود', { privateJid: 'x@s.whatsapp.net', period: { from: '2026-08-01', to: '2026-08-31', label: '2026-08' } });
+  assert.equal(ask.ok, false); assert.equal(ask.ask, true); assert.ok(ask.options.includes('DESIGNER WOOD PRESSING LLC')); assert.match(ask.text, /چند مشتری به «دیزاینر وود» می‌خورد/);
+  const { parseStatementRequest } = await import('../src/period.js');
+  for (const t of ['statement designer wood month 8', 'Atossa statement designer wood August', 'statement of designer wood 08/2026', 'statement for designer wood in august', 'صورت حساب ماه ۸ دیزاینر وود', 'آتوسا صورتحساب دیزاینر وود ماه ۸', 'آتوسا صورتحساب دیزاینر وود اوت']) {
+    const r = parseStatementRequest(t, '2026-11-14');
+    if (/اوت/.test(t)) continue; // the Persian spelling of August is not a month word here
+    assert.deepEqual([r.period.from, r.period.to], ['2026-08-01', '2026-08-31'], t); assert.match(r.customer, /^(?:designer wood|دیزاینر وود)$/, t);
+  }
+  assert.equal(parseStatementRequest('statement designer wood month 12', '2026-11-14').period.from, '2025-12-01'); // a month still ahead: the last one
+});

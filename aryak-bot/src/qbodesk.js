@@ -80,6 +80,9 @@ export class QboMap {
   }
 }
 
+/** A sound match is sure only with a high score AND a clear lead over the second best; anything weaker is shown as numbered choices. */
+export const soundIsSure = (ranked) => { const best = ranked?.[0]; const second = ranked?.[1]; if (!best) return false; return (best.score >= 0.95 && best.score - (second?.score || 0) >= 0.2) || (best.raw >= 0.96 && best.score >= 0.7 && !(second && second.raw >= 0.96)); }; // a high score with a clear lead, or every spoken word exact and no other name as exact
+
 export class QboDesk {
   /**
    * [qbo]: the client; [list]: the approved customer-group list; [aliases]; [map]: QboMap; [config]; [groups]: async () => [{ id, subject }];
@@ -361,14 +364,16 @@ export class QboDesk {
     for (const row of this.list.rows()) names.push({ name: row.customer, alts: [], id: '', approved: true }); // the approved list (Persian names too)
     const picked = pickSpoken(typed, names, { strong: 0.7 });
     const pickName = (x) => { const hit = names.find((n) => n.name === x.name && n.id) || null; return hit; };
-    if (picked.kind === 'one') {
+    const sure = picked.kind === 'one' ? soundIsSure(picked.ranked) : false;
+    if (picked.kind === 'one' && sure) { // a clear winner only (a high score AND a clear lead over the second): anything weaker is a numbered list, never a silent guess
       const hit = pickName(picked.best);
       if (hit) return { id: hit.id, name: hit.name, via: 'sound' };
       const viaRow = await this.resolveStrict(picked.best.name); // an approved-list name: its QuickBooks customer, if it has one
       if (viaRow.id) return { id: viaRow.id, name: viaRow.name || picked.best.name, via: 'sound' };
     }
-    const cands = (picked.kind === 'many' ? picked.candidates : picked.kind === 'one' ? [picked.best] : []).map((c) => c.name);
-    if (cands.length > 1) return { many: [...new Set(cands)].slice(0, 5) };
+    const weak = picked.kind === 'one' && !sure ? picked.ranked.filter((r) => r.score >= 0.4).slice(0, 3).map((c) => c.name) : [];
+    const cands = (picked.kind === 'many' ? picked.candidates : picked.kind === 'one' ? (weak.length > 1 ? weak.map((name) => ({ name })) : [picked.best]) : []).map((c) => c.name);
+    if (cands.length > 1) return { many: [...new Set(cands)].slice(0, 3) };
     return { nearest: [...new Set((picked.nearest || picked.ranked.slice(0, 3)).map((c) => c.name))].slice(0, 3) };
   }
 
