@@ -91,6 +91,7 @@ import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, overrideF
 import { unbilled, unbilledText } from './unbilled.js';
 import { PaymentDups, cleanPaymentEvents, groupPaymentNotices, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
+import { AllStatementPreviews, parseAllReply, previewAllText, selectOpen } from './allstatements.js';
 import { GroupStatements, StatementPreviews, askLine, effectiveRequest, parseStyleReply, previewText, statementAsk } from './groupstatement.js';
 import { DEFAULT_PHRASES, metadataToken, speechTranscriber } from './speech.js';
 import { MAX_SECONDS, NO_VOICE_CUSTOMER, NO_VOICE_FA, NOT_UNDERSTOOD_CUSTOMER, NOT_UNDERSTOOD_FA, VoiceDesk, answerKind, answerLead, nameHeard, retryText, understand, voiceAction } from './voice.js';
@@ -1239,6 +1240,17 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'adjust': return qboInvoices.adjust(ic);
     case 'cancel_all': case 'queue_list': return [await queueCommand('owner', ic.type)];
     case 'yes_all': case 'no_all': return qboInvoices.decideAll({ verb: ic.type === 'yes_all' ? 'yes' : 'no' });
+    case 'statement_all': { // every customer with an open account that has an invoice in the period: ONE preview, then 1 / 2 builds them all (owner's own chat only; read only)
+      if (ic.unsupported) return ['ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'];
+      if (!ic.period) return ['Which month? Write for example: statements month <number> all'];
+      const blockedAll = qboInvoices.guard(); if (blockedAll) return [blockedAll];
+      if (allRunning) return ['A run of all statements is going on; wait for its summary.'];
+      const [customersAll, invoicesAll] = [await qboDesk.customers(true), await qbo.query("select * from Invoice where TxnDate >= '" + ic.period.from + "' and TxnDate <= '" + ic.period.to + "'")];
+      const sel = selectOpen({ customers: customersAll, invoices: invoicesAll, from: ic.period.from, to: ic.period.to });
+      if (!sel.rows.length) return ['No customer with an open account has an invoice from ' + ic.period.from.split('-').reverse().join('/') + ' to ' + ic.period.to.split('-').reverse().join('/') + '.'];
+      const idAll = allPreviews.add({ from: ic.period.from, to: ic.period.to, rows: sel.rows, total: sel.total, more: sel.more });
+      return [previewAllText({ id: idAll, from: ic.period.from, to: ic.period.to, rows: sel.rows, total: sel.total, more: sel.more })];
+    }
     case 'statement_nl': {
       if (ic.unsupported) return ['ماه شمسی را نمی‌توانم بسازم؛ ماه میلادی (مثل «ماه ۱۰ میلادی» یا «اکتبر») یا بازهٔ تاریخ بگویید.'];
       if (!ic.customer) { const out = ['صورت‌حساب کدام مشتری؟ نام را بنویسید یا بگویید.']; out.clarify = true; return out; }
@@ -1534,6 +1546,8 @@ async function finishOwnerSend({ chatId, pending, reply, lang = 'en' }) {
 
 // ---------------------------------------------------------------------------------------------------------------- statements asked for in a group
 const groupStatements = new GroupStatements(); // built for a customer group, waiting for the owner's «بله #S1»
+const allPreviews = new AllStatementPreviews({ file: path.join(config.authDir, 'qbo', 'all-statement-previews.json') }); // «statements month 10 all»: the waiting previews survive a restart
+let allRunning = false; // one run of all statements at a time
 const statementPreviews = new StatementPreviews({ nextId: () => { groupStatements.n = Math.max(groupStatements.n, statementPreviews.maxN); return groupStatements.nextId(); }, file: path.join(config.authDir, 'qbo', 'statement-previews.json'), revive: (e) => statementRun({ name: e.name, period: e.revive.period, privateJid: e.revive.privateJid, say: (t) => sock.sendMessage(e.revive.privateJid, persianText(t)) }) }); // asked for, not built: waiting for «1» or «2»
 
 /** Everything that waits for an answer, as { id, kind, cancel }. [by]: 'owner' sees every kind; a person sees only what he asked for (invoice previews, statements and their layout questions, his expenses). */
@@ -1584,6 +1598,36 @@ const statementRun = ({ name, period, privateJid, say }) => async (style) => {
   const y = await qboDesk.statementFor(name, { privateJid, period, style });
   await say(y.text);
 };
+
+/** The answer to the preview of ALL statements («1», «2», «No», with or without «#SA1»): the run builds one PDF per customer and sends each to the owner's own chat with a gap. true = it was one. */
+async function allStatementFlow({ text, say }) {
+  const r = parseAllReply(text);
+  if (!r) return false;
+  const open = allPreviews.openIds();
+  if (!open.length) { if (r.id) { await say('That preview of all statements is no longer waiting (half an hour passed or it was answered); ask for it again.'); return true; } return false; }
+  if (!r.id && statementPreviews.openIds('owner').length) { await say('Two kinds of statements wait: ' + [...open, ...statementPreviews.openIds('owner')].map((x) => '#' + x).join(', ') + '. Nothing was done. Reply with the code, for example: ' + (r.kind === 'no' ? 'No' : r.style === 'balance' ? '1' : '2') + ' #' + open[0]); return true; }
+  const pick = r.id ? (open.includes(r.id) ? r.id : '') : (open.length === 1 ? open[0] : '');
+  if (r.id && !pick) { await say('That preview of all statements was not found or its half hour is over; ask again.'); return true; }
+  if (!pick) { await say(open.length + ' previews of all statements wait: ' + open.map((x) => '#' + x).join(', ') + '. Nothing was done. Reply with the code, for example: ' + (r.kind === 'no' ? 'No' : r.style === 'balance' ? '1' : '2') + ' #' + open[0]); return true; }
+  if (r.kind === 'no') { allPreviews.clear(pick); await say('Cancelled. Nothing was made.'); return true; }
+  const blocked = qboInvoices.guard(); if (blocked) { await say(blocked); return true; }
+  if (allRunning) { await say('A run of all statements is already going on; wait for its summary (the preview stays).'); return true; }
+  const p = allPreviews.get(pick); allPreviews.clear(pick);
+  allRunning = true;
+  const own = ownIds()[0]; const period = { from: p.from, to: p.to, label: p.from.slice(0, 7) };
+  await say('Started: ' + p.rows.length + ' statements (' + (r.style === 'balance' ? 'Balance forward' : 'Transaction statement') + ', ' + p.from.split('-').reverse().join('/') + ' – ' + p.to.split('-').reverse().join('/') + ') to this chat, one every few seconds; a summary follows.');
+  void (async () => {
+    let sent = 0; const failed = [];
+    try {
+      for (const [i, row] of p.rows.entries()) {
+        try { const x = await qboDesk.statementFor(row.name, { privateJid: own, period, style: r.style, found: { id: row.id, name: row.name, via: 'exact' } }); if (x.ok) sent += 1; else failed.push(row.name); } catch (e) { failed.push(row.name); logger.warn('all statements: ' + row.name + ' failed: ' + (e.name || '') + ' ' + (e.message || '')); }
+        if (i < p.rows.length - 1) await new Promise((res) => setTimeout(res, 5000));
+      }
+    } finally { allRunning = false; }
+    await say('Done: ' + sent + ' sent, ' + failed.length + ' failed' + (failed.length ? ' (' + failed.slice(0, 15).join(', ') + ')' : '') + '. Nothing was written to QuickBooks.').catch(() => {});
+  })();
+  return true;
+}
 
 /** The answer to a preview («1», «2», «No», with or without «#S5»): true when it was one. [say]: where the answers go; [choicePending]: a numbered customer question waits in this chat (a bare number belongs to it). */
 async function styleReplyFlow({ text, by, say, choicePending = false }) {
@@ -2584,6 +2628,7 @@ async function handleStaffChat(raw, chatId, group) {
   }
   // The owner's invoice commands (his own chat, owner only): the request, his yes or no, the kill switch, the audit report, the authorized people.
   if (text && !audio && !image && !group && isSelf) {
+    if (await allStatementFlow({ text, say: (t) => reply(t) })) return true; // «1» / «2» / «No» for the preview of ALL statements
     if (await styleReplyFlow({ text, by: 'owner', say: (t) => reply(t), choicePending: !!choiceDesk.get(`pc:${chatId}`) })) return true; // «1» / «2» / «No» for a statement preview
     let ic = parseInvoiceCommand(text) || plainReportAsk(text); // plain questions and typos («how much money came in today?», «recieved today») go to the reports that exist
     // a bare yes or no answers the question the assistant asked last in this chat (a photo, a voice note, a follow-up); only without one does it look at open previews

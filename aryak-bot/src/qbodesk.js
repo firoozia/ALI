@@ -388,8 +388,8 @@ export class QboDesk {
    * A statement for a PERIOD of a customer named in any words, sent to [privateJid] (the asker's own chat). Returns { ok, text }; { ok: false, ask: true } when the
    * customer must be chosen first (a numbered list) or was not found (the three nearest).
    */
-  async statementFor(typed, { privateJid, period = null, hold = false, style = '', preview = false } = {}) {
-    const found = await this.resolveSpoken(typed);
+  async statementFor(typed, { privateJid, period = null, hold = false, style = '', preview = false, found: given = null } = {}) {
+    const found = given || await this.resolveSpoken(typed); // [found]: a customer already chosen ({ id, name }), as the run of all statements does
     if (!found.id) {
       if (isEnglishOut()) { // written in English at once (not translated): a statement is a statement of account, never an invoice
         if (found.many) return { ok: false, ask: true, text: `Several customers match "${typed}"; write the right number:\n${withSeparators(found.many.map((n, i) => `${i + 1}. ${n}`))}`, options: found.many };

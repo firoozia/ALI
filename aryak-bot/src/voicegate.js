@@ -12,7 +12,7 @@ import { answerKind } from './voice.js';
 import { parseStatementRequest } from './period.js';
 import { parseQboCommand } from './qbodesk.js';
 
-const READ_ONLY = new Set(['audit', 'tax_list', 'auth_list', 'cost_report', 'price_list', 'statement_nl', 'persian_list', 'details', 'compare', 'dry_run', 'tax_inclusive', 'tax_inclusive_undo', 'stock_diff', 'alias_propose', 'unbilled', 'payments', 'expenses_report', 'received_report', 'weekly_check']);
+const READ_ONLY = new Set(['audit', 'tax_list', 'auth_list', 'cost_report', 'price_list', 'statement_nl', 'statement_all', 'persian_list', 'details', 'compare', 'dry_run', 'tax_inclusive', 'tax_inclusive_undo', 'stock_diff', 'alias_propose', 'unbilled', 'payments', 'expenses_report', 'received_report', 'weekly_check']);
 const dubaiToday = () => new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10);
 const SEND = /(?:ارسال|بفرست|بفرستید|بفرستین|send|forward)/iu;
 const INVOICE = /(?:فاکتور|invoice|صورت\s*حساب)/iu;

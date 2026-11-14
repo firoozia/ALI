@@ -6,6 +6,7 @@
 // id written here. Safety: a kill switch in the client, at most 10 creations an hour and 40 a day, an append-only audit log, only the "create invoice"
 // write exists, and QBO_WRITE off refuses everything. Nothing here sends anything to a customer.
 
+import { isAllRequest } from './allstatements.js';
 import { parseCutCommand } from './cutedit.js';
 import { nameFallback } from './namelead.js';
 import { parseExpenseEdit } from './expenseedit.js';
@@ -214,6 +215,7 @@ function parseInvoiceCommandImpl(text) {
   if ((m = /^کد\s+(.+?)\s*=\s*(.+?)(?:\s+مشتری\s+(.+))?$/u.exec(s))) return { type: 'item_code', code: m[1].trim(), item: m[2].trim(), customer: m[3]?.trim() || '' };
   { // «صورت‌حساب شرکت … برای ماه ۱۰ میلادی» in any words: the statement of a customer for a period (read only; it goes to the asker's own chat)
     const sr = parseStatementRequest(raw, new Date(Date.now() + 4 * 3600 * 1000).toISOString().slice(0, 10));
+    if (sr && isAllRequest(sr, raw)) return { type: 'statement_all', period: sr.period, unsupported: sr.unsupported }; // every customer with an open account: a preview first
     if (sr) return { type: 'statement_nl', customer: sr.customer, period: sr.period, unsupported: sr.unsupported, style: sr.style || '' };
   }
   const firstLine = String(raw).split(/\n/).map((x) => x.trim()).find(Boolean) || '';

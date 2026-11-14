@@ -57,7 +57,7 @@ test('the wiring: every request origin shows the preview first and builds only a
   assert.match(index, /statementFor\(customer, \{ hold: true, period, style, preview: !style \}\)/); // a customer group: privately to the requester
   assert.match(index, /if \(may && await styleReplyFlow\(\{ text, by,/); // internal groups: only owner or authorized
   assert.match(index, /if \(person && canStatement && await styleReplyFlow\(/); // a private chat: the statement permission
-  assert.match(index, /isSelf\) \{\n    if \(await styleReplyFlow\(\{ text, by: 'owner'/); // the owner's own chat
+  assert.match(index, /isSelf\) \{\n    if \(await allStatementFlow\(\{ text, say: \(t\) => reply\(t\) \}\)\) return true;[^\n]*\n    if \(await styleReplyFlow\(\{ text, by: 'owner'/); // the owner's own chat
   const fn = index.slice(index.indexOf('async function styleReplyFlow'), index.indexOf('async function trackGroup') > 0 ? index.indexOf('const sayIn') : undefined);
   assert.ok(fn.indexOf('qboInvoices.guard()') < fn.indexOf('p.run(r.style)')); // the kill switch is checked before anything is built
   const desk = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'qbodesk.js'), 'utf8');

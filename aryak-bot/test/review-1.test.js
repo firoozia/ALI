@@ -1658,3 +1658,38 @@ test('a statement preview waits for «1» or «2» in every form, survives a res
   const ix = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(ix.includes('That statement is no longer waiting') && ix.includes("file: path.join(config.authDir, 'qbo', 'statement-previews.json')") && ix.includes('revive: { privateJid: ownIds()[0], period: ic.period || null }'));
 });
+
+test('statements of all customers with an open account: the phrases, the selection rule, the preview, 1/2/no, restart survival, the busy guard and the wiring', async () => {
+  const { selectOpen, previewAllText, parseAllReply, AllStatementPreviews } = await import('../src/allstatements.js');
+  const { parseInvoiceCommand } = await import('../src/qboinvoice.js');
+  const { parseQboCommand } = await import('../src/qbodesk.js');
+  for (const t of ['statement month 10 all', 'statements month 10', 'all statements 10/2026', 'Atossa statement mont 10 all', 'صورت حساب ماه ۱۰ همه', 'statement last month all']) {
+    const c = parseInvoiceCommand(t); assert.equal(c?.type, 'statement_all', t); assert.ok(c.period && /^\d{4}-\d{2}-\d{2}$/.test(c.period.from), t);
+  }
+  const m10 = parseInvoiceCommand('statements month 10').period; assert.deepEqual([m10.from.slice(5), m10.to.slice(5)], ['10-01', '10-31']);
+  assert.equal(parseInvoiceCommand('statement designer wood month 10').type, 'statement_nl'); // one customer: the old flow
+  assert.equal(parseQboCommand('صورت حساب همه')?.type, 'all'); assert.notEqual(parseInvoiceCommand('صورت حساب همه')?.type, 'statement_all'); // the old «all to the test group» command is untouched
+  assert.equal(parseQboCommand('صورت حساب ماه ۱۰ همه'), null); // the new phrase never falls into it
+  // the selection: an invoice in the period AND an open balance now; paid-up customers are left out; the biggest open balance first
+  const customers = [{ Id: '1', DisplayName: 'ALPHA', Balance: 700 }, { Id: '2', DisplayName: 'BRAVO', Balance: 0 }, { Id: '3', DisplayName: 'CHARLIE', Balance: 50 }, { Id: '4', DisplayName: 'DELTA', Balance: 900 }, { Id: '5', DisplayName: 'ECHO', Balance: 40, Active: false }];
+  const invoices = [{ CustomerRef: { value: '1' }, TotalAmt: 1200, Balance: 700, TxnDate: '2026-10-05' }, { CustomerRef: { value: '1' }, TotalAmt: 300, Balance: 0, TxnDate: '2026-10-20' }, { CustomerRef: { value: '2' }, TotalAmt: 500, Balance: 0, TxnDate: '2026-10-07' },
+    { CustomerRef: { value: '3' }, TotalAmt: 80, Balance: 50, TxnDate: '2026-09-30' }, { CustomerRef: { value: '5' }, TotalAmt: 60, Balance: 40, TxnDate: '2026-10-09' }];
+  const sel = selectOpen({ customers, invoices, from: '2026-10-01', to: '2026-10-31' });
+  assert.deepEqual(sel.rows.map((r) => [r.name, r.invoiced, r.received, r.open]), [['ALPHA', 1500, 800, 700]]); // BRAVO paid up, CHARLIE no invoice in the period, DELTA none at all, ECHO inactive
+  assert.deepEqual(sel.total, { invoiced: 1500, received: 800, open: 700 }); assert.equal(sel.more, 0);
+  const many = selectOpen({ customers: Array.from({ length: 90 }, (_, i) => ({ Id: String(i), DisplayName: 'C' + i, Balance: i + 1 })), invoices: Array.from({ length: 90 }, (_, i) => ({ CustomerRef: { value: String(i) }, TotalAmt: 10, Balance: 5, TxnDate: '2026-10-02' })), from: '2026-10-01', to: '2026-10-31' });
+  assert.equal(many.rows.length, 80); assert.equal(many.more, 10); assert.equal(many.rows[0].name, 'C89');
+  const text = previewAllText({ id: 'SA1', from: '2026-10-01', to: '2026-10-31', ...sel });
+  assert.match(text, /^\*Statements #SA1\* 01\/10\/2026 – 31\/10\/2026 — 1 customers with an open account\n1\. ALPHA — invoiced 1,500\.00, received 800\.00, open 700\.00\nTotal — invoiced 1,500\.00, received 800\.00, open 700\.00\nReply 1 = Balance forward, 2 = Transaction statement \(for all\), or No/);
+  assert.match(previewAllText({ id: 'SA2', from: '2026-10-01', to: '2026-10-31', ...many }), /10 more customers with an open account are not included \(the limit is 80\)/);
+  for (const [t, want] of [['1', { kind: 'style', style: 'balance', id: '' }], ['2', { kind: 'style', style: 'transaction', id: '' }], ['2 #SA1', { kind: 'style', style: 'transaction', id: 'SA1' }], ['#SA1 1', { kind: 'style', style: 'balance', id: 'SA1' }], ['No', { kind: 'no', id: '' }], ['no #SA3', { kind: 'no', id: 'SA3' }], ['۲', { kind: 'style', style: 'transaction', id: '' }]]) assert.deepEqual(parseAllReply(t), want, t);
+  assert.equal(parseAllReply('hello'), null); assert.equal(parseAllReply('2 #S1'), null); // a single statement's code is not ours
+  const os = await import('node:os'); const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'asp-')), 'q', 'all.json');
+  let clock = 1000; const mk = () => new AllStatementPreviews({ file, now: () => clock });
+  const a = mk(); const id = a.add({ from: '2026-10-01', to: '2026-10-31', rows: sel.rows, total: sel.total }); assert.equal(id, 'SA1');
+  const b = mk(); assert.deepEqual(b.openIds(), ['SA1']); assert.equal(b.get('SA1').rows[0].name, 'ALPHA'); assert.equal(b.add({ from: 'x', to: 'y', rows: [], total: {} }), 'SA2'); // survives a restart, the counter continues
+  clock += 31 * 60 * 1000; assert.deepEqual(mk().openIds(), []); // half an hour is over
+  const ix = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(ix.includes('let allRunning = false;') && ix.includes('A run of all statements is already going on') && ix.includes('const own = ownIds()[0];') && ix.includes("privateJid: own, period, style: r.style, found: { id: row.id, name: row.name, via: 'exact' }"));
+  assert.ok(ix.includes("'Done: ' + sent + ' sent, '") && ix.includes('setTimeout(res, 5000)') && ix.includes("case 'statement_all':") && ix.includes('await allStatementFlow({ text, say: (t) => reply(t) })'));
+});
