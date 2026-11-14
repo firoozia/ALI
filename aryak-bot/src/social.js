@@ -127,6 +127,28 @@ export function parseSocialCommand(text) {
   return null;
 }
 
+/** «پست کاتالوگ ۱۸۰۵ …» / «post catalogue 212 …»: a colour of the catalogues by its code, with the owner's words after it. Null when not one. */
+export function catalogRequest(text) {
+  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  const m = /^(?:پست|post)\s+(?:کاتالوگ|کاتالوگی|catalog(?:ue)?)\s*:?\s*(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(t);
+  return m ? { code: m[1].replace(/\s+/g, '').toUpperCase(), note: m[2].trim() } : null;
+}
+
+/** Instagram takes a feed photo between 4:5 (tall) and 1.91:1 (wide): the middle is kept, the width is at most 1440, a JPEG comes out. The original when it cannot be read. */
+export async function fitForInstagram(buf) {
+  try {
+    const sharp = (await import('sharp')).default;
+    const m = await sharp(buf).rotate().toBuffer({ resolveWithObject: true });
+    let { width: w, height: h } = m.info;
+    if (!w || !h) return buf;
+    let pipe = sharp(m.data);
+    if (w / h < 0.8) { const nh = Math.floor(w / 0.8); pipe = pipe.extract({ left: 0, top: Math.floor((h - nh) / 2), width: w, height: nh }); h = nh; }
+    else if (w / h > 1.91) { const nw = Math.floor(h * 1.91); pipe = pipe.extract({ left: Math.floor((w - nw) / 2), top: 0, width: nw, height: h }); w = nw; }
+    if (w > 1440) pipe = pipe.resize({ width: 1440 });
+    return await pipe.jpeg({ quality: 88 }).toBuffer();
+  } catch { return buf; }
+}
+
 /** A photo's caption that asks for a post: «post …», «پست …», «instagram …», «اینستا …». Returns { note } (the rest of the caption) or null. */
 export function postRequest(caption) {
   const m = /^\s*(?:post|instagram|insta|پست|اینستا|اینستاگرام)(?=\s|:|$)\s*:?\s*([\s\S]*)$/i.exec(String(caption || ''));
@@ -187,8 +209,8 @@ const ago = (ms) => { const h = Math.round(ms / 3600000); return h < 1 ? 'just n
  * [cfg] { brand, contact }, [mediaDir] where the photo of a draft waits for the yes.
  */
 export class SocialDesk {
-  constructor({ client, store, write, cfg = {}, mediaDir = '', log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { client, store, write, cfg, mediaDir, log, now });
+  constructor({ client, store, write, cfg = {}, mediaDir = '', catalogDir = '', log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { client, store, write, cfg, mediaDir, catalogDir, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
   /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
@@ -197,10 +219,12 @@ export class SocialDesk {
   }
 
   /** A photo from the owner with «post …»: a caption is written and shown as #SP n; nothing is posted. */
-  async draftPost({ image, mime = 'image/jpeg', note = '' }) {
+  async draftPost({ image, mime = 'image/jpeg', note = '', facts = '', fitted = false }) {
     await this.ready();
     if (!this.enabled) return 'Instagram and Facebook are not connected yet, so nothing can be posted.';
-    const caption = String(await this.write({ kind: 'caption', system: fill(CAPTION_RULES, this.cfg), text: note ? `The owner's note: ${note}` : 'The owner gave no note; describe what the photo shows.', image, mime }) || '').trim();
+    if (!fitted) { image = await fitForInstagram(image); mime = 'image/jpeg'; } // a tall phone photo is cut to 4:5, or Instagram refuses it
+    const ask = [facts, note ? `The owner's note: ${note}` : facts ? '' : 'The owner gave no note; describe what the photo shows.'].filter(Boolean).join('\n');
+    const caption = String(await this.write({ kind: 'caption', system: fill(CAPTION_RULES, this.cfg), text: ask, image, mime }) || '').trim();
     if (!caption) return 'No caption could be written; send the photo again.';
     const id = this.store.next('SP');
     let file = '';
@@ -209,6 +233,24 @@ export class SocialDesk {
     this.store.save();
     return this.postPreview(id);
   }
+  /** The colours of the catalogues (catalog.json + one 4:5 picture per code, on the server): «پست کاتالوگ ۱۸۰۵» drafts that colour's post. */
+  catalog() {
+    if (!this.catalogDir) return {};
+    try { return JSON.parse(fs.readFileSync(path.join(this.catalogDir, 'catalog.json'), 'utf8')); } catch { return {}; }
+  }
+  async draftFromCatalog({ code, note = '' }) {
+    const all = this.catalog();
+    const e = all[code];
+    if (!e) {
+      const codes = Object.keys(all);
+      return codes.length ? `There is no colour ${code} in the catalogues. Known codes: ${codes.length} (${codes.slice(0, 3).join(', ')} … ${codes.slice(-2).join(', ')}).` : 'The catalogue pictures are not on the server yet.';
+    }
+    let image;
+    try { image = fs.readFileSync(path.join(this.catalogDir, e.file)); } catch { return `The picture of colour ${code} is missing on the server.`; }
+    const facts = `This is colour code ${code} from the ${e.catalogue}${e.kind ? ` (${e.kind})` : ''}. Name it in the caption as «Code ${code}». The picture is the colour sample itself (a decorative film for furniture), not a room.`;
+    return this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
+  }
+
   postPreview(id) {
     const p = this.store.d.posts[id];
     const to = [this.client.hasIg ? 'Instagram' : '', this.client.hasFb ? 'Facebook' : ''].filter(Boolean).join(' + ');

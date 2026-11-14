@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, parseSocialCommand, postRequest } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, catalogRequest, fitForInstagram, parseSocialCommand, postRequest } from '../src/social.js';
 
 // A fake Graph API: answers by the path, records every call.
 function fakeGraph(routes) {
@@ -144,4 +144,42 @@ test('the system-user way: the Page token and the Instagram account are read onc
   assert.equal(g.calls.filter((x) => x.key === 'GET /222').length, 1);
   assert.equal(g.calls.filter((x) => x.key === 'GET /222/conversations').length, 2, 'Instagram and Facebook messages are both read from the Page');
   assert.match(await desk.statusText(), /Instagram connected, Facebook connected/);
+});
+
+test('«پست کاتالوگ ۱۸۰۵»: the code in any digits, the owner words after it', () => {
+  assert.deepEqual(catalogRequest('پست کاتالوگ ۱۸۰۵'), { code: '1805', note: '' });
+  assert.deepEqual(catalogRequest('post catalogue 212 for kitchens'), { code: '212', note: 'for kitchens' });
+  assert.deepEqual(catalogRequest('پست کاتالوگ کد ts840: رنگ ویژه'), { code: 'TS840', note: 'رنگ ویژه' });
+  assert.equal(catalogRequest('پست رنگ جدید'), null);
+  assert.equal(catalogRequest('پست کاتالوگ'), null);
+});
+
+test('a catalogue colour: its own picture and its code go to the caption; an unknown code is said with the known ones', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-'));
+  fs.writeFileSync(path.join(dir, 'catalog.json'), JSON.stringify({ 1812: { file: '1812.jpg', catalogue: 'TEST film catalogue', kind: 'marble' }, 212: { file: '212.jpg', catalogue: 'TEST catalogue' } }));
+  fs.writeFileSync(path.join(dir, '1812.jpg'), Buffer.from('JPEG-1812'));
+  const writes = [];
+  const g = fakeGraph({});
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: dir, write: async (r) => { writes.push(r); return 'Marble look. Code 1812.'; } });
+  const out = await desk.draftFromCatalog(catalogRequest('پست کاتالوگ ۱۸۱۲ برای کابینت'));
+  assert.match(out, /Post #SP1/);
+  assert.equal(writes[0].image.toString(), 'JPEG-1812', 'the catalogue picture is sent as it is (already 4:5)');
+  assert.match(writes[0].text, /colour code 1812 from the TEST film catalogue \(marble\)/);
+  assert.match(writes[0].text, /The owner's note: برای کابینت/);
+  assert.match(await desk.draftFromCatalog({ code: '999', note: '' }), /no colour 999 in the catalogues\. Known codes: 2/);
+  assert.equal(g.calls.length, 0, 'nothing reaches Meta before the yes');
+});
+
+test('a tall phone photo is cut to 4:5 for Instagram; a square one is kept; an unreadable one is left as it is', async () => {
+  const sharp = (await import('sharp')).default;
+  const tall = await sharp({ create: { width: 900, height: 1600, channels: 3, background: '#888' } }).png().toBuffer();
+  const m1 = await sharp(await fitForInstagram(tall)).metadata();
+  assert.equal(m1.width, 900); assert.equal(m1.height, 1125); assert.equal(m1.format, 'jpeg');
+  const wide = await sharp({ create: { width: 3000, height: 1000, channels: 3, background: '#888' } }).png().toBuffer();
+  const m2 = await sharp(await fitForInstagram(wide)).metadata();
+  assert.ok(Math.abs(m2.width / m2.height - 1.91) < 0.01 && m2.width <= 1440);
+  const sq = await sharp({ create: { width: 800, height: 800, channels: 3, background: '#888' } }).png().toBuffer();
+  const m3 = await sharp(await fitForInstagram(sq)).metadata();
+  assert.equal(m3.width, 800); assert.equal(m3.height, 800);
+  assert.equal((await fitForInstagram(Buffer.from('not a picture'))).toString(), 'not a picture');
 });
