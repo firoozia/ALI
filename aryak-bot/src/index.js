@@ -2468,13 +2468,17 @@ async function handleStaffChat(raw, chatId, group) {
     const sctx = (content.extendedTextMessage || imageOf(content))?.contextInfo || {};
     const isOwner = () => isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(sctx.isForwarded || sctx.forwardingScore > 0) });
     const sc = !imageOf(content) ? parseSocialCommand(text) : null;
-    const pr = imageOf(content) ? postRequest(text) : null;
+    const pr = postRequest(text);
+    // the photo: this message's own, or (a typed «post …» alone) the photo sent in this chat in the last 15 minutes, forwarded or not
+    const recent = !imageOf(content) && pr ? lastPhotos.get(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) : null;
+    const photoRaw = imageOf(content) ? raw : recent && Date.now() - recent.at < 15 * 60 * 1000 ? recent.raw : null;
     if ((sc || pr) && isOwner()) {
       if (sc) { trace(where, 'owner', `social: ${sc.verb}${sc.id ? ` #${sc.id}` : ''}`); await socialSay(await socialDesk.handle(sc)); return true; }
-      trace(where, 'owner', 'social: a photo to post');
+      if (!photoRaw) { trace(where, 'owner', 'social: «post» with no photo'); await socialSay('Which photo? Send the photo first, then write «post» and a few words about it (or as the caption of the photo).'); return true; }
+      trace(where, 'owner', `social: a photo to post${photoRaw === raw ? '' : ' (the photo sent just before)'}`);
       let buf = null;
-      try { buf = await downloadMedia(raw); } catch (e) { logger.warn(`social: photo download failed: ${e.message}`); }
-      await socialSay(buf ? await socialDesk.draftPost({ image: buf, mime: imageOf(content).mimetype || 'image/jpeg', note: pr.note }) : 'The photo could not be read; send it again.');
+      try { buf = await downloadMedia(photoRaw); } catch (e) { logger.warn(`social: photo download failed: ${e.message}`); }
+      await socialSay(buf ? await socialDesk.draftPost({ image: buf, mime: imageOf(normalizeMessageContent(photoRaw.message))?.mimetype || 'image/jpeg', note: pr.note }) : 'The photo could not be read; send it again.');
       return true;
     }
   }
