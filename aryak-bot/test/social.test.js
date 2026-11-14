@@ -113,12 +113,30 @@ test('a source that fails is kept as a problem and the others still run', async 
   const store = new SocialStore('');
   const desk = new SocialDesk({ client: client(g.fetchImpl, { pageToken: '' }), store, write: async () => '' });
   assert.deepEqual(await desk.poll(), []);
-  assert.match(desk.statusText(), /Facebook not connected/);
-  assert.match(desk.statusText(), /ig-messages: missing permission \(code 10\)/);
+  assert.match(await desk.statusText(), /Facebook not connected/);
+  assert.match(await desk.statusText(), /ig-messages: missing permission \(code 10\)/);
 });
 
 test('without tokens nothing is posted and nothing is read', async () => {
   const desk = new SocialDesk({ client: new MetaClient({}), store: new SocialStore(''), write: async () => 'x' });
   assert.match(await desk.draftPost({ image: Buffer.from('x') }), /not connected yet/);
   assert.deepEqual(await desk.poll(), []);
+});
+
+test('the system-user way: the Page token and the Instagram account are read once, Instagram goes through graph.facebook.com', async () => {
+  const g = fakeGraph({
+    'GET /222': (u) => { assert.equal(u.searchParams.get('access_token'), 'SYS'); return { access_token: 'PAGE', instagram_business_account: { id: '333' } }; },
+    'GET /333/media': (u) => { assert.equal(u.hostname, 'graph.facebook.com'); assert.equal(u.searchParams.get('access_token'), 'PAGE'); return { data: [] }; },
+    'GET /222/conversations': (u) => ({ data: [] }),
+    'GET /222/feed': { data: [] },
+  });
+  const c = new MetaClient({ pageId: '222', systemToken: 'SYS', fetchImpl: g.fetchImpl, wait: async () => {} });
+  const desk = new SocialDesk({ client: c, store: new SocialStore(''), write: async () => '' });
+  assert.equal(desk.enabled, false, 'nothing is known before the first look');
+  assert.deepEqual(await desk.poll(), []);
+  assert.equal(c.igUserId, '333');
+  assert.equal(desk.enabled, true);
+  assert.equal(g.calls.filter((x) => x.key === 'GET /222').length, 1);
+  assert.equal(g.calls.filter((x) => x.key === 'GET /222/conversations').length, 2, 'Instagram and Facebook messages are both read from the Page');
+  assert.match(await desk.statusText(), /Instagram connected, Facebook connected/);
 });

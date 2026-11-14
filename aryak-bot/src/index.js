@@ -3721,7 +3721,7 @@ async function monthlyFullReport() {
 const socialStore = new SocialStore(path.join(config.authDir, 'social'));
 const socialTokenFrom = config.social.igToken ? createHash('sha256').update(config.social.igToken).digest('hex').slice(0, 12) : '';
 const socialDesk = new SocialDesk({
-  client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, version: config.social.version }),
+  client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), log: (s) => logger.info(s),
   write: async ({ system, text, image, mime }) => {
     const content = [...(image ? [{ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: image.toString('base64') } }] : []), { type: 'text', text }];
@@ -3740,7 +3740,7 @@ async function socialSay(text) {
 if (config.social.enabled) {
   setInterval(async () => {
     try {
-      if (!sock?.user || botState.paused || !socialDesk.enabled) return;
+      if (!sock?.user || botState.paused || !(config.social.systemToken || socialDesk.enabled)) return;
       try { if (await socialDesk.refreshToken()) logger.info('social: the Instagram token was renewed'); } catch (e) { logger.warn(`social: token renewal failed: ${e.message}`); }
       for (const n of await socialDesk.poll()) await socialSay(n);
     } catch (e) { logger.warn(`social: the look at Instagram and Facebook failed: ${e.message}`); }

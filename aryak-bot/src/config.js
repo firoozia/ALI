@@ -147,6 +147,7 @@ export function loadConfig(env = process.env) {
       enabled: (env.SOCIAL || 'on').toLowerCase() !== 'off',
       igToken: (env.META_IG_TOKEN || '').trim(), igUserId: (env.META_IG_USER_ID || '').trim(),
       pageId: (env.META_PAGE_ID || '').trim(), pageToken: (env.META_PAGE_TOKEN || '').trim(),
+      systemToken: (env.META_SYSTEM_TOKEN || '').trim(), // the business's system-user token (never expires): the Page and its Instagram account through it
       version: (env.META_GRAPH_VERSION || 'v24.0').trim(),
       pollMinutes: Math.max(2, Number(env.SOCIAL_POLL_MINUTES || 5)),
       brand: (env.SOCIAL_BRAND || 'ARYAK, a supplier to furniture and carpentry workshops in the UAE').trim(),

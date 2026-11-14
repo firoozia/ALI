@@ -15,11 +15,21 @@ const DAY = 24 * 3600 * 1000;
 
 /** The Graph API calls the assistant uses, nothing more. [fetchImpl] is replaced in the tests. */
 export class MetaClient {
-  constructor({ igToken = '', igUserId = '', pageId = '', pageToken = '', version = 'v24.0', fetchImpl = globalThis.fetch, wait = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
-    Object.assign(this, { igToken, igUserId, pageId, pageToken, version, fetchImpl, wait });
+  // Two ways in: an Instagram-Login token (graph.instagram.com), or the business's system-user token (never expires): with it the Page
+  // token and the Instagram account behind the Page are read once (ready()) and Instagram is reached through graph.facebook.com.
+  constructor({ igToken = '', igUserId = '', pageId = '', pageToken = '', systemToken = '', version = 'v24.0', fetchImpl = globalThis.fetch, wait = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+    Object.assign(this, { igToken, igUserId, pageId, pageToken, systemToken, version, fetchImpl, wait });
+    this.viaFb = !!systemToken && !igToken;
   }
-  get hasIg() { return !!(this.igToken && this.igUserId); }
+  get hasIg() { return !!(this.igUserId && (this.igToken || (this.viaFb && this.pageToken))); }
   get hasFb() { return !!(this.pageToken && this.pageId); }
+  /** With a system-user token: the Page token and the Instagram account of the Page, read once. */
+  async ready() {
+    if (!this.systemToken || !this.pageId || (this.pageToken && (this.igUserId || !this.viaFb))) return;
+    const r = await this.call(GRAPH_FB, this.pageId, { params: { fields: 'access_token,instagram_business_account' }, token: this.systemToken });
+    if (r.access_token) this.pageToken = r.access_token;
+    if (this.viaFb && !this.igUserId && r.instagram_business_account?.id) this.igUserId = r.instagram_business_account.id;
+  }
 
   async call(base, p, { method = 'GET', params = {}, token, form = null, json = null, versioned = true } = {}) {
     const url = new URL(`${base}/${versioned ? `${this.version}/` : ''}${p}`);
@@ -39,7 +49,7 @@ export class MetaClient {
     }
     return body;
   }
-  ig(p, o = {}) { return this.call(GRAPH_IG, p, { ...o, token: this.igToken }); }
+  ig(p, o = {}) { return this.viaFb ? this.call(GRAPH_FB, p, { ...o, token: this.pageToken }) : this.call(GRAPH_IG, p, { ...o, token: this.igToken }); }
   fb(p, o = {}) { return this.call(GRAPH_FB, p, { ...o, token: this.pageToken }); }
 
   // Facebook Page
@@ -78,9 +88,9 @@ export class MetaClient {
   igMedia(limit = 5) { return this.ig(`${this.igUserId}/media`, { params: { fields: 'id,caption,permalink,timestamp', limit } }); }
   igComments(mediaId) { return this.ig(`${mediaId}/comments`, { params: { fields: 'id,text,username,timestamp,from' } }); }
   igReply(commentId, message) { return this.ig(`${commentId}/replies`, { method: 'POST', params: { message } }); }
-  igConversations() { return this.ig(`${this.igUserId}/conversations`, { params: { platform: 'instagram', fields: 'id,updated_time,messages.limit(5){id,from,message,created_time}', limit: 10 } }); }
-  igSend(recipient, text) { return this.ig(`${this.igUserId}/messages`, { method: 'POST', json: { recipient: { id: recipient }, message: { text } } }); }
-  async igRefresh() { return this.call(GRAPH_IG, 'refresh_access_token', { params: { grant_type: 'ig_refresh_token' }, token: this.igToken, versioned: false }); }
+  igConversations() { return this.ig(`${this.viaFb ? this.pageId : this.igUserId}/conversations`, { params: { platform: 'instagram', fields: 'id,updated_time,messages.limit(5){id,from,message,created_time}', limit: 10 } }); }
+  igSend(recipient, text) { return this.ig(`${this.viaFb ? this.pageId : this.igUserId}/messages`, { method: 'POST', json: { recipient: { id: recipient }, message: { text } } }); }
+  async igRefresh() { if (this.viaFb) return null; return this.call(GRAPH_IG, 'refresh_access_token', { params: { grant_type: 'ig_refresh_token' }, token: this.igToken, versioned: false }); }
 }
 
 /** The state on the server: drafts (#SP), inbox items (#SR), what was seen, the people who wrote (leads), the refreshed token. */
@@ -179,9 +189,14 @@ export class SocialDesk {
     Object.assign(this, { client, store, write, cfg, mediaDir, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
+  /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
+  async ready() {
+    try { await this.client.ready?.(); delete this.store.d.errors.connect; } catch (e) { this.store.d.errors.connect = { message: e.message, at: this.now() }; this.log(`social: connect failed: ${e.message}`); }
+  }
 
   /** A photo from the owner with «post …»: a caption is written and shown as #SP n; nothing is posted. */
   async draftPost({ image, mime = 'image/jpeg', note = '' }) {
+    await this.ready();
     if (!this.enabled) return 'Instagram and Facebook are not connected yet, so nothing can be posted.';
     const caption = String(await this.write({ kind: 'caption', system: fill(CAPTION_RULES, this.cfg), text: note ? `The owner's note: ${note}` : 'The owner gave no note; describe what the photo shows.', image, mime }) || '').trim();
     if (!caption) return 'No caption could be written; send the photo again.';
@@ -199,6 +214,7 @@ export class SocialDesk {
   }
 
   async decidePost(c) {
+    await this.ready();
     const p = this.store.d.posts[c.id];
     if (!p) return `There is no post #${c.id}.`;
     if (p.state !== 'draft') return `Post #${c.id} was already ${p.state}.`;
@@ -236,6 +252,7 @@ export class SocialDesk {
 
   /** One look at the accounts. Returns the notices for the owner (one per new comment or message), each with a drafted answer. */
   async poll() {
+    await this.ready();
     if (!this.enabled) return [];
     const own = (id, username) => (id && (id === this.client.igUserId || id === this.client.pageId)) || (username && this.cfg.username && String(username).toLowerCase() === String(this.cfg.username).toLowerCase());
     const sources = [];
@@ -291,6 +308,7 @@ export class SocialDesk {
   }
 
   async decideReply(c) {
+    await this.ready();
     const it = this.store.d.inbox[c.id];
     if (!it) return `There is no message #${c.id}.`;
     if (it.state !== 'open') return `#${c.id} was already ${it.state}.`;
@@ -315,7 +333,8 @@ export class SocialDesk {
     return c.kind === 'SP' ? this.decidePost(c) : this.decideReply(c);
   }
 
-  statusText() {
+  async statusText() {
+    await this.ready();
     const d = this.store.d;
     const open = Object.values(d.inbox).filter((x) => x.state === 'open');
     const drafts = Object.values(d.posts).filter((x) => x.state === 'draft');
@@ -335,7 +354,7 @@ export class SocialDesk {
 
   /** The Instagram token lives 60 days; it is renewed once a week and kept on the server (never in the repository). */
   async refreshToken() {
-    if (!this.client.hasIg) return false;
+    if (!this.client.hasIg || this.client.viaFb) return false;
     const t = this.store.d.token;
     if (t?.at && t.from === (this.cfg.tokenFrom || '') && this.now() - t.at < 7 * DAY) return false;
     const r = await this.client.igRefresh();
