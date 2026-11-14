@@ -1620,3 +1620,21 @@ test('the kind of a payment comes from its method words: transfer / bank / TT / 
   assert.equal(one('cash received from alia wood 250 aed').customer, 'alia wood');
   assert.equal(one('18000 deposit to boss').kind, 'cash_to_boss'); // a deposit to the boss is still cash leaving the box
 });
+
+test('clearAuth removes only the WhatsApp login files of the top level; every data file and sub-folder stays', async () => {
+  const { clearAuth, afterClose } = await import('../src/pairing.js');
+  const os = await import('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-'));
+  const login = ['creds.json', 'session-12345.0.json', 'pre-key-7.json', 'sender-key-g-1.json', 'app-state-sync-key-AAAA.json', 'app-state-sync-version-regular.json', 'lid-mapping-99.json', 'device-list-12.json', 'identity-key-5.json', 'tctoken-3.json', 'bot.lock'];
+  const data = ['expenses.json', 'tracker.json', 'config.json', 'rawlog.jsonl', 'aliases.json'];
+  for (const f of [...login, ...data]) fs.writeFileSync(path.join(dir, f), 'x');
+  for (const sub of ['qbo', 'shadow', 'tracker-test', 'customer-groups']) { fs.mkdirSync(path.join(dir, sub)); fs.writeFileSync(path.join(dir, sub, 'creds.json'), 'keep'); fs.writeFileSync(path.join(dir, sub, 'session-1.json'), 'keep'); }
+  const gone = clearAuth(dir);
+  assert.deepEqual(gone.sort(), [...login].sort());
+  assert.deepEqual(fs.readdirSync(dir).sort(), [...data, 'qbo', 'shadow', 'tracker-test', 'customer-groups'].sort());
+  for (const sub of ['qbo', 'shadow', 'tracker-test', 'customer-groups']) assert.deepEqual(fs.readdirSync(path.join(dir, sub)).sort(), ['creds.json', 'session-1.json']); // a sub-folder is never entered
+  assert.deepEqual(clearAuth(path.join(dir, 'missing')), []);
+  assert.equal(afterClose({ loggedOut: true, registered: false }), 'reset-and-wait');
+  const ix = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(!ix.includes('delete the auth folder') && ix.includes('never the data folders'));
+});

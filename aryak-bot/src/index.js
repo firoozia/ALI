@@ -3844,7 +3844,7 @@ async function start() {
         logger.warn('logged out before pairing: clearing the old login, a new pairing code follows in a minute');
         clearAuth(config.authDir);
         setTimeout(start, 60000);
-      } else logger.error('logged out: delete the auth folder and link again');
+      } else logger.error('logged out: delete the WhatsApp login files (creds.json, session-*, pre-key-* ...) and link again; never the data folders');
     }
   });
   sock.ev.on('groups.update', (updates) => { for (const u of updates || []) if (u?.id && u.subject && watchList.rename(u.id, u.subject, config)) logger.info(`watched group renamed to "${u.subject}" (kept watched)`); });

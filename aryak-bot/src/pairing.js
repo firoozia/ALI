@@ -26,10 +26,18 @@ export function pairingOnce({ registered, phone, request, show, log = () => {} }
   };
 }
 
-/** Empties the auth folder (a stale or half-made login) but keeps the folder itself. */
+/** The WhatsApp login files in the top level of the auth folder; the same folder also holds all the app's data, which is never touched. */
+export const LOGIN_FILE = /^(?:creds\.json|bot\.lock|(?:session|pre-key|sender-key|app-state-sync-key|app-state-sync-version|lid-mapping|device-list|identity-key|tctoken)[-_.].*)$/;
+
+/** Removes ONLY the WhatsApp login files (top level of the folder, plain files): never a sub-folder and never any other file (expenses, tracker, tokens ... live there too). Returns the names removed. */
 export function clearAuth(dir) {
-  if (!fs.existsSync(dir)) return;
-  for (const f of fs.readdirSync(dir)) fs.rmSync(`${dir}/${f}`, { recursive: true, force: true });
+  if (!fs.existsSync(dir)) return [];
+  const gone = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !LOGIN_FILE.test(entry.name)) continue;
+    fs.rmSync(`${dir}/${entry.name}`, { force: true }); gone.push(entry.name);
+  }
+  return gone;
 }
 
 /** What to do when WhatsApp closes the connection. */
