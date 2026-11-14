@@ -142,6 +142,17 @@ export function loadConfig(env = process.env) {
     waitMinutes: Number(env.WAIT_MINUTES || 5),
     pairPhone: env.PAIR_PHONE || '', // the bot's own number, for a pairing code instead of a QR
     authDir: env.AUTH_DIR || './auth',
+    // Instagram and Facebook (the owner, 14/11): official Graph API tokens from the VM metadata; nothing is posted or answered without his yes.
+    social: {
+      enabled: (env.SOCIAL || 'on').toLowerCase() !== 'off',
+      igToken: (env.META_IG_TOKEN || '').trim(), igUserId: (env.META_IG_USER_ID || '').trim(),
+      pageId: (env.META_PAGE_ID || '').trim(), pageToken: (env.META_PAGE_TOKEN || '').trim(),
+      version: (env.META_GRAPH_VERSION || 'v24.0').trim(),
+      pollMinutes: Math.max(2, Number(env.SOCIAL_POLL_MINUTES || 5)),
+      brand: (env.SOCIAL_BRAND || 'ARYAK, a supplier to furniture and carpentry workshops in the UAE').trim(),
+      contact: (env.SOCIAL_CONTACT || '').trim(), // the WhatsApp number people are invited to (empty: none is given)
+      username: (env.META_IG_USERNAME || '').trim(),
+    },
     kbDir: env.KB_DIR || './kb',
     // "Master Wood – ARYAK" -> "Master Wood"
     groupSuffix: env.GROUP_SUFFIX ? new RegExp(env.GROUP_SUFFIX, 'i') : /\s*[-–|:]\s*aryak.*$/i,

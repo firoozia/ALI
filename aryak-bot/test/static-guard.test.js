@@ -22,7 +22,7 @@ const strip = (src) => src.replace(TOKEN, (m) => m.replace(/[^\n]/g, ' '));
 const GLOBALS = new Set(['console', 'process', 'Buffer', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'fetch', 'URL', 'URLSearchParams', 'AbortController',
   'Date', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise', 'Error', 'RegExp', 'Symbol', 'Intl', 'parseInt', 'parseFloat',
   'isNaN', 'Uint8Array', 'TextDecoder', 'TextEncoder', 'structuredClone', 'queueMicrotask', 'globalThis', 'BigInt', 'AggregateError', 'TypeError', 'RangeError',
-  'encodeURIComponent', 'decodeURIComponent', 'AbortSignal', 'FormData', 'Headers', 'Response', 'Request', 'require', 'import', 'super', 'this', 'await', 'async', 'constructor']);
+  'encodeURIComponent', 'decodeURIComponent', 'AbortSignal', 'Blob', 'FormData', 'Headers', 'Response', 'Request', 'require', 'import', 'super', 'this', 'await', 'async', 'constructor']);
 const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof', 'new', 'delete', 'void', 'in', 'of', 'instanceof', 'else', 'do', 'case', 'throw', 'yield', 'class', 'const', 'let', 'var', 'from', 'as', 'default', 'try', 'finally', 'break', 'continue', 'static', 'get', 'set', 'export', 'extends']);
 
 // Names the rough scanner cannot see being declared: a parameter inside a template literal nested in another one.

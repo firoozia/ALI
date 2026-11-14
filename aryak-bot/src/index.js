@@ -113,6 +113,7 @@ import { buildSystemPrompt } from './prompt.js';
 import { acquireSingleInstance } from './singleinstance.js';
 import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
+import { MetaClient, SocialDesk, SocialStore, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2461,6 +2462,22 @@ async function handleStaffChat(raw, chatId, group) {
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
   const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  // Instagram and Facebook (his own chat, the owner only): a photo with «post …» becomes a draft #SP; yes / no / edit for #SP, yes / no / reply for #SR;
+  // «social» and «leads». Nothing reaches Meta before his yes (social.js).
+  if (config.social.enabled && !group && isSelf && !audio) {
+    const sctx = (content.extendedTextMessage || imageOf(content))?.contextInfo || {};
+    const isOwner = () => isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(sctx.isForwarded || sctx.forwardingScore > 0) });
+    const sc = !imageOf(content) ? parseSocialCommand(text) : null;
+    const pr = imageOf(content) ? postRequest(text) : null;
+    if ((sc || pr) && isOwner()) {
+      if (sc) { trace(where, 'owner', `social: ${sc.verb}${sc.id ? ` #${sc.id}` : ''}`); await socialSay(await socialDesk.handle(sc)); return true; }
+      trace(where, 'owner', 'social: a photo to post');
+      let buf = null;
+      try { buf = await downloadMedia(raw); } catch (e) { logger.warn(`social: photo download failed: ${e.message}`); }
+      await socialSay(buf ? await socialDesk.draftPost({ image: buf, mime: imageOf(content).mimetype || 'image/jpeg', note: pr.note }) : 'The photo could not be read; send it again.');
+      return true;
+    }
+  }
   // The sales manager's (or the owner's) answer to an availability draft, in a private chat: «yes #V1» / «no #V1» (the full code is needed).
   if (!group && text && !audio && !image && (ownerPerson || [chatId, raw.key.remoteJidAlt].some((j) => j && jidDigits(j) === jidDigits(config.salesManager) && jidDigits(config.salesManager)))) {
     const dv = parseInvoiceCommand(text);
@@ -3697,6 +3714,37 @@ async function monthlyFullReport() {
   const r = rangeOf('month', todayDubai());
   const records = [...await qbRows('Purchase', dayPlus(r.from, -3), dayPlus(r.to, 3)), ...await qbRows('Bill', dayPlus(r.from, -3), dayPlus(r.to, 3))].filter((x) => x.TxnDate >= r.from && x.TxnDate <= r.to);
   return monthlyFullText({ expenses: expenseStore.done(r), records, title: r.label });
+}
+
+// Instagram and Facebook (social.js): the owner's drafts and the public's comments and messages, each waiting for his yes in his own chat.
+// The Instagram token is renewed weekly and kept on the server; a new token put in the metadata replaces the kept one.
+const socialStore = new SocialStore(path.join(config.authDir, 'social'));
+const socialTokenFrom = config.social.igToken ? createHash('sha256').update(config.social.igToken).digest('hex').slice(0, 12) : '';
+const socialDesk = new SocialDesk({
+  client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, version: config.social.version }),
+  store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), log: (s) => logger.info(s),
+  write: async ({ system, text, image, mime }) => {
+    const content = [...(image ? [{ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: image.toString('base64') } }] : []), { type: 'text', text }];
+    const res = await client.beta.messages.create({ model: config.model, max_tokens: 800, system, messages: [{ role: 'user', content }], output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+    return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  },
+});
+/** A social notice to the owner's own chat, in its own languages (an Arabic caption is never turned into English). */
+async function socialSay(text) {
+  const content = { text: `🤖 ${text}` };
+  keepLang.add(content);
+  const r = await sock.sendMessage(ownIds()[0], content);
+  if (r?.key?.id) sent.add(r.key.id);
+  return r;
+}
+if (config.social.enabled) {
+  setInterval(async () => {
+    try {
+      if (!sock?.user || botState.paused || !socialDesk.enabled) return;
+      try { if (await socialDesk.refreshToken()) logger.info('social: the Instagram token was renewed'); } catch (e) { logger.warn(`social: token renewal failed: ${e.message}`); }
+      for (const n of await socialDesk.poll()) await socialSay(n);
+    } catch (e) { logger.warn(`social: the look at Instagram and Facebook failed: ${e.message}`); }
+  }, config.social.pollMinutes * 60 * 1000).unref();
 }
 
 // 19:00 Dubai time: the daily expenses report in the expenses group (never salaries, rent or QuickBooks figures there) and the money received report to the owner only; on Thursday the week and the check
