@@ -22,6 +22,8 @@ export function eventsFromCaption(role, text) {
     const lines = c.lines || [{ code: c.code, quantity: c.quantity, unit: c.unit, ...(c.invoiceQuantity !== undefined ? { invoiceQuantity: c.invoiceQuantity } : {}) }];
     // an opened roll or a damaged piece is kept (the cutters' log) but is never a sale: no customer, flagged internal
     if (c.kind === 'open-roll' || c.kind === 'damage') return { events: [{ type: 'cut', internal: true, kind: c.kind, customer: c.kind === 'damage' ? c.customer : '', lines }] };
+    // a catalog is always FREE (the owner, 14/11): kept in the log with its customer, never a sale, never «not invoiced»
+    if (lines.length && lines.every((l) => l.code === 'CATALOG')) return { events: [{ type: 'cut', internal: true, kind: 'catalog', customer: c.customer, lines }] };
     return { events: [{ type: 'cut', customer: c.customer, lines, ...(c.pieces ? { pieces: c.pieces } : {}) }] };
   }
   if (role === 'delivery') {

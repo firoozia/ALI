@@ -159,10 +159,13 @@ test('a catalog handed to a customer: the item is CATALOG with its thickness, ne
   tr.add({ type: 'cut', at: NOW - 3 * DAY, customer: 'SAMPLE WOODS', lines: [{ code: '18', quantity: 2, unit: 'pcs' }], ref: 'k2', text: 'Catalog 0.18mm SAMPLE WOODS 2 PCS' }); // an old reading: the thickness taken for a code
   cut(tr, 'k3', 'SAMPLE WOODS', '301', 18, 0);
   const { problems } = crossCheck(tr, 'SAMPLE WOODS INDUSTRIES', [{ code: '301', qty: 18 }], { now: NOW, invoiced: [] });
-  assert.deepEqual(problems, [
-    'CATALOG 0.18mm: given 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced',
-    '18: cut 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced',
-  ]);
-  const books = [{ codes: ['ARYAK PVC CATALOG'], qty: 2, number: 'inv-1', at: NOW - 3 * DAY }];
-  assert.deepEqual(crossCheck(tr, 'SAMPLE WOODS INDUSTRIES', [{ code: '301', qty: 18 }], { now: NOW, invoiced: books }).problems, ['18: cut 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced']); // the catalog line takes the catalog
+  assert.deepEqual(problems, ['18: cut 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced']); // a catalog is always free: never «not invoiced»; an old reading quotes its post
+  assert.deepEqual(crossCheck(tr, 'SAMPLE WOODS INDUSTRIES', [{ code: '301', qty: 18 }, { name: 'ARYAK PVC CATALOG', qty: 1 }], { now: NOW, invoiced: [] }).problems.slice(0, 1), ['18: cut 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced']); // a catalog line on an invoice has no cut to check
+});
+
+test('a catalog post is always free: recorded as an internal note with its customer, never a sale', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const [e] = eventsFromCaption('cut', 'Catalog 0.18mm SAMPLE WOODS 2 PCS').events;
+  assert.equal(e.internal, true); assert.equal(e.kind, 'catalog'); assert.equal(e.customer, 'SAMPLE WOODS');
+  assert.equal(eventsFromCaption('cut', 'ART NO 301 SAMPLE WOODS 18M').events[0].internal, undefined); // a film cut stays a sale
 });

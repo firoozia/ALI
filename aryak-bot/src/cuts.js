@@ -142,7 +142,8 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
     if (!(forCustomer(e.customer) || forCustomer(e.customerTyped))) continue;
-    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, note: l.note || '', text: e.text || '', left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
+    // a catalog is always free (the owner, 14/11): never «not invoiced»
+    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0 && code(l.code) !== 'CATALOG') rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, note: l.note || '', text: e.text || '', left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
   }
   const same = (r, inv) => (inv.codes || []).some((k) => code(k) === r.code || (r.digits && digitsOf(k) === r.digits));
   if (invoiced) { // the SAME pairing as «unbilled»: an invoice line of this customer and this code within +-windowDays of the cut, before OR after it (an invoice may come the day before the cut);
@@ -168,6 +169,7 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
     const open = mine.filter((r) => r.left);
     const done = mine.filter((r) => !r.left);
     if (log) log(`cross-check: line ${shown} x${ln.qty} for "${customer}": ${mine.length} cut(s) of this customer (posts named: ${[...new Set(mine.map((r) => r.post))].join(' | ') || '-'}), ${open.length} open, ${done.length} invoiced`);
+    if (shown === 'CATALOG') continue; // a free catalog has no cut to check
     if (!mine.length) problems.push(`${shown}: not cut yet (no orders-group post)`);
     else if (!open.length) { if (invoiced || done[0].tracked) problems.push(`${shown}: already invoiced${done[0].by?.number ? ` (${done[0].by.number})` : ''} on ${dm(done[0].by?.at || done[0].at, timeZone)}`); }
     else if (open.every((r) => r.unit === 'm')) { // meters against meters only: a count of pieces is another measure

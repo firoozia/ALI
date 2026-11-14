@@ -162,6 +162,7 @@ export async function extractEvent({ client, config, role, caption = '', images 
       return { type: 'payment', kind: String(v.kind || 'other'), customer: String(v.customer || ''), amount, currency: String(v.currency || ''), number: String(v.invoice || ''), lines: [] };
     }
     if (!String(v.customer || '').trim() && !lines.length) return null;
+    if (role === 'cut' && lines.length && lines.every((l) => l.code === 'CATALOG')) return { type: 'cut', internal: true, kind: 'catalog', customer: String(v.customer || ''), number: '', lines }; // a catalog is always free: never a sale
     return { type: role, customer: String(v.customer || ''), number: String(v.invoice || ''), lines };
   } catch { return null; }
 }
