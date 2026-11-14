@@ -842,7 +842,7 @@ async function trackGroup(raw, groupId, role) {
     return;
   }
   // The shapes the groups really use are read here without a model (and without downloading the photo).
-  const det = text ? eventsFromCaption(role, text) : null;
+  let det = text ? eventsFromCaption(role, text) : null;
   if (det) {
     const whereDet = `group "${(await groupInfo(groupId)).subject}"`;
     if (det.cleared) {
@@ -855,6 +855,17 @@ async function trackGroup(raw, groupId, role) {
     }
     if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    if (det.noCode) { // «ART NO 21.8+9 30.8M DESIGNER WOOD» as a reply: the code is the one of the cut post it quotes; with no quoted cut nothing is recorded and the owner is told once
+      const nc = det.noCode;
+      const quoted = quotedId ? tracker.events.find((e) => e.type === 'cut' && e.ref === refOf(quotedId, 0) && e.lines?.[0]?.code) : null;
+      if (!quoted) {
+        trace(whereDet, 'tracker', 'a cut post without a product code: the owner is told');
+        if (!replayCtx.getStore()?.quiet && !officeAsked.has('nk|' + raw.key.id)) { officeAsked.add('nk|' + raw.key.id); await sock.sendMessage(ownIds()[0], { text: '🤖 Cut without a product code in the orders group: ' + String(text).slice(0, 80) + ' (' + (raw.pushName || 'someone') + '). Nothing was recorded; ask them for the code.' }).catch((e) => logger.warn('cut note failed: ' + e.message)); }
+        return;
+      }
+      det = { events: [{ type: 'cut', customer: nc.customer || quoted.customerTyped || quoted.customer, lines: [{ code: quoted.lines[0].code, quantity: nc.quantity, unit: nc.unit, ...(nc.invoiceQuantity !== undefined ? { invoiceQuantity: nc.invoiceQuantity } : {}) }], ...(nc.pieces ? { pieces: nc.pieces } : {}) }] };
+      trace(whereDet, 'tracker', `a cut post without a code took code ${quoted.lines[0].code} from the post it quotes`);
+    }
     if (det.noCustomer) { // «303 6.4»: a cut with nobody named: not recorded; the owner is told once
       trace(whereDet, 'tracker', 'a cut post without a customer: the owner is told');
       if (!replayCtx.getStore()?.quiet && !officeAsked.has('nc|' + raw.key.id)) { officeAsked.add('nc|' + raw.key.id); await sock.sendMessage(ownIds()[0], { text: '🤖 Cut without customer in the orders group: code ' + det.noCustomer.code + ', ' + det.noCustomer.quantity + ' m (' + (raw.pushName || 'someone') + '). Nothing was recorded; ask them for the customer.' }).catch((e) => logger.warn('cut note failed: ' + e.message)); }

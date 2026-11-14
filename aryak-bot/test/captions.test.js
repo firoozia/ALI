@@ -154,3 +154,10 @@ test('a catalog post: the item CATALOG, the thickness a note (never a code), the
   assert.equal(parseCutCaption('CATALOG 2 PCS').kind, 'no-customer');
   assert.equal(parseCutCaption('ART NO 410 SAMPLE DOOR 6M').code, '410'); // the usual post is unchanged
 });
+
+test('a length right after ART NO is no code: «ART NO 21.8+9 30.8M PLANE WOOD» is a cut without a code (a reply takes it from the post it quotes), never code 21', () => {
+  const r = parseCutCaption('ART NO 21.8+9 30.8M PLANE WOOD');
+  assert.equal(r.kind, 'no-code'); assert.equal(r.code, ''); assert.equal(r.customer, 'PLANE WOOD'); assert.equal(r.quantity, 30.8); assert.deepEqual(r.pieces, [21.8, 9]);
+  assert.deepEqual(eventsFromCaption('cut', 'ART NO 21.8+9 30.8M PLANE WOOD').noCode.quantity, 30.8);
+  assert.equal(parseCutCaption('ART NO 212 PLANE WOOD 21.5M').code, '212');
+});

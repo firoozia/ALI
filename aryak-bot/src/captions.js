@@ -47,7 +47,13 @@ export function parseCutCaption(text) {
   const s = clean(text);
   if (!s) return null;
   if (!/^ART\.?\s*NO\b/i.test(s) && CATALOG_WORD.test(s)) return parseCatalogCaption(s);
-  const m = /^ART\.?\s*NO\.?\s*(\d{2,5})(?:\s+([A-Z])(?=\s|$))?\s*(.*)$/i.exec(s);
+  // «ART NO 21.8+9 30.8M DESIGNER WOOD»: a decimal number after ART NO is a length, not a code (the code was left out; a reply takes it from the post it quotes)
+  const lengthFirst = /^ART\.?\s*NO\.?\s*(?=\d+\.\d)/i;
+  if (lengthFirst.test(s)) {
+    const r = parseCutCaption(`ART NO 99999 ${s.replace(lengthFirst, '')}`);
+    return r && r.kind === 'cut' ? { ...r, code: '', kind: 'no-code' } : null;
+  }
+  const m = /^ART\.?\s*NO\.?\s*(\d{2,5})(?![.\d])(?:\s+([A-Z])(?=\s|$))?\s*(.*)$/i.exec(s);
   if (!m) {
     // «Golden door 1810 3m + 215 edge 50m»: the customer first, then «code quantity» pairs joined by «+» (a word between code and quantity, like «edge», is a note)
     const seg = String.raw`(\d{2,5})(?:\s+([A-Za-z]+))?\s+(\d+(?:\.\d+)?)\s*(?:M|MTRS?|METERS?|METRES?)\b`;
@@ -80,6 +86,8 @@ export function parseCutCaption(text) {
     }
     return near || all;
   });
+  // the «=» left out: «21.8+9 30.8M» is 21.8+9=30.8M when the length after the parts is their sum (within a metre: the writer's own slip in adding)
+  rest = rest.replace(new RegExp(String.raw`(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+)\s+(\d+(?:\.\d+)?)(\s*${UNIT}\b)`, 'i'), (all, parts, total, unitText) => (Math.abs(parts.split('+').reduce((a, x) => a + num(x), 0) - num(total)) <= 1 ? `${parts}=${total}${unitText}` : all));
   const p = QTY_PIECES.exec(rest);
   const t = p ? null : QTY_TIMES.exec(rest);
   if (p) {

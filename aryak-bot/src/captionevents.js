@@ -17,6 +17,7 @@ export function eventsFromCaption(role, text) {
   if (role === 'cut') {
     const c = parseCutCaption(text);
     if (!c || c.kind === 'name') return null;
+    if (c.kind === 'no-code') return { noCode: { customer: c.customer, quantity: c.quantity, unit: c.unit, ...(c.pieces ? { pieces: c.pieces } : {}), ...(c.invoiceQuantity !== undefined ? { invoiceQuantity: c.invoiceQuantity } : {}) } }; // the code comes from the quoted post, or the owner is told
     if (c.kind === 'no-customer') return { noCustomer: { code: c.code, quantity: c.quantity, unit: c.unit } }; // a cut with nobody named: not recorded, the owner is told
     const lines = c.lines || [{ code: c.code, quantity: c.quantity, unit: c.unit, ...(c.invoiceQuantity !== undefined ? { invoiceQuantity: c.invoiceQuantity } : {}) }];
     // an opened roll or a damaged piece is kept (the cutters' log) but is never a sale: no customer, flagged internal
