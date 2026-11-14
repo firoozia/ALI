@@ -29,6 +29,11 @@ test('the owner\'s words: yes, no, edit, reply, status, leads', () => {
   assert.deepEqual(parseSocialCommand('reply #SR5: Please message us on WhatsApp'), { verb: 'reply', kind: 'SR', id: 'SR5', text: 'Please message us on WhatsApp' });
   assert.equal(parseSocialCommand('social').verb, 'status');
   assert.equal(parseSocialCommand('leads').verb, 'leads');
+  assert.deepEqual(parseSocialCommand('بله پست ۱'), { verb: 'yes', kind: 'SP', id: 'SP1' });
+  assert.deepEqual(parseSocialCommand('نه پیام ۱۲'), { verb: 'no', kind: 'SR', id: 'SR12' });
+  assert.deepEqual(parseSocialCommand('ویرایش پست ۲ رنگ‌های تازه'), { verb: 'edit', kind: 'SP', id: 'SP2', text: 'رنگ‌های تازه' });
+  assert.deepEqual(parseSocialCommand('جواب پیام ۳ با ما در واتس‌اپ تماس بگیرید'), { verb: 'reply', kind: 'SR', id: 'SR3', text: 'با ما در واتس‌اپ تماس بگیرید' });
+  assert.equal(parseSocialCommand('پست رنگ جدید'), null, 'a post request is not a decision');
   assert.equal(parseSocialCommand('yes #S3'), null); // a statement preview is not ours
   assert.equal(parseSocialCommand('yes #Q3'), null);
 });
