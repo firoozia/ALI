@@ -414,7 +414,7 @@ export class QboDesk {
     const sum = (k) => (data.txn || []).reduce((n, r) => n + r[k], 0);
     const layout = style || 'transaction';
     const totals = `total amount ${cur}${money(sum('amount'))}, total received ${cur}${money(sum('received'))}`;
-    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${dm(period.from)} – ${dm(period.to)}` : 'no month understood — current open balance'} - ${layout === 'transaction' ? totals : `balance ${cur}${money(data.closing)}`}`;
+    const caption = `Statement - ${data.customer.name || found.name} - ${(style || 'transaction') === 'transaction' ? 'Transaction statement' : 'Balance forward'} - ${period ? `${dm(period.from)} – ${dm(period.to)}` : 'no month understood — current open balance'} - ${layout === 'transaction' ? totals : `balance ${cur}${money(data.closing)}`}`;
     const fileName = `statement-${safe}${period ? `-${period.label}` : ''}.pdf`;
     if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, balance: layout === 'transaction' ? totals : `${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}`, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
     await this.post(privateJid, pdf, fileName, caption);

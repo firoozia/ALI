@@ -1246,7 +1246,7 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       if (blocked) return [blocked];
       const ownSay = (t) => sock.sendMessage(ownIds()[0], persianText(t));
       const x = await qboDesk.statementFor(ic.customer, { privateJid: ownIds()[0], period: ic.period, style: ic.style, preview: !ic.style });
-      const out = [x.preview ? stylePreview(x, { by: 'owner', run: statementRun({ name: x.preview.name, period: ic.period, privateJid: ownIds()[0], say: ownSay }) }) : x.text];
+      const out = [x.preview ? stylePreview(x, { by: 'owner', run: statementRun({ name: x.preview.name, period: ic.period, privateJid: ownIds()[0], say: ownSay }), revive: { privateJid: ownIds()[0], period: ic.period || null } }) : x.text];
       if (x.ask) { out.clarify = true; if (x.options?.length) out.choice = { kind: 'statement', options: x.options, period: ic.period }; } // the next answer picks one
       return out;
     }
@@ -1382,7 +1382,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
       try {
         const sayPrivate = (t) => sock.sendMessage(chatId, persianText(t));
         const x = await qboDesk.statementFor(pend.options[at], { privateJid: chatId, period: pend.period, preview: true });
-        await sayPrivate(x.preview ? stylePreview(x, { by: person, run: statementRun({ name: x.preview.name, period: pend.period, privateJid: chatId, say: sayPrivate }) }) : x.text);
+        await sayPrivate(x.preview ? stylePreview(x, { by: person, run: statementRun({ name: x.preview.name, period: pend.period, privateJid: chatId, say: sayPrivate }), revive: { privateJid: chatId, period: pend.period || null } }) : x.text);
       } catch (e) { await sock.sendMessage(chatId, persianText('صورت‌حساب ساخته نشد؛ دوباره بنویسید.')); }
       return true;
     }
@@ -1422,7 +1422,7 @@ async function authorizedFlow({ chatId, text, canInvoice = false, canStatement =
       const blockedNow = qboInvoices.guard();
       if (blockedNow) { await say(blockedNow); return true; }
       const x = await qboDesk.statementFor(nl.customer, { privateJid: chatId, period: nl.period, style: nl.style, preview: !nl.style });
-      await say(x.preview ? stylePreview(x, { by: person, run: statementRun({ name: x.preview.name, period: nl.period, privateJid: chatId, say }) }) : x.text);
+      await say(x.preview ? stylePreview(x, { by: person, run: statementRun({ name: x.preview.name, period: nl.period, privateJid: chatId, say }), revive: { privateJid: chatId, period: nl.period || null } }) : x.text);
       if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: nl.period });
       return true;
     }
@@ -1534,7 +1534,7 @@ async function finishOwnerSend({ chatId, pending, reply, lang = 'en' }) {
 
 // ---------------------------------------------------------------------------------------------------------------- statements asked for in a group
 const groupStatements = new GroupStatements(); // built for a customer group, waiting for the owner's «بله #S1»
-const statementPreviews = new StatementPreviews({ nextId: () => groupStatements.nextId() }); // asked for, not built: waiting for «1» or «2»
+const statementPreviews = new StatementPreviews({ nextId: () => { groupStatements.n = Math.max(groupStatements.n, statementPreviews.maxN); return groupStatements.nextId(); }, file: path.join(config.authDir, 'qbo', 'statement-previews.json'), revive: (e) => statementRun({ name: e.name, period: e.revive.period, privateJid: e.revive.privateJid, say: (t) => sock.sendMessage(e.revive.privateJid, persianText(t)) }) }); // asked for, not built: waiting for «1» or «2»
 
 /** Everything that waits for an answer, as { id, kind, cancel }. [by]: 'owner' sees every kind; a person sees only what he asked for (invoice previews, statements and their layout questions, his expenses). */
 function waitingItems(by) {
@@ -1573,9 +1573,9 @@ async function queueCommand(by, type) {
 }
 
 /** Remember a statement request as a preview and return the text to show (the customer, the exact period, the two layouts). [run(style)] builds it where the request came from. */
-function stylePreview(x, { by, run }) {
+function stylePreview(x, { by, run, revive = null }) {
   const pv = x.preview;
-  const id = statementPreviews.add({ by, name: pv.name, from: pv.from, to: pv.to, typed: pv.typed, guessed: pv.guessed, run });
+  const id = statementPreviews.add({ by, name: pv.name, from: pv.from, to: pv.to, typed: pv.typed, guessed: pv.guessed, run, revive });
   return previewText({ id, name: pv.name, from: pv.from, to: pv.to, typed: pv.typed, guessed: pv.guessed, several: statementPreviews.openIds(by).length > 1 }, !isEnglishOut());
 }
 
@@ -1590,7 +1590,10 @@ async function styleReplyFlow({ text, by, say, choicePending = false }) {
   const r = parseStyleReply(text);
   if (!r) return false;
   const mine = statementPreviews.openIds(by);
-  if (!mine.length) return false;
+  if (!mine.length) {
+    if (r.id) { await say(bi('That statement is no longer waiting (half an hour passed or it was answered); ask for it again.', 'آن صورت‌حساب دیگر منتظر نیست (نیم ساعت گذشته یا پاسخ داده شده)؛ دوباره درخواست بدهید.')); return true; }
+    return false;
+  }
   if (!r.id && choicePending && r.kind === 'style') return false;
   const pick = r.id ? (mine.includes(r.id) ? r.id : '') : (mine.length === 1 ? mine[0] : '');
   if (r.id && !pick) { await say(bi('That statement was not found or its half hour is over; ask again.', 'این صورت‌حساب پیدا نشد یا مهلتش (نیم ساعت) تمام شده؛ دوباره درخواست بدهید.')); return true; }
@@ -1705,7 +1708,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
         try {
           const sayHere = (t) => sayIn(raw, chatId, where, t);
           const x = await qboDesk.statementFor(pending.options[at], { privateJid: chatId, period: pending.period, preview: true });
-          await sayHere(x.preview ? stylePreview(x, { by, run: statementRun({ name: x.preview.name, period: pending.period, privateJid: chatId, say: sayHere }) }) : x.text);
+          await sayHere(x.preview ? stylePreview(x, { by, run: statementRun({ name: x.preview.name, period: pending.period, privateJid: chatId, say: sayHere }), revive: { privateJid: chatId, period: pending.period || null } }) : x.text);
         } catch (e) { await sayIn(raw, chatId, where, e.paused ? 'کوییک‌بوکس با فرمان مالک متوقف است.' : 'صورت‌حساب ساخته نشد؛ دوباره بنویسید.'); }
         return true;
       }
@@ -1752,7 +1755,7 @@ async function groupStatementTurn({ raw, chatId, text, ctx, owner, authorized, c
   try {
     const sayHere = (t) => sayIn(raw, chatId, where, t);
     const x = await qboDesk.statementFor(ask.customer, { privateJid: chatId, period: ask.period, style: ask.style, preview: !ask.style });
-    await sayHere(x.preview ? stylePreview(x, { by, run: statementRun({ name: x.preview.name, period: ask.period, privateJid: chatId, say: sayHere }) }) : x.text);
+    await sayHere(x.preview ? stylePreview(x, { by, run: statementRun({ name: x.preview.name, period: ask.period, privateJid: chatId, say: sayHere }), revive: { privateJid: chatId, period: ask.period || null } }) : x.text);
     if (x.ask && x.options?.length) choiceDesk.set(`pc:${chatId}`, { kind: 'statement', options: x.options, period: ask.period, by });
   } catch (e) {
     logger.warn(`group statement failed: ${e.name} ${e.status || ''}`);

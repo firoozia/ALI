@@ -1638,3 +1638,23 @@ test('clearAuth removes only the WhatsApp login files of the top level; every da
   const ix = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(!ix.includes('delete the auth folder') && ix.includes('never the data folders'));
 });
+
+test('a statement preview waits for «1» or «2» in every form, survives a restart, an explicit code that no longer waits is said; the caption names the layout and the period', async () => {
+  const { StatementPreviews, parseStyleReply, previewText } = await import('../src/groupstatement.js');
+  for (const [t, style, id] of [['1', 'balance', ''], ['2', 'transaction', ''], ['2 #S1', 'transaction', 'S1'], ['1 #S1', 'balance', 'S1'], ['#S1 2', 'transaction', 'S1'], ['۲', 'transaction', '']]) assert.deepEqual(parseStyleReply(t), { kind: 'style', style, id }, t);
+  assert.deepEqual(parseStyleReply('No'), { kind: 'no', id: '' }); assert.deepEqual(parseStyleReply('no #S1'), { kind: 'no', id: 'S1' });
+  assert.match(previewText({ id: 'S1', name: 'DESIGNER WOOD CARPENTRY', from: '2026-08-01', to: '2026-08-31' }), /Period: 01\/08\/2026 – 31\/08\/2026\n1\. Balance forward\n2\. Transaction statement\nReply 1 or 2 \(or No\)/);
+  const os = await import('node:os');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sp-')), 'q', 'previews.json');
+  let n = 0; const ran = [];
+  const mk = () => new StatementPreviews({ nextId: () => 'S' + (++n), file, revive: (e) => async (style) => { ran.push([e.name, e.revive.period.label, style]); } });
+  const first = mk();
+  const id = first.add({ by: 'owner', name: 'DESIGNER WOOD CARPENTRY', from: '2026-08-01', to: '2026-08-31', run: async () => {}, revive: { privateJid: 'x@s.whatsapp.net', period: { from: '2026-08-01', to: '2026-08-31', label: '2026-08' } } });
+  assert.equal(id, 'S1');
+  const second = mk(); // the program restarted
+  assert.deepEqual(second.openIds('owner'), ['S1']); assert.equal(second.maxN, 1);
+  await second.get('S1').run('transaction'); assert.deepEqual(ran, [['DESIGNER WOOD CARPENTRY', '2026-08', 'transaction']]);
+  second.clear('S1'); assert.deepEqual(mk().openIds('owner'), []);
+  const ix = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(ix.includes('That statement is no longer waiting') && ix.includes("file: path.join(config.authDir, 'qbo', 'statement-previews.json')") && ix.includes('revive: { privateJid: ownIds()[0], period: ic.period || null }'));
+});

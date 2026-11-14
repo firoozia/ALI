@@ -153,9 +153,9 @@ test('«Atossa statement Desinger wood mont 8»: the month typo is a period, the
   const desk = mkDesk(customers);
   const found = await desk.resolveSpoken(r.customer); assert.equal(found.name, 'DESIGNER WOOD CARPENTRY'); // sure: no question
   const held = await desk.statementFor(r.customer, { hold: true, period: r.period });
-  assert.equal(held.ok, true); assert.match(held.held.caption, /^Statement - DESIGNER WOOD CARPENTRY - 01\/08\/2026 – 31\/08\/2026 - /);
+  assert.equal(held.ok, true); assert.match(held.held.caption, /^Statement - DESIGNER WOOD CARPENTRY - Transaction statement - 01\/08\/2026 – 31\/08\/2026 - /);
   const none = await desk.statementFor(r.customer, { hold: true });
-  assert.match(none.held.caption, /DESIGNER WOOD CARPENTRY - no month understood — current open balance - /);
+  assert.match(none.held.caption, /DESIGNER WOOD CARPENTRY - Transaction statement - no month understood — current open balance - /);
   // two customers with the typed words: the choices both share a word, the one that fits better first, never an unrelated name
   const two = mkDesk([...customers, { Id: '399', DisplayName: 'DESIGNER WOOD PRESSING LLC', CompanyName: 'DESIGNER WOOD PRESSING LLC', Balance: 0 }]);
   const many = await two.resolveSpoken('Desinger wood'); assert.ok(many.many && many.many.every((n) => /DESIGNER WOOD|MASTER WOOD/.test(n)) && !many.many.includes('FUTURE MIND TECHNICAL SERVICES'));

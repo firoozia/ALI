@@ -4,6 +4,8 @@
 //  - A customer group: only the OWNER's request counts and it means «send it to this customer». Nothing goes to the group by itself: the statement is built, shown to
 //    the owner in his own chat as «بله #S3», and only his yes sends it (one-shot token, like the owner's invoice send). A colleague's request there is ignored.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { parseInvoiceCommand } from './qboinvoice.js';
 import { parseQboCommand } from './qbodesk.js';
 import { withoutBotNames } from './staff.js';
@@ -64,12 +66,29 @@ export const askLine = ({ name, subject, id, period, kind = 'group' }) => `صو�
  * [run(style)] builds and sends it where the request came from.
  */
 export class StatementPreviews {
-  constructor({ nextId, now = () => Date.now(), ttlMs = TTL_MS }) { Object.assign(this, { nextId, now, ttlMs }); this.map = new Map(); }
-  add({ by, name, from, to, typed = '', guessed = false, run }) { const id = this.nextId(); this.map.set(id, { id, by, name, from, to, typed, guessed, run, at: this.now() }); return id; }
-  get(id) { const p = this.map.get(String(id || '').toUpperCase()); if (!p) return null; if (this.now() - p.at > this.ttlMs) { this.map.delete(p.id); return null; } return p; }
+  /** [file]: the waiting previews are kept there (their data, not the function), so a restart does not lose a statement the owner is about to answer; [revive(entry)] makes the function again. */
+  constructor({ nextId, now = () => Date.now(), ttlMs = TTL_MS, file = '', revive = null }) { Object.assign(this, { nextId, now, ttlMs, file, revive }); this.map = new Map(); this.loaded = !file; this.maxN = 0; }
+  _load() {
+    if (this.loaded) return; this.loaded = true;
+    try {
+      const d = JSON.parse(fs.readFileSync(this.file, 'utf8')); this.maxN = Number(d.n) || 0;
+      for (const e of d.items || []) { const run = this.revive && e.revive ? this.revive(e) : null; if (run && this.now() - e.at <= this.ttlMs) this.map.set(e.id, { ...e, run }); }
+    } catch { /* none yet */ }
+  }
+  _save() {
+    if (!this.file) return;
+    try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      const items = [...this.map.values()].filter((p) => p.revive).map(({ run, ...rest }) => rest);
+      const n = [...this.map.keys()].reduce((m, k) => Math.max(m, Number(String(k).slice(1)) || 0), this.maxN);
+      fs.writeFileSync(this.file, JSON.stringify({ n, items }), { mode: 0o600 });
+    } catch { /* best effort */ }
+  }
+  add({ by, name, from, to, typed = '', guessed = false, run, revive = null }) { this._load(); const id = this.nextId(); this.map.set(id, { id, by, name, from, to, typed, guessed, run, revive, at: this.now() }); this._save(); return id; }
+  get(id) { this._load(); const p = this.map.get(String(id || '').toUpperCase()); if (!p) return null; if (this.now() - p.at > this.ttlMs) { this.map.delete(p.id); return null; } return p; }
   /** The waiting ids of one person; the owner (by 'owner') sees all of them. */
-  openIds(by = '') { return [...this.map.keys()].filter((id) => this.get(id) && (!by || by === 'owner' || this.get(id).by === by)); }
-  clear(id) { this.map.delete(String(id || '').toUpperCase()); }
+  openIds(by = '') { this._load(); return [...this.map.keys()].filter((id) => this.get(id) && (!by || by === 'owner' || this.get(id).by === by)); }
+  clear(id) { this._load(); this.map.delete(String(id || '').toUpperCase()); this._save(); }
 }
 
 const dmy = (iso) => String(iso).split('-').reverse().join('/');
@@ -86,6 +105,7 @@ export function parseStyleReply(text) {
   const t = String(text || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).trim();
   let m = /^([12])\s*(?:#?\s*(S\d+))?\s*[.!]?$/i.exec(t);
   if (m) return { kind: 'style', style: m[1] === '1' ? 'balance' : 'transaction', id: (m[2] || '').toUpperCase() };
+  if ((m = /^#?\s*(S\d+)\s*([12])\s*[.!]?$/i.exec(t))) return { kind: 'style', style: m[2] === '1' ? 'balance' : 'transaction', id: m[1].toUpperCase() }; // «#S1 2»
   if ((m = /^(?:no|نه|لغو|cancel)\s*(?:#?\s*(S\d+))?\s*[.!]?$/i.exec(t))) return { kind: 'no', id: (m[1] || '').toUpperCase() };
   return null;
 }
