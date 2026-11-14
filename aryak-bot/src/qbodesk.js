@@ -2,6 +2,7 @@
 // "صورت‌حساب <customer>" and "صورت‌حساب همه" (at most 50, a gap between posts). READ ONLY: nothing is ever written to QuickBooks here. Every statement
 // is posted ONLY to the test group, whatever is asked: the desk has no target to choose, it asks for "the test group" and nothing else.
 
+import { payerCheck, wordOverlap } from './simtext.js';
 import { nameFallback } from './namelead.js';
 import { withEnd, withSeparators } from './separator.js';
 import { isEnglishOut } from './outlang.js';
@@ -358,6 +359,10 @@ export class QboDesk {
       return { many: [...new Set(ranked)].slice(0, 5) };
     }
     const all = await this.customers();
+    if (!/[؀-ۿ]/.test(typed)) { // a Latin name with a slip or two («Desinger wood»): every typed word fits ONE QuickBooks name (word by word, in order, close spellings allowed)
+      const c = payerCheck(typed, all.map((x) => x.DisplayName || x.CompanyName || ''));
+      if (c.known && c.how !== 'no list') { const hit = all.find((x) => (x.DisplayName || x.CompanyName) === c.resolved); if (hit) return { id: String(hit.Id), name: c.resolved, via: 'words' }; }
+    }
     // a name typed in Persian letters: the Persian spellings of the customers are written once (one batch call) and kept; the owner can correct them
     if (this.persian && this.seedPersian && !this.persian.seeded && /[؀-ۿ]/.test(typed)) { try { await this.seedPersian(); } catch (e) { this.log(`persian names could not be written: ${e.message}`); } }
     const names = all.map((c) => ({ name: c.DisplayName || c.CompanyName || '', alts: [c.CompanyName, c.FullyQualifiedName, ...(this.persian ? this.persian.of(c.Id) : [])].filter((x) => x && x !== c.DisplayName), id: String(c.Id) }));
@@ -372,9 +377,11 @@ export class QboDesk {
       if (viaRow.id) return { id: viaRow.id, name: viaRow.name || picked.best.name, via: 'sound' };
     }
     const weak = picked.kind === 'one' && !sure ? picked.ranked.filter((r) => r.score >= 0.4).slice(0, 3).map((c) => c.name) : [];
-    const cands = (picked.kind === 'many' ? picked.candidates : picked.kind === 'one' ? (weak.length > 1 ? weak.map((name) => ({ name })) : [picked.best]) : []).map((c) => c.name);
+    const latin = !/[؀-ۿ]/.test(typed);
+    const sharing = (list) => (latin ? list.filter((n) => wordOverlap(typed, n) > 0).sort((a, b) => wordOverlap(typed, b) - wordOverlap(typed, a)) : list); // a Latin name: no choice without a shared word
+    const cands = sharing((picked.kind === 'many' ? picked.candidates : picked.kind === 'one' ? (weak.length > 1 ? weak.map((name) => ({ name })) : [picked.best]) : []).map((c) => c.name));
     if (cands.length > 1) return { many: [...new Set(cands)].slice(0, 3) };
-    return { nearest: [...new Set((picked.nearest || picked.ranked.slice(0, 3)).map((c) => c.name))].slice(0, 3) };
+    return { nearest: sharing([...new Set((picked.nearest || picked.ranked.slice(0, 3)).map((c) => c.name))]).slice(0, 3) };
   }
 
   /**
@@ -407,7 +414,7 @@ export class QboDesk {
     const sum = (k) => (data.txn || []).reduce((n, r) => n + r[k], 0);
     const layout = style || 'transaction';
     const totals = `total amount ${cur}${money(sum('amount'))}, total received ${cur}${money(sum('received'))}`;
-    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${dm(period.from)} to ${dm(period.to)}` : 'current'} - ${layout === 'transaction' ? totals : `balance ${cur}${money(data.closing)}`}`;
+    const caption = `Statement - ${data.customer.name || found.name} - ${period ? `${dm(period.from)} – ${dm(period.to)}` : 'no month understood — current open balance'} - ${layout === 'transaction' ? totals : `balance ${cur}${money(data.closing)}`}`;
     const fileName = `statement-${safe}${period ? `-${period.label}` : ''}.pdf`;
     if (hold) return { ok: true, held: { pdf, fileName, caption }, name: data.customer.name || found.name, closing: data.closing, balance: layout === 'transaction' ? totals : `${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}`, currency: data.currency || '', guessed: found.via === 'sound', typed, text: '' }; // built, not sent: the caller keeps it for the owner's yes
     await this.post(privateJid, pdf, fileName, caption);
@@ -416,9 +423,9 @@ export class QboDesk {
     if (isEnglishOut()) {
       const shown = data.customer.name || found.name;
       const note = found.via === 'sound' ? ` (guessed from "${typed}"; tell me if it is another customer)` : '';
-      return { ok: true, name: shown, guessed: !!guessed, text: `Statement of account for "${shown}"${note}${period ? ` from ${dm(period.from)} to ${dm(period.to)}` : ''} sent (${layout === 'transaction' ? totals : `balance ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? ', closing balance of the period' : ''}`}).` };
+      return { ok: true, name: shown, guessed: !!guessed, text: `Statement of account for "${shown}"${note}${period ? ` from ${dm(period.from)} to ${dm(period.to)}` : ' (no month understood — current open balance)'} sent (${layout === 'transaction' ? totals : `balance ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? ', closing balance of the period' : ''}`}).` };
     }
-    return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(dm(period.from))} تا ${fa(dm(period.to))}` : ''} فرستاده شد (${layout === 'transaction' ? `جمع مبلغ ${money((data.txn || []).reduce((n, r) => n + r.amount, 0))}، جمع دریافتی ${money((data.txn || []).reduce((n, r) => n + r.received, 0))}${data.currency ? ` ${data.currency}` : ''}` : `مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}`}).` };
+    return { ok: true, name: data.customer.name || found.name, guessed: !!guessed, text: `صورت‌حساب «${data.customer.name || found.name}»${guessed}${period ? ` از ${fa(dm(period.from))} تا ${fa(dm(period.to))}` : ' (ماهی فهمیده نشد؛ مانده باز فعلی)'} فرستاده شد (${layout === 'transaction' ? `جمع مبلغ ${money((data.txn || []).reduce((n, r) => n + r.amount, 0))}، جمع دریافتی ${money((data.txn || []).reduce((n, r) => n + r.received, 0))}${data.currency ? ` ${data.currency}` : ''}` : `مانده ${money(data.closing)}${data.currency ? ` ${data.currency}` : ''}${period ? '، مانده در پایان دوره' : ''}`}).` };
   }
 
   async statementOne(typed, privateJid = null) {

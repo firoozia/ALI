@@ -59,8 +59,8 @@ const squeeze = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,
  */
 const NOISE_WORDS = new Set(['llc', 'l', 'c', 'co', 'company', 'trading', 'tr', 'industries', 'industry', 'ind', 'est', 'establishment', 'fze', 'fzco', 'the', 'and']); // legal and filler words are ignored when names are compared
 const tokens = (s) => String(s || '').toLowerCase().replace(/[.']/g, '').split(/[^\p{L}\p{N}]+/u).filter((w) => w && !NOISE_WORDS.has(w));
-const oneOff = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0; let j = 0; let miss = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; } else { if (++miss > 1) return false; if (a.length > b.length) i++; else if (a.length < b.length) j++; else { i++; j++; } } } return miss + (a.length - i) + (b.length - j) <= 1; };
-const tokenFits = (w, c) => c === w || (w.length >= 3 && c.startsWith(w)) || (w.length >= 5 && c.length >= 5 && oneOff(w, c));
+const oneOff = (a, b) => { if (a.length === b.length) { let i = 0; while (i < a.length && a[i] === b[i]) i++; if (i < a.length - 1 && a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2)) return true; } if (Math.abs(a.length - b.length) > 1) return false; let i = 0; let j = 0; let miss = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; } else { if (++miss > 1) return false; if (a.length > b.length) i++; else if (a.length < b.length) j++; else { i++; j++; } } } return miss + (a.length - i) + (b.length - j) <= 1; };
+export const tokenFits = (w, c) => c === w || (w.length >= 3 && c.startsWith(w)) || (w.length >= 5 && c.length >= 5 && oneOff(w, c));
 /** Every typed word is a word (or the start of a word) of the customer name, in the same order: «Alia wood» fits «ALIA WOOD PRESSING L.L.C». */
 const orderedFit = (typed, name) => { const t = tokens(typed); const n = tokens(name); if (!t.length) return false; let at = 0; for (const w of t) { const k = n.findIndex((c, i) => i >= at && tokenFits(w, c)); if (k < 0) return false; at = k + 1; } return true; };
 /** Every typed word is somewhere in the customer name, in any order («Munich kitchen door» for «MUNICH DOOR KITCHEN TRADING»). */
@@ -82,6 +82,9 @@ export function payerCheck(typed, customerNames) {
   }
   return { resolved: typed, known: false, how: fits.length > 1 || ordered.length > 1 ? 'fits several customers' : 'no such customer' };
 }
+
+/** How many of the typed words (not filler) are a word, the start of a word or a close spelling of a word of the customer name: the choices must share a real word. */
+export function wordOverlap(typed, name) { const t = tokens(typed).filter((w) => w.length >= 3 && !/^\d+$/.test(w)); const n = tokens(name); return t.filter((w) => n.some((c) => tokenFits(w, c))).length; }
 
 const RANGE_WORDS = /\b(?:today|yesterday|this week|week|weekly|this month|month)\b|دیروز|امروز/i;
 const rangeOf = (t) => { const w = (RANGE_WORDS.exec(t) || [])[0] || 'today'; return /yesterday|دیروز/i.test(w) ? 'yesterday' : /month/i.test(w) ? 'month' : /week/i.test(w) ? 'week' : 'today'; };

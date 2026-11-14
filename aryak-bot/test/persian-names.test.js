@@ -141,3 +141,22 @@ test('a statement of «designer wood» for month 8: the customer is chosen by wo
   }
   assert.equal(parseStatementRequest('statement designer wood month 12', '2026-11-14').period.from, '2025-12-01'); // a month still ahead: the last one
 });
+
+test('«Atossa statement Desinger wood mont 8»: the month typo is a period, the name typo still finds DESIGNER WOOD CARPENTRY with no question, a choice shares a real word, the caption says the period (or that none was understood)', async () => {
+  const { parseStatementRequest } = await import('../src/period.js');
+  const { wordOverlap } = await import('../src/simtext.js');
+  const r = parseStatementRequest('Atossa statement Desinger wood mont 8', '2026-11-14');
+  assert.equal(r.customer, 'Desinger wood'); assert.deepEqual([r.period.from, r.period.to], ['2026-08-01', '2026-08-31']);
+  for (const t of ['statement designer wood monht 8', 'statement designer wood moth 8', 'statement designer wood mnth 8', 'statement designer wood month 8']) assert.deepEqual([parseStatementRequest(t, '2026-11-14').period.from, parseStatementRequest(t, '2026-11-14').customer], ['2026-08-01', 'designer wood'], t);
+  assert.ok(wordOverlap('Desinger wood', 'DESIGNER WOOD CARPENTRY') === 2 && wordOverlap('Desinger wood', 'FUTURE MIND TECHNICAL SERVICES') === 0);
+  const customers = ['FUTURE MIND TECHNICAL SERVICES', 'DESIGNER WOOD CARPENTRY', 'MASTER WOOD'].map((name, i) => ({ Id: String(300 + i), DisplayName: name, CompanyName: name, Balance: 0 }));
+  const desk = mkDesk(customers);
+  const found = await desk.resolveSpoken(r.customer); assert.equal(found.name, 'DESIGNER WOOD CARPENTRY'); // sure: no question
+  const held = await desk.statementFor(r.customer, { hold: true, period: r.period });
+  assert.equal(held.ok, true); assert.match(held.held.caption, /^Statement - DESIGNER WOOD CARPENTRY - 01\/08\/2026 – 31\/08\/2026 - /);
+  const none = await desk.statementFor(r.customer, { hold: true });
+  assert.match(none.held.caption, /DESIGNER WOOD CARPENTRY - no month understood — current open balance - /);
+  // two customers with the typed words: the choices both share a word, the one that fits better first, never an unrelated name
+  const two = mkDesk([...customers, { Id: '399', DisplayName: 'DESIGNER WOOD PRESSING LLC', CompanyName: 'DESIGNER WOOD PRESSING LLC', Balance: 0 }]);
+  const many = await two.resolveSpoken('Desinger wood'); assert.ok(many.many && many.many.every((n) => /DESIGNER WOOD|MASTER WOOD/.test(n)) && !many.many.includes('FUTURE MIND TECHNICAL SERVICES'));
+});

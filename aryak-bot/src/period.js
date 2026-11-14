@@ -77,7 +77,7 @@ export function parsePeriod(text, today) {
   }
   if ((m = /(?:این|همین)\s+(?:ماه|برج)|this\s+month/iu.exec(t))) { const tp = todayParts(today); return { ...monthRange(tp.m, tp.y, today), span: [m.index, m.index + m[0].length] }; }
   // "ماه ۱۰ میلادی", "برج 10", "ماه دهم میلادی", with an optional year
-  if ((m = new RegExp(`(?:ماه|برج|month)\\s+(\\d{1,2}|${Object.keys(ORDINAL).join('|')})(?:\\s*(میلادی|شمسی|ایرانی|هجری))?(?:\\s+(\\d{4}))?`, 'iu').exec(t))) {
+  if ((m = new RegExp(`(?:ماه|برج|month|mont|monht|moth|mnth|mounth|monthe)\\s+(\\d{1,2}|${Object.keys(ORDINAL).join('|')})(?:\\s*(میلادی|شمسی|ایرانی|هجری))?(?:\\s+(\\d{4}))?`, 'iu').exec(t))) {
     if (/شمسی|ایرانی|هجری/.test(m[2] || '')) return { unsupported: 'solar', span: [m.index, m.index + m[0].length] };
     const n = /^\d+$/.test(m[1]) ? +m[1] : ORDINAL[m[1]];
     if (n >= 1 && n <= 12) return { ...monthRange(n, m[3] ? +m[3] : 0, today), span: [m.index, m.index + m[0].length] };
@@ -91,7 +91,7 @@ export function parsePeriod(text, today) {
 }
 
 const SIMPLE_WORDS = /(?:^|\s)(?:آتوسا|اتوسا|آدرس|لطفا|لطفاً|سلام|atossa|atosa|atousa|atusa|atoosa|hello|hi|hey)(?=\s|$)/giu;
-const FILLERS = /(?:^|\s)(?:را|رو|برای|برام|برایم|به|من|ما|از|تا|بفرست|بفرستید|بفرستین|بده|بدید|می‌?خواهم|میخواهم|می‌?خوام|میخوام|لازم|دارم|ارسال|کن|بزن|بساز|ماه|برج|میلادی|کنید|صورت\s*حساب|صورتحساب|حساب|statement|statements|soa|account|accounts|please|send|give|make|get|show|issue|me|the|of|for|my|to|a|in|on|i|need|want|can|you|could|would|like)(?=\s|$)/giu;
+const FILLERS = /(?:^|\s)(?:را|رو|برای|برام|برایم|به|من|ما|از|تا|بفرست|بفرستید|بفرستین|بده|بدید|می‌?خواهم|میخواهم|می‌?خوام|میخوام|لازم|دارم|ارسال|کن|بزن|بساز|ماه|برج|میلادی|کنید|صورت\s*حساب|صورتحساب|حساب|month|mont|monht|moth|mnth|mounth|statement|statements|soa|account|accounts|please|send|give|make|get|show|issue|me|the|of|for|my|to|a|in|on|i|need|want|can|you|could|would|like)(?=\s|$)/giu;
 
 /**
  * A free-form request for a statement ("آتوسا صورتحساب شرکت پالم برد را برای ماه ۱۰ میلادی برام بفرست"): { customer, period, label } or null when the text does not
