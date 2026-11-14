@@ -147,3 +147,10 @@ test('cash on delivery against the invoices of the customer, and a deleted invoi
   t.markDeleted('inv-9911');
   assert.ok(new Tracker().deleted.size === 0 && t.deleted.has('inv-9911'));
 });
+
+test('a catalog post: the item CATALOG, the thickness a note (never a code), the count in pieces, the customer what is left', () => {
+  assert.deepEqual(parseCutCaption('Catalog 0.18mm SAMPLE WOODS 2 PCS'), { kind: 'cut', code: 'CATALOG', customer: 'SAMPLE WOODS', quantity: 2, unit: 'pcs', lines: [{ code: 'CATALOG', quantity: 2, unit: 'pcs', note: '0.18mm' }] });
+  assert.deepEqual(parseCutCaption('SAMPLE KITCHEN CATALOG 0.35 7 PCS, 0.18 10 PCS').lines, [{ code: 'CATALOG', quantity: 7, unit: 'pcs', note: '0.35mm' }, { code: 'CATALOG', quantity: 10, unit: 'pcs', note: '0.18mm' }]);
+  assert.equal(parseCutCaption('CATALOG 2 PCS').kind, 'no-customer');
+  assert.equal(parseCutCaption('ART NO 410 SAMPLE DOOR 6M').code, '410'); // the usual post is unchanged
+});

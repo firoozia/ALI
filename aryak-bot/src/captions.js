@@ -18,6 +18,25 @@ const QTY_TIMES = new RegExp(String.raw`(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+)\s*(?:${
 const QTY_ONE = /(\d+(?:\.\d+)?)\s*(M|MTRS?|METERS?|METRES?|ROLLS?|PCS?|PIECES?)\b/i;
 const round3 = (n) => Math.round(n * 1000) / 1000;
 
+// A catalog (the sample book of the films) handed to a customer: «Catalog 0.18mm AWAB 2 PCS», «AL AFFEFI KITCHEN CATALOG 0.35 7 PCS, 0.18 10 PCS». The item is CATALOG,
+// the thickness (0.18 mm) is a note of the line and never a product code, the count is in pieces.
+const CATALOG_WORD = /\bCATALOG(?:UE)?S?\b/i;
+const THICK = /(?<![\d.])(0?\.\d{1,2})\s*(?:MM\b)?/gi;
+export function parseCatalogCaption(s) {
+  const lines = []; let rest = s;
+  for (const m of s.matchAll(/(?:(?<![\d.])(0?\.\d{1,2})\s*(?:MM)?\s*)?(?<![\d.])(\d+)\s*(?:PCS?|PIECES?|NOS?|BOOKS?)\b/gi)) {
+    lines.push({ code: 'CATALOG', quantity: Number(m[2]), unit: 'pcs', ...(m[1] ? { note: `${Number(m[1])}mm` } : {}) });
+    rest = rest.replace(m[0], ' ');
+  }
+  const thick = [...rest.matchAll(THICK)].map((m) => `${Number(m[1])}mm`);
+  if (lines.length === 1 && !lines[0].note && thick.length === 1) lines[0] = { ...lines[0], note: thick[0] }; // «Catalog 0.18mm AWAB 2 PCS»: the one thickness belongs to the one count
+  if (!lines.length) lines.push({ code: 'CATALOG', quantity: null, unit: 'pcs', ...(thick.length === 1 ? { note: thick[0] } : {}) });
+  const customer = title(rest.replace(THICK, ' ').replace(CATALOG_WORD, ' ').replace(/[,;+&]/g, ' ').replace(/\s+/g, ' '));
+  const quantity = lines.some((l) => l.quantity) ? round3(lines.reduce((a, l) => a + (Number(l.quantity) || 0), 0)) : null;
+  if (!customer) return { kind: 'no-customer', code: 'CATALOG', quantity, unit: 'pcs' };
+  return { kind: 'cut', code: 'CATALOG', customer, quantity, unit: 'pcs', lines };
+}
+
 /**
  * "ART NO 410 DANDY DOOR 6M" -> { kind: 'cut', code: '410', customer: 'DANDY DOOR', quantity: 6, unit: 'm' }.
  * "ART NO 108 C PVC WORKS 40M": a letter after the number is part of the code ("108 C" is a variant). "18+12 = 30M": two pieces.
@@ -27,6 +46,7 @@ const round3 = (n) => Math.round(n * 1000) / 1000;
 export function parseCutCaption(text) {
   const s = clean(text);
   if (!s) return null;
+  if (!/^ART\.?\s*NO\b/i.test(s) && CATALOG_WORD.test(s)) return parseCatalogCaption(s);
   const m = /^ART\.?\s*NO\.?\s*(\d{2,5})(?:\s+([A-Z])(?=\s|$))?\s*(.*)$/i.exec(s);
   if (!m) {
     // «Golden door 1810 3m + 215 edge 50m»: the customer first, then «code quantity» pairs joined by «+» (a word between code and quantity, like «edge», is a note)

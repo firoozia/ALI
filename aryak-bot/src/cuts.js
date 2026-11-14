@@ -11,7 +11,12 @@ import { isEnglishOut } from './outlang.js';
 const DAY = 24 * 3600 * 1000;
 const FA = '۰۱۲۳۴۵۶۷۸۹';
 export const faDigits = (s) => String(s).replace(/\d/g, (d) => FA[d]);
-const code = (c) => productCode(c) || String(c || '').trim().toUpperCase();
+const code = (c) => (/catalog/i.test(String(c || '')) ? 'CATALOG' : productCode(c) || String(c || '').trim().toUpperCase()); // «ARYAK PVC CATALOG» in the books and «Catalog 0.18mm» in the group are one item
+// what a warning calls a posted line: the product code, or the item and its note («CATALOG 0.18mm»); a line whose code is not a product code (a thickness read as a code)
+// also quotes the post, so the owner sees what was written
+const isProductCode = (k) => /^[A-Z]{0,4}\s?-?\d{3,5}(?:-\d+)?(?:\s?[A-Z])?$/.test(String(k || ''));
+const postLabel = (r) => `${r.code}${r.note ? ` ${r.note}` : ''}`;
+const postQuote = (r) => (!isProductCode(r.code) && r.text ? ` («${String(r.text).replace(/\s+/g, ' ').trim().slice(0, 80)}»)` : '');
 const digitsOf = (c) => (String(c || '').match(/\d{2,5}/g) || []).join('-'); // «ART NO 220» and «220» share the number
 // Words that say what a company does or where it is, never which company it is (a customer «MUNICH DOOR KITCHEN» is not «AL NOOR DOOR»).
 export const GENERIC = new Set(['llc', 'l', 'c', 'ltd', 'co', 'company', 'trading', 'tr', 'ind', 'industries', 'industrial', 'est', 'fze', 'fzco', 'spc', 'general', 'the', 'and', 'of', 'international', 'for', 'trade', 'investment',
@@ -137,7 +142,7 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
     if (!(forCustomer(e.customer) || forCustomer(e.customerTyped))) continue;
-    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
+    (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, note: l.note || '', text: e.text || '', left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
   }
   const same = (r, inv) => (inv.codes || []).some((k) => code(k) === r.code || (r.digits && digitsOf(k) === r.digits));
   if (invoiced) { // the SAME pairing as «unbilled»: an invoice line of this customer and this code within +-windowDays of the cut, before OR after it (an invoice may come the day before the cut);
@@ -155,7 +160,7 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
   const problems = []; const covered = [];
   const taken = new Set();
   for (const ln of lines) {
-    const shown = ln.code || (/\d{2,}/.exec(ln.sku || ln.name || '') || [''])[0];
+    const shown = ln.code || (/catalog/i.test(`${ln.sku || ''} ${ln.name || ''}`) ? 'CATALOG' : (/\d{2,}/.exec(ln.sku || ln.name || '') || [''])[0]);
     const wanted = new Set([ln.code, String(ln.sku || '').replace(/^(?:PVC|EDGE\d*)-/i, ''), String(ln.name || '').replace(/^.*?(\d{3,5})$/, '$1')].filter(Boolean).map(code));
     const wantedDigits = new Set([...wanted].map(digitsOf).filter((d) => d.length >= 2));
     const mine = rows.filter((r) => wanted.has(r.code) || (r.digits && wantedDigits.has(r.digits)));
@@ -174,10 +179,10 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
   }
   if (invoiced) { // orders cut for this customer that no invoice (the office's or ours) carries and no line of this invoice takes
     const missing = new Map();
-    for (const r of rows) if (r.left && !taken.has(r)) missing.set(r.code, [...(missing.get(r.code) || []), r]);
+    for (const r of rows) if (r.left && !taken.has(r)) missing.set(postLabel(r), [...(missing.get(postLabel(r)) || []), r]);
     for (const [k, list] of missing) {
       if (log) log(`cross-check: cut ${k} of "${customer}" (post named: ${[...new Set(list.map((r) => r.post))].join(' | ')}) has no invoice line since ${dm(list[0].at, timeZone)}`);
-      problems.push(`${k}: cut ${amount(list.reduce((x, r) => x + r.qty, 0), list[0].unit)} on ${dm(list[0].at, timeZone)}, not invoiced`);
+      problems.push(`${k}: ${list[0].code === 'CATALOG' ? 'given' : 'cut'} ${amount(list.reduce((x, r) => x + r.qty, 0), list[0].unit)} on ${dm(list[0].at, timeZone)}${postQuote(list[0])}, not invoiced`);
     }
   }
   return { problems: problems.slice(0, max), more: Math.max(0, problems.length - max), covered: covered.slice(0, max) };

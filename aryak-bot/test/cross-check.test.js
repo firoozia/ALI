@@ -152,3 +152,17 @@ test('a bank message that names the customer after the amount keeps the name and
   const plain = events('payment', 'Your AC No:XXXXXXXX1234 is credited with AED 8000.00 by transfer').events[0];
   assert.equal(plain.customer, ''); assert.equal(plain.pendingName, true);
 });
+
+test('a catalog handed to a customer: the item is CATALOG with its thickness, never the thickness as a code; the warning names the item and quotes a post whose code is not a product code; a catalog line in the books takes it', () => {
+  const tr = new Tracker({ dir: '' });
+  tr.add({ type: 'cut', at: NOW - 3 * DAY, customer: 'SAMPLE WOODS', lines: [{ code: 'CATALOG', quantity: 2, unit: 'pcs', note: '0.18mm' }], ref: 'k1', text: 'Catalog 0.18mm SAMPLE WOODS 2 PCS' });
+  tr.add({ type: 'cut', at: NOW - 3 * DAY, customer: 'SAMPLE WOODS', lines: [{ code: '18', quantity: 2, unit: 'pcs' }], ref: 'k2', text: 'Catalog 0.18mm SAMPLE WOODS 2 PCS' }); // an old reading: the thickness taken for a code
+  cut(tr, 'k3', 'SAMPLE WOODS', '301', 18, 0);
+  const { problems } = crossCheck(tr, 'SAMPLE WOODS INDUSTRIES', [{ code: '301', qty: 18 }], { now: NOW, invoiced: [] });
+  assert.deepEqual(problems, [
+    'CATALOG 0.18mm: given 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced',
+    '18: cut 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced',
+  ]);
+  const books = [{ codes: ['ARYAK PVC CATALOG'], qty: 2, number: 'inv-1', at: NOW - 3 * DAY }];
+  assert.deepEqual(crossCheck(tr, 'SAMPLE WOODS INDUSTRIES', [{ code: '301', qty: 18 }], { now: NOW, invoiced: books }).problems, ['18: cut 2 pcs on 05/11 («Catalog 0.18mm SAMPLE WOODS 2 PCS»), not invoiced']); // the catalog line takes the catalog
+});
