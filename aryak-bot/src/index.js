@@ -183,6 +183,7 @@ const sent = new Set(); // ids of messages the bot sent, so they are not read ag
 const staffChats = new Set(); // private chats a staff member started: the assistant may answer there
 const lastPhotos = new Map(); // chat and sender -> their latest picture message (kept in memory, read only when she is asked about it)
 const keepLang = new WeakSet(); // replies that keep their own language (the test-only played customer or owner)
+const asWritten = new WeakSet(); // texts sent exactly as written in every language setting (an English + Arabic caption shown to the owner for his yes)
 const quietContents = new WeakSet(); // messages that are not an answer to anyone (the good-morning message): never counted for learning
 // What the customer-flow gate did with a message, in words (the gate also watches staff messages: a colleague's
 // message cancels the answer that was waiting for a customer, it is not itself answered).
@@ -3737,6 +3738,7 @@ const socialDesk = new SocialDesk({
 async function socialSay(text) {
   const content = { text: `🤖 ${text}` };
   keepLang.add(content);
+  asWritten.add(content);
   const r = await sock.sendMessage(ownIds()[0], content);
   if (r?.key?.id) sent.add(r.key.id);
   return r;
@@ -3895,13 +3897,15 @@ async function start() {
     return !([...(config.ownerNumbers || []), ...ownIds()].map(jidDigits).includes(d));
   };
   sock.sendMessage = async (...a) => {
+    const written = asWritten.has(a[1]); // read before the text is cleaned (a cleaned text is a new object)
     if (typeof a[1]?.text === 'string') {
       const c = cleanOutgoing(a[1].text);
       if (c.changed) { logger.warn('an unresolved placeholder was removed from an outgoing text'); if (!c.text) return undefined; a[1] = { ...a[1], text: c.text }; }
       const sep = separateStockAnswers(a[1].text); // several stock answers in one message: a line between the code blocks
       if (sep !== a[1].text) a[1] = { ...a[1], text: sep };
     }
-    if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && config.replyLanguage === 'en') {
+    if (written) { /* the social preview: its Arabic part is what will be posted, never translated */ }
+    else if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && config.replyLanguage === 'en') {
       try { const en = await englishOut(a[1].text, englishViaModel); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } catch { /* sent as written */ }
     } else if (typeof a[1]?.text === 'string' && /[؀-ۿ]/.test(a[1].text) && !keepLang.has(a[1])) {
       try { if (await englishFor(a[0])) { const en = toEnglish(a[1].text); if (en !== a[1].text) a[1] = { ...a[1], text: en }; } } catch { /* sent as written */ }

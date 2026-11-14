@@ -77,7 +77,7 @@ test('the switch: REPLY_LANGUAGE=en by default; fa goes back; the customer rule 
   assert.match(buildSystemPrompt(undefined, 'Atossa', 'en'), /Always reply in English, whatever language the customer wrote in/);
   assert.match(buildSystemPrompt(undefined, 'Atossa', 'fa'), /Reply in the language of the customer's message/);
   assert.match(src, /setOutLang\(config\.replyLanguage\)/);
-  assert.match(src, /config\.replyLanguage === 'en'\) \{\s*try \{ const en = await englishOut\(a\[1\]\.text, englishViaModel\)/); // the one outgoing path
+  assert.match(src, /else if \(typeof a\[1\]\?\.text === 'string' && \/\[؀-ۿ\]\/\.test\(a\[1\]\.text\) && config\.replyLanguage === 'en'\) \{\s*try \{ const en = await englishOut\(a\[1\]\.text, englishViaModel\)/); // the one outgoing path
   assert.match(src, /const staffLang = config\.replyLanguage === 'en' \? 'en' :/);
   assert.match(src, /lang = config\.replyLanguage === 'en' \? 'en' : detectLang\(withText/); // customers too
 });
@@ -97,4 +97,10 @@ test('a bare yes: any case, ok, Persian words; with a full code it always names 
   assert.match(turn, /bareOk = dec && \(dec\.type === 'yes' \|\| dec\.type === 'no'\) && !dec\.id && !bareAnswerYieldsToPending\(/); // internal groups, owner only (inside if (owner)), unless a photo or voice question waits
   assert.ok(turn.indexOf('if (owner) {') < turn.indexOf('bareOk'));
   assert.match(turn, /voiceDesk\.get\(`s:\$\{chatId\}:\$\{person\}`\) \|\| followDesk\.get\(`s:\$\{chatId\}:\$\{person\}`\) \|\| voiceGate\.get\(`vg:\$\{chatId\}:\$\{person\}`\)/);
+});
+
+test('a social preview is sent as written: its Arabic caption is never turned into English (owner 15/11: the preview showed two English texts)', () => {
+  const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  assert.match(src, /async function socialSay\(text\) \{\s*const content = \{ text: `🤖 \$\{text\}` \};\s*keepLang\.add\(content\);\s*asWritten\.add\(content\);/);
+  assert.match(src, /const written = asWritten\.has\(a\[1\]\);[\s\S]{0,600}if \(written\) \{/);
 });
