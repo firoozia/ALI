@@ -69,7 +69,7 @@ export async function endCard({ codes = [], logo = null, font = '', line = '' })
  * The Reel: [room] and [detail] pictures (4:5), [focus] { x, y } (0..1) where the camera pushes in on the room, [overlay] a transparent
  * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
  */
-export async function makeReel({ room, detail = null, details = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
+export async function makeReel({ room, detail = null, details = null, views = [], motion = 'zoom', focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   // the close-ups, one per film (the owner, 15/11: up to three films, wood grain longer and closer): [{ image, seconds, zoom }]
   const shots = (details || (detail ? [{ image: detail, seconds: seconds.detail, zoom: 0.12 }] : [])).filter((d) => d?.image).slice(0, 3);
@@ -79,7 +79,11 @@ export async function makeReel({ room, detail = null, details = null, focus = { 
     const fps = 30;
     const fx = clamp(focus?.x, 0.15, 0.85); const fy = clamp(focus?.y, 0.15, 0.85);
     const args = ['-y', '-loglevel', 'error'];
-    const inputs = [put('room.jpg', room), ...shots.map((d, i) => put(`detail${i}.jpg`, d.image)), put('card.png', card)];
+    // «the camera turns in the room, not a zoom» (the owner, 15/11): with motion 'orbit' each still is crossed by a slow sideways move,
+    // and [views] (the same room from other camera places) follow the room, so the camera seems to walk around it
+    const orbit = motion === 'orbit';
+    const angles = orbit ? views.filter(Boolean).slice(0, 3) : [];
+    const inputs = [put('room.jpg', room), ...angles.map((v, i) => put(`view${i}.jpg`, v)), ...shots.map((d, i) => put(`detail${i}.jpg`, d.image)), put('card.png', card)];
     for (const f of inputs) args.push('-i', f);
     const cardIn = inputs.length - 1;
     if (overlay) args.push('-i', put('overlay.png', overlay));
@@ -90,11 +94,21 @@ export async function makeReel({ room, detail = null, details = null, focus = { 
     // each still is enlarged a little above the frame first, so the slow zoom moves smoothly (1.25x: twice froze the 1 GB server)
     const move = (i, frames, zoom, cx, cy) => `[${i}:v]scale=1350:2400:force_original_aspect_ratio=increase,crop=1350:2400,setsar=1,`
       + `zoompan=z='1+${zoom}*on/${frames}':x='(iw-iw/zoom)*${cx}':y='(ih-ih/zoom)*${cy}':d=${frames}:s=1080x1920:fps=${fps},setsar=1,format=yuv420p`;
-    const parts = [`${move(0, n(seconds.room), 0.22, fx, fy)}[m0]`];
+    // the sideways move: a fixed small enlargement, the window travelling from one side to the other (every other shot the other way)
+    const pan = (i, frames, toRight) => `[${i}:v]scale=1350:2400:force_original_aspect_ratio=increase,crop=1350:2400,setsar=1,`
+      + `zoompan=z='1.18':x='(iw-iw/zoom)*${toRight ? '' : '(1-'}on/${frames}${toRight ? '' : ')'}':y='(ih-ih/zoom)*0.5':d=${frames}:s=1080x1920:fps=${fps},setsar=1,format=yuv420p`;
+    const parts = [`${orbit ? pan(0, n(seconds.room), true) : move(0, n(seconds.room), 0.22, fx, fy)}[m0]`];
     let last = 'm0'; let t = seconds.room;
+    angles.forEach((v, i) => {
+      const sec = seconds.view || seconds.room;
+      parts.push(`${pan(i + 1, n(sec), i % 2 === 1)}[v${i}]`);
+      parts.push(`[${last}][v${i}]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[w${i}]`);
+      last = `w${i}`; t += sec - fade;
+    });
     shots.forEach((d, i) => {
       const sec = d.seconds || seconds.detail;
-      parts.push(`${move(i + 1, n(sec), d.zoom ?? 0.12, 0.5, 0.5)}[d${i}]`);
+      const at = i + 1 + angles.length;
+      parts.push(`${orbit ? pan(at, n(sec), i % 2 === 0) : move(at, n(sec), d.zoom ?? 0.12, 0.5, 0.5)}[d${i}]`);
       parts.push(`[${last}][d${i}]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[m${i + 1}]`);
       last = `m${i + 1}`; t += sec - fade;
     });

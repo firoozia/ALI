@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -237,6 +237,13 @@ test('the Reel itself: an MP4 from two stills and the end card', { skip: !fs.exi
   assert.equal(mp4.subarray(4, 8).toString(), 'ftyp', 'an MP4');
 });
 
+test('the Reel that walks around the room: two more views and close-ups crossed by a sideways move, no zoom', { skip: !fs.existsSync(await ffmpegPath()) && 'no ffmpeg here' }, async () => {
+  const card = await endCard({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }], line: 'WhatsApp +971000' });
+  const mp4 = await makeReel({ room: await pic('#806040', 1440, 1800), views: [await pic('#705030', 1440, 1800), await pic('#604020', 1440, 1800)], motion: 'orbit',
+    details: [{ image: await pic('#402010', 1440, 1800), seconds: 1.5 }], card, seconds: { room: 1.5, view: 1.5, detail: 1.5, card: 1 } });
+  assert.equal(mp4.subarray(4, 8).toString(), 'ftyp');
+});
+
 test('the Reel gets new music in the mood the designer chose; when the music model fails, a kept clip; with none, silence', async () => {
   let reelArgs = null;
   const { desk } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
@@ -435,4 +442,38 @@ test('Atossa\'s morning look at Instagram: the most liked recent post of each de
   assert.deepEqual(got, ['https://cdn.ig/archdigest-1.jpg', 'https://cdn.ig/dezeen-1.jpg'], 'the fresh ones only, the most liked first, one per account');
   assert.match(writes.find((w) => w.kind === 'instagram-watch').text, /@archdigest, 900 likes/);
   assert.match(writes.find((w) => w.kind === 'design-plan').text, /What is working on Instagram now[\s\S]*Dark walnut galley/);
+});
+
+test('the owner\'s change to a drafted design: by quoting it or «تغییر پست N …»; redrawn, a new draft with the Reel as he asked, the old one set aside', async () => {
+  assert.deepEqual(designEditRequest('خط های عمودی رو هم رنگ درب ها کن', '#SP22 the Reel'), { id: 'SP22', note: 'خط های عمودی رو هم رنگ درب ها کن' });
+  assert.deepEqual(designEditRequest('تغییر پست ۲۲ موزیک عوض کن'), { id: 'SP22', note: 'موزیک عوض کن' });
+  assert.equal(designEditRequest('بله پست ۲۲', '#SP22 the Reel'), null, 'a yes stays a yes');
+  assert.equal(designEditRequest('خط های عمودی رو هم رنگ کن', 'no number here'), null);
+  let reelArgs = null;
+  const { desk, made, writes } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const first = await desk.draftDesign({});
+  const id = /Post #(SP\d+)/.exec(first.text)[1];
+  assert.ok(desk.store.d.posts[id].design.plan.scene, 'the whole plan is kept with the post');
+  const base = desk.write;
+  desk.write = async (r) => {
+    if (r.kind === 'design-plan' && /He asks for this change/.test(r.text)) { writes.push(r); return JSON.stringify({ title_fa: 'آشپزخانه', room: 'kitchen', parts: [{ code: 'HZ812', where: 'doors and the vertical strips' }], scene: 'Strips in the door colour.', change_fa: 'نوارهای عمودی هم‌رنگ درها شد.', reel: { seconds: 22, music: 'warm oud and piano', motion: 'orbit' } }); }
+    if (r.kind === 'check-change') return '{"done":true}';
+    return base(r);
+  };
+  const before = made.length;
+  const d = await desk.reviseDesign({ id, note: 'خط های عمودی هم رنگ درب ها، ریلز بلندتر، موزیک عوض، چرخش دوربین' });
+  assert.equal(desk.store.d.posts[id].state, 'replaced');
+  const nid = /Post #(SP\d+)/.exec(d.text)[1];
+  assert.notEqual(nid, id);
+  assert.equal(desk.store.d.posts[id].replacedBy, nid);
+  assert.match(d.text, /تغییر به خواست شما: نوارهای عمودی هم‌رنگ درها شد/);
+  assert.match(d.text, /کنار گذاشته شد/);
+  assert.match(made[before].prompt, /redrawn for the owner who asked/);
+  assert.equal(reelArgs.motion, 'orbit');
+  assert.equal(reelArgs.views.length, 2, 'two more camera places');
+  assert.ok(made.some((m) => /moved about 35 degrees to the left/.test(m.prompt)));
+  const total = reelArgs.seconds.room + reelArgs.views.length * (reelArgs.seconds.view - 0.6) + reelArgs.details.reduce((a, x) => a + x.seconds - 0.6, 0) + reelArgs.seconds.card - 0.6;
+  assert.ok(Math.abs(total - 22) < 1, `about 22 s (${total.toFixed(1)})`);
+  assert.match((await desk.decidePost({ verb: 'yes', kind: 'SP', id })), /already replaced/, 'the old draft cannot be posted');
+  assert.match((await desk.reviseDesign({ id, note: 'x' })).text, /already replaced/);
 });

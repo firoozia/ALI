@@ -115,7 +115,7 @@ import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlan
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
 import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designRequest, inspirationRequest, linkRequest, parseSocialCommand, postRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designEditRequest, designRequest, inspirationRequest, linkRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2520,6 +2520,15 @@ ${t.authorizeUrl()}`);
       if (!buf) { await socialSay('The picture could not be read; send it again.'); return true; }
       await socialSay('Atossa is designing from your picture with ARYAK films… (one or two minutes)');
       await socialSayDesign(await socialDesk.draftDesign({ note: ir.note, inspiration: { image: buf, mime: imageOf(normalizeMessageContent(picRaw.message))?.mimetype || 'image/jpeg' } }));
+      return true;
+    }
+    // the owner's change to a drafted design: a reply to its message, or «تغییر پست ۲۲ …» (live 15/11: «I did not understand that»)
+    const quotedText = sctx.quotedMessage ? String(textOf(normalizeMessageContent(sctx.quotedMessage)) || normalizeMessageContent(sctx.quotedMessage)?.imageMessage?.caption || normalizeMessageContent(sctx.quotedMessage)?.videoMessage?.caption || '') : '';
+    const de = !imageOf(content) && !sc ? designEditRequest(text, quotedText) : null;
+    if (de && isOwner() && socialDesk.store.d.posts[de.id]?.design) {
+      trace(where, 'owner', `social: a change to design #${de.id}`);
+      await socialSay(`آتوسا طرح پست ${de.id.slice(2)} را با خواستهٔ شما از نو می‌سازد: عکس، عکس‌های نزدیک و ریلز… (چند دقیقه)`);
+      await socialSayDesign(await socialDesk.reviseDesign(de));
       return true;
     }
     // links from the owner (Instagram, TikTok, Pinterest, a magazine): Atossa studies them for her next designs (the owner, 15/11)

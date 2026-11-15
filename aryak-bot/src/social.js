@@ -402,6 +402,19 @@ export function inspirationRequest(caption) {
 }
 
 /** A photo's caption that asks for a post: «post …», «پست …», «instagram …», «اینستا …». Returns { note } (the rest of the caption) or null. */
+/**
+ * The owner's change to a drafted design: a reply to one of its messages (the quoted text carries «#SP22») or «تغییر پست ۲۲ …» /
+ * «اصلاح طرح ۲۲ …». { id, note } or null. A caption edit («ویرایش پست …») and the yes / no commands are not this.
+ */
+export function designEditRequest(text, quotedText = '') {
+  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+  let m = /^(?:تغییر|اصلاح|عوض\s*کن)\s*(?:پست|طرح|post)\s*#?\s*(?:SP)?\s*(\d+)\s*[:\-،,]?\s*([\s\S]+)$/i.exec(t);
+  if (m) return { id: `SP${m[1]}`, note: m[2].trim() };
+  if (!t || parseSocialCommand(t) || /https?:\/\//.test(t)) return null;
+  m = /#SP(\d+)/i.exec(String(quotedText || ''));
+  return m && t.length >= 4 ? { id: `SP${m[1]}`, note: t } : null;
+}
+
 /** A message of the owner with web links (Instagram, TikTok, Pinterest, a magazine…): { urls, note } for Atossa to study; null when none. */
 export function linkRequest(text) {
   const urls = [...new Set((String(text || '').match(/https?:\/\/[^\s<>«»"']+/g) || []).map((u) => u.replace(/[),.;!؟،]+$/, '')))];
@@ -702,7 +715,7 @@ export class SocialDesk {
     const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true, pillar: plan.pillar || 'inspiration', made: mine });
     const p = this.store.d.posts[mine.id];
     if (!p) return { text };
-    p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene };
+    p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene, plan: { ...plan, dialogue_fa: undefined, change_fa: undefined } };
     const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
     const details = [];
     for (const [k, sh] of shots.entries()) {
@@ -712,7 +725,7 @@ export class SocialDesk {
     }
     let video = null;
     if (this.reel) {
-      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
+      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     this.remember(plan);
     const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
@@ -800,6 +813,32 @@ export class SocialDesk {
     return this.produceDesign({ plan, roomRaw, note, size });
   }
 
+  /**
+   * The owner's change to a design already drafted (he quotes it or names it: «تغییر پست ۲۲ …»): the plan rewritten around his words,
+   * the room drawn again and checked, close-ups, the Reel as he asked; the old draft is set aside so it is never posted by mistake.
+   */
+  async reviseDesign({ id, note }) {
+    const p = this.store.d.posts[id];
+    if (!p?.design) return { text: `There is no design #${id} to change.` };
+    if (p.state !== 'draft' && p.state !== 'scheduled') return { text: `Post #${id} was already ${p.state}; a posted design is not changed.` };
+    const all = this.catalog();
+    const old = p.design.plan || { room: p.design.room, title_fa: p.design.title, scene: p.design.scene || p.design.room, parts: (p.design.codes || []).filter((c) => all[c]).map((code) => ({ code, where: 'as in the picture' })) };
+    const oldRaw = p.file ? fs.readFileSync(p.file) : Buffer.from(p.image || '', 'base64');
+    const hq = /کیفیت|جزئیات|دقیق|وضوح|quality|detail|sharp/i.test(note);
+    let plan;
+    let roomRaw;
+    try {
+      plan = await this.revisePlan(old, note, '');
+      roomRaw = await this.redraw(plan, oldRaw, note, { size: hq ? '4K' : '', hq });
+    } catch (err) { return { text: `The change could not be made: ${err.message}` }; }
+    this.addTaste(`The owner changed design «${old.title_fa || old.room}»: ${note}`);
+    p.state = 'replaced'; this.store.save();
+    const d = await this.produceDesign({ plan, roomRaw, note, size: hq ? '4K' : '' });
+    const nid = /Post #(SP\d+)/.exec(d.text || '')?.[1];
+    if (nid) { p.replacedBy = nid; this.store.save(); }
+    return { ...d, text: `${d.text}\n\n(پست ${id.slice(2)} کنار گذاشته شد؛ این نسخهٔ تازهٔ آن است.)` };
+  }
+
   /** Atossa's plan rewritten around the owner's words (films of the same catalogue); the old plan when no JSON comes back. */
   async revisePlan(plan, note, family = '') {
     const all = this.catalog();
@@ -809,6 +848,7 @@ export class SocialDesk {
       `\nThe owner chose this concept of yours:\n${JSON.stringify(plan)}`,
       `\nHe asks for this change: «${note}».`,
       'Rewrite the plan so that his change is the first thing anyone sees in the new picture. Read his words as a designer: «more space in the view» = a wider room and a wider camera (more floor, ceiling and depth, the walls further away, a lighter balance so the dark film does not close the room in); «more modern» = cleaner lines, slimmer profiles, fewer ornaments; «more detail» = more visible joinery, profiles, lighting and styling details, closer textures; «change the design» = another style or layout, not the same room recoloured. Keep his chosen films unless he asks otherwise.',
+      'When he asks about the Reel (its length, the music, how the camera moves), add "reel": {"seconds": the whole Reel in seconds (he says longer: about 22), "music": a new music mood in English when he wants other music, "motion": "orbit" when he wants the camera to turn around the room instead of zooming, else "zoom"}.',
       'Add "change_fa": one Persian sentence for the owner saying exactly what you changed. Answer with the full JSON.',
     ].join('\n') }) || '');
     try {
@@ -1003,7 +1043,7 @@ export class SocialDesk {
     }
   }
 
-  async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '' }) {
+  async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '', opts = null, plan = null }) {
     const sharp = (await import('sharp')).default;
     let focus = { x: 0.5, y: 0.5 };
     try {
@@ -1018,7 +1058,33 @@ export class SocialDesk {
     const card = await endCard({ codes, logo: brand.logo, font: brand.font, line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
     // each film's close-up in turn: wood grain longer and closer (the owner, 15/11), the others a shorter, gentler look
     const details = shots ? shots.map((sh) => ({ image: sh.raw, seconds: sh.wood ? 4.5 : 3, zoom: sh.wood ? 0.18 : 0.1 })) : detail ? [{ image: detail, seconds: 4, zoom: 0.12 }] : [];
-    return this.reel({ room, details, focus, overlay, card, music: await this.reelMusic(mood) });
+    // the owner's wishes for the Reel (15/11): its length, new music, the camera turning around the room instead of a zoom
+    const motion = opts?.motion === 'orbit' ? 'orbit' : 'zoom';
+    const views = motion === 'orbit' ? await this.otherAngles(room, plan) : [];
+    const seconds = { room: 5, detail: 4, card: 3, view: 4.5 };
+    const want = Number(opts?.seconds);
+    if (Number.isFinite(want) && want > 0) {
+      const fade = 0.6;
+      const now = seconds.room + views.length * (seconds.view - fade) + details.reduce((a, d) => a + d.seconds - fade, 0) + seconds.card - fade;
+      const k = Math.min(2.5, Math.max(0.6, (Math.min(45, want) - seconds.card) / Math.max(1, now - seconds.card)));
+      seconds.room *= k; seconds.view *= k; for (const d of details) d.seconds *= k;
+    }
+    return this.reel({ room, details, views, motion, seconds, focus, overlay, card, music: await this.reelMusic(opts?.music || mood) });
+  }
+
+  /** The same room from two other camera places (left and right around it), for a Reel that walks around the design. */
+  async otherAngles(room, plan) {
+    const all = this.catalog();
+    const films = (plan?.parts || []).filter((p) => all[p.code]).map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
+    const out = [];
+    for (const side of ['left', 'right']) {
+      try {
+        const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design', buffer: room, mime: 'image/jpeg' }, ...films],
+          prompt: `The same room, the same design, furniture, films, light and styling, photographed from another place: the camera has moved about 35 degrees to the ${side} around the room, still facing the main joinery, so the viewer sees the space from a new angle and in more depth. Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait.` });
+        out.push(await fitForInstagram(v.image));
+      } catch (err) { this.log(`social: the ${side} view failed: ${err.message}`); }
+    }
+    return out;
   }
 
   /** A composition used (a produced design or a concept shown): its signature is kept so it is never made again (last 40). */
