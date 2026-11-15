@@ -3738,7 +3738,7 @@ const socialTokenFrom = config.social.igToken ? createHash('sha256').update(conf
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), log: (s) => logger.info(s),
-  imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel }),
+  imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize }),
   write: async ({ system, text, image, mime, effort = 'low', maxTokens = 800 }) => {
     const content = [...(image ? [{ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: image.toString('base64') } }] : []), { type: 'text', text }];
     const res = await client.beta.messages.create({ model: config.model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }], output_config: { effort }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });

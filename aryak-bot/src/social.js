@@ -152,12 +152,12 @@ export function designRequest(text) {
  * [apiKey] from Google AI Studio, [model] e.g. gemini-nano-banana-2.1. make() throws with Google's own words when no picture comes back.
  */
 export class GeminiImage {
-  constructor({ apiKey, model = 'gemini-nano-banana-2.1', fetchImpl = globalThis.fetch }) { Object.assign(this, { apiKey, model, fetchImpl }); }
+  constructor({ apiKey, model = 'gemini-3-pro-image', size = '2K', fetchImpl = globalThis.fetch }) { Object.assign(this, { apiKey, model, size, fetchImpl }); }
   get enabled() { return !!this.apiKey; }
   async make({ prompt, images = [], aspect = '4:5' }) {
     const body = {
       contents: [{ role: 'user', parts: [...images.flatMap((i) => [...(i.label ? [{ text: i.label }] : []), { inline_data: { mime_type: i.mime || 'image/jpeg', data: i.buffer.toString('base64') } }]), { text: prompt }] }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect } },
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect, ...(this.size ? { imageSize: this.size } : {}) } },
     };
     const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
@@ -174,12 +174,13 @@ export const LOOK_RULES = `Describe this decorative film sample for an interior 
 its colour (warm or cool; light, medium or dark), its pattern (solid colour; the wood it looks like and its grain; stone, concrete or marble and its veins) and its finish.
 Output only the description.`;
 
-export const DESIGNER_RULES = `You are the lead interior designer of {BRAND}: the best in the Gulf, with the taste of the top studios of Dubai, Milan and London.
-You design rooms that show off our decorative films (doors and panels of kitchens, wardrobes, TV walls, vanities, offices, majlis, hotel rooms) and sell them.
-The owner is not a designer: you choose everything, he only approves or rejects. Each time propose ONE design.
-- Combine one to three films from the list (only codes from the list), the way the best designers do: a main film, a second one that contrasts (wood with a solid colour, light with dark, warm with cool), at most a small accent; the 60-30-10 balance; a stone or concrete look as a feature, never everywhere.
-- Current, high-end, livable; for clients in the UAE (villas and apartments). Vary the room and the style from your recent proposals; follow the owner's notes.
-- The scene: ONE English paragraph of 90 to 150 words for an image model: a photorealistic interior photograph (eye level, natural daylight, wide angle), naming each film by the fronts it covers ("the upper cabinet doors in film HZ818"), everything else neutral and quiet so the films are the heroes. No people, no text, no logos.
+export const DESIGNER_RULES = `You are the lead interior designer of {BRAND}: the best in the Gulf, with the eye of the top studios of Dubai, Milan and London.
+Your pictures sell our decorative films: a client must look at the picture and want THAT film on his doors. The owner is not a designer: you choose everything, he only approves or rejects. Each time propose ONE design.
+- The films are the heroes. Choose rooms where they cover large, well-lit surfaces seen up close: a full kitchen, a wall of wardrobe doors, a full-height TV feature wall, a walk-in closet, a vanity, a reception desk. The films must fill at least half of the picture.
+- Combine one to three films from the list (only codes from the list), the way the best designers do: a main film with character (a rich wood grain or a stone with movement), a second that contrasts (a solid colour, light against dark, warm against cool), at most a small accent; the 60-30-10 balance.
+- The picture must be rich and alive, never plain or empty: layered warm lighting (golden late-afternoon sun through the windows, hidden LED strips grazing the panels so the grain and texture show), fine details (handleless grooves, slim brass or black metal profiles, fluted glass, a marble or quartz worktop, open shelves with styled objects, plants, books, ceramics), depth (a second room or a view beyond), real reflections and soft shadows.
+- Luxury, current and livable, for villas and apartments in the UAE. Vary the room and the style from your recent proposals; follow the owner's notes.
+- The scene: ONE English paragraph of 120 to 180 words for an image model, written as the brief of an editorial photograph for a luxury interior magazine: the camera (35 mm lens, eye level, three-quarter view, slightly close so the film texture is crisp), the light, the materials, each film named by the fronts it covers ("the tall wardrobe doors in film HZ812, its walnut grain running vertically, lit by a warm LED strip"). No people, no text, no logos.
 Answer with JSON only:
 {"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
 
@@ -364,7 +365,7 @@ export class SocialDesk {
     let made;
     try {
       const images = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
-      made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. Photorealistic, 4:5 portrait.`, images });
+      made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. An editorial photograph for a luxury interior design magazine: photorealistic, highly detailed, crisp film textures with visible grain, rich warm light and depth, real reflections and soft shadows. 4:5 portrait.`, images });
     } catch (err) {
       this.log(`social: design failed: ${err.message}`);
       return { text: `The design could not be made: ${err.message}` };

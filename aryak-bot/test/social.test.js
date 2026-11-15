@@ -218,6 +218,7 @@ test('Gemini: the sample goes in as a picture with the prompt, 4:5 is asked, the
   assert.match(calls[0].url, /\/v1beta\/models\/m-1:generateContent$/);
   assert.equal(calls[0].opts.headers['x-goog-api-key'], 'K');
   assert.equal(calls[0].body.generationConfig.imageConfig.aspectRatio, '4:5');
+  assert.equal(calls[0].body.generationConfig.imageConfig.imageSize, '2K', 'the sharper size by default');
   assert.equal(Buffer.from(calls[0].body.contents[0].parts[0].inline_data.data, 'base64').toString(), 'SAMPLE');
   assert.equal(calls[0].body.contents[0].parts[1].text, 'a kitchen');
   const bad = new GeminiImage({ apiKey: 'K', fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'API key not valid' } }) }) });
