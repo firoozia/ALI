@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, inspirationRequest } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, goodHour, inspirationRequest, nextGoodTime, parseSocialCommand } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -273,4 +273,62 @@ test('the press pictures: the research names them, they are fetched (pictures on
   assert.doesNotMatch(desk.todayTrends(), /IMAGES/, 'the address line is not kept in the notes');
   assert.match(desk.todayLooks(), /Together: warm wood with thin brass lines/);
   assert.match(writes.find((w) => w.kind === 'design-plan').text, /What today's pictures from the design press show[\s\S]*thin brass lines/);
+});
+
+test('the hours the Gulf looks: 12-14 and 19-22 Dubai time, Friday only the evening, Ramadan 21-01; the next good minute', () => {
+  const at = (iso) => Date.parse(iso);
+  assert.equal(goodHour(at('2026-11-16T09:00:00Z')), true, 'Monday 13:00');
+  assert.equal(goodHour(at('2026-11-16T06:00:00Z')), false, 'Monday 10:00');
+  assert.equal(goodHour(at('2026-11-20T09:00:00Z')), false, 'Friday 13:00: the noon prayer');
+  assert.equal(goodHour(at('2026-11-20T16:00:00Z')), true, 'Friday 20:00');
+  assert.equal(goodHour(at('2027-02-10T15:00:00Z')), false, 'Ramadan 19:00: iftar');
+  assert.equal(goodHour(at('2027-02-10T17:30:00Z')), true, 'Ramadan 21:30');
+  assert.equal(goodHour(at('2027-02-10T20:30:00Z')), true, 'Ramadan 00:30');
+  assert.equal(nextGoodTime(at('2026-11-16T06:07:00Z')), at('2026-11-16T08:00:00Z'), '10:07 waits for 12:00');
+  assert.equal(nextGoodTime(at('2026-11-20T08:00:00Z')), at('2026-11-20T15:00:00Z'), 'Friday noon waits for 19:00');
+  assert.equal(nextGoodTime(at('2026-11-16T15:30:00Z')), at('2026-11-16T15:30:00Z'), 'already good: now');
+  assert.deepEqual(parseSocialCommand('بله پست ۱۳ الان'), { verb: 'yes', kind: 'SP', id: 'SP13', now: true });
+  assert.deepEqual(parseSocialCommand('بله پست 13 همین الان'), { verb: 'yes', kind: 'SP', id: 'SP13', now: true });
+  assert.deepEqual(parseSocialCommand('بله پست 13'), { verb: 'yes', kind: 'SP', id: 'SP13' });
+});
+
+test('the owner\'s yes outside the good hours: the post waits for the next one, «… الان» posts at once, «نه» cancels it; it goes out when due', async () => {
+  const { desk } = await studio();
+  let T = Date.parse('2026-11-16T06:00:00Z'); // Monday 10:00 Dubai
+  desk.now = () => T;
+  desk.cfg.postWindows = true;
+  await desk.draftPost({ image: await pic('#806040'), note: 'kitchen' });
+  assert.equal(desk.store.d.posts.SP1.pillar, 'real', 'the owner\'s own photo is a real job');
+  const r = await desk.decidePost({ verb: 'yes', kind: 'SP', id: 'SP1' });
+  assert.match(r, /goes out at 12:00 Dubai time/);
+  assert.equal(desk.store.d.posts.SP1.state, 'scheduled');
+  assert.match(await desk.decidePost({ verb: 'yes', kind: 'SP', id: 'SP1' }), /already goes out at 12:00/);
+  assert.deepEqual(desk.duePosts(), [], 'not yet');
+  assert.match(await desk.statusText(), /goes out at 12:00 Dubai time: #SP1/);
+  T = Date.parse('2026-11-16T08:01:00Z');
+  assert.deepEqual(desk.duePosts(), ['SP1']);
+  assert.match(await desk.decidePost({ verb: 'yes', kind: 'SP', id: 'SP1', now: true }), /^Post #SP1:/, 'it goes out');
+  T = Date.parse('2026-11-16T06:00:00Z');
+  await desk.draftPost({ image: await pic('#806040'), note: 'wardrobe' });
+  await desk.decidePost({ verb: 'yes', kind: 'SP', id: 'SP2' });
+  assert.match(await desk.decidePost({ verb: 'no', kind: 'SP', id: 'SP2' }), /cancelled/);
+  assert.deepEqual(desk.duePosts(), []);
+  await desk.draftPost({ image: await pic('#806040'), note: 'door' });
+  assert.match(await desk.decidePost({ verb: 'yes', kind: 'SP', id: 'SP3', now: true }), /^Post #SP3:/, '«الان»: at once');
+});
+
+test('the weekly mix: Atossa makes the kind the week is short of, the plan and the caption know it, the owner is asked for a real job once a week', async () => {
+  const { desk, writes } = await studio();
+  assert.equal(desk.nextPillar(), 'proof', 'an empty week starts with proof of the product');
+  const T = Date.now();
+  desk.store.d.posts = { SP91: { id: 'SP91', at: T, state: 'posted', pillar: 'proof' }, SP92: { id: 'SP92', at: T, state: 'posted', pillar: 'proof' }, SP93: { id: 'SP93', at: T, state: 'cancelled', pillar: 'inspiration' } };
+  assert.equal(desk.nextPillar(), 'inspiration');
+  assert.deepEqual(desk.weekMix(), { proof: 2, inspiration: 0, education: 0, real: 0 });
+  assert.match(desk.realJobReminder(), /کار واقعی/);
+  assert.equal(desk.realJobReminder(), '', 'once a week');
+  const d = await desk.draftDesign({ pillar: 'education' });
+  assert.match(writes.find((w) => w.kind === 'design-plan').text, /PILLAR: education/);
+  assert.match(writes.find((w) => w.kind === 'caption').text, /three short, useful points/);
+  assert.match(d.text, /نوع پست: آموزش/);
+  assert.equal(Object.values(desk.store.d.posts).at(-1).pillar, 'education');
 });

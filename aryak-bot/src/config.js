@@ -161,6 +161,7 @@ export function loadConfig(env = process.env) {
       tiktokKey: (env.TIKTOK_CLIENT_KEY || '').trim(), tiktokSecret: (env.TIKTOK_CLIENT_SECRET || '').trim(),
       publicBucket: (env.SOCIAL_PUBLIC_BUCKET ?? 'aryak-social-media').trim(), // the public folder TikTok takes post pictures from (verified in TikTok's portal)
       tiktokRedirect: (env.TIKTOK_REDIRECT_URI || 'https://aryak.ae/').trim(), tiktokMode: /^direct$/i.test(env.TIKTOK_MODE || '') ? 'direct' : 'inbox',
+      postWindows: !/^off$/i.test(env.SOCIAL_POST_TIMES || ''), // the owner's yes posts in the Gulf's good hours (12-14, 19-22; Ramadan 21-01); off: at once
       designHour: /^off$/i.test(env.SOCIAL_DESIGN_HOUR || '') ? -1 : Math.min(23, Math.max(0, Number(env.SOCIAL_DESIGN_HOUR || 10))), // the designer's proposal of the day, Dubai time
     },
     kbDir: env.KB_DIR || './kb',

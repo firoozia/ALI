@@ -3781,7 +3781,7 @@ const socialStore = new SocialStore(path.join(config.authDir, 'social'));
 const socialTokenFrom = config.social.igToken ? createHash('sha256').update(config.social.igToken).digest('hex').slice(0, 12) : '';
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
-  store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
+  store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom, timezone: config.timezone }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
   reel: makeReel,
   bucket: new PublicBucket({ bucket: config.social.publicBucket }),
   tiktok: new TikTokClient({ clientKey: config.social.tiktokKey, clientSecret: config.social.tiktokSecret, redirectUri: config.social.tiktokRedirect, mode: config.social.tiktokMode, store: socialStore }),
@@ -3841,11 +3841,22 @@ if (config.social.enabled) {
       socialStore.d.designDay = p.day; socialStore.save();
       await socialDesk.ready();
       if (!socialDesk.enabled) return;
-      const d = await socialDesk.draftDesign({});
+      const ask = socialDesk.realJobReminder();
+      if (ask) await socialSay(ask);
+      const d = await socialDesk.draftDesign({ pillar: socialDesk.nextPillar() });
       await socialSayDesign(d);
       logger.info('social: the designer\'s proposal of the day was sent');
     } catch (e) { logger.warn(`social: the proposal of the day failed: ${e.message}`); } finally { designing = false; }
   }, 10 * 60 * 1000).unref();
+  // the approved posts whose good hour has come go out (the owner's yes was given earlier)
+  let releasing = false;
+  setInterval(async () => {
+    if (releasing || !sock?.user || botState.paused) return;
+    releasing = true;
+    try {
+      for (const id of socialDesk.duePosts()) await socialSay(await socialDesk.decidePost({ verb: 'yes', kind: 'SP', id, now: true }));
+    } catch (e) { logger.warn(`social: an approved post could not go out: ${e.message}`); } finally { releasing = false; }
+  }, 60 * 1000).unref();
   // the owner's weekly report of the page: Sunday from 18:00 Dubai time, once a week
   setInterval(async () => {
     if (!sock?.user || botState.paused) return;
