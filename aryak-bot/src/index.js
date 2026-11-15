@@ -113,6 +113,7 @@ import { buildSystemPrompt } from './prompt.js';
 import { acquireSingleInstance } from './singleinstance.js';
 import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
+import { makeReel } from './reel.js';
 import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
@@ -2476,7 +2477,7 @@ async function handleStaffChat(raw, chatId, group) {
       trace(where, 'owner', `social: design with colour ${dr.code}`);
       await socialSay(dr.code ? `The designer is working on a design around colour ${dr.code}… (one or two minutes)` : 'The designer is working on a proposal… (one or two minutes)');
       const d = await socialDesk.draftDesign(dr);
-      await socialSay(d.text, d.image || null);
+      await socialSayDesign(d);
       return true;
     }
     const pr = postRequest(text);
@@ -3739,6 +3740,18 @@ const socialTokenFrom = config.social.igToken ? createHash('sha256').update(conf
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
+  reel: makeReel,
+  // Atossa's morning reading of the world's design press: Claude's own web search and web fetch (server tools)
+  research: async ({ system, text }) => {
+    const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4 }];
+    const messages = [{ role: 'user', content: text }];
+    for (let i = 0; i < 4; i++) {
+      const res = await client.beta.messages.create({ model: config.model, max_tokens: 6000, system, messages, tools, output_config: { effort: 'medium' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+      if (res.stop_reason !== 'pause_turn') return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+      messages.push({ role: 'assistant', content: res.content }); // a long search pauses the turn: send it back to continue
+    }
+    return '';
+  },
   imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize }),
   write: async ({ system, text, image, mime, effort = 'low', maxTokens = 800 }) => {
     const content = [...(image ? [{ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: image.toString('base64') } }] : []), { type: 'text', text }];
@@ -3747,13 +3760,20 @@ const socialDesk = new SocialDesk({
   },
 });
 /** A social notice to the owner's own chat, in its own languages (an Arabic caption is never turned into English); with [image] the notice is that picture's caption. */
-async function socialSay(text, image = null) {
-  const content = image ? { image, caption: `🤖 ${text}` } : { text: `🤖 ${text}` };
+async function socialSay(text, image = null, video = null) {
+  const content = video ? { video, caption: `🤖 ${text}`, mimetype: 'video/mp4' } : image ? { image, caption: `🤖 ${text}` } : { text: `🤖 ${text}` };
   keepLang.add(content);
   asWritten.add(content);
   const r = await sock.sendMessage(ownIds()[0], content);
   if (r?.key?.id) sent.add(r.key.id);
   return r;
+}
+/** A design to the owner: the room with Atossa's reasons and the caption, then the close-up, then the Reel. */
+async function socialSayDesign(d) {
+  await socialSay(d.text, d.image || null);
+  const id = /Post #(SP\d+)/.exec(d.text)?.[1] || '';
+  if (d.detail) await socialSay(`${id ? `#${id} ` : ''}second picture: the close-up of the film`, d.detail);
+  if (d.video) await socialSay(`${id ? `#${id} ` : ''}the Reel`, null, d.video);
 }
 if (config.social.enabled) {
   setInterval(async () => {
@@ -3776,10 +3796,18 @@ if (config.social.enabled) {
       await socialDesk.ready();
       if (!socialDesk.enabled) return;
       const d = await socialDesk.draftDesign({});
-      await socialSay(d.text, d.image || null);
+      await socialSayDesign(d);
       logger.info('social: the designer\'s proposal of the day was sent');
     } catch (e) { logger.warn(`social: the proposal of the day failed: ${e.message}`); } finally { designing = false; }
   }, 10 * 60 * 1000).unref();
+  // the owner's weekly report of the page: Sunday from 18:00 Dubai time, once a week
+  setInterval(async () => {
+    if (!sock?.user || botState.paused) return;
+    const p = localParts(Date.now(), config.timezone);
+    if (p.weekday !== 0 || p.minutes < 18 * 60 || socialStore.d.weekReportDay === p.day) return;
+    socialStore.d.weekReportDay = p.day; socialStore.save();
+    try { await socialDesk.ready(); if (socialDesk.enabled) await socialSay(await socialDesk.weeklyText()); } catch (e) { logger.warn(`social: the weekly report failed: ${e.message}`); }
+  }, 15 * 60 * 1000).unref();
 }
 
 // 19:00 Dubai time: the daily expenses report in the expenses group (never salaries, rent or QuickBooks figures there) and the money received report to the owner only; on Thursday the week and the check

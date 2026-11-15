@@ -85,6 +85,68 @@ export class MetaClient {
     try { link = (await this.ig(p.id, { params: { fields: 'permalink' } })).permalink || ''; } catch { /* the post is there; only its link is missing */ }
     return { id: p.id, link };
   }
+  /** Waits for an Instagram container (a photo is ready in seconds, a video can take minutes). */
+  async igReady(id, tries = 10, ms = 3000) {
+    for (let i = 0; i < tries; i++) {
+      const s = await this.ig(id, { params: { fields: 'status_code' } });
+      if (s.status_code === 'FINISHED') return;
+      if (s.status_code === 'ERROR' || s.status_code === 'EXPIRED') throw new Error(`Instagram could not take the media (${s.status_code})`);
+      await this.wait(ms);
+    }
+    throw new Error('Instagram is still processing the media; try the yes again later');
+  }
+  async igFinish(creationId) {
+    const p = await this.ig(`${this.igUserId}/media_publish`, { method: 'POST', params: { creation_id: creationId } });
+    let link = '';
+    try { link = (await this.ig(p.id, { params: { fields: 'permalink' } })).permalink || ''; } catch { /* posted; only the link is missing */ }
+    return { id: p.id, link };
+  }
+  /** Several pictures in one swipeable post (their web addresses, as for igPublish). */
+  async igCarousel(urls, caption) {
+    const kids = [];
+    for (const u of urls) { const c = await this.ig(`${this.igUserId}/media`, { method: 'POST', params: { image_url: u, is_carousel_item: 'true' } }); await this.igReady(c.id); kids.push(c.id); }
+    const c = await this.ig(`${this.igUserId}/media`, { method: 'POST', params: { media_type: 'CAROUSEL', children: kids.join(','), caption } });
+    await this.igReady(c.id);
+    return this.igFinish(c.id);
+  }
+  /** A Reel from the video's own bytes (Instagram's resumable upload: no public web address is needed). */
+  async igReel(video, caption) {
+    const c = await this.ig(`${this.igUserId}/media`, { method: 'POST', params: { media_type: 'REELS', upload_type: 'resumable', caption, share_to_feed: 'true' } });
+    const uri = c.uri || `https://rupload.facebook.com/ig-api-upload/${this.version}/${c.id}`;
+    const res = await this.fetchImpl(uri, { method: 'POST', headers: { Authorization: `OAuth ${this.viaFb ? this.pageToken : this.igToken}`, offset: '0', file_size: String(video.length) }, body: video });
+    let body = null; try { body = await res.json(); } catch { /* none */ }
+    if (!res.ok || body?.error || body?.success === false) throw new Error(`the Reel upload failed: ${body?.error?.message || body?.debug_info?.message || `HTTP ${res.status}`}`);
+    await this.igReady(c.id, 40, 5000);
+    return this.igFinish(c.id);
+  }
+  /** Several pictures in one Facebook post: each is uploaded unpublished, then one post carries them all. */
+  async fbAlbumPost(buffers, caption) {
+    const ids = [];
+    for (const b of buffers) ids.push((await this.fbPhoto(b, '', { published: false })).id);
+    const post = await this.fb(`${this.pageId}/feed`, { method: 'POST', params: { message: caption, attached_media: JSON.stringify(ids.map((id) => ({ media_fbid: id }))) } });
+    return { id: post.id, photoIds: ids };
+  }
+  async fbVideo(video, caption) {
+    const form = new FormData();
+    form.set('source', new Blob([video], { type: 'video/mp4' }), 'reel.mp4');
+    if (caption) form.set('description', caption);
+    return this.call('https://graph-video.facebook.com', `${this.pageId}/videos`, { method: 'POST', form, token: this.pageToken });
+  }
+  /** The numbers of an Instagram post: reach, likes, comments, saves, shares (null when Meta gives none). */
+  async igInsights(mediaId) {
+    try {
+      const r = await this.ig(`${mediaId}/insights`, { params: { metric: 'reach,likes,comments,saved,shares' } });
+      return Object.fromEntries((r.data || []).map((m) => [m.name, m.values?.[0]?.value ?? m.total_value?.value ?? 0]));
+    } catch {
+      try { const r = await this.ig(mediaId, { params: { fields: 'like_count,comments_count' } }); return { likes: r.like_count || 0, comments: r.comments_count || 0 }; } catch { return null; }
+    }
+  }
+  async fbPostNumbers(postId) {
+    try {
+      const r = await this.fb(postId, { params: { fields: 'reactions.summary(true).limit(0),comments.summary(true).limit(0),shares' } });
+      return { reactions: r.reactions?.summary?.total_count || 0, comments: r.comments?.summary?.total_count || 0, shares: r.shares?.count || 0 };
+    } catch { return null; }
+  }
   igMedia(limit = 5) { return this.ig(`${this.igUserId}/media`, { params: { fields: 'id,caption,permalink,timestamp', limit } }); }
   igComments(mediaId) { return this.ig(`${mediaId}/comments`, { params: { fields: 'id,text,username,timestamp,from' } }); }
   igReply(commentId, message) { return this.ig(`${commentId}/replies`, { method: 'POST', params: { message } }); }
@@ -170,26 +232,45 @@ export class GeminiImage {
   }
 }
 
+/**
+ * Atossa, the head of the ARYAK design studio (the owner, 15/11: «she is the manager and the designer of the design department; the
+ * whole job is hers»). One character for everything she makes: the trends she follows, the rooms she designs, the captions she writes.
+ */
+export const ATOSSA = `You are Atossa, Creative Director of the ARYAK Design Studio in Dubai.
+Your taste: warm minimal luxury with a Gulf soul. You pair honest wood grains with calm solid colours and one dramatic stone; you love golden-hour light, brass details, arches, palms, pools and the generous volumes of UAE villas; you design for real families, never for show.
+Your eye is editorial: you read Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell and Pinterest every day, you know what Salone del Mobile, Poliform, Molteni, Boffi and Minotti showed this year, and you turn it into rooms our clients can build with our films.
+Your rule: every picture makes the film the hero. Your voice: confident, warm, expert and short; never salesy, never a claim you cannot prove.`;
+
+export const TREND_RULES = `${ATOSSA}
+This morning you scan the world's best interior design sources for new ideas: Pinterest (trends and Pinterest Predicts), Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell, Houzz, and what leading kitchen and wardrobe brands show this season. Search the web; prefer pages from the last few weeks.
+Write today's notes for your studio: 5 to 8 short English bullet points of concrete ideas you can use with decorative films on cabinets, wardrobes, wall panels and doors (colour pairings, wood and stone looks, finishes, details, layouts, lighting), each with its source site in brackets.
+Then one line starting with «فارسی:» with two Persian sentences for the owner: the most useful idea of the day.
+Output only the notes.`;
+
+export const FOCUS_RULES = `Look at this interior picture. Give the point at the centre of the largest, best-lit area of the named film, where its colour and texture show best.
+x and y go from 0 to 1, from the left and from the top. Answer with JSON only, for example {"x":0.62,"y":0.41}.`;
+
 export const LOOK_RULES = `Describe this decorative film sample for an interior designer in at most 18 English words:
 its colour (warm or cool; light, medium or dark), its pattern (solid colour; the wood it looks like and its grain; stone, concrete or marble and its veins) and its finish.
 Output only the description.`;
 
-export const DESIGNER_RULES = `You are the lead interior designer of {BRAND}: the best in the Gulf, with the eye of the top studios of Dubai, Milan and London.
-Your pictures sell our decorative films: a client must look at the picture and want THAT film on his doors. The owner is not a designer: you choose everything, he only approves or rejects. Each time propose ONE design.
+export const DESIGNER_RULES = `${ATOSSA}
+You design the rooms that sell our decorative films: a client must look at the picture and want THAT film on his doors. The owner is not a designer: you choose everything, he only approves or rejects. Each time propose ONE design.
 - The films are the heroes. Choose rooms where they cover large, well-lit surfaces seen up close: a full kitchen, a wall of wardrobe doors, a full-height TV feature wall, a walk-in closet, a vanity, a reception desk. The films must fill at least half of the picture.
 - Combine one to three films from the list (only codes from the list), the way the best designers do: a main film with character (a rich wood grain or a stone with movement), a second that contrasts (a solid colour, light against dark, warm against cool), at most a small accent; the 60-30-10 balance.
+- Use today's notes from the world's design press when they fit: say in inspiration_fa which idea you took and from where.
 - The picture must be rich and alive, never plain or empty: layered warm lighting (golden late-afternoon sun through the windows, hidden LED strips grazing the panels so the grain and texture show), fine details (handleless grooves, slim brass or black metal profiles, fluted glass, a marble or quartz worktop, open shelves with styled objects, plants, books, ceramics), depth (a second room or a view beyond), real reflections and soft shadows.
 - Luxury, current and livable, for villas and apartments in the UAE. Vary the room and the style from your recent proposals; follow the owner's notes.
 - The scene: ONE English paragraph of 120 to 180 words for an image model, written as the brief of an editorial photograph for a luxury interior magazine: the camera (35 mm lens, eye level, three-quarter view, slightly close so the film texture is crisp), the light, the materials, each film named by the fronts it covers ("the tall wardrobe doors in film HZ812, its walnut grain running vertically, lit by a warm LED strip"). No people, no text, no logos.
 Answer with JSON only:
-{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
+{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
 
 /**
  * The owner's mark on a design picture (15/11): the ARYAK logo in the top corner and, along the bottom, a band with each film's swatch
  * and its code. [logo] a PNG with its own plate; [font] a font file for the codes (the server has no fonts of its own). The picture
  * keeps its size (Instagram's ratio is kept). The original when anything fails.
  */
-export async function brandDesign(buf, { codes = [], logo = null, font = '' } = {}) {
+export async function brandDesign(buf, { codes = [], logo = null, font = '', transparent = false } = {}) {
   try {
     const sharp = (await import('sharp')).default;
     const { width: W, height: H } = await sharp(buf).metadata();
@@ -223,6 +304,8 @@ export async function brandDesign(buf, { codes = [], logo = null, font = '' } = 
       if (weight && sum / weight < 110) for (let i = 0; i < lg.data.length; i += 4) { lg.data[i] = 255; lg.data[i + 1] = 255; lg.data[i + 2] = 255; }
       comps.push({ input: await sharp(lg.data, { raw: { width: lw, height: lh, channels: 4 } }).png().toBuffer(), top: pad, left: pad });
     }
+    // [transparent]: only the marks, on a clear layer of the picture's size (the Reel lays it over the moving picture)
+    if (transparent) return sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer();
     return comps.length ? await sharp(buf).composite(comps).jpeg({ quality: 90 }).toBuffer() : buf;
   } catch { return buf; }
 }
@@ -248,7 +331,7 @@ export function postRequest(caption) {
   return m ? { note: m[1].trim() } : null;
 }
 
-export const CAPTION_RULES = `You write social media captions for {BRAND}.
+export const CAPTION_RULES = `You write social media captions for {BRAND}, in the voice of Atossa, its design director: confident, warm, expert, never salesy.
 Write ONE caption for Instagram and Facebook from the photo and the owner's note.
 - First a short English part (one to three sentences), then the same in Arabic.
 - Then 4 to 8 relevant hashtags on one line (English, one or two Arabic).
@@ -302,8 +385,8 @@ const ago = (ms) => { const h = Math.round(ms / 3600000); return h < 1 ? 'just n
  * [cfg] { brand, contact }, [mediaDir] where the photo of a draft waits for the yes.
  */
 export class SocialDesk {
-  constructor({ client, store, write, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { client, store, write, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
+  constructor({ client, store, write, research = null, reel = null, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { client, store, write, research, reel, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
   /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
@@ -316,7 +399,7 @@ export class SocialDesk {
     await this.ready();
     if (!this.enabled) return 'Instagram and Facebook are not connected yet, so nothing can be posted.';
     // a tall phone photo is cut to 4:5, or Instagram refuses it; the owner's own photos carry the logo like every post (15/11)
-    if (!fitted) { image = await brandDesign(await fitForInstagram(image), this.brandAssets()); mime = 'image/jpeg'; }
+    if (!fitted) { image = await brandDesign(await fitForInstagram(image), { ...this.brandAssets(), codes: this.codesIn(note) }); mime = 'image/jpeg'; }
     const ask = [facts, note ? `The owner's note: ${note}` : facts ? '' : 'The owner gave no note; describe what the photo shows.'].filter(Boolean).join('\n');
     const caption = String(await this.write({ kind: 'caption', system: fill(CAPTION_RULES, this.cfg), text: ask, image, mime }) || '').trim();
     if (!caption) return 'No caption could be written; send the photo again.';
@@ -327,6 +410,18 @@ export class SocialDesk {
     this.store.save();
     return this.postPreview(id);
   }
+  /** The catalogue colours a note names («پست کد ۸۱۲ و ۱۸۰۵ کابینت»): [{ code, swatch }], at most four, only codes the catalogues have. */
+  codesIn(note) {
+    const all = this.catalog();
+    const out = [];
+    for (const m of plainCode(note).matchAll(/(?:^|[^A-Za-z0-9])((?:[A-Za-z]{1,3}\s*)?\d{3,4})(?!\d)/g)) {
+      const c = this.catalogColour(m[1].replace(/\s+/g, '').toUpperCase());
+      if (!c.error && !out.some((x) => x.code === c.code)) out.push({ code: c.code, swatch: c.image });
+      if (out.length === 4) break;
+    }
+    return out;
+  }
+
   /** The colours of the catalogues (catalog.json + one 4:5 picture per code, on the server): «پست کاتالوگ ۱۸۰۵» drafts that colour's post. */
   catalog() {
     if (!this.catalogDir) return {};
@@ -387,6 +482,7 @@ export class SocialDesk {
       ...Object.entries(all).map(([k, e]) => `${k}: ${e.look || e.kind || 'decorative film'} [${e.catalogue || ''}]`),
       (d.designs || []).length ? `\nYour recent proposals (vary from them):\n${d.designs.slice(-12).map((x) => `- ${x.room}: ${x.codes.join(' + ')}`).join('\n')}` : '',
       (d.taste || []).length ? `\nThe owner's notes on your earlier proposals (follow them):\n${d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
+      this.todayTrends() ? `\nToday's notes from the world's design press (your own research this morning):\n${this.todayTrends()}` : '',
       code ? `\nThe owner asks for a design built around film ${code}: it is the main film.` : '',
       note ? `\nThe owner's words: ${note}` : '',
     ].filter(Boolean).join('\n');
@@ -409,6 +505,7 @@ export class SocialDesk {
     let code = '';
     if (asked) { const c = this.catalogColour(asked); if (c.error) return { text: c.error }; code = c.code; }
     await this.ensureLooks();
+    await this.researchTrends().catch((err) => this.log(`social: today's research failed: ${err.message}`));
     const plan = await this.designPlan({ code, note });
     if (plan.error) return { text: plan.error };
     const all = this.catalog();
@@ -422,17 +519,67 @@ export class SocialDesk {
     }
     const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.`;
     // the owner's mark (15/11): the ARYAK logo in the top corner, each film's swatch and code along the bottom
-    const image = await brandDesign(await fitForInstagram(made.image), { ...this.brandAssets(), codes: plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })) });
+    const codes = plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
+    const room = await fitForInstagram(made.image);
+    const image = await brandDesign(room, { ...this.brandAssets(), codes });
+    // the second picture: the main film seen close, its grain and finish filling the frame (a swipe in the post, the second shot of the Reel)
+    const main = plan.parts[0];
+    let detail = null;
+    try {
+      const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: the camera is about 40 cm from the ${main.where} in film ${main.code}, at a slight angle, so the film fills two thirds of the frame and its colour, grain or texture and finish are crisp and exactly like the reference sample; at one side a slim brass profile, a handle groove or the edge of the worktop; warm light grazing across the surface; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people, no text.`,
+        images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${main.code}`, buffer: codes[0].swatch, mime: 'image/jpeg' }] });
+      detail = await fitForInstagram(d.image);
+    } catch (err) { this.log(`social: the close-up failed: ${err.message}`); }
     const before = new Set(Object.keys(this.store.d.posts));
     const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
     const p = this.store.d.posts[Object.keys(this.store.d.posts).find((k) => !before.has(k))];
     if (!p) return { text };
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene };
+    const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
+    let detailImage = null;
+    if (detail) { detailImage = await brandDesign(detail, { ...this.brandAssets(), codes: codes.slice(0, 1) }); p.extras = [save(`${p.id}-2.jpg`, detailImage)].filter(Boolean); }
+    let video = null;
+    if (this.reel) {
+      try { video = await this.makeReelFor({ room, detail, codes, main }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
+    }
     (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes: p.design.codes });
     this.store.d.designs = this.store.d.designs.slice(-40);
     this.store.save();
-    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, plan.why_fa || '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
-    return { text: `${head}\n\n${text}`, image: p.file ? fs.readFileSync(p.file) : made.image };
+    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
+    return { text: `${head}\n\n${text}${detailImage || video ? `\nWith the post: ${[detailImage ? 'a close-up as a second picture' : '', video ? 'a Reel' : ''].filter(Boolean).join(' and ')}; one yes posts them all.` : ''}`,
+      image: p.file ? fs.readFileSync(p.file) : made.image, detail: detailImage, video };
+  }
+
+  /** Today's research notes (Atossa reads the world's design press once a day); '' when none. */
+  todayTrends() {
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    return (this.store.d.trends || []).find((t) => t.day === day)?.text || '';
+  }
+  async researchTrends() {
+    if (!this.research || this.todayTrends()) return this.todayTrends();
+    const text = String(await this.research({ system: fill(TREND_RULES, this.cfg), text: `Today is ${new Date(this.now()).toISOString().slice(0, 10)}. Your notes for today.` }) || '').trim();
+    if (!text) return '';
+    (this.store.d.trends ||= []).push({ day: new Date(this.now()).toISOString().slice(0, 10), at: this.now(), text: text.slice(0, 4000) });
+    this.store.d.trends = this.store.d.trends.slice(-14);
+    this.store.save();
+    return text;
+  }
+
+  /** The Reel of a design: the camera pushes in on the main film (Atossa finds where it shows best), then the close-up, then the codes. */
+  async makeReelFor({ room, detail, codes, main }) {
+    const sharp = (await import('sharp')).default;
+    let focus = { x: 0.5, y: 0.5 };
+    try {
+      const raw = String(await this.write({ kind: 'focus', system: FOCUS_RULES, text: `The film: ${main.code}, on ${main.where}.`, image: room, mime: 'image/jpeg' }) || '');
+      const f = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+      if (Number.isFinite(f.x) && Number.isFinite(f.y)) focus = f;
+    } catch { /* the middle */ }
+    const brand = this.brandAssets();
+    const frame = await sharp(room).resize(1080, 1920, { fit: 'cover' }).jpeg().toBuffer();
+    const overlay = await brandDesign(frame, { ...brand, codes, transparent: true });
+    const { endCard } = await import('./reel.js');
+    const card = await endCard({ codes, logo: brand.logo, font: brand.font, line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
+    return this.reel({ room, detail, focus, overlay, card });
   }
 
   /** Design drafts still waiting for the owner's answer: the daily proposal waits while there are [max]. */
@@ -465,8 +612,10 @@ export class SocialDesk {
     p.state = 'posting'; this.store.save(); // a second yes while it runs does nothing
     const done = [];
     const failed = [];
+    const extras = (p.extras || []).filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f));
+    if (extras.length) await this.postAlbum(p, [image, ...extras], done, failed);
     let photoUrl = '';
-    try {
+    if (!extras.length) try {
       if (this.client.hasFb) {
         // the Facebook photo is published (with the caption) and its address is the one Instagram fetches the picture from
         const fb = await this.client.fbPhoto(image, p.caption, { published: true, mime: p.mime });
@@ -476,7 +625,7 @@ export class SocialDesk {
         if (this.client.hasIg) photoUrl = await this.client.fbPhotoUrl(fb.id);
       }
     } catch (e) { failed.push(`Facebook: ${e.message}`); }
-    if (this.client.hasIg) {
+    if (this.client.hasIg && !extras.length) {
       try {
         if (!photoUrl && this.client.hasFb) { const hidden = await this.client.fbPhoto(image, '', { published: false, mime: p.mime }); photoUrl = await this.client.fbPhotoUrl(hidden.id); }
         if (!photoUrl) throw new Error('Instagram takes a photo only from a web address; connect the Facebook Page so the photo can be held there');
@@ -485,9 +634,73 @@ export class SocialDesk {
         done.push(`Instagram: posted${ig.link ? ` ${ig.link}` : ''}`);
       } catch (e) { failed.push(`Instagram: ${e.message}`); }
     }
+    if (p.reel && fs.existsSync(p.reel)) await this.postReel(p, fs.readFileSync(p.reel), done, failed);
     p.state = done.length ? 'posted' : 'draft'; // nothing went out: the draft stays, a later yes tries again
+    p.postedAt = this.now();
     this.store.save();
     return [`Post #${c.id}:`, ...done, ...failed.map((f) => `NOT posted, ${f}`)].join('\n');
+  }
+
+  /** Several pictures as one swipeable post: a Facebook post with all of them, an Instagram carousel from their Facebook addresses. */
+  async postAlbum(p, images, done, failed) {
+    let urls = [];
+    if (this.client.hasFb) {
+      try {
+        const fb = await this.client.fbAlbumPost(images, p.caption);
+        p.fb = fb.id;
+        const link = await this.client.fbPermalink(fb.id);
+        done.push(`Facebook: posted (${images.length} pictures)${link ? ` ${link}` : ''}`);
+        if (this.client.hasIg) urls = await Promise.all(fb.photoIds.map((id) => this.client.fbPhotoUrl(id)));
+      } catch (e) { failed.push(`Facebook: ${e.message}`); }
+    }
+    if (this.client.hasIg) {
+      try {
+        if (urls.length !== images.length || urls.some((u) => !u)) {
+          if (!this.client.hasFb) throw new Error('Instagram takes pictures only from a web address; connect the Facebook Page so they can be held there');
+          urls = [];
+          for (const b of images) urls.push(await this.client.fbPhotoUrl((await this.client.fbPhoto(b, '', { published: false })).id));
+        }
+        const ig = await this.client.igCarousel(urls, p.caption);
+        p.ig = ig.id;
+        done.push(`Instagram: posted (${images.length} pictures)${ig.link ? ` ${ig.link}` : ''}`);
+      } catch (e) { failed.push(`Instagram: ${e.message}`); }
+    }
+  }
+
+  /** The Reel of a design: a Facebook video and an Instagram Reel, with the same caption. */
+  async postReel(p, video, done, failed) {
+    if (this.client.hasFb) {
+      try { const v = await this.client.fbVideo(video, p.caption); p.fbReel = v.id; done.push(`Facebook video: posted https://www.facebook.com/${v.id}`); } catch (e) { failed.push(`Facebook video: ${e.message}`); }
+    }
+    if (this.client.hasIg) {
+      try { const r = await this.client.igReel(video, p.caption); p.igReel = r.id; done.push(`Instagram Reel: posted${r.link ? ` ${r.link}` : ''}`); } catch (e) { failed.push(`Instagram Reel: ${e.message}`); }
+    }
+  }
+
+  /** The owner's weekly report (in Persian): what went out in the last 7 days, how each did, which colours people looked at most. */
+  async weeklyText() {
+    await this.ready();
+    const week = Object.values(this.store.d.posts).filter((p) => p.state === 'posted' && this.now() - (p.postedAt || p.at) < 7 * DAY);
+    if (!week.length) return 'گزارش هفتگی صفحه: این هفته پستی منتشر نشد.';
+    const lines = [];
+    const byCode = {};
+    let reachAll = 0;
+    for (const p of week) {
+      const ig = p.ig ? await this.client.igInsights(p.ig) : null;
+      const reel = p.igReel ? await this.client.igInsights(p.igReel) : null;
+      const fb = p.fb ? await this.client.fbPostNumbers(p.fb) : null;
+      const codes = p.design?.codes || this.codesIn(`${p.note || ''} ${p.caption || ''}`).map((c) => c.code);
+      const reach = (ig?.reach || 0) + (reel?.reach || 0);
+      reachAll += reach;
+      for (const c of codes) byCode[c] = (byCode[c] || 0) + reach + (ig?.saved || 0) * 20;
+      const parts = [];
+      if (ig) parts.push(`اینستاگرام: دیده‌شده ${ig.reach ?? '-'}، پسند ${ig.likes ?? 0}، نظر ${ig.comments ?? 0}، ذخیره ${ig.saved ?? 0}`);
+      if (reel) parts.push(`ریلز: دیده‌شده ${reel.reach ?? '-'}، پسند ${reel.likes ?? 0}`);
+      if (fb) parts.push(`فیس‌بوک: واکنش ${fb.reactions}، نظر ${fb.comments}`);
+      lines.push(`• پست ${p.id.slice(2)}${codes.length ? ` (${codes.join('، ')})` : ''}: ${parts.join('؛ ') || 'عددی از متا نرسید'}`);
+    }
+    const top = Object.entries(byCode).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([c]) => c);
+    return ['گزارش هفتگی صفحه (۷ روز گذشته)', `پست‌ها: ${week.length}؛ روی هم دیده‌شده در اینستاگرام: ${reachAll}`, ...lines, top.length ? `رنگ‌هایی که بیشتر دیده و ذخیره شدند: ${top.join('، ')}` : ''].filter(Boolean).join('\n');
   }
 
   /** One look at the accounts. Returns the notices for the owner (one per new comment or message), each with a drafted answer. */

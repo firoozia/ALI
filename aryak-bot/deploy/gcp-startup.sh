@@ -15,6 +15,8 @@ if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split("."
   apt-get install -y nodejs
 fi
 command -v git >/dev/null || apt-get install -y git
+# the Reels of the design studio are made with ffmpeg (social.js, reel.js); a failed install never stops the bot
+command -v ffmpeg >/dev/null || { apt-get update -y && apt-get install -y ffmpeg; } || say "ffmpeg install failed: the Reels are skipped"
 
 if [ -d /opt/ALI/.git ]; then
   if timeout 180 git -C /opt/ALI fetch --depth 1 origin "$BRANCH" && git -C /opt/ALI reset --hard FETCH_HEAD; then

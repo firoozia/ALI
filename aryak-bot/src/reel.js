@@ -1,0 +1,106 @@
+// A Reel from a design (the owner, 15/11: «a moving video inside the design, zooming on the parts that show the film's texture»).
+// No AI video: the design picture itself, filmed by a slow camera move with ffmpeg: a push-in on the room towards the main film,
+// a cut to the close-up of the film's texture, and an end card with each film's swatch and code, the logo and the WhatsApp number.
+// Vertical 1080 x 1920 at 30 frames a second, H.264 with a silent sound track (Instagram wants one), about 11 seconds.
+
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+/** The ffmpeg program: FFMPEG_PATH, the bundled ffmpeg-static, or the system's own. */
+export async function ffmpegPath() {
+  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
+  try { const p = (await import('ffmpeg-static')).default; if (p && fs.existsSync(p)) return p; } catch { /* not installed */ }
+  return 'ffmpeg';
+}
+
+function run(bin, args) {
+  return new Promise((resolve, reject) => {
+    const ch = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    ch.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
+    ch.on('error', reject);
+    ch.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg failed (${code}): ${err.split('\n').slice(-3).join(' ')}`))));
+  });
+}
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : (lo + hi) / 2));
+
+/**
+ * The end card: the dark ARYAK ground, the logo (white), each film's swatch and code, the WhatsApp number. A PNG 1080 x 1920.
+ * [codes] [{ code, swatch }], [logo] the black logo PNG, [font] a font file, [line] the words under the codes.
+ */
+export async function endCard({ codes = [], logo = null, font = '', line = '' }) {
+  const sharp = (await import('sharp')).default;
+  const W = 1080; const H = 1920;
+  const comps = [];
+  const text = async (t, size, colour = '#ffffff') => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${size}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+  if (logo) {
+    const lg = await sharp(logo).resize({ width: 420 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    for (let i = 0; i < lg.data.length; i += 4) { lg.data[i] = 255; lg.data[i + 1] = 255; lg.data[i + 2] = 255; }
+    comps.push({ input: await sharp(lg.data, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } }).png().toBuffer(), top: 300, left: Math.round((W - lg.info.width) / 2) });
+  }
+  const sw = codes.length > 2 ? 240 : 300;
+  const gap = 50;
+  const total = codes.length * sw + (codes.length - 1) * gap;
+  let x = Math.round((W - total) / 2);
+  for (const c of codes) {
+    if (c.swatch) comps.push({ input: await sharp(c.swatch).resize(sw, sw, { fit: 'cover' }).extend({ top: 3, bottom: 3, left: 3, right: 3, background: '#ffffff' }).png().toBuffer(), top: 860, left: x - 3 });
+    const t = await text(c.code, 58);
+    const tm = await sharp(t).metadata();
+    comps.push({ input: t, top: 860 + sw + 40, left: x + Math.round((sw - tm.width) / 2) });
+    x += sw + gap;
+  }
+  if (line) {
+    const t = await text(line, 46, '#d6b25e');
+    const tm = await sharp(t).metadata();
+    comps.push({ input: t, top: 1560, left: Math.max(20, Math.round((W - tm.width) / 2)) });
+  }
+  return sharp({ create: { width: W, height: H, channels: 4, background: { r: 20, g: 17, b: 14, alpha: 1 } } }).composite(comps).png().toBuffer();
+}
+
+/**
+ * The Reel: [room] and [detail] pictures (4:5), [focus] { x, y } (0..1) where the camera pushes in on the room, [overlay] a transparent
+ * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
+ */
+export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, seconds = { room: 5, detail: 4, card: 3 } }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reel-'));
+  try {
+    const put = (name, buf) => { const f = path.join(dir, name); fs.writeFileSync(f, buf); return f; };
+    const fps = 30;
+    const fx = clamp(focus?.x, 0.15, 0.85); const fy = clamp(focus?.y, 0.15, 0.85);
+    const args = ['-y', '-loglevel', 'error'];
+    const inputs = [];
+    inputs.push(put('room.jpg', room));
+    if (detail) inputs.push(put('detail.jpg', detail));
+    inputs.push(put('card.png', card));
+    for (const f of inputs) args.push('-i', f);
+    if (overlay) args.push('-i', put('overlay.png', overlay));
+    args.push('-f', 'lavfi', '-t', '20', '-i', 'anullsrc=r=44100:cl=stereo');
+    const fade = 0.6;
+    const n = (s) => Math.round(s * fps);
+    // each still is enlarged to twice the frame first, so the slow zoom moves smoothly instead of in pixel steps
+    const move = (i, frames, zoom, cx, cy) => `[${i}:v]scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,setsar=1,`
+      + `zoompan=z='1+${zoom}*on/${frames}':x='(iw-iw/zoom)*${cx}':y='(ih-ih/zoom)*${cy}':d=${frames}:s=1080x1920:fps=${fps},setsar=1,format=yuv420p`;
+    const parts = [];
+    parts.push(`${move(0, n(seconds.room), 0.22, fx, fy)}[a]`);
+    let last = 'a'; let t = seconds.room;
+    let k = 1;
+    if (detail) {
+      parts.push(`${move(1, n(seconds.detail), 0.12, 0.5, 0.5)}[b]`);
+      parts.push(`[a][b]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[ab]`);
+      last = 'ab'; t += seconds.detail - fade; k = 2;
+    }
+    const moving = t; // the overlay stays on the moving parts only
+    if (overlay) { parts.push(`[${last}][${k + 1}:v]overlay=0:0:enable='lt(t,${(moving - fade).toFixed(2)})'[o]`); last = 'o'; }
+    parts.push(`[${k}:v]loop=loop=${n(seconds.card)}:size=1:start=0,setpts=N/${fps}/TB,fps=${fps},scale=1080:1920,setsar=1,format=yuv420p[c]`);
+    parts.push(`[${last}][c]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[v]`);
+    const total = t + seconds.card - fade;
+    const audio = overlay ? k + 2 : k + 1;
+    args.push('-filter_complex', parts.join(';'), '-map', '[v]', '-map', `${audio}:a`, '-t', total.toFixed(2),
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', path.join(dir, 'reel.mp4'));
+    await run(await ffmpegPath(), args);
+    return fs.readFileSync(path.join(dir, 'reel.mp4'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}

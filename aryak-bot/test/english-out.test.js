@@ -101,6 +101,6 @@ test('a bare yes: any case, ok, Persian words; with a full code it always names 
 
 test('a social preview is sent as written: its Arabic caption is never turned into English (owner 15/11: the preview showed two English texts)', () => {
   const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
-  assert.match(src, /async function socialSay\(text, image = null\) \{\s*const content = image \? \{ image, caption: `🤖 \$\{text\}` \} : \{ text: `🤖 \$\{text\}` \};\s*keepLang\.add\(content\);\s*asWritten\.add\(content\);/);
+  assert.match(src, /async function socialSay\(text, image = null, video = null\) \{\s*const content = video \? \{ video, caption: `🤖 \$\{text\}`, mimetype: 'video\/mp4' \} : image \? \{ image, caption: `🤖 \$\{text\}` \} : \{ text: `🤖 \$\{text\}` \};\s*keepLang\.add\(content\);\s*asWritten\.add\(content\);/);
   assert.match(src, /const written = asWritten\.has\(a\[1\]\);[\s\S]{0,600}if \(written\) \{/);
 });
