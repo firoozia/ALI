@@ -184,6 +184,40 @@ Your pictures sell our decorative films: a client must look at the picture and w
 Answer with JSON only:
 {"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
 
+/**
+ * The owner's mark on a design picture (15/11): the ARYAK logo in the top corner and, along the bottom, a band with each film's swatch
+ * and its code. [logo] a PNG with its own plate; [font] a font file for the codes (the server has no fonts of its own). The picture
+ * keeps its size (Instagram's ratio is kept). The original when anything fails.
+ */
+export async function brandDesign(buf, { codes = [], logo = null, font = '' } = {}) {
+  try {
+    const sharp = (await import('sharp')).default;
+    const { width: W, height: H } = await sharp(buf).metadata();
+    const comps = [];
+    const pad = Math.round(W * 0.028);
+    if (codes.length) {
+      const bandH = Math.round(W * 0.09);
+      const sw = Math.round(bandH * 0.6);
+      const top = H - bandH + Math.round((bandH - sw) / 2);
+      comps.push({ input: { create: { width: W, height: bandH, channels: 4, background: { r: 20, g: 17, b: 14, alpha: 0.74 } } }, top: H - bandH, left: 0 });
+      let x = pad;
+      for (const c of codes) {
+        const items = [];
+        if (c.swatch) items.push({ input: await sharp(c.swatch).resize(sw, sw, { fit: 'cover' }).extend({ top: 2, bottom: 2, left: 2, right: 2, background: '#ffffff' }).png().toBuffer(), w: sw + 4, dy: -2 });
+        const text = await sharp({ text: { text: `<span foreground="#ffffff">${String(c.code).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${Math.round(sw * 0.58)}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+        const tm = await sharp(text).metadata();
+        items.push({ input: text, w: tm.width, dy: Math.round((sw - tm.height) / 2) });
+        const need = items.reduce((s, i) => s + i.w, 0) + Math.round(pad * 0.45) * (items.length - 1);
+        if (x + need > W - pad) break; // a band never runs off the picture
+        for (const i of items) { comps.push({ input: i.input, top: top + i.dy, left: x }); x += i.w + Math.round(pad * 0.45); }
+        x += Math.round(pad * 0.9);
+      }
+    }
+    if (logo) comps.push({ input: await sharp(logo).resize({ width: Math.round(W * 0.17) }).png().toBuffer(), top: pad, left: pad });
+    return comps.length ? await sharp(buf).composite(comps).jpeg({ quality: 90 }).toBuffer() : buf;
+  } catch { return buf; }
+}
+
 /** Instagram takes a feed photo between 4:5 (tall) and 1.91:1 (wide): the middle is kept, the width is at most 1440, a JPEG comes out. The original when it cannot be read. */
 export async function fitForInstagram(buf) {
   try {
@@ -259,8 +293,8 @@ const ago = (ms) => { const h = Math.round(ms / 3600000); return h < 1 ? 'just n
  * [cfg] { brand, contact }, [mediaDir] where the photo of a draft waits for the yes.
  */
 export class SocialDesk {
-  constructor({ client, store, write, cfg = {}, mediaDir = '', catalogDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { client, store, write, cfg, mediaDir, catalogDir, imager, log, now });
+  constructor({ client, store, write, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { client, store, write, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
   /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
@@ -371,8 +405,12 @@ export class SocialDesk {
       return { text: `The design could not be made: ${err.message}` };
     }
     const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.`;
+    // the owner's mark (15/11): the ARYAK logo in the top corner, each film's swatch and code along the bottom
+    const brand = (f) => { try { return this.brandDir ? fs.readFileSync(path.join(this.brandDir, f)) : null; } catch { return null; } };
+    const font = this.brandDir && fs.existsSync(path.join(this.brandDir, 'IBMPlexSans-SemiBold.ttf')) ? path.join(this.brandDir, 'IBMPlexSans-SemiBold.ttf') : '';
+    const image = await brandDesign(await fitForInstagram(made.image), { logo: brand('logo.png'), font, codes: plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })) });
     const before = new Set(Object.keys(this.store.d.posts));
-    const text = await this.draftPost({ image: made.image, mime: made.mime, note, facts });
+    const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
     const p = this.store.d.posts[Object.keys(this.store.d.posts).find((k) => !before.has(k))];
     if (!p) return { text };
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene };

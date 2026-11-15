@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, fitForInstagram, parseSocialCommand, postRequest } from '../src/social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, brandDesign, catalogRequest, designRequest, fitForInstagram, parseSocialCommand, postRequest } from '../src/social.js';
 
 // A fake Graph API: answers by the path, records every call.
 function fakeGraph(routes) {
@@ -298,4 +298,22 @@ test('Gemini: a label goes before its reference picture', async () => {
   const gi = new GeminiImage({ apiKey: 'K', fetchImpl: async (u, o) => { body = JSON.parse(o.body); return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'UA==' } }] } }] }) }; } });
   await gi.make({ prompt: 'P', images: [{ label: 'Reference: film A', buffer: Buffer.from('A') }, { buffer: Buffer.from('B') }] });
   assert.deepEqual(body.contents[0].parts.map((x) => x.text || Buffer.from(x.inline_data.data, 'base64').toString()), ['Reference: film A', 'A', 'B', 'P']);
+});
+
+test('the owner\'s mark on a design: the logo in the top corner, each film\'s swatch and code along the bottom; the size is kept; a bad picture is left as it is', async () => {
+  const sharp = (await import('sharp')).default;
+  const room = await sharp({ create: { width: 1000, height: 1250, channels: 3, background: '#808080' } }).jpeg().toBuffer();
+  const logo = await sharp({ create: { width: 200, height: 150, channels: 4, background: { r: 214, g: 178, b: 94, alpha: 1 } } }).png().toBuffer();
+  const swatch = await sharp({ create: { width: 300, height: 400, channels: 3, background: '#ff0000' } }).jpeg().toBuffer();
+  const out = await brandDesign(room, { logo, codes: [{ code: 'HZ802', swatch }, { code: '1813', swatch }] });
+  const m = await sharp(out).metadata();
+  assert.deepEqual([m.width, m.height], [1000, 1250], 'the picture keeps its size (Instagram\'s ratio)');
+  const { data, info } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+  const px = (x, y) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)];
+  const near = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 40);
+  assert.ok(near(px(60, 60), [214, 178, 94]), 'the logo sits in the top corner');
+  assert.ok(near(px(500, 600), [128, 128, 128]), 'the middle of the room is untouched');
+  assert.ok(px(990, 1240).every((v) => v < 60), 'a dark band along the bottom');
+  assert.ok(near(px(28 + 30, 1250 - 45), [255, 0, 0]), 'the first film\'s swatch on the band');
+  assert.equal((await brandDesign(Buffer.from('not a picture'), { logo })).toString(), 'not a picture');
 });
