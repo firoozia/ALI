@@ -115,7 +115,7 @@ import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlan
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
 import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designEditRequest, designRequest, inspirationRequest, linkRequest, parseSocialCommand, postRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designEditRequest, designRequest, inspirationRequest, linkRequest, parseSocialCommand, postRequest, reelRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2520,6 +2520,14 @@ ${t.authorizeUrl()}`);
       if (!buf) { await socialSay('The picture could not be read; send it again.'); return true; }
       await socialSay('Atossa is designing from your picture with ARYAK films… (one or two minutes)');
       await socialSayDesign(await socialDesk.draftDesign({ note: ir.note, inspiration: { image: buf, mime: imageOf(normalizeMessageContent(picRaw.message))?.mimetype || 'image/jpeg' } }));
+      return true;
+    }
+    // «ریلز پست ۲۴ …»: only the Reel made again (the owner, 15/11)
+    const rr = !imageOf(content) ? reelRequest(text) : null;
+    if (rr && isOwner()) {
+      trace(where, 'owner', `social: the Reel of #${rr.id} again`);
+      await socialSay(`آتوسا ریلز پست ${rr.id.slice(2)} را دوباره می‌سازد… (چند دقیقه)`);
+      try { const r = await socialDesk.remakeReel(rr); await socialSay(r.text, null, r.video || null); } catch (e) { await socialSay(`ریلز ساخته نشد: ${e.message}`); }
       return true;
     }
     // the owner's change to a drafted design: a reply to its message, or «تغییر پست ۲۲ …» (live 15/11: «I did not understand that»)

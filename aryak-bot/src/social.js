@@ -415,6 +415,13 @@ export function designEditRequest(text, quotedText = '') {
   return m && t.length >= 4 ? { id: `SP${m[1]}`, note: t } : null;
 }
 
+/** «ریلز پست ۲۴ …» / «ریلز ۲۴ …»: only the Reel of a drafted design made again. { id, note } or null. */
+export function reelRequest(text) {
+  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+  const m = /^(?:ریلز|reel)\s*(?:پست|post)?\s*#?\s*(?:SP)?\s*(\d+)\s*[:\-،,]?\s*([\s\S]*)$/i.exec(t);
+  return m ? { id: `SP${m[1]}`, note: m[2].trim() } : null;
+}
+
 /** A message of the owner with web links (Instagram, TikTok, Pinterest, a magazine…): { urls, note } for Atossa to study; null when none. */
 export function linkRequest(text) {
   const urls = [...new Set((String(text || '').match(/https?:\/\/[^\s<>«»"']+/g) || []).map((u) => u.replace(/[),.;!؟،]+$/, '')))];
@@ -717,6 +724,7 @@ export class SocialDesk {
     if (!p) return { text };
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene, plan: { ...plan, dialogue_fa: undefined, change_fa: undefined } };
     const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
+    p.raw = { room: save(`${p.id}-room.jpg`, room), shots: shots.map((sh, k) => ({ file: save(`${p.id}-shot${k + 1}.jpg`, sh.raw), code: sh.part.code, where: sh.part.where, wood: sh.wood })) };
     const details = [];
     for (const [k, sh] of shots.entries()) {
       const branded = await brandDesign(sh.raw, { ...this.brandAssets(), codes: codes.filter((c) => c.code === sh.part.code) });
@@ -837,6 +845,49 @@ export class SocialDesk {
     const nid = /Post #(SP\d+)/.exec(d.text || '')?.[1];
     if (nid) { p.replacedBy = nid; this.store.save(); }
     return { ...d, text: `${d.text}\n\n(پست ${id.slice(2)} کنار گذاشته شد؛ این نسخهٔ تازهٔ آن است.)` };
+  }
+
+  /**
+   * «ریلز پست ۲۴ …» (the owner, 15/11): only the Reel of a drafted design made again, from its own pictures, with the Reel wishes of its
+   * plan (length, music, the camera walking around the room) and his new words. Older posts keep only marked pictures: the logo and the
+   * band of codes are taken off them first.
+   */
+  async remakeReel({ id, note = '' }) {
+    const p = this.store.d.posts[id];
+    if (!p?.design) return { text: `There is no design #${id}.` };
+    if (p.state !== 'draft' && p.state !== 'scheduled') return { text: `Post #${id} was already ${p.state}.` };
+    if (!this.reel) return { text: 'The Reel maker is not on this server.' };
+    const all = this.catalog();
+    const plan = p.design.plan || { room: p.design.room, parts: (p.design.codes || []).filter((c) => all[c]).map((code) => ({ code, where: 'the fronts' })) };
+    const read = (f) => (f && fs.existsSync(f) ? fs.readFileSync(f) : null);
+    let room = read(p.raw?.room);
+    let shots = (p.raw?.shots || []).map((s) => ({ part: { code: s.code, where: s.where }, wood: s.wood, raw: read(s.file) })).filter((s) => s.raw);
+    if (!room) {
+      room = await this.unmark(p.file ? fs.readFileSync(p.file) : Buffer.from(p.image || '', 'base64'));
+      const order = plan.parts.slice(0, 3).map((x, i) => ({ x, i })).sort((a, b) => Number(this.isWood(b.x.code)) - Number(this.isWood(a.x.code)) || a.i - b.i);
+      shots = [];
+      for (const [k, f] of (p.extras || []).entries()) { const x = order[k]?.x; if (x && fs.existsSync(f)) shots.push({ part: x, wood: this.isWood(x.code), raw: await this.unmark(fs.readFileSync(f)) }); }
+    }
+    let opts = { motion: 'orbit', ...(plan.reel || {}) };
+    if (note) {
+      try {
+        const raw = String(await this.write({ kind: 'reel-wish', system: 'You turn the owner\'s words about a Reel into JSON: {"seconds": the whole Reel in seconds or null, "music": a new English music mood or "", "motion": "orbit" (the camera turns around the room) or "zoom"}. Output only the JSON.', text: `Now: ${JSON.stringify(opts)}\nThe owner says: «${note}»`, effort: 'low', maxTokens: 300 }) || '');
+        const w = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+        opts = { ...opts, ...(w.seconds ? { seconds: w.seconds } : {}), ...(w.music ? { music: w.music } : {}), ...(w.motion ? { motion: w.motion } : {}) };
+      } catch { /* the plan's own wishes */ }
+    }
+    const codes = plan.parts.filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
+    const video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts, plan });
+    if (this.mediaDir) { const f = path.join(this.mediaDir, `${p.id}-reel-${this.now().toString(36)}.mp4`); fs.writeFileSync(f, video); p.reel = f; }
+    p.design.plan = { ...plan, reel: opts };
+    this.store.save();
+    return { text: `ریلز تازهٔ پست ${id.slice(2)} آماده است${opts.motion === 'orbit' ? ' (دوربین دور اتاق می‌چرخد)' : ''}. با «بله پست ${id.slice(2)}» همراه پست منتشر می‌شود.`, video };
+  }
+
+  /** A posted-style picture without the ARYAK marks (the logo in the corner and the band of codes), the picture behind them restored. */
+  async unmark(buf) {
+    const r = await this.imager.make({ images: [{ label: 'The picture', buffer: buf, mime: 'image/jpeg' }], prompt: 'Remove the logo in the top corner and the dark band with colour swatches and codes along the bottom edge; restore the picture behind them exactly as it continues. Change nothing else. Same size, 4:5 portrait.' });
+    return fitForInstagram(r.image);
   }
 
   /** Atossa's plan rewritten around the owner's words (films of the same catalogue); the old plan when no JSON comes back. */

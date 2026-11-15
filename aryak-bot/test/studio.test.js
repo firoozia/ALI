@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand, reelRequest } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -476,4 +476,29 @@ test('the owner\'s change to a drafted design: by quoting it or «تغییر پ�
   assert.ok(Math.abs(total - 22) < 1, `about 22 s (${total.toFixed(1)})`);
   assert.match((await desk.decidePost({ verb: 'yes', kind: 'SP', id })), /already replaced/, 'the old draft cannot be posted');
   assert.match((await desk.reviseDesign({ id, note: 'x' })).text, /already replaced/);
+});
+
+test('«ریلز پست N»: only the Reel made again from the post\'s own unmarked pictures, walking around the room; an older post is unmarked first', async () => {
+  assert.deepEqual(reelRequest('ریلز پست ۲۴'), { id: 'SP24', note: '' });
+  assert.deepEqual(reelRequest('ریلز ۲۴ بلندتر'), { id: 'SP24', note: 'بلندتر' });
+  assert.equal(reelRequest('پست ۲۴'), null);
+  let reelArgs = null;
+  const { desk, made } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const id = /Post #(SP\d+)/.exec((await desk.draftDesign({})).text)[1];
+  const p = desk.store.d.posts[id];
+  assert.ok(fs.existsSync(p.raw.room) && p.raw.shots.length, 'the unmarked room and close-ups are kept');
+  const before = made.length;
+  const oldReel = p.reel;
+  const r = await desk.remakeReel({ id });
+  assert.equal(reelArgs.motion, 'orbit');
+  assert.equal(reelArgs.views.length, 2);
+  assert.ok(made.slice(before).every((m) => !/Remove the logo/.test(m.prompt)), 'its own pictures need no unmarking');
+  assert.notEqual(p.reel, oldReel);
+  assert.match(r.text, /ریلز تازهٔ پست/);
+  delete p.raw;
+  const before2 = made.length;
+  await desk.remakeReel({ id });
+  assert.ok(made.slice(before2).some((m) => /Remove the logo/.test(m.prompt)), 'an older post: the marks are taken off first');
+  p.state = 'posted';
+  assert.match((await desk.remakeReel({ id })).text, /already posted/);
 });
