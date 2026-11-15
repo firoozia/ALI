@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SocialStore } from '../src/social.js';
-import { PublicBucket, TikTokClient, tiktokCommand } from '../src/tiktok.js';
+import { PublicBucket, TikTokClient, fiveHashtags, tiktokCommand } from '../src/tiktok.js';
 
 function fakeTikTok({ status = 'SEND_TO_USER_INBOX', tokenError = null } = {}) {
   const calls = [];
@@ -92,4 +92,12 @@ test('photos: put in the public folder with the server token, then one photo pos
   assert.equal(init.is_aigc, true);
   assert.equal(init.post_info.title, 'Design idea with Code HZ806');
   assert.deepEqual(init.source_info, { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: [url, url] });
+});
+
+test('TikTok takes five hashtags: the first five are kept, the words untouched', () => {
+  const c = 'New TV wall with Code HZ806.\n#TVWallDesign #VillaInterior #WoodSlatPanels #CarpentryUAE #InteriorDesignUAE #Joinery #تصميم_داخلي';
+  const out = fiveHashtags(c);
+  assert.equal((out.match(/#/g) || []).length, 5);
+  assert.equal(out, 'New TV wall with Code HZ806.\n#TVWallDesign #VillaInterior #WoodSlatPanels #CarpentryUAE #InteriorDesignUAE');
+  assert.equal(fiveHashtags('no tags here'), 'no tags here');
 });

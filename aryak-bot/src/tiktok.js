@@ -61,6 +61,7 @@ export class TikTokClient {
    */
   async postPhotos(urls, caption = '', { aigc = false } = {}) {
     const direct = this.mode === 'direct';
+    caption = fiveHashtags(caption);
     const title = String(caption).split('\n')[0].slice(0, 90);
     const init = await this.api('/v2/post/publish/content/init/', {
       post_info: { title, description: String(caption).slice(0, 4000), ...(direct ? { privacy_level: this.privacy, disable_comment: false, auto_add_music: true, brand_organic_toggle: true } : {}) },
@@ -83,7 +84,7 @@ export class TikTokClient {
     const source_info = { source: 'FILE_UPLOAD', video_size: size, chunk_size: size, total_chunk_count: 1 };
     const direct = this.mode === 'direct';
     const init = direct
-      ? await this.api('/v2/post/publish/video/init/', { post_info: { title: caption.slice(0, 2200), privacy_level: this.privacy, disable_duet: false, disable_comment: false, disable_stitch: false }, source_info })
+      ? await this.api('/v2/post/publish/video/init/', { post_info: { title: fiveHashtags(caption).slice(0, 2200), privacy_level: this.privacy, disable_duet: false, disable_comment: false, disable_stitch: false }, source_info })
       : await this.api('/v2/post/publish/inbox/video/init/', { source_info });
     const up = await this.fetchImpl(init.upload_url, { method: 'PUT', headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(size), 'Content-Range': `bytes 0-${size - 1}/${size}` }, body: video });
     if (!up.ok) throw new Error(`TikTok upload: HTTP ${up.status}`);
@@ -118,6 +119,12 @@ export class PublicBucket {
     if (!res.ok) throw new Error(`the picture folder refused the picture (HTTP ${res.status})`);
     return `https://storage.googleapis.com/${this.bucket}/${name.split('/').map(encodeURIComponent).join('/')}`;
   }
+}
+
+/** TikTok takes at most five hashtags in a post (the owner's phone, 15/11): the first five are kept, the rest dropped. */
+export function fiveHashtags(text, max = 5) {
+  let n = 0;
+  return String(text || '').replace(/(^|\s)#[^\s#]+/gu, (m) => (++n <= max ? m : '')).replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
 }
 
 /** «تیک‌تاک وصل» / «تیک‌تاک کد …» / «tiktok connect» / «tiktok code …». Null when not one. */
