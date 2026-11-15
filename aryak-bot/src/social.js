@@ -129,7 +129,7 @@ export function parseSocialCommand(text) {
 
 /** «پست کاتالوگ ۱۸۰۵ …» / «post catalogue 212 …»: a colour of the catalogues by its code, with the owner's words after it. Null when not one. */
 export function catalogRequest(text) {
-  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/اچ[\s‌]*زد/g, 'HZ');
   const m = /^(?:پست|post)\s+(?:کاتالوگ|کاتالوگی|catalog(?:ue)?)\s*:?\s*(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(t);
   return m ? { code: m[1].replace(/\s+/g, '').toUpperCase(), note: m[2].trim() } : null;
 }
@@ -240,6 +240,8 @@ export class SocialDesk {
   }
   async draftFromCatalog({ code, note = '' }) {
     const all = this.catalog();
+    // «۸۳۲» alone finds HZ832 when no plain 832 exists (the owner types the number, the catalogue prints the prefix)
+    if (!all[code] && /^\d+$/.test(code)) code = Object.keys(all).find((k) => /^[A-Z]+\d+$/.test(k) && k.replace(/^[A-Z]+/, '') === code) || code;
     const e = all[code];
     if (!e) {
       const codes = Object.keys(all);

@@ -150,6 +150,8 @@ test('«پست کاتالوگ ۱۸۰۵»: the code in any digits, the owner word
   assert.deepEqual(catalogRequest('پست کاتالوگ ۱۸۰۵'), { code: '1805', note: '' });
   assert.deepEqual(catalogRequest('post catalogue 212 for kitchens'), { code: '212', note: 'for kitchens' });
   assert.deepEqual(catalogRequest('پست کاتالوگ کد ts840: رنگ ویژه'), { code: 'TS840', note: 'رنگ ویژه' });
+  assert.deepEqual(catalogRequest('پست کاتالوگ اچ‌زد ۸۳۲'), { code: 'HZ832', note: '' });
+  assert.deepEqual(catalogRequest('post catalogue hz 816 kitchen'), { code: 'HZ816', note: 'kitchen' });
   assert.equal(catalogRequest('پست رنگ جدید'), null);
   assert.equal(catalogRequest('پست کاتالوگ'), null);
 });
@@ -167,6 +169,9 @@ test('a catalogue colour: its own picture and its code go to the caption; an unk
   assert.match(writes[0].text, /colour code 1812 from the TEST film catalogue \(marble\)/);
   assert.match(writes[0].text, /The owner's note: برای کابینت/);
   assert.match(await desk.draftFromCatalog({ code: '999', note: '' }), /no colour 999 in the catalogues\. Known codes: 2/);
+  fs.writeFileSync(path.join(dir, 'catalog.json'), JSON.stringify({ HZ832: { file: '1812.jpg', catalogue: 'TEST signature catalogue' } }));
+  await desk.draftFromCatalog(catalogRequest('پست کاتالوگ ۸۳۲'));
+  assert.match(writes[1].text, /colour code HZ832 from the TEST signature catalogue/, 'the number alone finds its prefixed code');
   assert.equal(g.calls.length, 0, 'nothing reaches Meta before the yes');
 });
 
