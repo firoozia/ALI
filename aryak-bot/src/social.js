@@ -1076,13 +1076,23 @@ export class SocialDesk {
   async otherAngles(room, plan) {
     const all = this.catalog();
     const films = (plan?.parts || []).filter((p) => all[p.code]).map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
+    // live 15/11: «moved 35 degrees» came back as the same picture; each view is now a named, very different shot, checked by eye
+    const shotsWanted = [
+      'a wide establishing shot from the far opposite corner of the room, the camera low at the height of a seated person, a 20 mm lens: the whole room, more floor and ceiling, the joinery seen at a strong diagonal from the left',
+      'a three-quarter view standing close beside the main furniture on the right, looking along the joinery wall at a sharp angle, a 35 mm lens, the nearest fronts large in the foreground and the rest of the room receding',
+    ];
     const out = [];
-    for (const side of ['left', 'right']) {
-      try {
-        const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design', buffer: room, mime: 'image/jpeg' }, ...films],
-          prompt: `The same room, the same design, furniture, films, light and styling, photographed from another place: the camera has moved about 35 degrees to the ${side} around the room, still facing the main joinery, so the viewer sees the space from a new angle and in more depth. Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait.` });
-        out.push(await fitForInstagram(v.image));
-      } catch (err) { this.log(`social: the ${side} view failed: ${err.message}`); }
+    for (const shot of shotsWanted) {
+      let miss = '';
+      for (let i = 0; i < 2; i++) {
+        try {
+          const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
+            prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait.` });
+          const look = await this.changeSeen(room, v.image, `the same room from a clearly different camera position (${shot})`);
+          if (look.done || i === 1) { out.push(await fitForInstagram(v.image)); break; }
+          miss = look.missing || 'the framing is almost the same';
+        } catch (err) { this.log(`social: a view of the room failed: ${err.message}`); break; }
+      }
     }
     return out;
   }

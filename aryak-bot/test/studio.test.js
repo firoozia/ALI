@@ -471,7 +471,7 @@ test('the owner\'s change to a drafted design: by quoting it or «تغییر پ�
   assert.match(made[before].prompt, /redrawn for the owner who asked/);
   assert.equal(reelArgs.motion, 'orbit');
   assert.equal(reelArgs.views.length, 2, 'two more camera places');
-  assert.ok(made.some((m) => /moved about 35 degrees to the left/.test(m.prompt)));
+  assert.ok(made.some((m) => /wide establishing shot from the far opposite corner/.test(m.prompt)), 'a really different camera place');
   const total = reelArgs.seconds.room + reelArgs.views.length * (reelArgs.seconds.view - 0.6) + reelArgs.details.reduce((a, x) => a + x.seconds - 0.6, 0) + reelArgs.seconds.card - 0.6;
   assert.ok(Math.abs(total - 22) < 1, `about 22 s (${total.toFixed(1)})`);
   assert.match((await desk.decidePost({ verb: 'yes', kind: 'SP', id })), /already replaced/, 'the old draft cannot be posted');
