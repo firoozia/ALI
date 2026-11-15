@@ -230,6 +230,15 @@ export class GeminiImage {
     if (!pic) throw new Error(`Gemini gave no picture (${c?.finishReason || data.promptFeedback?.blockReason || 'no reason given'}): ${parts.map((p) => p.text).filter(Boolean).join(' ').slice(0, 200)}`);
     return { image: Buffer.from(pic.data, 'base64'), mime: pic.mimeType || pic.mime_type };
   }
+  /** A 30-second instrumental clip from Google's music model (Lyria, the Interactions API): an MP3. Throws with Google's words. */
+  async music(prompt, model = 'lyria-3-clip-preview') {
+    const res = await this.fetchImpl('https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', headers: { 'content-type': 'application/json', 'Api-Revision': '2026-05-20', 'x-goog-api-key': this.apiKey }, body: JSON.stringify({ model, input: prompt }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(`Lyria: ${data.error?.message || `HTTP ${res.status}`}`);
+    const audio = (data.steps || []).filter((s) => s.type === 'model_output').flatMap((s) => s.content || []).filter((c) => c.type === 'audio' && c.data).pop();
+    if (!audio) throw new Error('Lyria gave no audio');
+    return Buffer.from(audio.data, 'base64');
+  }
 }
 
 /**
@@ -263,7 +272,7 @@ You design the rooms that sell our decorative films: a client must look at the p
 - Luxury, current and livable, for villas and apartments in the UAE. Vary the room and the style from your recent proposals; follow the owner's notes.
 - The scene: ONE English paragraph of 120 to 180 words for an image model, written as the brief of an editorial photograph for a luxury interior magazine: the camera (35 mm lens, eye level, three-quarter view, slightly close so the film texture is crisp), the light, the materials, each film named by the fronts it covers ("the tall wardrobe doors in film HZ812, its walnut grain running vertically, lit by a warm LED strip"). No people, no text, no logos.
 Answer with JSON only:
-{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
+{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","music":"one English line for the background music of this room's Reel: the mood, the instruments and the tempo, calm and elegant (no artist or song names)","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
 
 /**
  * The owner's mark on a design picture (15/11): the ARYAK logo in the top corner and, along the bottom, a band with each film's swatch
@@ -544,7 +553,7 @@ export class SocialDesk {
     if (detail) { detailImage = await brandDesign(detail, { ...this.brandAssets(), codes: codes.slice(0, 1) }); p.extras = [save(`${p.id}-2.jpg`, detailImage)].filter(Boolean); }
     let video = null;
     if (this.reel) {
-      try { video = await this.makeReelFor({ room, detail, codes, main }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
+      try { video = await this.makeReelFor({ room, detail, codes, main, music: plan.music }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes: p.design.codes });
     this.store.d.designs = this.store.d.designs.slice(-40);
@@ -570,7 +579,26 @@ export class SocialDesk {
   }
 
   /** The Reel of a design: the camera pushes in on the main film (Atossa finds where it shows best), then the close-up, then the codes. */
-  async makeReelFor({ room, detail, codes, main }) {
+  /**
+   * The Reel's music (the owner, 15/11): a new instrumental clip from Google's music model in the mood the designer chose; every clip is
+   * kept, and when the model fails a kept one is used; with none, the Reel is silent.
+   */
+  async reelMusic(mood = '') {
+    const dir = this.brandDir ? path.join(this.brandDir, 'music') : '';
+    const kept = () => { try { return fs.readdirSync(dir).filter((f) => f.endsWith('.mp3')); } catch { return []; } };
+    try {
+      if (!this.imager?.music) throw new Error('no music model');
+      const mp3 = await this.imager.music(`${mood || 'Warm minimal luxury lounge: soft piano, gentle strings, a slow deep pulse, 78 BPM'}. Instrumental only, no vocals. Calm and elegant, for a short luxury interior design video.`);
+      if (dir) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${this.now()}.mp3`), mp3); }
+      return mp3;
+    } catch (err) {
+      this.log(`social: new music failed (${err.message}); a kept clip is used`);
+      const all = kept();
+      return all.length ? fs.readFileSync(path.join(dir, all[Math.floor(Math.random() * all.length)])) : null;
+    }
+  }
+
+  async makeReelFor({ room, detail, codes, main, music: mood = '' }) {
     const sharp = (await import('sharp')).default;
     let focus = { x: 0.5, y: 0.5 };
     try {
@@ -583,7 +611,7 @@ export class SocialDesk {
     const overlay = await brandDesign(frame, { ...brand, codes, transparent: true });
     const { endCard } = await import('./reel.js');
     const card = await endCard({ codes, logo: brand.logo, font: brand.font, line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
-    return this.reel({ room, detail, focus, overlay, card });
+    return this.reel({ room, detail, focus, overlay, card, music: await this.reelMusic(mood) });
   }
 
   /** Design drafts still waiting for the owner's answer: the daily proposal waits while there are [max]. */

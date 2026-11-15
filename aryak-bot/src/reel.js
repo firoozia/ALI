@@ -69,7 +69,7 @@ export async function endCard({ codes = [], logo = null, font = '', line = '' })
  * The Reel: [room] and [detail] pictures (4:5), [focus] { x, y } (0..1) where the camera pushes in on the room, [overlay] a transparent
  * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
  */
-export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, seconds = { room: 5, detail: 4, card: 3 } }) {
+export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reel-'));
   try {
@@ -83,7 +83,8 @@ export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }
     inputs.push(put('card.png', card));
     for (const f of inputs) args.push('-i', f);
     if (overlay) args.push('-i', put('overlay.png', overlay));
-    args.push('-f', 'lavfi', '-t', '20', '-i', 'anullsrc=r=44100:cl=stereo');
+    // the sound: the design's own music (an MP3, faded in and out), or silence (Instagram wants a sound track)
+    if (music) args.push('-i', put('music.mp3', music)); else args.push('-f', 'lavfi', '-t', '20', '-i', 'anullsrc=r=44100:cl=stereo');
     const fade = 0.6;
     const n = (s) => Math.round(s * fps);
     // each still is enlarged a little above the frame first, so the slow zoom moves smoothly (1.25x: twice froze the 1 GB server)
@@ -104,7 +105,8 @@ export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }
     parts.push(`[${last}][c]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[v]`);
     const total = t + seconds.card - fade;
     const audio = overlay ? k + 2 : k + 1;
-    args.push('-filter_threads', '1', '-filter_complex_threads', '1', '-filter_complex', parts.join(';'), '-map', '[v]', '-map', `${audio}:a`, '-t', total.toFixed(2),
+    parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5[s]`);
+    args.push('-filter_threads', '1', '-filter_complex_threads', '1', '-filter_complex', parts.join(';'), '-map', '[v]', '-map', '[s]', '-t', total.toFixed(2),
       '-c:v', 'libx264', '-preset', 'veryfast', '-threads', '1', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', path.join(dir, 'reel.mp4'));
     await run(await ffmpegPath(), args);
     return fs.readFileSync(path.join(dir, 'reel.mp4'));

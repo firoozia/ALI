@@ -132,3 +132,30 @@ test('the Reel itself: an MP4 from two stills and the end card', { skip: !fs.exi
   assert.ok(mp4.length > 1000);
   assert.equal(mp4.subarray(4, 8).toString(), 'ftyp', 'an MP4');
 });
+
+test('the Reel gets new music in the mood the designer chose; when the music model fails, a kept clip; with none, silence', async () => {
+  let reelArgs = null;
+  const { desk } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  desk.brandDir = tmp('brand-');
+  const prompts = [];
+  desk.imager.music = async (p) => { prompts.push(p); return Buffer.from('MP3-1'); };
+  await desk.draftDesign({});
+  assert.equal(reelArgs.music.toString(), 'MP3-1');
+  assert.match(prompts[0], /Instrumental only, no vocals/);
+  assert.equal(fs.readdirSync(path.join(desk.brandDir, 'music')).length, 1, 'kept');
+  desk.imager.music = async () => { throw new Error('quota'); };
+  assert.equal((await desk.reelMusic('calm')).toString(), 'MP3-1', 'a kept clip');
+  desk.brandDir = tmp('brand-');
+  assert.equal(await desk.reelMusic('calm'), null, 'silence');
+});
+
+test('Lyria: the audio of the model output is taken; its error is said', async () => {
+  const { GeminiImage } = await import('../src/social.js');
+  let sent;
+  const ok = new GeminiImage({ apiKey: 'K', fetchImpl: async (u, o) => { sent = { u, o }; return { ok: true, status: 200, json: async () => ({ steps: [{ type: 'model_output', content: [{ type: 'text', text: '<instrumental>' }, { type: 'audio', data: Buffer.from('MP3').toString('base64') }] }] }) }; } });
+  assert.equal((await ok.music('calm piano')).toString(), 'MP3');
+  assert.match(sent.u, /\/v1beta\/interactions$/);
+  assert.equal(JSON.parse(sent.o.body).model, 'lyria-3-clip-preview');
+  const bad = new GeminiImage({ apiKey: 'K', fetchImpl: async () => ({ ok: false, status: 429, json: async () => ({ error: { message: 'quota' } }) }) });
+  await assert.rejects(bad.music('x'), /Lyria: quota/);
+});
