@@ -708,7 +708,12 @@ export class SocialDesk {
     if (!this.tiktok?.connected || !this.bucket?.enabled || !images.length) return;
     try {
       const urls = [];
-      for (let i = 0; i < images.length; i++) urls.push(await this.bucket.put(`posts/${p.id}-${i + 1}-${this.now().toString(36)}.jpg`, images[i]));
+      // TikTok takes photos up to 1080 pixels wide (live test 15/11: picture_size_check_failed on 1440): 1080 x 1350, JPEG
+      const sharp = (await import('sharp')).default;
+      for (let i = 0; i < images.length; i++) {
+        const small = await sharp(images[i]).resize({ width: 1080, withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer().catch(() => images[i]);
+        urls.push(await this.bucket.put(`posts/${p.id}-${i + 1}-${this.now().toString(36)}.jpg`, small));
+      }
       const t = await this.tiktok.postPhotos(urls, p.caption, { aigc: !!p.design });
       p.tiktokPhotos = t.publishId;
       done.push(t.status === 'SEND_TO_USER_INBOX' ? `TikTok photos: sent to your TikTok inbox as a draft (${images.length} pictures; open TikTok and tap Post)` : `TikTok photos: posted (${images.length} pictures)`);
