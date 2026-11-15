@@ -65,6 +65,11 @@ export class MetaClient {
     const best = (r.images || []).slice().sort((a, b) => (b.width || 0) - (a.width || 0))[0];
     return best?.source || '';
   }
+  /** Another professional account's latest posts (Business Discovery): [{ media_type, like_count, permalink, media_url, thumbnail_url, timestamp }]. */
+  async igDiscover(username, limit = 8) {
+    const r = await this.ig(this.igUserId, { params: { fields: `business_discovery.username(${username}){username,media.limit(${limit}){media_type,like_count,comments_count,permalink,media_url,thumbnail_url,timestamp}}` } });
+    return r.business_discovery?.media?.data || [];
+  }
   async fbPermalink(postId) { try { return (await this.fb(postId, { params: { fields: 'permalink_url' } })).permalink_url || ''; } catch { return ''; } }
   fbFeed(limit = 5) { return this.fb(`${this.pageId}/feed`, { params: { fields: 'id,message,permalink_url,comments.limit(25){id,message,from,created_time}', limit } }); }
   fbCommentReply(commentId, message) { return this.fb(`${commentId}/comments`, { method: 'POST', params: { message } }); }
@@ -265,8 +270,18 @@ export const TREND_RULES = `${ATOSSA}
 This morning you scan the world's best interior design sources for new ideas: Pinterest (trends and Pinterest Predicts), Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell, Houzz, and what leading kitchen and wardrobe brands show this season. Search the web; prefer pages from the last few weeks.
 Write today's notes for your studio: 5 to 8 short English bullet points of concrete ideas you can use with decorative films on cabinets, wardrobes, wall panels and doors (colour pairings, wood and stone looks, finishes, details, layouts, lighting), each with its source site in brackets.
 Then one line starting with «فارسی:» with two Persian sentences for the owner: the most useful idea of the day.
+Also look at what interior, kitchen and wardrobe videos people watch and save on TikTok and Instagram Reels this week (search the web: TikTok Creative Center, articles and lists of trending interior Reels and TikToks) and add one or two bullets on formats or ideas that work there, with the source.
 Last, one line starting with «IMAGES:» and up to four direct addresses of interior pictures from the pages you read (jpg, png or webp, the article's own photos), separated by spaces.
 Output only the notes.`;
+
+export const LINK_RULES = `${ATOSSA}
+The owner sent you posts he likes (from Instagram, TikTok, Pinterest or a magazine) to inspire your next designs. You see each one's picture and words.
+For each, write in English: what to take from it (layout, colour pairing, a detail, the light, the camera, the format of the post) and which ARYAK films from the list could make it.
+Then, for the owner, one line per post starting with «فارسی:», two short Persian sentences: what you will take from it and how you will use it in an ARYAK design.
+Output only that.`;
+
+export const WATCH_RULES = `${ATOSSA}
+These are the most liked recent posts of leading interior design accounts on Instagram (their account and likes are given). In 4 to 6 English bullets: what is working there now (rooms, colours, materials, details, light, camera, the format of the post), each with the account in brackets. Only what you can see.`;
 
 export const LOOKS_RULES = `${ATOSSA}
 These are interior pictures from today's design press. For each one, write one short English line of what a designer can take from it for decorative films on cabinets, wardrobes and wall panels: the colours and how they are paired, the wood or stone look, the finish, the light, one detail. Then one line «Together:» with the strongest common idea. Output only the lines.`;
@@ -387,6 +402,14 @@ export function inspirationRequest(caption) {
 }
 
 /** A photo's caption that asks for a post: «post …», «پست …», «instagram …», «اینستا …». Returns { note } (the rest of the caption) or null. */
+/** A message of the owner with web links (Instagram, TikTok, Pinterest, a magazine…): { urls, note } for Atossa to study; null when none. */
+export function linkRequest(text) {
+  const urls = [...new Set((String(text || '').match(/https?:\/\/[^\s<>«»"']+/g) || []).map((u) => u.replace(/[),.;!؟،]+$/, '')))];
+  if (!urls.length) return null;
+  const note = String(text).replace(/https?:\/\/[^\s<>«»"']+/g, ' ').replace(/\s+/g, ' ').trim();
+  return { urls: urls.slice(0, 8), note };
+}
+
 export function postRequest(caption) {
   const m = /^\s*(?:post|instagram|insta|پست|اینستا|اینستاگرام)(?=\s|:|$)\s*:?\s*([\s\S]*)$/i.exec(String(caption || ''));
   return m ? { note: m[1].trim() } : null;
@@ -583,6 +606,8 @@ export class SocialDesk {
       note ? `\nThe owner's words: ${note}` : '',
       inspiration ? '\nThe owner liked the attached picture (his inspiration). Design the same kind of room with the same mood, layout, light and style, but with ARYAK films from the list on the fronts, chosen to match its colours and feeling. Never copy a brand, a logo or text from it. Say in inspiration_fa that the idea is the owner\'s picture.' : '',
       this.todayLooks() ? `\nWhat today's pictures from the design press show (your own eye this morning):\n${this.todayLooks()}` : '',
+      this.todayInstagram() ? `\nWhat is working on Instagram now (the most liked recent posts of leading design accounts, your own look this morning):\n${this.todayInstagram()}` : '',
+      this.ownerInspirations() ? `\nPosts the owner sent you because he likes them (his taste; take from them, never copy):\n${this.ownerInspirations()}` : '',
     ].filter(Boolean).join('\n');
     // room to think: the morning's notes made the brief longer, and a cut answer has no JSON (live test 15/11); one more try when it is cut
     let plan;
@@ -841,6 +866,7 @@ export class SocialDesk {
     if (urls.length) {
       try { entry.looks = await this.lookAtPictures(urls); this.store.save(); } catch (err) { this.log(`social: the press pictures were not read: ${err.message}`); }
     }
+    try { entry.instagram = await this.watchInstagram(); this.store.save(); } catch (err) { this.log(`social: the look at Instagram failed: ${err.message}`); }
     return text;
   }
   /** Today's notes on the press pictures ('' when none). */
@@ -850,21 +876,111 @@ export class SocialDesk {
   }
   /** The pictures of the day's articles: fetched (pictures only, at most 8 MB each), made small, looked at together once. */
   async lookAtPictures(urls) {
+    const pics = (await this.fetchPictures(urls)).filter(Boolean);
+    if (!pics.length) return '';
+    return String(await this.write({ kind: 'press-pictures', system: LOOKS_RULES, text: `${pics.length} interior pictures from today's design press.`, images: pics, mime: 'image/jpeg', effort: 'low', maxTokens: 1500 }) || '').trim().slice(0, 2000);
+  }
+
+  /** Pictures from their addresses, 768 px JPEG; null for one that cannot be read (not a picture, too big, no answer in 15 s). */
+  async fetchPictures(urls) {
     const sharp = (await import('sharp')).default;
     const fetchImpl = this.fetchImpl || globalThis.fetch;
-    const pics = [];
+    const out = [];
     for (const u of urls) {
+      let pic = null;
+      if (!u) { out.push(null); continue; }
       try {
         const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 15000);
         const r = await fetchImpl(u, { signal: ac.signal, headers: { 'User-Agent': 'Mozilla/5.0 ARYAK design studio' } }).finally(() => clearTimeout(t));
-        if (!r.ok || !/^image\//.test(r.headers.get('content-type') || '')) continue;
-        const buf = Buffer.from(await r.arrayBuffer());
-        if (buf.length > 8 * 1024 * 1024) continue;
-        pics.push(await sharp(buf).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer());
+        if (r.ok && /^image\//.test(r.headers.get('content-type') || '')) {
+          const buf = Buffer.from(await r.arrayBuffer());
+          if (buf.length <= 8 * 1024 * 1024) pic = await sharp(buf).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+        }
       } catch { /* that picture is skipped */ }
+      out.push(pic);
     }
-    if (!pics.length) return '';
-    return String(await this.write({ kind: 'press-pictures', system: LOOKS_RULES, text: `${pics.length} interior pictures from today's design press.`, images: pics, mime: 'image/jpeg', effort: 'low', maxTokens: 1500 }) || '').trim().slice(0, 2000);
+    return out;
+  }
+
+  /**
+   * What a link shows: its picture and words. TikTok answers its public oEmbed; Instagram, Pinterest and most sites give their picture
+   * to link previews (og:image), so the page is asked as a link preview would ask it. { url, image, text } (image '' when none).
+   */
+  async previewOf(url) {
+    const fetchImpl = this.fetchImpl || globalThis.fetch;
+    const get = async (u, ua) => {
+      const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 15000);
+      return fetchImpl(u, { signal: ac.signal, redirect: 'follow', headers: { 'User-Agent': ua, 'Accept-Language': 'en' } }).finally(() => clearTimeout(t));
+    };
+    try {
+      if (/tiktok\.com/i.test(url)) {
+        const r = await get(`https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`, 'Mozilla/5.0 ARYAK design studio');
+        if (r.ok) { const j = await r.json(); if (j.thumbnail_url) return { url, image: j.thumbnail_url, text: [j.author_name, j.title].filter(Boolean).join(': ') }; } // no thumbnail (live 15/11): the page's own preview
+      }
+      const r = await get(url, 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)');
+      if (/^image\//.test(r.headers.get('content-type') || '')) return { url, image: url, text: '' };
+      const html = (await r.text()).slice(0, 400000);
+      const meta = (name) => {
+        const m = new RegExp(`<meta[^>]+(?:property|name)=["']${name}["'][^>]*content=["']([^"']*)["']`, 'i').exec(html) || new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']${name}["']`, 'i').exec(html);
+        return m ? m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'") : '';
+      };
+      return { url, image: meta('og:image') || meta('twitter:image'), text: [meta('og:title'), meta('og:description') || meta('description')].filter(Boolean).join(': ').slice(0, 600) };
+    } catch (err) { return { url, image: '', text: '', error: err.message }; }
+  }
+
+  /** «Look at these» (the owner's links): Atossa studies each post's picture and words, keeps what she takes, answers in Persian. */
+  async studyLinks({ urls, note = '' }) {
+    const seen = [];
+    for (const u of urls) seen.push(await this.previewOf(u));
+    const pics = await this.fetchPictures(seen.map((s) => s.image || ''));
+    const read = seen.map((s, i) => ({ ...s, pic: pics[i] })).filter((s) => s.pic);
+    const blind = seen.filter((s, i) => !pics[i]);
+    if (!read.length) return `آتوسا نتوانست تصویر این ${seen.length === 1 ? 'پیوند' : 'پیوندها'} را باز کند (احتمالاً صفحه خصوصی است یا ورود می‌خواهد). خود عکس را با «الهام» بفرستید.`;
+    const all = this.catalog();
+    const text = String(await this.write({ kind: 'owner-links', system: LINK_RULES, effort: 'medium', maxTokens: 2500, images: read.map((s) => s.pic), mime: 'image/jpeg', text: [
+      ...read.map((s, i) => `Post ${i + 1} (${s.url}): ${s.text || '(no words)'}`),
+      note ? `\nThe owner's words: ${note}` : '',
+      `\nARYAK films (code: look): ${Object.entries(all).slice(0, 200).map(([k, e]) => `${k}: ${e.look || e.kind || ''}`).join('; ')}`,
+    ].filter(Boolean).join('\n') }) || '').trim();
+    if (!text) return 'آتوسا پاسخی ننوشت؛ دوباره بفرستید.';
+    const english = text.split('\n').filter((l) => !/^\s*فارسی\s*:/.test(l)).join('\n').trim();
+    const persian = text.split('\n').filter((l) => /^\s*فارسی\s*:/.test(l)).map((l) => `• ${l.replace(/^\s*فارسی\s*:\s*/, '')}`);
+    (this.store.d.inspo ||= []).push({ at: this.now(), urls: read.map((s) => s.url), text: english.slice(0, 3000), note });
+    this.store.d.inspo = this.store.d.inspo.slice(-20);
+    this.store.save();
+    this.addTaste(`The owner sent posts he likes${note ? ` (${note})` : ''}: ${english.slice(0, 300)}`);
+    return [`آتوسا ${read.length} پیوند را دید و برای طرح‌های بعدی نگه داشت:`, ...persian, blind.length ? `\n${blind.length} پیوند باز نشد (خصوصی یا نیازمند ورود): عکسش را با «الهام» بفرستید.` : ''].filter(Boolean).join('\n');
+  }
+  /** The owner's saved ideas (his links), newest last: what Atossa reads before she designs. */
+  ownerInspirations(max = 5) {
+    return (this.store.d.inspo || []).slice(-max).map((x) => `- ${x.text.replace(/\s+/g, ' ').slice(0, 600)}`).join('\n');
+  }
+
+  /**
+   * Atossa's look around Instagram (the owner, 15/11: she looks for ideas on Instagram and TikTok herself): the latest posts of leading
+   * design accounts (Business Discovery, no review needed), the most liked of the last two weeks looked at once a day.
+   */
+  async watchInstagram() {
+    if (!this.client.hasIg || !this.client.igDiscover) return '';
+    const accounts = (this.cfg.watchAccounts || 'archdigest,elledecor,dezeen,housebeautiful,dwellmagazine,houzz,studiomcgee,amberinteriors,kellywearstler').split(/[\s,]+/).filter(Boolean);
+    const posts = [];
+    for (const a of accounts) {
+      try { for (const m of await this.client.igDiscover(a)) posts.push({ ...m, account: a }); } catch (err) { this.log(`social: Instagram account ${a} not read: ${err.message}`); }
+    }
+    const fresh = posts.filter((m) => !m.timestamp || this.now() - Date.parse(m.timestamp) < 14 * DAY).sort((x, y) => (y.like_count || 0) - (x.like_count || 0));
+    const top = [];
+    for (const m of fresh) { if (top.filter((x) => x.account === m.account).length < 1 && (m.media_url || m.thumbnail_url)) top.push(m); if (top.length === 4) break; }
+    if (!top.length) return '';
+    const pics = await this.fetchPictures(top.map((m) => (m.media_type === 'VIDEO' ? m.thumbnail_url : m.media_url) || ''));
+    const seen = top.map((m, i) => ({ ...m, pic: pics[i] })).filter((m) => m.pic);
+    if (!seen.length) return '';
+    return String(await this.write({ kind: 'instagram-watch', system: WATCH_RULES, effort: 'low', maxTokens: 1200, images: seen.map((m) => m.pic), mime: 'image/jpeg',
+      text: seen.map((m, i) => `Picture ${i + 1}: @${m.account}, ${m.like_count ?? '?'} likes, ${m.media_type === 'VIDEO' ? 'a Reel' : m.media_type === 'CAROUSEL_ALBUM' ? 'a carousel' : 'a photo'} ${m.permalink || ''}`).join('\n') }) || '').trim().slice(0, 2000);
+  }
+  /** Today's look at Instagram ('' when none). */
+  todayInstagram() {
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    return (this.store.d.trends || []).find((t) => t.day === day)?.instagram || '';
   }
 
   /** The Reel of a design: the camera pushes in on the main film (Atossa finds where it shows best), then the close-up, then the codes. */

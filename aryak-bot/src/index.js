@@ -115,7 +115,7 @@ import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlan
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
 import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designRequest, inspirationRequest, parseSocialCommand, postRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designRequest, inspirationRequest, linkRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2520,6 +2520,14 @@ ${t.authorizeUrl()}`);
       if (!buf) { await socialSay('The picture could not be read; send it again.'); return true; }
       await socialSay('Atossa is designing from your picture with ARYAK films… (one or two minutes)');
       await socialSayDesign(await socialDesk.draftDesign({ note: ir.note, inspiration: { image: buf, mime: imageOf(normalizeMessageContent(picRaw.message))?.mimetype || 'image/jpeg' } }));
+      return true;
+    }
+    // links from the owner (Instagram, TikTok, Pinterest, a magazine): Atossa studies them for her next designs (the owner, 15/11)
+    const lr = !imageOf(content) && !sc ? linkRequest(text) : null;
+    if (lr && isOwner()) {
+      trace(where, 'owner', `social: ${lr.urls.length} link(s) to study`);
+      await socialSay(`آتوسا ${lr.urls.length === 1 ? 'پیوند' : `${lr.urls.length} پیوند`} را بررسی می‌کند…`);
+      try { await socialSay(await socialDesk.studyLinks(lr)); } catch (e) { await socialSay(`بررسی پیوندها نشد: ${e.message}`); }
       return true;
     }
     const pr = postRequest(text);

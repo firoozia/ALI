@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, goodHour, inspirationRequest, nextGoodTime, parseSocialCommand } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -378,4 +378,61 @@ test('two concepts produced at once: each keeps its own post, picture, close-ups
   for (const p of posts) assert.ok((p.extras || []).every((f) => path.basename(f).startsWith(`${p.id}-`)), 'its own close-ups');
   assert.match(a.text, /کتابخانه/);
   assert.match(b.text, /اتاق خواب/);
+});
+
+test('the owner\'s links: TikTok by its oEmbed, Instagram by its link preview; Atossa looks at the pictures, answers in Persian, keeps them for her designs', async () => {
+  assert.deepEqual(linkRequest('اینا رو ببین https://www.instagram.com/p/ABC/ و https://vm.tiktok.com/xyz/.'), { urls: ['https://www.instagram.com/p/ABC/', 'https://vm.tiktok.com/xyz/'], note: 'اینا رو ببین و' });
+  assert.equal(linkRequest('بله پست ۱۲'), null);
+  const { desk, writes } = await studio();
+  const asked = [];
+  const img = await pic('#8a6a4a', 900, 1100);
+  const picture = { ok: true, headers: { get: () => 'image/jpeg' }, arrayBuffer: async () => img.buffer.slice(img.byteOffset, img.byteOffset + img.length) };
+  desk.fetchImpl = async (u, o = {}) => {
+    asked.push({ u, ua: o.headers?.['User-Agent'] });
+    if (u.startsWith('https://www.tiktok.com/oembed')) return { ok: true, headers: { get: () => 'application/json' }, json: async () => ({ thumbnail_url: 'https://cdn.tt/thumb.jpg', title: 'Walnut kitchen reveal', author_name: 'studio' }) };
+    if (u === 'https://www.instagram.com/p/ABC/') return { ok: true, headers: { get: () => 'text/html' }, text: async () => '<meta property="og:image" content="https://cdn.ig/p.jpg?a=1&amp;b=2"><meta property="og:description" content="Fluted oak wardrobe">' };
+    if (u === 'https://private.example/x') return { ok: true, headers: { get: () => 'text/html' }, text: async () => '<html>login</html>' };
+    return picture;
+  };
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'owner-links' ? (writes.push(r), 'Post 1: fluted oak doors, HZ812 could make them.\nPost 2: a slow reveal Reel.\nفارسی: درهای شیاردار بلوط را با HZ812 می‌سازم.\nفارسی: ریلز آهسته را برای نمایش بافت به کار می‌برم.') : base(r));
+  const text = await desk.studyLinks({ urls: ['https://www.instagram.com/p/ABC/', 'https://www.tiktok.com/@s/video/1', 'https://private.example/x'], note: 'این‌ها رو دوست دارم' });
+  assert.match(asked.find((a) => a.u === 'https://www.instagram.com/p/ABC/').ua, /facebookexternalhit/, 'asked like a link preview');
+  assert.ok(asked.some((a) => a.u === 'https://cdn.ig/p.jpg?a=1&b=2'), 'the og:image, unescaped');
+  assert.ok(asked.some((a) => a.u === 'https://cdn.tt/thumb.jpg'), 'the TikTok thumbnail');
+  const w = writes.find((x) => x.kind === 'owner-links');
+  assert.equal(w.images.length, 2);
+  assert.match(w.text, /Fluted oak wardrobe[\s\S]*Walnut kitchen reveal[\s\S]*این‌ها رو دوست دارم/);
+  assert.match(text, /^آتوسا 2 پیوند را دید/);
+  assert.match(text, /• درهای شیاردار بلوط/);
+  assert.match(text, /1 پیوند باز نشد/);
+  assert.doesNotMatch(desk.store.d.inspo[0].text, /فارسی/);
+  desk.write = base;
+  await desk.draftDesign({});
+  assert.match(writes.find((x) => x.kind === 'design-plan').text, /Posts the owner sent you[\s\S]*fluted oak doors/);
+  desk.fetchImpl = async () => ({ ok: true, headers: { get: () => 'text/html' }, text: async () => '' });
+  assert.match(await desk.studyLinks({ urls: ['https://x.example/'] }), /نتوانست تصویر این پیوند/);
+});
+
+test('Atossa\'s morning look at Instagram: the most liked recent post of each design account, looked at, read by the designer', async () => {
+  const { desk, writes } = await studio({ research: async () => '- Oak [AD]' });
+  const now = Date.now();
+  desk.client.igDiscover = async (a) => {
+    if (a === 'gone') throw new Error('not found');
+    return [
+      { media_type: 'IMAGE', like_count: a === 'archdigest' ? 900 : 50, media_url: `https://cdn.ig/${a}-1.jpg`, permalink: `https://ig/${a}/1`, timestamp: new Date(now - 2 * 864e5).toISOString() },
+      { media_type: 'VIDEO', like_count: 5000, thumbnail_url: `https://cdn.ig/${a}-old.jpg`, permalink: `https://ig/${a}/old`, timestamp: new Date(now - 40 * 864e5).toISOString() },
+    ];
+  };
+  Object.defineProperty(desk.client, 'hasIg', { get: () => true });
+  desk.cfg.watchAccounts = 'archdigest, dezeen gone';
+  const got = [];
+  const img = await pic('#8a6a4a', 900, 1100);
+  desk.fetchImpl = async (u) => { got.push(u); return { ok: true, headers: { get: () => 'image/jpeg' }, arrayBuffer: async () => img.buffer.slice(img.byteOffset, img.byteOffset + img.length) }; };
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'instagram-watch' ? (writes.push(r), '- Dark walnut galley kitchens [archdigest]') : base(r));
+  await desk.draftDesign({});
+  assert.deepEqual(got, ['https://cdn.ig/archdigest-1.jpg', 'https://cdn.ig/dezeen-1.jpg'], 'the fresh ones only, the most liked first, one per account');
+  assert.match(writes.find((w) => w.kind === 'instagram-watch').text, /@archdigest, 900 likes/);
+  assert.match(writes.find((w) => w.kind === 'design-plan').text, /What is working on Instagram now[\s\S]*Dark walnut galley/);
 });
