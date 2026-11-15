@@ -15,15 +15,20 @@ export async function ffmpegPath() {
   return 'ffmpeg';
 }
 
-function run(bin, args) {
+// The server is small (1 GB, live test 15/11: a 2x zoom froze it): ffmpeg runs at the lowest priority, on one thread, and is stopped
+// after [limitMs]; a Reel is skipped when the machine has too little free memory to make it without starving the bot.
+function run(bin, args, limitMs = 240000) {
   return new Promise((resolve, reject) => {
-    const ch = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const nice = process.platform === 'linux';
+    const ch = spawn(nice ? 'nice' : bin, nice ? ['-n', '19', bin, ...args] : args, { stdio: ['ignore', 'ignore', 'pipe'] });
     let err = '';
+    const timer = setTimeout(() => { err += ' (stopped: too slow)'; ch.kill('SIGKILL'); }, limitMs);
     ch.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-    ch.on('error', reject);
-    ch.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg failed (${code}): ${err.split('\n').slice(-3).join(' ')}`))));
+    ch.on('error', (e) => { clearTimeout(timer); reject(e); });
+    ch.on('close', (code) => { clearTimeout(timer); if (code === 0) resolve(); else reject(new Error(`ffmpeg failed (${code}): ${err.split('\n').slice(-3).join(' ')}`)); });
   });
 }
+export const REEL_MIN_FREE_MB = 300;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : (lo + hi) / 2));
 
@@ -65,6 +70,7 @@ export async function endCard({ codes = [], logo = null, font = '', line = '' })
  * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
  */
 export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, seconds = { room: 5, detail: 4, card: 3 } }) {
+  if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reel-'));
   try {
     const put = (name, buf) => { const f = path.join(dir, name); fs.writeFileSync(f, buf); return f; };
@@ -80,8 +86,8 @@ export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }
     args.push('-f', 'lavfi', '-t', '20', '-i', 'anullsrc=r=44100:cl=stereo');
     const fade = 0.6;
     const n = (s) => Math.round(s * fps);
-    // each still is enlarged to twice the frame first, so the slow zoom moves smoothly instead of in pixel steps
-    const move = (i, frames, zoom, cx, cy) => `[${i}:v]scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,setsar=1,`
+    // each still is enlarged a little above the frame first, so the slow zoom moves smoothly (1.25x: twice froze the 1 GB server)
+    const move = (i, frames, zoom, cx, cy) => `[${i}:v]scale=1350:2400:force_original_aspect_ratio=increase,crop=1350:2400,setsar=1,`
       + `zoompan=z='1+${zoom}*on/${frames}':x='(iw-iw/zoom)*${cx}':y='(ih-ih/zoom)*${cy}':d=${frames}:s=1080x1920:fps=${fps},setsar=1,format=yuv420p`;
     const parts = [];
     parts.push(`${move(0, n(seconds.room), 0.22, fx, fy)}[a]`);
@@ -98,8 +104,8 @@ export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }
     parts.push(`[${last}][c]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[v]`);
     const total = t + seconds.card - fade;
     const audio = overlay ? k + 2 : k + 1;
-    args.push('-filter_complex', parts.join(';'), '-map', '[v]', '-map', `${audio}:a`, '-t', total.toFixed(2),
-      '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', path.join(dir, 'reel.mp4'));
+    args.push('-filter_threads', '1', '-filter_complex_threads', '1', '-filter_complex', parts.join(';'), '-map', '[v]', '-map', `${audio}:a`, '-t', total.toFixed(2),
+      '-c:v', 'libx264', '-preset', 'veryfast', '-threads', '1', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', path.join(dir, 'reel.mp4'));
     await run(await ffmpegPath(), args);
     return fs.readFileSync(path.join(dir, 'reel.mp4'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
