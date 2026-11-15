@@ -119,7 +119,8 @@ export function parseSocialCommand(text) {
     .replace(/(^|\s)(?:پست|post)\s*#?\s*(\d+)/i, '$1#SP$2').replace(/(^|\s)(?:پیام|نظر|message|comment)\s*#?\s*(\d+)/i, '$1#SR$2');
   let m;
   if ((m = /^(?:yes|ok|okay|بله|آره|اره|باشه)\s*#?\s*(SP|SR)\s*(\d+)\s*[.!]?$/i.exec(t))) return { verb: 'yes', kind: m[1].toUpperCase(), id: `${m[1].toUpperCase()}${m[2]}` };
-  if ((m = /^(?:no|cancel|نه|خیر|لغو)\s*#?\s*(SP|SR)\s*(\d+)\s*[.!]?$/i.exec(t))) return { verb: 'no', kind: m[1].toUpperCase(), id: `${m[1].toUpperCase()}${m[2]}` };
+  if ((m = /^(?:no|cancel|نه|خیر|لغو)\s*#?\s*(SP|SR)\s*(\d+)\s*[.!]?(?:\s*[:\-،,]?\s*([\s\S]+))?$/i.exec(t))) return { verb: 'no', kind: m[1].toUpperCase(), id: `${m[1].toUpperCase()}${m[2]}`, ...(m[3]?.trim() ? { text: m[3].trim() } : {}) };
+  if ((m = /^(?:taste|سلیقه|سلیقه‌ی من|سلیقه من)\s*[:\-]?\s*([\s\S]+)$/i.exec(t))) return { verb: 'taste', text: m[1].trim() };
   if ((m = /^(?:edit|ویرایش|اصلاح)\s*#?\s*SP\s*(\d+)\s*[:\-]?\s*([\s\S]+)$/i.exec(t))) return { verb: 'edit', kind: 'SP', id: `SP${m[1]}`, text: m[2].trim() };
   if ((m = /^(?:reply|answer|جواب|پاسخ)\s*#?\s*SR\s*(\d+)\s*[:\-]?\s*([\s\S]+)$/i.exec(t))) return { verb: 'reply', kind: 'SR', id: `SR${m[1]}`, text: m[2].trim() };
   if (/^(?:social|social status|سوشال|وضعیت سوشال|وضعیت اینستاگرام)\s*[?؟]?$/i.test(t)) return { verb: 'status' };
@@ -135,10 +136,15 @@ export function catalogRequest(text) {
   return m ? { code: m[1].replace(/\s+/g, '').toUpperCase(), note: m[2].trim() } : null;
 }
 
-/** «طرح ۸۳۲ کمد دیواری» / «design 212 kitchen»: an AI design idea of a room made with that catalogue colour. Null when not one. */
+/**
+ * «طرح» / «پیشنهاد طرح» (the designer chooses everything), «طرح آشپزخانه» (the room), «طرح ۸۳۲ کمد دیواری» (built around that colour).
+ * Returns { code, note } (code '' when none) or null.
+ */
 export function designRequest(text) {
-  const m = /^(?:طرح|design)\s+(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(plainCode(text));
-  return m ? { code: m[1].replace(/\s+/g, '').toUpperCase(), note: m[2].trim() } : null;
+  const m = /^(?:پیشنهاد\s+طرح|طرح|design)(?=\s|:|$)\s*:?\s*([\s\S]*)$/i.exec(plainCode(text));
+  if (!m) return null;
+  const c = /^(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(m[1].trim());
+  return c ? { code: c[1].replace(/\s+/g, '').toUpperCase(), note: c[2].trim() } : { code: '', note: m[1].trim() };
 }
 
 /**
@@ -150,7 +156,7 @@ export class GeminiImage {
   get enabled() { return !!this.apiKey; }
   async make({ prompt, images = [], aspect = '4:5' }) {
     const body = {
-      contents: [{ role: 'user', parts: [...images.map((i) => ({ inline_data: { mime_type: i.mime || 'image/jpeg', data: i.buffer.toString('base64') } })), { text: prompt }] }],
+      contents: [{ role: 'user', parts: [...images.flatMap((i) => [...(i.label ? [{ text: i.label }] : []), { inline_data: { mime_type: i.mime || 'image/jpeg', data: i.buffer.toString('base64') } }]), { text: prompt }] }],
       generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect } },
     };
     const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body) });
@@ -164,14 +170,18 @@ export class GeminiImage {
   }
 }
 
-export const DESIGN_RULES = `You write the prompt for an image model that makes interior design ideas for {BRAND}.
-The image model gets the attached picture as its reference: a sample of one decorative film (colour code {CODE}, {KIND}).
-Write ONE English paragraph of 80 to 140 words describing a photorealistic interior photograph in which the fronts named by the owner (cabinet doors, wardrobe doors, wall panels…) are covered with exactly this film.
-- Describe the film precisely from the sample: its colour, its pattern or grain and the grain direction, matt or gloss. Keep the pattern at real scale (wood grain runs along the door; stone veins are large and calm).
-- Everything else in the room is neutral and quiet (white or light walls, simple handles, plain worktop), so the film is the hero. Natural daylight, eye-level camera, wide-angle interior photography.
-- No people, no text, no logos, no brand names.
-- The owner's words may be in Persian or Arabic: follow them (the room, the style, the colours around). With no words, a modern kitchen.
-Output only the prompt.`;
+export const LOOK_RULES = `Describe this decorative film sample for an interior designer in at most 18 English words:
+its colour (warm or cool; light, medium or dark), its pattern (solid colour; the wood it looks like and its grain; stone, concrete or marble and its veins) and its finish.
+Output only the description.`;
+
+export const DESIGNER_RULES = `You are the lead interior designer of {BRAND}: the best in the Gulf, with the taste of the top studios of Dubai, Milan and London.
+You design rooms that show off our decorative films (doors and panels of kitchens, wardrobes, TV walls, vanities, offices, majlis, hotel rooms) and sell them.
+The owner is not a designer: you choose everything, he only approves or rejects. Each time propose ONE design.
+- Combine one to three films from the list (only codes from the list), the way the best designers do: a main film, a second one that contrasts (wood with a solid colour, light with dark, warm with cool), at most a small accent; the 60-30-10 balance; a stone or concrete look as a feature, never everywhere.
+- Current, high-end, livable; for clients in the UAE (villas and apartments). Vary the room and the style from your recent proposals; follow the owner's notes.
+- The scene: ONE English paragraph of 90 to 150 words for an image model: a photorealistic interior photograph (eye level, natural daylight, wide angle), naming each film by the fronts it covers ("the upper cabinet doors in film HZ818"), everything else neutral and quiet so the films are the heroes. No people, no text, no logos.
+Answer with JSON only:
+{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
 
 /** Instagram takes a feed photo between 4:5 (tall) and 1.91:1 (wide): the middle is kept, the width is at most 1440, a JPEG comes out. The original when it cannot be read. */
 export async function fitForInstagram(buf) {
@@ -295,31 +305,85 @@ export class SocialDesk {
     const facts = `This is colour code ${code} from the ${e.catalogue}${e.kind ? ` (${e.kind})` : ''}. Name it in the caption as «Code ${code}». The picture is the colour sample itself (a decorative film for furniture), not a room.`;
     return this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
   }
+  /** A short look of every colour (colour, pattern, finish), asked once from its picture and kept in catalog.json: what the designer reads. */
+  async ensureLooks({ batch = 6 } = {}) {
+    const all = this.catalog();
+    const todo = Object.keys(all).filter((k) => !all[k].look);
+    if (!todo.length) return 0;
+    let done = 0;
+    const sharp = (await import('sharp').catch(() => null))?.default;
+    for (let i = 0; i < todo.length; i += batch) {
+      await Promise.all(todo.slice(i, i + batch).map(async (code) => {
+        try {
+          let image = fs.readFileSync(path.join(this.catalogDir, all[code].file));
+          if (sharp) image = await sharp(image).resize({ width: 384 }).jpeg({ quality: 80 }).toBuffer().catch(() => image);
+          const look = String(await this.write({ kind: 'look', system: LOOK_RULES, text: `Film ${code} (${all[code].kind || all[code].catalogue || ''})`, image, mime: 'image/jpeg' }) || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+          if (look) { all[code].look = look; done++; }
+        } catch (err) { this.log(`social: the look of ${code} failed: ${err.message}`); }
+      }));
+      try { fs.writeFileSync(path.join(this.catalogDir, 'catalog.json'), JSON.stringify(all, null, 1)); } catch (err) { this.log(`social: the looks could not be kept: ${err.message}`); }
+    }
+    this.log(`social: ${done} colour looks written`);
+    return done;
+  }
+
+  /** The designer's plan: { title_fa, why_fa, room, parts: [{ code, where, where_fa }], scene } or { error }. */
+  async designPlan({ code = '', note = '' } = {}) {
+    const all = this.catalog();
+    const d = this.store.d;
+    const text = [
+      'The films (code: look [catalogue]):',
+      ...Object.entries(all).map(([k, e]) => `${k}: ${e.look || e.kind || 'decorative film'} [${e.catalogue || ''}]`),
+      (d.designs || []).length ? `\nYour recent proposals (vary from them):\n${d.designs.slice(-12).map((x) => `- ${x.room}: ${x.codes.join(' + ')}`).join('\n')}` : '',
+      (d.taste || []).length ? `\nThe owner's notes on your earlier proposals (follow them):\n${d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
+      code ? `\nThe owner asks for a design built around film ${code}: it is the main film.` : '',
+      note ? `\nThe owner's words: ${note}` : '',
+    ].filter(Boolean).join('\n');
+    const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text, effort: 'medium', maxTokens: 2000 }) || '');
+    let plan;
+    try { plan = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { return { error: 'The designer gave no plan; try again.' }; }
+    plan.parts = (Array.isArray(plan.parts) ? plan.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => all[p.code]).slice(0, 4);
+    if (code && !plan.parts.some((p) => p.code === code)) plan.parts.unshift({ code, where: 'the main fronts', where_fa: 'سطح اصلی' });
+    if (!plan.parts.length || !plan.scene) return { error: 'The designer chose no colour of the catalogues; try again.' };
+    return plan;
+  }
+
   /**
-   * «طرح ۸۳۲ کمد دیواری»: the model writes the scene from the colour sample, Gemini draws the room with that film, and the picture
-   * becomes a draft #SP like any other (nothing is posted before the yes). Returns { text, image } so the owner sees the picture itself.
+   * «طرح …» and the daily proposal: the designer chooses the room, the style and the films, Gemini draws it with each film's own
+   * picture, and it becomes a draft #SP like any other (nothing is posted before the yes). Returns { text, image }: the owner sees the
+   * picture with the designer's Persian reasons above the caption.
    */
-  async draftDesign({ code: asked, note = '' }) {
+  async draftDesign({ code: asked = '', note = '' } = {}) {
     if (!this.imager?.enabled) return { text: 'The design maker (Google Gemini) is not connected yet: its key is missing on the server.' };
-    const { code, e, image: sample, error } = this.catalogColour(asked);
-    if (error) return { text: error };
-    const system = fill(DESIGN_RULES, this.cfg).replace('{CODE}', code).replace('{KIND}', e.kind || e.catalogue || 'decorative film');
-    const scene = String(await this.write({ kind: 'design-prompt', system, text: note ? `The owner's words: ${note}` : 'The owner gave no words.', image: sample, mime: 'image/jpeg' }) || '').trim();
-    if (!scene) return { text: 'No design description could be written; try again.' };
+    let code = '';
+    if (asked) { const c = this.catalogColour(asked); if (c.error) return { text: c.error }; code = c.code; }
+    await this.ensureLooks();
+    const plan = await this.designPlan({ code, note });
+    if (plan.error) return { text: plan.error };
+    const all = this.catalog();
     let made;
     try {
-      made = await this.imager.make({ prompt: `${scene}\nThe attached picture is the exact surface film (colour code ${code}): reproduce its colour, pattern and scale faithfully on those fronts. Photorealistic, 4:5 portrait.`, images: [{ buffer: sample, mime: 'image/jpeg' }] });
+      const images = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
+      made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. Photorealistic, 4:5 portrait.`, images });
     } catch (err) {
-      this.log(`social: design ${code} failed: ${err.message}`);
-      return { text: `The design of colour ${code} could not be made: ${err.message}` };
+      this.log(`social: design failed: ${err.message}`);
+      return { text: `The design could not be made: ${err.message}` };
     }
-    const facts = `This picture is an AI design idea (not a photo of a finished job) showing colour code ${code} from the ${e.catalogue}${e.kind ? ` (${e.kind})` : ''}. Say in the caption that it is a design idea made with «Code ${code}».`;
+    const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.`;
     const before = new Set(Object.keys(this.store.d.posts));
     const text = await this.draftPost({ image: made.image, mime: made.mime, note, facts });
     const p = this.store.d.posts[Object.keys(this.store.d.posts).find((k) => !before.has(k))];
-    if (p) { p.design = { code, scene }; this.store.save(); }
-    return { text, image: p?.file ? fs.readFileSync(p.file) : made.image };
+    if (!p) return { text };
+    p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene };
+    (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes: p.design.codes });
+    this.store.d.designs = this.store.d.designs.slice(-40);
+    this.store.save();
+    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, plan.why_fa || '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
+    return { text: `${head}\n\n${text}`, image: p.file ? fs.readFileSync(p.file) : made.image };
   }
+
+  /** Design drafts still waiting for the owner's answer: the daily proposal waits while there are [max]. */
+  designsWaiting() { return Object.values(this.store.d.posts).filter((p) => p.design && p.state === 'draft').length; }
 
   postPreview(id) {
     const p = this.store.d.posts[id];
@@ -332,7 +396,8 @@ export class SocialDesk {
     const p = this.store.d.posts[c.id];
     if (!p) return `There is no post #${c.id}.`;
     if (p.state !== 'draft') return `Post #${c.id} was already ${p.state}.`;
-    if (c.verb === 'no') { p.state = 'cancelled'; this.store.save(); return `Post #${c.id} cancelled; nothing was posted.`; }
+    if (p.design && (c.verb === 'no' || c.verb === 'yes')) this.addTaste(`${c.verb === 'yes' ? 'Approved' : 'Rejected'}: ${p.design.room} with ${p.design.codes.join(' + ')}${c.text ? `: ${c.text}` : ''}`);
+    if (c.verb === 'no') { p.state = 'cancelled'; this.store.save(); return `Post #${c.id} cancelled; nothing was posted.${p.design ? (c.text ? ' Your reason is kept for the next designs.' : ' (A reason after the number, e.g. «نه پست 5 too dark», teaches the designer.)') : ''}`; }
     if (c.verb === 'edit') { p.caption = c.text; this.store.save(); return this.postPreview(c.id); }
     if (c.verb !== 'yes') return null;
     const image = p.file ? fs.readFileSync(p.file) : Buffer.from(p.image || '', 'base64');
@@ -441,7 +506,9 @@ export class SocialDesk {
     return `#${c.id}: answer sent to ${it.name} on ${it.platform === 'instagram' ? 'Instagram' : 'Facebook'}.`;
   }
 
+  addTaste(text) { (this.store.d.taste ||= []).push({ at: this.now(), text }); this.store.d.taste = this.store.d.taste.slice(-40); this.store.save(); }
   async handle(c) {
+    if (c.verb === 'taste') { this.addTaste(`The owner says: ${c.text}`); return 'Noted for the next designs.'; }
     if (c.verb === 'status') return this.statusText();
     if (c.verb === 'leads') return this.leadsText();
     return c.kind === 'SP' ? this.decidePost(c) : this.decideReply(c);

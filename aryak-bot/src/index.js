@@ -2474,7 +2474,7 @@ async function handleStaffChat(raw, chatId, group) {
     const dr = !imageOf(content) ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
     if (dr && isOwner()) {
       trace(where, 'owner', `social: design with colour ${dr.code}`);
-      await socialSay(`Drawing a design with colour ${dr.code}… (about a minute)`);
+      await socialSay(dr.code ? `The designer is working on a design around colour ${dr.code}… (one or two minutes)` : 'The designer is working on a proposal… (one or two minutes)');
       const d = await socialDesk.draftDesign(dr);
       await socialSay(d.text, d.image || null);
       return true;
@@ -3739,9 +3739,9 @@ const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), log: (s) => logger.info(s),
   imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel }),
-  write: async ({ system, text, image, mime }) => {
+  write: async ({ system, text, image, mime, effort = 'low', maxTokens = 800 }) => {
     const content = [...(image ? [{ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: image.toString('base64') } }] : []), { type: 'text', text }];
-    const res = await client.beta.messages.create({ model: config.model, max_tokens: 800, system, messages: [{ role: 'user', content }], output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+    const res = await client.beta.messages.create({ model: config.model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }], output_config: { effort }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
   },
 });
@@ -3762,6 +3762,23 @@ if (config.social.enabled) {
       for (const n of await socialDesk.poll()) await socialSay(n);
     } catch (e) { logger.warn(`social: the look at Instagram and Facebook failed: ${e.message}`); }
   }, config.social.pollMinutes * 60 * 1000).unref();
+  // the designer's proposal of the day (the owner, 15/11: «she is the designer, I approve or reject»): once a day from SOCIAL_DESIGN_HOUR,
+  // never while 3 of her designs still wait for his answer
+  let designing = false;
+  setInterval(async () => {
+    if (designing || config.social.designHour < 0 || !sock?.user || botState.paused || !socialDesk.imager?.enabled) return;
+    const p = localParts(Date.now(), config.timezone);
+    if (p.minutes < config.social.designHour * 60 || socialStore.d.designDay === p.day || socialDesk.designsWaiting() >= 3) return;
+    designing = true;
+    try {
+      socialStore.d.designDay = p.day; socialStore.save();
+      await socialDesk.ready();
+      if (!socialDesk.enabled) return;
+      const d = await socialDesk.draftDesign({});
+      await socialSay(d.text, d.image || null);
+      logger.info('social: the designer\'s proposal of the day was sent');
+    } catch (e) { logger.warn(`social: the proposal of the day failed: ${e.message}`); } finally { designing = false; }
+  }, 10 * 60 * 1000).unref();
 }
 
 // 19:00 Dubai time: the daily expenses report in the expenses group (never salaries, rent or QuickBooks figures there) and the money received report to the owner only; on Thursday the week and the check

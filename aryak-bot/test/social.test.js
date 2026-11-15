@@ -189,12 +189,21 @@ test('a tall phone photo is cut to 4:5 for Instagram; a square one is kept; an u
   assert.equal((await fitForInstagram(Buffer.from('not a picture'))).toString(), 'not a picture');
 });
 
-test('«طرح ۸۳۲ کمد دیواری»: a design request by its code, in any digits, with the owner words', () => {
+test('«طرح»: alone the designer chooses; with a room; with a code built around it; any digits', () => {
   assert.deepEqual(designRequest('طرح ۸۳۲ کمد دیواری'), { code: '832', note: 'کمد دیواری' });
   assert.deepEqual(designRequest('طرح اچ‌زد ۸۱۶: آشپزخانه مدرن'), { code: 'HZ816', note: 'آشپزخانه مدرن' });
   assert.deepEqual(designRequest('design 212 kitchen'), { code: '212', note: 'kitchen' });
-  assert.equal(designRequest('طرح جدید آشپزخانه'), null, 'no code, no design');
+  assert.deepEqual(designRequest('طرح'), { code: '', note: '' });
+  assert.deepEqual(designRequest('پیشنهاد طرح'), { code: '', note: '' });
+  assert.deepEqual(designRequest('طرح آشپزخانه ویلا'), { code: '', note: 'آشپزخانه ویلا' });
+  assert.equal(designRequest('طراحی جدید'), null, 'another word');
   assert.equal(designRequest('پست کاتالوگ ۸۳۲'), null);
+});
+
+test('the owner teaches the designer: a no with its reason, «سلیقه …»', () => {
+  assert.deepEqual(parseSocialCommand('نه پست ۵ خیلی تیره است'), { verb: 'no', kind: 'SP', id: 'SP5', text: 'خیلی تیره است' });
+  assert.deepEqual(parseSocialCommand('no #SP5'), { verb: 'no', kind: 'SP', id: 'SP5' });
+  assert.deepEqual(parseSocialCommand('سلیقه: رنگ‌های روشن و چوب گرم'), { verb: 'taste', text: 'رنگ‌های روشن و چوب گرم' });
 });
 
 test('Gemini: the sample goes in as a picture with the prompt, 4:5 is asked, the final picture comes out; its error is said', async () => {
@@ -218,33 +227,74 @@ test('Gemini: the sample goes in as a picture with the prompt, 4:5 is asked, the
   assert.equal(new GeminiImage({ apiKey: '' }).enabled, false);
 });
 
-test('a design: the scene is written from the sample, Gemini draws it, the picture becomes a draft the owner sees; nothing reaches Meta', async () => {
+test('the designer: looks once, a plan of films from the list, each film\'s picture labelled for Gemini, a draft with Persian reasons; the owner\'s answers teach her', async () => {
   const cat = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-'));
-  fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ832: { file: 'HZ832.jpg', catalogue: 'TEST signature catalogue', kind: 'stone look' } }));
+  fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ832: { file: 'HZ832.jpg', catalogue: 'TEST signature', kind: 'stone look' }, HZ818: { file: 'HZ818.jpg', catalogue: 'TEST signature', kind: 'solid colour' } }));
   fs.writeFileSync(path.join(cat, 'HZ832.jpg'), Buffer.from('SAMPLE-832'));
-  const media = dir();
+  fs.writeFileSync(path.join(cat, 'HZ818.jpg'), Buffer.from('SAMPLE-818'));
   const writes = [];
   const made = [];
   const g = fakeGraph({});
+  const plan = { title_fa: 'کمد سنگی با قاب کرم', why_fa: 'سنگ تیره با کرم روشن تعادل می‌سازد.', room: 'master bedroom wardrobe', parts: [{ code: 'hz832', where: 'wardrobe doors', where_fa: 'درهای کمد' }, { code: 'HZ818', where: 'side panels', where_fa: 'بدنه‌ها' }, { code: 'XX999', where: 'ceiling' }], scene: 'A calm bedroom; the wardrobe doors in film HZ832, side panels in film HZ818.' };
+  const write = async (r) => { writes.push(r); return r.kind === 'look' ? `look of ${r.text.split(' ')[1]}` : r.kind === 'design-plan' ? `Here:\n${JSON.stringify(plan)}` : 'Design idea with Code HZ832 and Code HZ818.'; };
   const imager = { enabled: true, make: async (r) => { made.push(r); return { image: Buffer.from('ROOM'), mime: 'image/png' }; } };
-  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: media, imager,
-    write: async (r) => { writes.push(r); return r.kind === 'design-prompt' ? 'A bright wardrobe wall in dark stone film.' : 'Design idea with Code HZ832.'; } });
-  const out = await desk.draftDesign(designRequest('طرح ۸۳۲ کمد دیواری'));
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: dir(), imager, write });
+  const out = await desk.draftDesign(designRequest('طرح کمد دیواری'));
+  // the looks: asked once from each picture, kept in catalog.json
+  assert.equal(writes.filter((w) => w.kind === 'look').length, 2);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(cat, 'catalog.json'), 'utf8')).HZ818.look, 'look of HZ818');
+  // the plan: the designer reads every film's look and the owner's words
+  const asked = writes.find((w) => w.kind === 'design-plan');
+  assert.match(asked.text, /HZ832: look of HZ832 \[TEST signature\]/);
+  assert.match(asked.text, /The owner's words: کمد دیواری/);
+  assert.equal(asked.effort, 'medium');
+  // Gemini: each film's own picture, labelled with its place; an unknown code is dropped
+  assert.deepEqual(made[0].images.map((i) => [i.label, i.buffer.toString()]), [['Reference: film HZ832, for wardrobe doors', 'SAMPLE-832'], ['Reference: film HZ818, for side panels', 'SAMPLE-818']]);
+  assert.match(made[0].prompt, /^A calm bedroom; .*\nEach labelled reference picture is the exact surface film/);
+  // the draft: the picture, the designer's Persian reasons above the caption
+  assert.equal(out.image.toString(), 'ROOM');
+  assert.match(out.text, /^پیشنهاد طراحی: کمد سنگی با قاب کرم\nسنگ تیره با کرم روشن تعادل می‌سازد\.\n• کد HZ832: درهای کمد\n• کد HZ818: بدنه‌ها/);
   assert.match(out.text, /Post #SP1/);
-  assert.equal(out.image.toString(), 'ROOM', 'the owner sees the drawn room');
-  assert.equal(writes[0].kind, 'design-prompt');
-  assert.equal(writes[0].image.toString(), 'SAMPLE-832');
-  assert.match(writes[0].system, /colour code HZ832, stone look/);
-  assert.match(writes[0].text, /کمد دیواری/);
-  assert.match(made[0].prompt, /^A bright wardrobe wall in dark stone film\.\nThe attached picture is the exact surface film \(colour code HZ832\)/);
-  assert.equal(made[0].images[0].buffer.toString(), 'SAMPLE-832');
-  assert.match(writes[1].text, /AI design idea \(not a photo of a finished job\) showing colour code HZ832/);
-  assert.equal(desk.store.d.posts.SP1.design.code, 'HZ832');
+  assert.match(writes.at(-1).text, /AI design idea \(not a photo of a finished job\): master bedroom wardrobe, made with «Code HZ832» \(wardrobe doors\), «Code HZ818» \(side panels\)/);
+  assert.equal(desk.designsWaiting(), 1);
   assert.equal(g.calls.length, 0, 'nothing reaches Meta before the yes');
-  // no key: said, nothing drawn; a failure of Gemini: said with its words, no draft
-  assert.match((await new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, write: async () => 'x' }).draftDesign({ code: '832' })).text, /not connected yet/);
-  const failing = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, imager: { enabled: true, make: async () => { throw new Error('Gemini: quota'); } }, write: async () => 'scene' });
-  const f = await failing.draftDesign({ code: 'HZ832' });
-  assert.match(f.text, /could not be made: Gemini: quota/);
+  // a no with its reason is kept; the next plan reads it and the recent proposal
+  assert.match(await desk.handle({ verb: 'no', kind: 'SP', id: 'SP1', text: 'too dark' }), /reason is kept/);
+  assert.match(await desk.handle({ verb: 'taste', text: 'light colours' }), /Noted/);
+  await desk.draftDesign({});
+  const second = writes.filter((w) => w.kind === 'design-plan')[1];
+  assert.match(second.text, /Rejected: master bedroom wardrobe with HZ832 \+ HZ818: too dark/);
+  assert.match(second.text, /The owner says: light colours/);
+  assert.match(second.text, /recent proposals[\s\S]*- master bedroom wardrobe: HZ832 \+ HZ818/);
+  assert.equal(writes.filter((w) => w.kind === 'look').length, 2, 'the looks are not asked again');
+});
+
+test('the designer around a code: the code is kept as the main film; no key, an unknown code, a bad plan or a failed picture are said, no draft', async () => {
+  const cat = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-'));
+  fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ832: { file: 'HZ832.jpg', catalogue: 'T', look: 'dark stone' }, HZ818: { file: 'HZ818.jpg', catalogue: 'T', look: 'cream' } }));
+  fs.writeFileSync(path.join(cat, 'HZ832.jpg'), Buffer.from('S832'));
+  fs.writeFileSync(path.join(cat, 'HZ818.jpg'), Buffer.from('S818'));
+  const g = fakeGraph({});
+  const made = [];
+  const plan = { title_fa: 'ت', why_fa: 'چ', room: 'kitchen', parts: [{ code: 'HZ818', where: 'upper doors' }], scene: 'A kitchen.' };
+  const writes = [];
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, imager: { enabled: true, make: async (r) => { made.push(r); return { image: Buffer.from('R'), mime: 'image/png' }; } },
+    write: async (r) => { writes.push(r); return r.kind === 'design-plan' ? JSON.stringify(plan) : 'caption'; } });
+  await desk.draftDesign(designRequest('طرح ۸۳۲ آشپزخانه'));
+  assert.match(writes[0].text, /built around film HZ832: it is the main film/);
+  assert.deepEqual(made[0].images.map((i) => i.buffer.toString()), ['S832', 'S818'], 'the asked code is added when the designer left it out');
+  assert.match((await new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, write: async () => 'x' }).draftDesign({})).text, /not connected yet/);
+  assert.match((await desk.draftDesign({ code: '999' })).text, /no colour 999/);
+  const bad = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, imager: { enabled: true, make: async () => ({}) }, write: async () => 'no json here' });
+  assert.match((await bad.draftDesign({})).text, /gave no plan/);
+  const failing = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, imager: { enabled: true, make: async () => { throw new Error('Gemini: quota'); } }, write: async () => JSON.stringify(plan) });
+  assert.match((await failing.draftDesign({})).text, /could not be made: Gemini: quota/);
   assert.equal(Object.keys(failing.store.d.posts).length, 0);
+});
+
+test('Gemini: a label goes before its reference picture', async () => {
+  let body;
+  const gi = new GeminiImage({ apiKey: 'K', fetchImpl: async (u, o) => { body = JSON.parse(o.body); return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'UA==' } }] } }] }) }; } });
+  await gi.make({ prompt: 'P', images: [{ label: 'Reference: film A', buffer: Buffer.from('A') }, { buffer: Buffer.from('B') }] });
+  assert.deepEqual(body.contents[0].parts.map((x) => x.text || Buffer.from(x.inline_data.data, 'base64').toString()), ['Reference: film A', 'A', 'B', 'P']);
 });

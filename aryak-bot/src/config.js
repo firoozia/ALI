@@ -156,6 +156,7 @@ export function loadConfig(env = process.env) {
       // «طرح ۸۳۲ …»: design ideas drawn by Google's image model with a catalogue colour (the owner, 15/11); no key, no designs
       geminiKey: (env.GEMINI_API_KEY || '').trim(),
       geminiImageModel: (env.GEMINI_IMAGE_MODEL || 'gemini-nano-banana-2.1').trim(),
+      designHour: /^off$/i.test(env.SOCIAL_DESIGN_HOUR || '') ? -1 : Math.min(23, Math.max(0, Number(env.SOCIAL_DESIGN_HOUR || 10))), // the designer's proposal of the day, Dubai time
     },
     kbDir: env.KB_DIR || './kb',
     // "Master Wood – ARYAK" -> "Master Wood"
