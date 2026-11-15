@@ -306,7 +306,8 @@ export class SocialDesk {
   async draftPost({ image, mime = 'image/jpeg', note = '', facts = '', fitted = false }) {
     await this.ready();
     if (!this.enabled) return 'Instagram and Facebook are not connected yet, so nothing can be posted.';
-    if (!fitted) { image = await fitForInstagram(image); mime = 'image/jpeg'; } // a tall phone photo is cut to 4:5, or Instagram refuses it
+    // a tall phone photo is cut to 4:5, or Instagram refuses it; the owner's own photos carry the logo like every post (15/11)
+    if (!fitted) { image = await brandDesign(await fitForInstagram(image), this.brandAssets()); mime = 'image/jpeg'; }
     const ask = [facts, note ? `The owner's note: ${note}` : facts ? '' : 'The owner gave no note; describe what the photo shows.'].filter(Boolean).join('\n');
     const caption = String(await this.write({ kind: 'caption', system: fill(CAPTION_RULES, this.cfg), text: ask, image, mime }) || '').trim();
     if (!caption) return 'No caption could be written; send the photo again.';

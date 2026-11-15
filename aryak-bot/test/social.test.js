@@ -336,3 +336,18 @@ test('a catalogue post carries the logo too; without a logo on the server the pi
   await make('').draftFromCatalog({ code: '212' });
   assert.ok(seen[1].equals(sample), 'no logo on the server: the picture as it is');
 });
+
+test('the owner\'s own photo carries the logo too, after the 4:5 cut', async () => {
+  const sharp = (await import('sharp')).default;
+  const brand = fs.mkdtempSync(path.join(os.tmpdir(), 'brand-'));
+  fs.writeFileSync(path.join(brand, 'logo.png'), await sharp({ create: { width: 200, height: 150, channels: 4, background: { r: 214, g: 178, b: 94, alpha: 1 } } }).png().toBuffer());
+  const photo = await sharp({ create: { width: 900, height: 1600, channels: 3, background: '#808080' } }).jpeg().toBuffer();
+  const seen = [];
+  const desk = new SocialDesk({ client: client(fakeGraph({}).fetchImpl), store: new SocialStore(''), brandDir: brand, write: async (r) => { seen.push(r.image); return 'caption'; } });
+  await desk.draftPost({ image: photo, note: 'new job' });
+  const m = await sharp(seen[0]).metadata();
+  assert.deepEqual([m.width, m.height], [900, 1125], 'cut to 4:5 first');
+  const { data, info } = await sharp(seen[0]).raw().toBuffer({ resolveWithObject: true });
+  const at = (x, y) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)];
+  assert.ok(Math.abs(at(40, 40)[0] - 214) < 40 && Math.abs(at(40, 40)[2] - 94) < 40, 'the gold logo in the top corner');
+});
