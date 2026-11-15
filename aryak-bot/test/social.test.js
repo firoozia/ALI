@@ -266,7 +266,7 @@ test('the designer: looks once, a plan of films from the list, each film\'s pict
   const second = writes.filter((w) => w.kind === 'design-plan')[1];
   assert.match(second.text, /Rejected: master bedroom wardrobe with HZ832 \+ HZ818: too dark/);
   assert.match(second.text, /The owner says: light colours/);
-  assert.match(second.text, /recent proposals[\s\S]*- master bedroom wardrobe: HZ832 \+ HZ818/);
+  assert.match(second.text, /recent compositions[\s\S]*- master bedroom wardrobe: HZ832 \+ HZ818/);
   assert.equal(writes.filter((w) => w.kind === 'look').length, 2, 'the looks are not asked again');
 });
 

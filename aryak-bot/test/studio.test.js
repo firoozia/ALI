@@ -123,6 +123,33 @@ test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that cat
   assert.match(made[before].prompt, /highest quality/);
 });
 
+test('Atossa and Dariush: he reads every plan before it is drawn, she revises what he sends back; the talk is shown; no composition twice', async () => {
+  const { desk, writes } = await studio();
+  const base = desk.write;
+  const first = { title_fa: 'اول', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors' }], signature: 'modern kitchen, island with drum pendants, frontal', scene: 'A kitchen.' };
+  const second = { title_fa: 'دوم', room: 'majlis', parts: [{ code: 'HZ812', where: 'wall panels' }], signature: 'Arabic contemporary majlis, low seating, panelled wall, corner view', scene: 'A majlis.' };
+  desk.store.d.designs = [{ room: 'kitchen', codes: ['HZ812'], signature: 'modern kitchen, island with drum pendants, frontal' }];
+  desk.write = async (r) => {
+    if (r.kind === 'critique') return JSON.stringify([{ verdict: 'revise', notes: ['the same island again: make it a majlis'], hook: 'Walnut that hosts the evening', dialogue_fa: 'داریوش: تکراری است. آتوسا: مجلس می‌کنم.' }]);
+    if (r.kind === 'design-plan') return JSON.stringify(/Dariush, your marketing partner/.test(r.text) ? second : first);
+    return base(r);
+  };
+  const plan = await desk.designPlan({ code: 'HZ812' });
+  assert.equal(plan.room, 'majlis', 'the revised plan is the one drawn');
+  assert.equal(plan.hook, 'Walnut that hosts the evening');
+  assert.match(plan.dialogue_fa, /داریوش/);
+  const asks = [];
+  desk.write = async (r) => { asks.push(r); return r.kind === 'critique' ? JSON.stringify([{ verdict: 'ok', notes: [], hook: 'h', dialogue_fa: 'خوب است' }]) : JSON.stringify(second); };
+  await desk.designPlan({ code: 'HZ812' });
+  assert.match(asks.find((r) => r.kind === 'critique').text, /island with drum pendants/, 'Dariush sees the recent compositions');
+  assert.match(asks.find((r) => r.kind === 'design-plan').text, /never repeat them[\s\S]*island with drum pendants/, 'Atossa sees them too');
+  assert.equal(asks.filter((r) => r.kind === 'design-plan').length, 1, 'an ok plan is not written twice');
+  desk.remember(second);
+  assert.match(desk.recentCompositions(), /Arabic contemporary majlis/);
+  desk.write = async () => 'not json';
+  assert.deepEqual(await desk.challenge([second]), [], 'Dariush unreadable: the plans stay as they are');
+});
+
 test('one yes: both pictures as one swipeable post on Facebook and Instagram, then the Reel on both', async () => {
   let photo = 0;
   const routes = {

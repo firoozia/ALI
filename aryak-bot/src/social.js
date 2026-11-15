@@ -274,6 +274,21 @@ These are interior pictures from today's design press. For each one, write one s
 export const FOCUS_RULES = `Look at this interior picture. Give the point at the centre of the largest, best-lit area of the named film, where its colour and texture show best.
 x and y go from 0 to 1, from the left and from the top. Answer with JSON only, for example {"x":0.62,"y":0.41}.`;
 
+export const DARIUSH = `You are Dariush, ARYAK's marketing strategist and Atossa's sparring partner. Atossa designs; you make sure every design sells the films on Instagram, TikTok and Facebook and never looks like the last one. The audience: UAE carpentry workshops, kitchen and wardrobe makers, contractors, designers and villa owners. Your one question: would a joiner send this to a client? (Instagram's top signals are watch time, likes and sends; sends reach new people.)
+- Novelty first: if a plan repeats a recent composition (same room type with the same layout and key elements), or shares the room type and the camera angle with any of the last three, send it back with a concrete different idea (another room, layout, camera and focal length, style, time of day and light, palette). Lived-in details and real props beat the sterile AI look.
+- The design rules: at most three finishes, 60-30-10, matched undertones, one loud pattern, pattern scale fits the surface, grain in one direction.
+- The hook: in the first two seconds the viewer sees motion or the payoff (the film filling the frame in raking light, the finished room), never a logo; a 5 to 7 word keyword headline. The film is the hero, not the furniture.
+- Proof: a benefit (anti-fingerprint, scratch resistance, super-matte) only with a visible test or a spec; never an absolute ("scratch-proof").
+- Useful and saveable: a clear pairing idea or a detail worth copying; the film code and its place named.
+- Gulf taste: modern Arabic, majlis and hosting-ready kitchens fit; Ramadan and Eid renovation, 2 December, September; no alcohol, bar carts, wine or ashtrays, no religious text as decor, people modest if any.
+- Honest: it is a design idea made with AI; the film shown is a real ARYAK film.
+Be short and concrete; praise only what earns it.`;
+
+export const DARIUSH_RULES = `${DARIUSH}
+Read Atossa's plans. Answer with a JSON array, one object per plan in the same order:
+[{"verdict":"ok" or "revise","notes":["short concrete changes (empty when ok)"],"hook":"the post's hook in English, 3 to 6 words, the first line of the caption","dialogue_fa":"two short Persian sentences for the owner: what Dariush said and what Atossa changes or keeps"}]
+Output only the JSON.`;
+
 export const LOOK_RULES = `Describe this decorative film sample for an interior designer in at most 18 English words:
 its colour (warm or cool; light, medium or dark), its pattern (solid colour; the wood it looks like and its grain; stone, concrete or marble and its veins) and its finish.
 Output only the description.`;
@@ -284,10 +299,11 @@ You design the rooms that sell our decorative films: a client must look at the p
 - Combine one to three films from the list (only codes from the list), the way the best designers do: a main film with character (a rich wood grain or a stone with movement), a second that contrasts (a solid colour, light against dark, warm against cool), at most a small accent; the 60-30-10 balance.
 - Use today's notes from the world's design press when they fit: say in inspiration_fa which idea you took and from where.
 - The picture must be rich and alive, never plain or empty: layered warm lighting (golden late-afternoon sun through the windows, hidden LED strips grazing the panels so the grain and texture show), fine details (handleless grooves, slim brass or black metal profiles, fluted glass, a marble or quartz worktop, open shelves with styled objects, plants, books, ceramics), depth (a second room or a view beyond), real reflections and soft shadows.
-- Luxury, current and livable, for villas and apartments in the UAE. Vary the room and the style from your recent proposals; follow the owner's notes.
+- Luxury, current and livable, for villas and apartments in the UAE. Follow the owner's notes.
+- Never repeat a composition (the owner, 15/11: «we must be different»): your recent compositions are listed; change the room type, or at least the layout, the camera angle, the light and the key elements (no second island with drum pendants in front of a wall of tall doors). Rotate styles: Arabic contemporary, Japandi, organic modern, classic shaker, mid-century, minimal monolith, warm industrial, coastal Gulf villa; and rooms: kitchen, walk-in closet, wardrobe wall, TV wall, majlis, home office, library, vanity and bathroom, entrance and console, bedroom headboard wall, kids room, hotel suite, reception desk, dining sideboard.
 - The scene: ONE English paragraph of 120 to 180 words for an image model, written as the brief of an editorial photograph for a luxury interior magazine: the camera (35 mm lens, eye level, three-quarter view, slightly close so the film texture is crisp), the light, the materials, each film named by the fronts it covers ("the tall wardrobe doors in film HZ812, its walnut grain running vertically, lit by a warm LED strip"). No people, no text, no logos.
 Answer with JSON only:
-{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","music":"one English line for the background music of this room's Reel: the mood, the instruments and the tempo, calm and elegant (no artist or song names)","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"scene":"the English paragraph"}`;
+{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","music":"one English line for the background music of this room's Reel: the mood, the instruments and the tempo, calm and elegant (no artist or song names)","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"signature":"one English line: style, room, layout and its three key elements, camera angle","scene":"the English paragraph"}`;
 
 /**
  * The owner's mark on a design picture (15/11): the ARYAK logo in the top corner and, along the bottom, a band with each film's swatch
@@ -525,7 +541,7 @@ export class SocialDesk {
     const text = [
       'The films (code: look [catalogue]):',
       ...Object.entries(all).map(([k, e]) => `${k}: ${e.look || e.kind || 'decorative film'} [${e.catalogue || ''}]`),
-      (d.designs || []).length ? `\nYour recent proposals (vary from them):\n${d.designs.slice(-12).map((x) => `- ${x.room}: ${x.codes.join(' + ')}`).join('\n')}` : '',
+      this.recentCompositions() ? `\nYour recent compositions (never repeat them):\n${this.recentCompositions()}` : '',
       (d.taste || []).length ? `\nThe owner's notes on your earlier proposals (follow them):\n${d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
       this.todayTrends() ? `\nToday's notes from the world's design press (your own research this morning):\n${this.todayTrends()}` : '',
       code ? `\nThe owner asks for a design built around film ${code}: it is the main film.` : '',
@@ -540,6 +556,14 @@ export class SocialDesk {
       try { plan = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { this.log(`social: the plan was not JSON (${raw.length} characters)`); }
     }
     if (!plan) return { error: 'The designer gave no plan; try again.' };
+    // Dariush challenges the plan before anything is drawn; Atossa revises once when he asks (the owner, 15/11: two characters, a talk, the best)
+    const [review] = await this.challenge([plan]);
+    if (review?.verdict === 'revise' && review.notes?.length) {
+      const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text: `${text}\n\nYour first plan:\n${JSON.stringify(plan)}\n\nDariush, your marketing partner, asks for these changes:\n${review.notes.map((x) => `- ${x}`).join('\n')}\nRevise the plan; answer with the full JSON.`, effort: 'medium', maxTokens: 12000, ...(inspiration ? { image: inspiration.image, mime: inspiration.mime || 'image/jpeg' } : {}) }) || '');
+      try { const revised = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); if (revised?.scene) plan = revised; } catch { this.log('social: the revised plan was not JSON; the first one stays'); }
+    }
+    plan.hook = review?.hook || plan.hook || '';
+    plan.dialogue_fa = review?.dialogue_fa || '';
     plan.parts = (Array.isArray(plan.parts) ? plan.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => all[p.code]).slice(0, 4);
     if (code && !plan.parts.some((p) => p.code === code)) plan.parts.unshift({ code, where: 'the main fronts', where_fa: 'سطح اصلی' });
     if (!plan.parts.length || !plan.scene) return { error: 'The designer chose no colour of the catalogues; try again.' };
@@ -601,7 +625,7 @@ export class SocialDesk {
    */
   async produceDesign({ plan, roomRaw, note = '', size = '' }) {
     const all = this.catalog();
-    const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.`;
+    const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.${plan.hook ? ` Open the caption with this hook, the line that stops the scroll: «${plan.hook}».` : ''}`;
     // the owner's mark (15/11): the ARYAK logo in the top corner, each film's swatch and code along the bottom
     const codes = plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
     const room = await fitForInstagram(roomRaw);
@@ -628,10 +652,8 @@ export class SocialDesk {
     if (this.reel) {
       try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
-    (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes: p.design.codes });
-    this.store.d.designs = this.store.d.designs.slice(-40);
-    this.store.save();
-    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
+    this.remember(plan);
+    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
     const extra = [details.length ? `${details.length} close-up${details.length > 1 ? 's' : ''} (${details.map((x) => x.code).join(', ')})` : '', video ? 'a Reel' : ''].filter(Boolean).join(' and ');
     return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}`,
       image: p.file ? fs.readFileSync(p.file) : image, details, detail: details[0]?.image || null, video };
@@ -656,6 +678,7 @@ export class SocialDesk {
       this.todayLooks() ? `\nWhat today's press pictures show:\n${this.todayLooks()}` : '',
       (this.store.d.taste || []).length ? `\nThe owner's notes (follow them):\n${this.store.d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
       note ? `\nThe owner's words: ${note}` : '',
+      this.recentCompositions() ? `\nYour recent compositions (never repeat them, and make the ${n} concepts differ from each other in room, layout, style and camera):\n${this.recentCompositions()}` : '',
       `\nPropose ${n} different concepts: at least one that uses a single film alone (a monochrome room that lets one film speak), the others your best pairings of two or three films. Each a different room. Answer with a JSON array of ${n} objects in the plan format.`,
     ].filter(Boolean).join('\n');
     let plans = null;
@@ -664,6 +687,14 @@ export class SocialDesk {
       try { plans = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { this.log(`social: the concepts were not JSON (${raw.length} characters)`); }
     }
     if (!Array.isArray(plans)) return [{ n: 0, text: 'The designer gave no concepts; try again.' }];
+    // Dariush looks at all of them before anything is drawn; the ones he sends back are revised together, once
+    const reviews = await this.challenge(plans);
+    if (reviews.some((r) => r?.verdict === 'revise' && r.notes?.length)) {
+      const asks = reviews.map((r, i) => (r?.verdict === 'revise' && r.notes?.length ? `Concept ${i + 1}: ${r.notes.join('; ')}` : `Concept ${i + 1}: keep`)).join('\n');
+      const raw = String(await this.write({ kind: 'concepts', system: fill(DESIGNER_RULES, this.cfg), text: `${text}\n\nYour first concepts:\n${JSON.stringify(plans)}\n\nDariush, your marketing partner, asks:\n${asks}\nRevise them; answer with the full JSON array of ${n}.`, effort: 'medium', maxTokens: 20000 }) || '');
+      try { const revised = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); if (Array.isArray(revised) && revised.length) plans = revised; } catch { this.log('social: the revised concepts were not JSON; the first ones stay'); }
+    }
+    plans.forEach((pl, i) => { pl.hook = reviews[i]?.hook || pl.hook || ''; pl.dialogue_fa = reviews[i]?.dialogue_fa || ''; });
     const items = [];
     for (const pl of plans.slice(0, n)) {
       pl.parts = (Array.isArray(pl.parts) ? pl.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => allowed.includes(p.code)).slice(0, 3);
@@ -675,12 +706,13 @@ export class SocialDesk {
         if (file) { fs.mkdirSync(this.mediaDir, { recursive: true }); fs.writeFileSync(file, raw); }
         const preview = await brandDesign(await fitForInstagram(raw), { ...this.brandAssets(), codes: pl.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })) });
         items.push({ n: k, plan: pl, file, image: file ? undefined : raw.toString('base64'), preview });
+        this.remember(pl); // a concept shown is a composition used, chosen or not
       } catch (err) { this.log(`social: concept failed: ${err.message}`); }
     }
     this.store.d.concepts = { at: this.now(), family, items: items.map(({ preview, ...x }) => x) };
     this.store.save();
     if (!items.length) return [{ n: 0, text: 'No concept could be drawn; try again.' }];
-    return items.map((x) => ({ n: x.n, image: x.preview, text: [`پیشنهاد شمارهٔ ${x.n}: ${x.plan.title_fa || x.plan.room}`, x.plan.why_fa || '', ...x.plan.parts.map((p) => `• کد ${p.code}: ${p.where_fa || p.where}`)].filter(Boolean).join('\n') }));
+    return items.map((x) => ({ n: x.n, image: x.preview, text: [`پیشنهاد شمارهٔ ${x.n}: ${x.plan.title_fa || x.plan.room}`, x.plan.why_fa || '', ...x.plan.parts.map((p) => `• کد ${p.code}: ${p.where_fa || p.where}`), x.plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${x.plan.dialogue_fa}` : ''].filter(Boolean).join('\n') }));
   }
 
   /** «شماره ۱ …»: that concept, edited as the owner says (when he says something), then produced in full (close-ups, Reel, draft #SP). */
@@ -786,6 +818,34 @@ export class SocialDesk {
     // each film's close-up in turn: wood grain longer and closer (the owner, 15/11), the others a shorter, gentler look
     const details = shots ? shots.map((sh) => ({ image: sh.raw, seconds: sh.wood ? 4.5 : 3, zoom: sh.wood ? 0.18 : 0.1 })) : detail ? [{ image: detail, seconds: 4, zoom: 0.12 }] : [];
     return this.reel({ room, details, focus, overlay, card, music: await this.reelMusic(mood) });
+  }
+
+  /** A composition used (a produced design or a concept shown): its signature is kept so it is never made again (last 40). */
+  remember(plan) {
+    (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes: (plan.parts || []).map((x) => x.code), signature: plan.signature || '' });
+    this.store.d.designs = this.store.d.designs.slice(-40);
+    this.store.save();
+  }
+  /** The last compositions, one line each, for the designer and for Dariush. */
+  recentCompositions(max = 15) {
+    return (this.store.d.designs || []).slice(-max).map((x) => `- ${x.signature || x.room}: ${(x.codes || []).join(' + ')}`).join('\n');
+  }
+
+  /**
+   * Dariush, Atossa's marketing partner, reads the plans before anything is drawn: novelty against the recent compositions, the design
+   * rules, the marketing (scroll-stopping, the film filling the frame, saveable, Gulf taste). One answer per plan: { verdict, notes, hook,
+   * dialogue_fa }; when he cannot be read, every plan is taken as it is.
+   */
+  async challenge(plans) {
+    try {
+      const raw = String(await this.write({ kind: 'critique', system: fill(DARIUSH_RULES, this.cfg), text: [
+        'The recent compositions:', this.recentCompositions() || '(none yet)',
+        (this.store.d.taste || []).length ? `\nThe owner's notes:\n${this.store.d.taste.slice(-10).map((x) => `- ${x.text}`).join('\n')}` : '',
+        `\nAtossa's plans (${plans.length}):`, JSON.stringify(plans),
+      ].filter(Boolean).join('\n'), effort: 'medium', maxTokens: 6000 }) || '');
+      const out = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1));
+      return Array.isArray(out) ? out : [];
+    } catch (err) { this.log(`social: Dariush could not be read: ${err.message}`); return []; }
   }
 
   /** Design drafts still waiting for the owner's answer: the daily proposal waits while there are [max]. */
