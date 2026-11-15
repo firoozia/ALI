@@ -334,11 +334,17 @@ export class SocialDesk {
     }
     try { return { code, e, image: fs.readFileSync(path.join(this.catalogDir, e.file)) }; } catch { return { error: `The picture of colour ${code} is missing on the server.` }; }
   }
+  /** The owner's logo and the font of the codes (social/brand on the server): { logo, font }, empty when missing. */
+  brandAssets() {
+    const at = (f) => (this.brandDir && fs.existsSync(path.join(this.brandDir, f)) ? path.join(this.brandDir, f) : '');
+    return { logo: at('logo.png') ? fs.readFileSync(at('logo.png')) : null, font: at('IBMPlexSans-SemiBold.ttf') };
+  }
   async draftFromCatalog({ code: asked, note = '' }) {
     const { code, e, image, error } = this.catalogColour(asked);
     if (error) return error;
     const facts = `This is colour code ${code} from the ${e.catalogue}${e.kind ? ` (${e.kind})` : ''}. Name it in the caption as «Code ${code}». The picture is the colour sample itself (a decorative film for furniture), not a room.`;
-    return this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
+    // the logo in the top corner like every design (the owner, 15/11); the catalogue picture already carries its code
+    return this.draftPost({ image: await brandDesign(image, this.brandAssets()), mime: 'image/jpeg', note, facts, fitted: true });
   }
   /** A short look of every colour (colour, pattern, finish), asked once from its picture and kept in catalog.json: what the designer reads. */
   async ensureLooks({ batch = 6 } = {}) {
@@ -406,9 +412,7 @@ export class SocialDesk {
     }
     const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.`;
     // the owner's mark (15/11): the ARYAK logo in the top corner, each film's swatch and code along the bottom
-    const brand = (f) => { try { return this.brandDir ? fs.readFileSync(path.join(this.brandDir, f)) : null; } catch { return null; } };
-    const font = this.brandDir && fs.existsSync(path.join(this.brandDir, 'IBMPlexSans-SemiBold.ttf')) ? path.join(this.brandDir, 'IBMPlexSans-SemiBold.ttf') : '';
-    const image = await brandDesign(await fitForInstagram(made.image), { logo: brand('logo.png'), font, codes: plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })) });
+    const image = await brandDesign(await fitForInstagram(made.image), { ...this.brandAssets(), codes: plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })) });
     const before = new Set(Object.keys(this.store.d.posts));
     const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
     const p = this.store.d.posts[Object.keys(this.store.d.posts).find((k) => !before.has(k))];

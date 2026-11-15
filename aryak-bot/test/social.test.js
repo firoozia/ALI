@@ -317,3 +317,22 @@ test('the owner\'s mark on a design: the logo in the top corner, each film\'s sw
   assert.ok(near(px(28 + 30, 1250 - 45), [255, 0, 0]), 'the first film\'s swatch on the band');
   assert.equal((await brandDesign(Buffer.from('not a picture'), { logo })).toString(), 'not a picture');
 });
+
+test('a catalogue post carries the logo too; without a logo on the server the picture is sent as it is', async () => {
+  const sharp = (await import('sharp')).default;
+  const cat = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-'));
+  const brand = fs.mkdtempSync(path.join(os.tmpdir(), 'brand-'));
+  const sample = await sharp({ create: { width: 800, height: 1000, channels: 3, background: '#808080' } }).jpeg().toBuffer();
+  fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ 212: { file: '212.jpg', catalogue: 'T' } }));
+  fs.writeFileSync(path.join(cat, '212.jpg'), sample);
+  fs.writeFileSync(path.join(brand, 'logo.png'), await sharp({ create: { width: 200, height: 150, channels: 4, background: { r: 214, g: 178, b: 94, alpha: 1 } } }).png().toBuffer());
+  const seen = [];
+  const make = (brandDir) => new SocialDesk({ client: client(fakeGraph({}).fetchImpl), store: new SocialStore(''), catalogDir: cat, brandDir, write: async (r) => { seen.push(r.image); return 'caption'; } });
+  await make(brand).draftFromCatalog({ code: '212' });
+  const { data, info } = await sharp(seen[0]).raw().toBuffer({ resolveWithObject: true });
+  const at = (x, y) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)];
+  assert.ok(Math.abs(at(45, 45)[0] - 214) < 40 && Math.abs(at(45, 45)[2] - 94) < 40, 'the gold logo in the top corner');
+  assert.ok(Math.abs(at(400, 700)[0] - 128) < 20, 'the colour itself untouched');
+  await make('').draftFromCatalog({ code: '212' });
+  assert.ok(seen[1].equals(sample), 'no logo on the server: the picture as it is');
+});
