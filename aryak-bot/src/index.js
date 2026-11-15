@@ -2474,7 +2474,7 @@ async function handleStaffChat(raw, chatId, group) {
     if (cr && isOwner()) { trace(where, 'owner', `social: catalogue colour ${cr.code}`); const t = await socialDesk.draftFromCatalog(cr); await socialSay(t, socialDesk.draftPicture(t)); return true; }
     const dr = !imageOf(content) ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
     if (dr && isOwner()) {
-      trace(where, 'owner', `social: design with colour ${dr.code}`);
+      trace(where, 'owner', `social: design ${dr.code ? `with colour ${dr.code}` : 'of the designer's choice'}`);
       await socialSay(dr.code ? `The designer is working on a design around colour ${dr.code}… (one or two minutes)` : 'The designer is working on a proposal… (one or two minutes)');
       const d = await socialDesk.draftDesign(dr);
       await socialSayDesign(d);

@@ -486,9 +486,13 @@ export class SocialDesk {
       code ? `\nThe owner asks for a design built around film ${code}: it is the main film.` : '',
       note ? `\nThe owner's words: ${note}` : '',
     ].filter(Boolean).join('\n');
-    const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text, effort: 'medium', maxTokens: 2000 }) || '');
+    // room to think: the morning's notes made the brief longer, and a cut answer has no JSON (live test 15/11); one more try when it is cut
     let plan;
-    try { plan = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { return { error: 'The designer gave no plan; try again.' }; }
+    for (let i = 0; i < 2 && !plan; i++) {
+      const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text, effort: 'medium', maxTokens: 12000 }) || '');
+      try { plan = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { this.log(`social: the plan was not JSON (${raw.length} characters)`); }
+    }
+    if (!plan) return { error: 'The designer gave no plan; try again.' };
     plan.parts = (Array.isArray(plan.parts) ? plan.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => all[p.code]).slice(0, 4);
     if (code && !plan.parts.some((p) => p.code === code)) plan.parts.unshift({ code, where: 'the main fronts', where_fa: 'سطح اصلی' });
     if (!plan.parts.length || !plan.scene) return { error: 'The designer chose no colour of the catalogues; try again.' };
