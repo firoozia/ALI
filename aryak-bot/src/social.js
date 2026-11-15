@@ -213,7 +213,16 @@ export async function brandDesign(buf, { codes = [], logo = null, font = '' } = 
         x += Math.round(pad * 0.9);
       }
     }
-    if (logo) comps.push({ input: await sharp(logo).resize({ width: Math.round(W * 0.17) }).png().toBuffer(), top: pad, left: pad });
+    if (logo) {
+      // the black logo, white where its corner is dark (the owner, 15/11: only the logo, no plate): the picture under the logo's own strokes decides
+      const lg = await sharp(logo).resize({ width: Math.round(W * 0.17) }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const { width: lw, height: lh } = lg.info;
+      const under = await sharp(buf).extract({ left: pad, top: pad, width: Math.min(lw, W - pad), height: Math.min(lh, H - pad) }).removeAlpha().resize(lw, lh, { fit: 'fill' }).raw().toBuffer();
+      let sum = 0, weight = 0;
+      for (let i = 0, j = 0; i < lg.data.length; i += 4, j += 3) { const a = lg.data[i + 3]; if (!a) continue; sum += a * (0.2126 * under[j] + 0.7152 * under[j + 1] + 0.0722 * under[j + 2]); weight += a; }
+      if (weight && sum / weight < 110) for (let i = 0; i < lg.data.length; i += 4) { lg.data[i] = 255; lg.data[i + 1] = 255; lg.data[i + 2] = 255; }
+      comps.push({ input: await sharp(lg.data, { raw: { width: lw, height: lh, channels: 4 } }).png().toBuffer(), top: pad, left: pad });
+    }
     return comps.length ? await sharp(buf).composite(comps).jpeg({ quality: 90 }).toBuffer() : buf;
   } catch { return buf; }
 }

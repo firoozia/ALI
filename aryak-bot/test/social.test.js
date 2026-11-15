@@ -351,3 +351,15 @@ test('the owner\'s own photo carries the logo too, after the 4:5 cut', async () 
   const at = (x, y) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)];
   assert.ok(Math.abs(at(40, 40)[0] - 214) < 40 && Math.abs(at(40, 40)[2] - 94) < 40, 'the gold logo in the top corner');
 });
+
+test('the black logo turns white on a dark corner and stays black on a light one', async () => {
+  const sharp = (await import('sharp')).default;
+  const logo = await sharp({ create: { width: 200, height: 150, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
+  const corner = async (bg) => {
+    const out = await brandDesign(await sharp({ create: { width: 1000, height: 1250, channels: 3, background: bg } }).jpeg().toBuffer(), { logo });
+    const { data, info } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+    return data[(60 * info.width + 60) * info.channels];
+  };
+  assert.ok(await corner('#f0f0f0') < 40, 'black on a light wall');
+  assert.ok(await corner('#202020') > 215, 'white on a dark cabinet');
+});
