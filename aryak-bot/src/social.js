@@ -410,11 +410,18 @@ export function inspirationRequest(caption) {
  */
 export function designEditRequest(text, quotedText = '') {
   const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
-  let m = /^(?:تغییر|اصلاح|عوض\s*کن)\s*(?:پست|طرح|post)\s*#?\s*(?:SP)?\s*(\d+)\s*[:\-،,]?\s*([\s\S]+)$/i.exec(t);
+  let m = /^(?:تغییر|اصلاح|عوض\s*کن)\s*(?:پست|طرح|post)\s*#?\s*(?:SP)?\s*(\d+)(?!\d)\s*[:\-،,]?\s*([\s\S]+)$/i.exec(t);
   if (m) return { id: `SP${m[1]}`, note: m[2].trim() };
   if (!t || parseSocialCommand(t) || /https?:\/\//.test(t)) return null;
   m = /#SP(\d+)/i.exec(String(quotedText || ''));
   return m && t.length >= 4 ? { id: `SP${m[1]}`, note: t } : null;
+}
+
+/** «رتوش پست ۲۵ …»: a small fix of a drafted design's picture, the design kept. { id, note } or null. */
+export function retouchRequest(text) {
+  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+  const m = /^(?:رتوش|retouch)\s*(?:پست|post)?\s*#?\s*(?:SP)?\s*(\d+)(?!\d)\s*[:\-،,]?\s*([\s\S]+)$/i.exec(t);
+  return m ? { id: `SP${m[1]}`, note: m[2].trim() } : null;
 }
 
 /** «ریلز پست ۲۴ …» / «ریلز ۲۴ …»: only the Reel of a drafted design made again. { id, note } or null. */
@@ -894,6 +901,41 @@ export class SocialDesk {
     p.design.plan = { ...plan, reel: opts };
     this.store.save();
     return { text: `ریلز تازهٔ پست ${id.slice(2)} آماده است${opts.motion === 'orbit' ? ' (دوربین دور اتاق می‌چرخد)' : ''}. با «بله پست ${id.slice(2)}» همراه پست منتشر می‌شود.`, video };
+  }
+
+  /**
+   * «رتوش پست ۲۵ …» (the owner, 15/11: «take the colourful bag off the counter»): a small fix of the room picture that keeps the design
+   * exactly (unlike a change, which redraws it); the post's picture is marked again and its Reel made again from the fixed room.
+   */
+  async retouch({ id, note }) {
+    const p = this.store.d.posts[id];
+    if (!p?.design) return { text: `There is no design #${id}.` };
+    if (p.state !== 'draft' && p.state !== 'scheduled') return { text: `Post #${id} was already ${p.state}.` };
+    const all = this.catalog();
+    const plan = p.design.plan || { room: p.design.room, parts: (p.design.codes || []).filter((c) => all[c]).map((code) => ({ code, where: 'the fronts' })) };
+    let room = p.raw?.room && fs.existsSync(p.raw.room) ? fs.readFileSync(p.raw.room) : await this.unmark(p.file ? fs.readFileSync(p.file) : Buffer.from(p.image || '', 'base64'));
+    let fixed = null;
+    let miss = '';
+    for (let i = 0; i < 2 && !fixed; i++) {
+      const r = await this.imager.make({ images: [{ label: 'The picture', buffer: room, mime: 'image/jpeg' }],
+        prompt: `Make only this small change: «${note}».${miss ? ` The last try missed: ${miss}.` : ''} Keep everything else exactly as it is: the room, the camera, the light, every surface, colour and object. Photorealistic, the same size, 4:5 portrait.` });
+      const look = await this.changeSeen(room, r.image, note);
+      if (look.done || i === 1) fixed = await fitForInstagram(r.image); else miss = look.missing || 'not done';
+    }
+    room = fixed;
+    const codes = plan.parts.filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
+    const image = await brandDesign(room, { ...this.brandAssets(), codes });
+    if (this.mediaDir) {
+      const stamp = this.now().toString(36);
+      const f = path.join(this.mediaDir, `${p.id}-room-${stamp}.jpg`); fs.writeFileSync(f, room);
+      p.raw = { ...(p.raw || {}), room: f };
+      const m = path.join(this.mediaDir, `${p.id}-${stamp}.jpg`); fs.writeFileSync(m, image); p.file = m;
+    } else p.image = image.toString('base64');
+    this.store.save();
+    this.addTaste(`The owner fixed design «${plan.title_fa || plan.room}»: ${note}`);
+    let video = null;
+    try { video = (await this.remakeReel({ id })).video || null; } catch (err) { this.log(`social: the Reel after the retouch failed: ${err.message}`); }
+    return { text: `پست ${id.slice(2)} رتوش شد: «${note}». عکس و ریلز تازه همین‌جاست؛ طرح و متن پست همان است.`, image, video };
   }
 
   /** A posted-style picture without the ARYAK marks (the logo in the corner and the band of codes), the picture behind them restored. */

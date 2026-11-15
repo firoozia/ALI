@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand, reelRequest } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand, reelRequest, retouchRequest } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -529,4 +529,23 @@ test('the Reel with the texture hook and a before wiped by the after: a real MP4
     const mp4 = await makeReel({ room: await pic('#806040', 1440, 1800), ...extra, details: [{ image: await pic('#402010', 1440, 1800), seconds: 1.35 }], card, seconds: { room: 1.35, hook: 1.35, before: 1.35, detail: 1.35, card: 1 } });
     assert.equal(mp4.subarray(4, 8).toString(), 'ftyp');
   }
+});
+
+test('«رتوش پست N»: a small fix of the room keeps the design; the picture is marked again and the Reel made again from it', async () => {
+  assert.deepEqual(retouchRequest('رتوش پست ۲۵ کیف رنگی روی پیشخوان را بردار'), { id: 'SP25', note: 'کیف رنگی روی پیشخوان را بردار' });
+  assert.equal(retouchRequest('رتوش پست ۲۵'), null, 'what to fix is needed');
+  let reelArgs = null;
+  const { desk, made, writes } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const id = /Post #(SP\d+)/.exec((await desk.draftDesign({})).text)[1];
+  const p = desk.store.d.posts[id];
+  const caption = p.caption; const file = p.file;
+  const before = made.length; const plans = writes.filter((w) => w.kind === 'design-plan').length;
+  const r = await desk.retouch({ id, note: 'کیف رنگی روی پیشخوان را بردار' });
+  assert.match(made[before].prompt, /Make only this small change: «کیف رنگی روی پیشخوان را بردار»[\s\S]*Keep everything else exactly/);
+  assert.equal(writes.filter((w) => w.kind === 'design-plan').length, plans, 'the design is not planned again');
+  assert.equal(p.caption, caption);
+  assert.notEqual(p.file, file);
+  assert.ok(r.image && r.video, 'the new picture and Reel are sent');
+  assert.ok(reelArgs.room, 'the Reel made again');
+  assert.match(r.text, /رتوش شد/);
 });
