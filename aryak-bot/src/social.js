@@ -417,6 +417,17 @@ export function designEditRequest(text, quotedText = '') {
   return m && t.length >= 4 ? { id: `SP${m[1]}`, note: t } : null;
 }
 
+/**
+ * Plain words about a design (live 16/11: «HZ816 is a black wood and the camera should move like reel 24» came right after #SP26 and got
+ * «I did not understand»): words about rooms, films, colours, light, the camera, the Reel or the music, and nothing about money.
+ */
+export function looksLikeDesignNote(text) {
+  const t = String(text || '');
+  if (t.length < 6 || /https?:\/\//.test(t)) return false;
+  if (/فاکتور|invoice|پرداخت|صندوق|گزارش|هزینه|حقوق|بدهی|چک|received|cash|expense|unbilled|qbo|quickbooks/i.test(t)) return false;
+  return /طرح|ریلز|reel|دوربین|رنگ|نور|کابینت|درب|دیوار|زاویه|موزیک|آهنگ|بافت|چوب|سنگ|جزیره|سقف|کف|عکس|نما|HZ\s*\d|TS\s*\d|\bکد\b/i.test(t);
+}
+
 /** «رتوش پست ۲۵ …»: a small fix of a drafted design's picture, the design kept. { id, note } or null. */
 export function retouchRequest(text) {
   const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
@@ -844,7 +855,19 @@ export class SocialDesk {
    * The owner's change to a design already drafted (he quotes it or names it: «تغییر پست ۲۲ …»): the plan rewritten around his words,
    * the room drawn again and checked, close-ups, the Reel as he asked; the old draft is set aside so it is never posted by mistake.
    */
+  /** The newest design draft made in the last [ms] (what plain words right after a design are about), or ''. */
+  latestDesignDraft(ms = 60 * 60 * 1000) {
+    const recent = Object.values(this.store.d.posts).filter((p) => p.design && (p.state === 'draft' || p.state === 'scheduled') && this.now() - p.at < ms).sort((a, b) => b.at - a.at);
+    return recent[0]?.id || '';
+  }
+
   async reviseDesign({ id, note }) {
+    // «the camera like reel 24»: the Reel wishes of that post are told to Atossa
+    for (const m of String(note).replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).matchAll(/(?:ریلز|reel|پست|post)\s*(?:پست|post)?\s*#?\s*(?:SP)?\s*(\d+)/gi)) {
+      const other = this.store.d.posts[`SP${m[1]}`];
+      const wish = other?.design?.plan?.reel || (other?.design?.plan ? { motion: 'zoom' } : null);
+      if (wish && `SP${m[1]}` !== id) note += ` (the Reel of post ${m[1]} was made with: ${JSON.stringify(wish)}; when he says like it, use the same "reel" values)`;
+    }
     const p = this.store.d.posts[id];
     if (!p?.design) return { text: `There is no design #${id} to change.` };
     if (p.state !== 'draft' && p.state !== 'scheduled') return { text: `Post #${id} was already ${p.state}; a posted design is not changed.` };

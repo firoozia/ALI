@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, parseSocialCommand, reelRequest, retouchRequest } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, looksLikeDesignNote, parseSocialCommand, reelRequest, retouchRequest } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -548,4 +548,25 @@ test('«رتوش پست N»: a small fix of the room keeps the design; the pictu
   assert.ok(r.image && r.video, 'the new picture and Reel are sent');
   assert.ok(reelArgs.room, 'the Reel made again');
   assert.match(r.text, /رتوش شد/);
+});
+
+test('plain words right after a design are a change to it; «like reel 24» tells Atossa how that Reel was made', async () => {
+  assert.equal(looksLikeDesignNote('HZ816 طرح چوب سیاه است و حرکت دوربین مثل reel 24 شود'), true);
+  assert.equal(looksLikeDesignNote('گزارش صندوق امروز'), false);
+  assert.equal(looksLikeDesignNote('فاکتور کد ۲۱۲ رنگ سفید'), false, 'money words win');
+  assert.equal(looksLikeDesignNote('سلام'), false);
+  let reelArgs = null;
+  const { desk, writes } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  assert.equal(desk.latestDesignDraft(), '');
+  const a = /Post #(SP\d+)/.exec((await desk.draftDesign({})).text)[1];
+  desk.store.d.posts[a].design.plan.reel = { seconds: 22, motion: 'orbit', music: 'oud' };
+  const b = /Post #(SP\d+)/.exec((await desk.draftDesign({})).text)[1];
+  desk.store.d.posts[b].at += 1;
+  assert.equal(desk.latestDesignDraft(), b, 'the newest draft');
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'check-change' ? '{"done":true}' : base(r));
+  await desk.reviseDesign({ id: b, note: `حرکت دوربین مثل ریلز ${a.slice(2)} شود` });
+  const asked = writes.filter((w) => w.kind === 'design-plan').at(-1).text;
+  assert.match(asked, /the Reel of post \d+ was made with: \{"seconds":22,"motion":"orbit","music":"oud"\}/);
+  void reelArgs;
 });

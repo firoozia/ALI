@@ -115,7 +115,7 @@ import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlan
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
 import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designEditRequest, designRequest, inspirationRequest, linkRequest, parseSocialCommand, postRequest, reelRequest, retouchRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designEditRequest, designRequest, inspirationRequest, linkRequest, looksLikeDesignNote, parseSocialCommand, postRequest, reelRequest, retouchRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2545,6 +2545,14 @@ ${t.authorizeUrl()}`);
       trace(where, 'owner', `social: a change to design #${de.id}`);
       await socialSay(`آتوسا طرح پست ${de.id.slice(2)} را با خواستهٔ شما از نو می‌سازد: عکس، عکس‌های نزدیک و ریلز… (چند دقیقه)`);
       await socialSayDesign(await socialDesk.reviseDesign(de));
+      return true;
+    }
+    // plain words about a design right after one was drafted (within the hour): a change to the newest design draft (live 16/11)
+    const latest = !de && !imageOf(content) && !sc && !postRequest(text) && looksLikeDesignNote(text) ? socialDesk.latestDesignDraft() : '';
+    if (latest && isOwner()) {
+      trace(where, 'owner', `social: plain words taken as a change to design #${latest}`);
+      await socialSay(`این را تغییر پست ${latest.slice(2)} گرفتم (آخرین طرح). آتوسا آن را با خواستهٔ شما از نو می‌سازد… (چند دقیقه)\nبرای پستی دیگر بنویسید «تغییر پست … » یا روی پیام همان پست «پاسخ» بزنید.`);
+      await socialSayDesign(await socialDesk.reviseDesign({ id: latest, note: text }));
       return true;
     }
     // links from the owner (Instagram, TikTok, Pinterest, a magazine): Atossa studies them for her next designs (the owner, 15/11)
