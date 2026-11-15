@@ -458,7 +458,7 @@ export class SocialDesk {
     if (p.state !== 'draft') return `Post #${c.id} was already ${p.state}.`;
     const trial = /^(?:آزمون|آزمایش|تست|test)$/i.test(c.text || ''); // «نه پست 7 آزمون»: a test, not the owner's taste
     if (p.design && !trial && (c.verb === 'no' || c.verb === 'yes')) this.addTaste(`${c.verb === 'yes' ? 'Approved' : 'Rejected'}: ${p.design.room} with ${p.design.codes.join(' + ')}${c.text ? `: ${c.text}` : ''}`);
-    if (c.verb === 'no') { p.state = 'cancelled'; this.store.save(); return `Post #${c.id} cancelled; nothing was posted.${p.design ? (c.text ? ' Your reason is kept for the next designs.' : ' (A reason after the number, e.g. «نه پست 5 too dark», teaches the designer.)') : ''}`; }
+    if (c.verb === 'no') { p.state = 'cancelled'; this.store.save(); return `Post #${c.id} cancelled; nothing was posted.${p.design ? (trial ? ' (A test: nothing was kept.)' : c.text ? ' Your reason is kept for the next designs.' : ' (A reason after the number, e.g. «نه پست 5 too dark», teaches the designer.)') : ''}`; }
     if (c.verb === 'edit') { p.caption = c.text; this.store.save(); return this.postPreview(c.id); }
     if (c.verb !== 'yes') return null;
     const image = p.file ? fs.readFileSync(p.file) : Buffer.from(p.image || '', 'base64');

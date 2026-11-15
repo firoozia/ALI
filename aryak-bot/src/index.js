@@ -2484,7 +2484,7 @@ async function handleStaffChat(raw, chatId, group) {
     const recent = !imageOf(content) && pr ? lastPhotos.get(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) : null;
     const photoRaw = imageOf(content) ? raw : recent && Date.now() - recent.at < 15 * 60 * 1000 ? recent.raw : null;
     if ((sc || pr) && isOwner()) {
-      if (sc) { trace(where, 'owner', `social: ${sc.verb}${sc.id ? ` #${sc.id}` : ''}`); await socialSay(await socialDesk.handle(sc)); return true; }
+      if (sc) { trace(where, 'owner', `social: ${sc.verb}${sc.id ? ` #${sc.id}` : ''}`); const t = await socialDesk.handle(sc); await socialSay(t, sc.verb === 'edit' ? socialDesk.draftPicture(t) : null); return true; }
       if (!photoRaw) { trace(where, 'owner', 'social: «post» with no photo'); await socialSay('Which photo? Send the photo first, then write «post» and a few words about it (or as the caption of the photo).'); return true; }
       trace(where, 'owner', `social: a photo to post${photoRaw === raw ? '' : ' (the photo sent just before)'}`);
       let buf = null;

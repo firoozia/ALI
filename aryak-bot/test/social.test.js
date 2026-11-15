@@ -371,6 +371,6 @@ test('the preview names its picture; a «test» no teaches nothing', async () =>
   assert.equal(desk.draftPicture(text).toString(), 'PIC');
   assert.equal(desk.draftPicture('no post here'), null);
   desk.store.d.posts.SP1.design = { room: 'kitchen', codes: ['HZ1'] };
-  await desk.handle({ verb: 'no', kind: 'SP', id: 'SP1', text: 'آزمون' });
+  assert.match(await desk.handle({ verb: 'no', kind: 'SP', id: 'SP1', text: 'آزمون' }), /A test: nothing was kept/);
   assert.equal((desk.store.d.taste || []).length, 0, 'a test answer is not the owner\'s taste');
 });
