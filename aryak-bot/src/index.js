@@ -113,7 +113,7 @@ import { buildSystemPrompt } from './prompt.js';
 import { acquireSingleInstance } from './singleinstance.js';
 import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
-import { MetaClient, SocialDesk, SocialStore, catalogRequest, parseSocialCommand, postRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2471,6 +2471,14 @@ async function handleStaffChat(raw, chatId, group) {
     const sc = !imageOf(content) ? parseSocialCommand(text) : null;
     const cr = !imageOf(content) ? catalogRequest(text) : null; // «پست کاتالوگ ۱۸۰۵ …»: the colour's own picture from the catalogues
     if (cr && isOwner()) { trace(where, 'owner', `social: catalogue colour ${cr.code}`); await socialSay(await socialDesk.draftFromCatalog(cr)); return true; }
+    const dr = !imageOf(content) ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
+    if (dr && isOwner()) {
+      trace(where, 'owner', `social: design with colour ${dr.code}`);
+      await socialSay(`Drawing a design with colour ${dr.code}… (about a minute)`);
+      const d = await socialDesk.draftDesign(dr);
+      await socialSay(d.text, d.image || null);
+      return true;
+    }
     const pr = postRequest(text);
     // the photo: this message's own, or (a typed «post …» alone) the photo sent in this chat in the last 15 minutes, forwarded or not
     const recent = !imageOf(content) && pr ? lastPhotos.get(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) : null;
@@ -3730,15 +3738,16 @@ const socialTokenFrom = config.social.igToken ? createHash('sha256').update(conf
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), log: (s) => logger.info(s),
+  imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel }),
   write: async ({ system, text, image, mime }) => {
     const content = [...(image ? [{ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: image.toString('base64') } }] : []), { type: 'text', text }];
     const res = await client.beta.messages.create({ model: config.model, max_tokens: 800, system, messages: [{ role: 'user', content }], output_config: { effort: 'low' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
   },
 });
-/** A social notice to the owner's own chat, in its own languages (an Arabic caption is never turned into English). */
-async function socialSay(text) {
-  const content = { text: `🤖 ${text}` };
+/** A social notice to the owner's own chat, in its own languages (an Arabic caption is never turned into English); with [image] the notice is that picture's caption. */
+async function socialSay(text, image = null) {
+  const content = image ? { image, caption: `🤖 ${text}` } : { text: `🤖 ${text}` };
   keepLang.add(content);
   asWritten.add(content);
   const r = await sock.sendMessage(ownIds()[0], content);

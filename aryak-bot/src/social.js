@@ -128,11 +128,50 @@ export function parseSocialCommand(text) {
 }
 
 /** «پست کاتالوگ ۱۸۰۵ …» / «post catalogue 212 …»: a colour of the catalogues by its code, with the owner's words after it. Null when not one. */
+const plainCode = (text) => String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/اچ[\s‌]*زد/g, 'HZ');
 export function catalogRequest(text) {
-  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace(/اچ[\s‌]*زد/g, 'HZ');
-  const m = /^(?:پست|post)\s+(?:کاتالوگ|کاتالوگی|catalog(?:ue)?)\s*:?\s*(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(t);
+  const t = plainCode(text);
+  const m =/^(?:پست|post)\s+(?:کاتالوگ|کاتالوگی|catalog(?:ue)?)\s*:?\s*(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(t);
   return m ? { code: m[1].replace(/\s+/g, '').toUpperCase(), note: m[2].trim() } : null;
 }
+
+/** «طرح ۸۳۲ کمد دیواری» / «design 212 kitchen»: an AI design idea of a room made with that catalogue colour. Null when not one. */
+export function designRequest(text) {
+  const m = /^(?:طرح|design)\s+(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(plainCode(text));
+  return m ? { code: m[1].replace(/\s+/g, '').toUpperCase(), note: m[2].trim() } : null;
+}
+
+/**
+ * Google's image model (Gemini, «Nano Banana») through its official API: a prompt and reference pictures in, one picture out.
+ * [apiKey] from Google AI Studio, [model] e.g. gemini-nano-banana-2.1. make() throws with Google's own words when no picture comes back.
+ */
+export class GeminiImage {
+  constructor({ apiKey, model = 'gemini-nano-banana-2.1', fetchImpl = globalThis.fetch }) { Object.assign(this, { apiKey, model, fetchImpl }); }
+  get enabled() { return !!this.apiKey; }
+  async make({ prompt, images = [], aspect = '4:5' }) {
+    const body = {
+      contents: [{ role: 'user', parts: [...images.map((i) => ({ inline_data: { mime_type: i.mime || 'image/jpeg', data: i.buffer.toString('base64') } })), { text: prompt }] }],
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect } },
+    };
+    const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(`Gemini: ${data.error?.message || `HTTP ${res.status}`}`);
+    const c = data.candidates?.[0];
+    const parts = (c?.content?.parts || []).filter((p) => !p.thought);
+    const pic = parts.map((p) => p.inlineData || p.inline_data).filter((d) => d?.data && /^image\//.test(d.mimeType || d.mime_type || '')).pop(); // the last picture is the final one
+    if (!pic) throw new Error(`Gemini gave no picture (${c?.finishReason || data.promptFeedback?.blockReason || 'no reason given'}): ${parts.map((p) => p.text).filter(Boolean).join(' ').slice(0, 200)}`);
+    return { image: Buffer.from(pic.data, 'base64'), mime: pic.mimeType || pic.mime_type };
+  }
+}
+
+export const DESIGN_RULES = `You write the prompt for an image model that makes interior design ideas for {BRAND}.
+The image model gets the attached picture as its reference: a sample of one decorative film (colour code {CODE}, {KIND}).
+Write ONE English paragraph of 80 to 140 words describing a photorealistic interior photograph in which the fronts named by the owner (cabinet doors, wardrobe doors, wall panels…) are covered with exactly this film.
+- Describe the film precisely from the sample: its colour, its pattern or grain and the grain direction, matt or gloss. Keep the pattern at real scale (wood grain runs along the door; stone veins are large and calm).
+- Everything else in the room is neutral and quiet (white or light walls, simple handles, plain worktop), so the film is the hero. Natural daylight, eye-level camera, wide-angle interior photography.
+- No people, no text, no logos, no brand names.
+- The owner's words may be in Persian or Arabic: follow them (the room, the style, the colours around). With no words, a modern kitchen.
+Output only the prompt.`;
 
 /** Instagram takes a feed photo between 4:5 (tall) and 1.91:1 (wide): the middle is kept, the width is at most 1440, a JPEG comes out. The original when it cannot be read. */
 export async function fitForInstagram(buf) {
@@ -209,8 +248,8 @@ const ago = (ms) => { const h = Math.round(ms / 3600000); return h < 1 ? 'just n
  * [cfg] { brand, contact }, [mediaDir] where the photo of a draft waits for the yes.
  */
 export class SocialDesk {
-  constructor({ client, store, write, cfg = {}, mediaDir = '', catalogDir = '', log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { client, store, write, cfg, mediaDir, catalogDir, log, now });
+  constructor({ client, store, write, cfg = {}, mediaDir = '', catalogDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { client, store, write, cfg, mediaDir, catalogDir, imager, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
   /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
@@ -238,19 +277,48 @@ export class SocialDesk {
     if (!this.catalogDir) return {};
     try { return JSON.parse(fs.readFileSync(path.join(this.catalogDir, 'catalog.json'), 'utf8')); } catch { return {}; }
   }
-  async draftFromCatalog({ code, note = '' }) {
+  /** A colour of the catalogues by its code: { code, e, image } or { error } (the words for the owner). */
+  catalogColour(code) {
     const all = this.catalog();
     // «۸۳۲» alone finds HZ832 when no plain 832 exists (the owner types the number, the catalogue prints the prefix)
     if (!all[code] && /^\d+$/.test(code)) code = Object.keys(all).find((k) => /^[A-Z]+\d+$/.test(k) && k.replace(/^[A-Z]+/, '') === code) || code;
     const e = all[code];
     if (!e) {
       const codes = Object.keys(all);
-      return codes.length ? `There is no colour ${code} in the catalogues. Known codes: ${codes.length} (${codes.slice(0, 3).join(', ')} … ${codes.slice(-2).join(', ')}).` : 'The catalogue pictures are not on the server yet.';
+      return { error: codes.length ? `There is no colour ${code} in the catalogues. Known codes: ${codes.length} (${codes.slice(0, 3).join(', ')} … ${codes.slice(-2).join(', ')}).` : 'The catalogue pictures are not on the server yet.' };
     }
-    let image;
-    try { image = fs.readFileSync(path.join(this.catalogDir, e.file)); } catch { return `The picture of colour ${code} is missing on the server.`; }
+    try { return { code, e, image: fs.readFileSync(path.join(this.catalogDir, e.file)) }; } catch { return { error: `The picture of colour ${code} is missing on the server.` }; }
+  }
+  async draftFromCatalog({ code: asked, note = '' }) {
+    const { code, e, image, error } = this.catalogColour(asked);
+    if (error) return error;
     const facts = `This is colour code ${code} from the ${e.catalogue}${e.kind ? ` (${e.kind})` : ''}. Name it in the caption as «Code ${code}». The picture is the colour sample itself (a decorative film for furniture), not a room.`;
     return this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
+  }
+  /**
+   * «طرح ۸۳۲ کمد دیواری»: the model writes the scene from the colour sample, Gemini draws the room with that film, and the picture
+   * becomes a draft #SP like any other (nothing is posted before the yes). Returns { text, image } so the owner sees the picture itself.
+   */
+  async draftDesign({ code: asked, note = '' }) {
+    if (!this.imager?.enabled) return { text: 'The design maker (Google Gemini) is not connected yet: its key is missing on the server.' };
+    const { code, e, image: sample, error } = this.catalogColour(asked);
+    if (error) return { text: error };
+    const system = fill(DESIGN_RULES, this.cfg).replace('{CODE}', code).replace('{KIND}', e.kind || e.catalogue || 'decorative film');
+    const scene = String(await this.write({ kind: 'design-prompt', system, text: note ? `The owner's words: ${note}` : 'The owner gave no words.', image: sample, mime: 'image/jpeg' }) || '').trim();
+    if (!scene) return { text: 'No design description could be written; try again.' };
+    let made;
+    try {
+      made = await this.imager.make({ prompt: `${scene}\nThe attached picture is the exact surface film (colour code ${code}): reproduce its colour, pattern and scale faithfully on those fronts. Photorealistic, 4:5 portrait.`, images: [{ buffer: sample, mime: 'image/jpeg' }] });
+    } catch (err) {
+      this.log(`social: design ${code} failed: ${err.message}`);
+      return { text: `The design of colour ${code} could not be made: ${err.message}` };
+    }
+    const facts = `This picture is an AI design idea (not a photo of a finished job) showing colour code ${code} from the ${e.catalogue}${e.kind ? ` (${e.kind})` : ''}. Say in the caption that it is a design idea made with «Code ${code}».`;
+    const before = new Set(Object.keys(this.store.d.posts));
+    const text = await this.draftPost({ image: made.image, mime: made.mime, note, facts });
+    const p = this.store.d.posts[Object.keys(this.store.d.posts).find((k) => !before.has(k))];
+    if (p) { p.design = { code, scene }; this.store.save(); }
+    return { text, image: p?.file ? fs.readFileSync(p.file) : made.image };
   }
 
   postPreview(id) {

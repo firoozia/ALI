@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, catalogRequest, fitForInstagram, parseSocialCommand, postRequest } from '../src/social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, fitForInstagram, parseSocialCommand, postRequest } from '../src/social.js';
 
 // A fake Graph API: answers by the path, records every call.
 function fakeGraph(routes) {
@@ -187,4 +187,64 @@ test('a tall phone photo is cut to 4:5 for Instagram; a square one is kept; an u
   const m3 = await sharp(await fitForInstagram(sq)).metadata();
   assert.equal(m3.width, 800); assert.equal(m3.height, 800);
   assert.equal((await fitForInstagram(Buffer.from('not a picture'))).toString(), 'not a picture');
+});
+
+test('«طرح ۸۳۲ کمد دیواری»: a design request by its code, in any digits, with the owner words', () => {
+  assert.deepEqual(designRequest('طرح ۸۳۲ کمد دیواری'), { code: '832', note: 'کمد دیواری' });
+  assert.deepEqual(designRequest('طرح اچ‌زد ۸۱۶: آشپزخانه مدرن'), { code: 'HZ816', note: 'آشپزخانه مدرن' });
+  assert.deepEqual(designRequest('design 212 kitchen'), { code: '212', note: 'kitchen' });
+  assert.equal(designRequest('طرح جدید آشپزخانه'), null, 'no code, no design');
+  assert.equal(designRequest('پست کاتالوگ ۸۳۲'), null);
+});
+
+test('Gemini: the sample goes in as a picture with the prompt, 4:5 is asked, the final picture comes out; its error is said', async () => {
+  const calls = [];
+  const png = Buffer.from('PNG-ROOM');
+  const ok = new GeminiImage({ apiKey: 'K', model: 'm-1', fetchImpl: async (url, opts) => {
+    calls.push({ url, opts, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'thinking', thought: true }, { inlineData: { mimeType: 'image/png', data: Buffer.from('DRAFT').toString('base64') }, thought: true }, { text: 'Here it is' }, { inlineData: { mimeType: 'image/png', data: png.toString('base64') } }] } }] }) };
+  } });
+  const out = await ok.make({ prompt: 'a kitchen', images: [{ buffer: Buffer.from('SAMPLE'), mime: 'image/jpeg' }] });
+  assert.equal(out.image.toString(), 'PNG-ROOM', 'the final picture, not a thought picture');
+  assert.match(calls[0].url, /\/v1beta\/models\/m-1:generateContent$/);
+  assert.equal(calls[0].opts.headers['x-goog-api-key'], 'K');
+  assert.equal(calls[0].body.generationConfig.imageConfig.aspectRatio, '4:5');
+  assert.equal(Buffer.from(calls[0].body.contents[0].parts[0].inline_data.data, 'base64').toString(), 'SAMPLE');
+  assert.equal(calls[0].body.contents[0].parts[1].text, 'a kitchen');
+  const bad = new GeminiImage({ apiKey: 'K', fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: 'API key not valid' } }) }) });
+  await assert.rejects(bad.make({ prompt: 'x' }), /Gemini: API key not valid/);
+  const none = new GeminiImage({ apiKey: 'K', fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ candidates: [{ finishReason: 'IMAGE_SAFETY', content: { parts: [] } }] }) }) });
+  await assert.rejects(none.make({ prompt: 'x' }), /no picture \(IMAGE_SAFETY\)/);
+  assert.equal(new GeminiImage({ apiKey: '' }).enabled, false);
+});
+
+test('a design: the scene is written from the sample, Gemini draws it, the picture becomes a draft the owner sees; nothing reaches Meta', async () => {
+  const cat = fs.mkdtempSync(path.join(os.tmpdir(), 'cat-'));
+  fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ832: { file: 'HZ832.jpg', catalogue: 'TEST signature catalogue', kind: 'stone look' } }));
+  fs.writeFileSync(path.join(cat, 'HZ832.jpg'), Buffer.from('SAMPLE-832'));
+  const media = dir();
+  const writes = [];
+  const made = [];
+  const g = fakeGraph({});
+  const imager = { enabled: true, make: async (r) => { made.push(r); return { image: Buffer.from('ROOM'), mime: 'image/png' }; } };
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: media, imager,
+    write: async (r) => { writes.push(r); return r.kind === 'design-prompt' ? 'A bright wardrobe wall in dark stone film.' : 'Design idea with Code HZ832.'; } });
+  const out = await desk.draftDesign(designRequest('طرح ۸۳۲ کمد دیواری'));
+  assert.match(out.text, /Post #SP1/);
+  assert.equal(out.image.toString(), 'ROOM', 'the owner sees the drawn room');
+  assert.equal(writes[0].kind, 'design-prompt');
+  assert.equal(writes[0].image.toString(), 'SAMPLE-832');
+  assert.match(writes[0].system, /colour code HZ832, stone look/);
+  assert.match(writes[0].text, /کمد دیواری/);
+  assert.match(made[0].prompt, /^A bright wardrobe wall in dark stone film\.\nThe attached picture is the exact surface film \(colour code HZ832\)/);
+  assert.equal(made[0].images[0].buffer.toString(), 'SAMPLE-832');
+  assert.match(writes[1].text, /AI design idea \(not a photo of a finished job\) showing colour code HZ832/);
+  assert.equal(desk.store.d.posts.SP1.design.code, 'HZ832');
+  assert.equal(g.calls.length, 0, 'nothing reaches Meta before the yes');
+  // no key: said, nothing drawn; a failure of Gemini: said with its words, no draft
+  assert.match((await new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, write: async () => 'x' }).draftDesign({ code: '832' })).text, /not connected yet/);
+  const failing = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, imager: { enabled: true, make: async () => { throw new Error('Gemini: quota'); } }, write: async () => 'scene' });
+  const f = await failing.draftDesign({ code: 'HZ832' });
+  assert.match(f.text, /could not be made: Gemini: quota/);
+  assert.equal(Object.keys(failing.store.d.posts).length, 0);
 });

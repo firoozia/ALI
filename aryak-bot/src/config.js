@@ -153,6 +153,9 @@ export function loadConfig(env = process.env) {
       brand: (env.SOCIAL_BRAND || 'ARYAK, a supplier to furniture and carpentry workshops in the UAE').trim(),
       contact: (env.SOCIAL_CONTACT || '').trim(), // the WhatsApp number people are invited to (empty: none is given)
       username: (env.META_IG_USERNAME || '').trim(),
+      // «طرح ۸۳۲ …»: design ideas drawn by Google's image model with a catalogue colour (the owner, 15/11); no key, no designs
+      geminiKey: (env.GEMINI_API_KEY || '').trim(),
+      geminiImageModel: (env.GEMINI_IMAGE_MODEL || 'gemini-nano-banana-2.1').trim(),
     },
     kbDir: env.KB_DIR || './kb',
     // "Master Wood – ARYAK" -> "Master Wood"
