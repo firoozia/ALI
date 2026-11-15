@@ -65,7 +65,9 @@ test('a design: one close-up per film (up to three, wood first, closer along the
   assert.deepEqual(d.details.map((x) => x.code), ['HZ812', '1805']);
   assert.ok(d.video);
   assert.deepEqual(reelArgs.focus, { x: 0.7, y: 0.3 });
-  assert.deepEqual(reelArgs.details.map((x) => [x.seconds, x.zoom]), [[4.5, 0.18], [4.5, 0.18]], 'wood: longer and closer');
+  assert.deepEqual(reelArgs.details.map((x) => [x.seconds, x.zoom]), [[4.35, 0.18], [4.35, 0.18]], 'wood: longer and closer (whole beats at 80 BPM, plus the cross-fade)');
+  assert.ok(reelArgs.hook, 'the Reel opens on the texture, very close');
+  for (const sec of [reelArgs.seconds.room, reelArgs.seconds.hook, ...reelArgs.details.map((x) => x.seconds)]) assert.ok(Math.abs(((sec - 0.6) / 0.75) - Math.round((sec - 0.6) / 0.75)) < 1e-9, `${sec} s: cuts on the beat`);
   const p = desk.store.d.posts.SP1;
   assert.equal(p.extras.length, 2);
   assert.ok(fs.existsSync(p.reel));
@@ -85,7 +87,7 @@ test('a stone or solid film gets a gentler, shorter look; wood comes first even 
   desk.reel = async (a) => { args = a; return Buffer.from('MP4'); };
   await desk.draftDesign({});
   assert.deepEqual(shots, ['1805', 'HZ812'], 'the wood first');
-  assert.deepEqual(args.details.map((x) => [x.seconds, x.zoom]), [[4.5, 0.18], [3, 0.1]]);
+  assert.deepEqual(args.details.map((x) => [x.seconds, x.zoom]), [[4.35, 0.18], [2.85, 0.1]]);
 });
 
 test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that catalogue only; «شماره ۲ …» edits that one and produces it in full', async () => {
@@ -353,7 +355,7 @@ test('the weekly mix: Atossa makes the kind the week is short of, the plan and t
   const T = Date.now();
   desk.store.d.posts = { SP91: { id: 'SP91', at: T, state: 'posted', pillar: 'proof' }, SP92: { id: 'SP92', at: T, state: 'posted', pillar: 'proof' }, SP93: { id: 'SP93', at: T, state: 'cancelled', pillar: 'inspiration' } };
   assert.equal(desk.nextPillar(), 'inspiration');
-  assert.deepEqual(desk.weekMix(), { proof: 2, inspiration: 0, education: 0, real: 0 });
+  assert.deepEqual(desk.weekMix(), { proof: 2, inspiration: 0, education: 0, transform: 0, real: 0 });
   assert.match(desk.realJobReminder(), /کار واقعی/);
   assert.equal(desk.realJobReminder(), '', 'once a week');
   const d = await desk.draftDesign({ pillar: 'education' });
@@ -501,4 +503,30 @@ test('«ریلز پست N»: only the Reel made again from the post\'s own unmar
   assert.ok(made.slice(before2).some((m) => /Remove the logo/.test(m.prompt)), 'an older post: the marks are taken off first');
   p.state = 'posted';
   assert.match((await desk.remakeReel({ id })).text, /already posted/);
+});
+
+test('a before/after: «پیش و پس», the room before made from the room after, first in the post and wiped away in the Reel', async () => {
+  const { designRequest } = await import('../src/social.js');
+  assert.deepEqual(designRequest('پیش و پس'), { code: '', note: '', pillar: 'transform' });
+  assert.deepEqual(designRequest('قبل و بعد کد ۸۱۲ آشپزخانه'), { code: 'HZ812'.slice(0, 0) + '812', note: 'آشپزخانه', pillar: 'transform' });
+  let reelArgs = null;
+  const routes = { 'POST /222/photos': () => ({ id: `ph${Math.random()}` }), 'POST /222/feed': { id: '222_9' }, 'GET /ph.*': { images: [{ width: 10, source: 'https://x/p.jpg' }] }, 'GET /222_9': { permalink_url: 'https://fb/post' } };
+  const { desk, made, writes } = await studio({ routes, reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const d = await desk.draftDesign({ pillar: 'transform' });
+  const id = /Post #(SP\d+)/.exec(d.text)[1];
+  const p = desk.store.d.posts[id];
+  assert.ok(made.some((m) => /BEFORE the renovation/.test(m.prompt)), 'the before picture is made from the room');
+  assert.ok(p.lead && fs.existsSync(p.lead));
+  assert.ok(reelArgs.before, 'the Reel opens on the room before');
+  assert.equal(reelArgs.hook, null);
+  assert.match(writes.find((w) => w.kind === 'caption').text, /before and after/);
+  assert.match(d.text, /نوع پست: پیش و پس/);
+});
+
+test('the Reel with the texture hook and a before wiped by the after: a real MP4', { skip: !fs.existsSync(await ffmpegPath()) && 'no ffmpeg here' }, async () => {
+  const card = await endCard({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }], line: 'WhatsApp +971000' });
+  for (const extra of [{ hook: await pic('#402010', 1440, 1800) }, { before: await pic('#cccccc', 1440, 1800) }]) {
+    const mp4 = await makeReel({ room: await pic('#806040', 1440, 1800), ...extra, details: [{ image: await pic('#402010', 1440, 1800), seconds: 1.35 }], card, seconds: { room: 1.35, hook: 1.35, before: 1.35, detail: 1.35, card: 1 } });
+    assert.equal(mp4.subarray(4, 8).toString(), 'ftyp');
+  }
 });

@@ -208,6 +208,8 @@ export function catalogRequest(text) {
  * Returns { code, note } (code '' when none) or null.
  */
 export function designRequest(text) {
+  const ba = /^(?:پیش\s*و\s*پس|قبل\s*و\s*بعد|before\s*(?:and|&|\/)\s*after)\s*:?\s*([\s\S]*)$/i.exec(plainCode(text)); // a before/after design now
+  if (ba) { const c = /^(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(ba[1].trim()); return { code: c ? c[1].replace(/\s+/g, '').toUpperCase() : '', note: (c ? c[2] : ba[1]).trim(), pillar: 'transform' }; }
   const m = /^(?:پیشنهاد\s+طرح|طرح|design)(?=\s|:|$)\s*:?\s*([\s\S]*)$/i.exec(plainCode(text));
   if (!m) return null;
   const c = /^(?:کد|code)?\s*#?\s*([A-Za-z]{0,3}\s*\d{3,4})(?![\d])\s*[:،,\-]?\s*([\s\S]*)$/i.exec(m[1].trim());
@@ -267,7 +269,7 @@ You present every design as a story that sells the film: the hero room first, th
 Your voice: confident, warm, expert and short; never salesy, never a claim you cannot prove.`;
 
 export const TREND_RULES = `${ATOSSA}
-This morning you scan the world's best interior design sources for new ideas: Pinterest (trends and Pinterest Predicts), Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell, Houzz, and what leading kitchen and wardrobe brands show this season. Search the web; prefer pages from the last few weeks.
+This morning you scan the world's best interior design sources for new ideas: Pinterest (trends and Pinterest Predicts), Architectural Digest, Elle Decor, Dezeen, ArchDaily (real luxury projects, many in Dubai, Milan and London), Dwell, Houzz (kitchen layouts, islands, built-in ovens and coffee machines, under-cabinet light), Behance (interior and kitchen CGI: camera angles and studio light), and the gold standard of luxury cabinetry: Poliform, Molteni&C, Snaidero, Arclinea, Boffi, Dada (handleless, super-matte, dark tones with brass or copper). Search the web; prefer pages from the last few weeks.
 Write today's notes for your studio: 5 to 8 short English bullet points of concrete ideas you can use with decorative films on cabinets, wardrobes, wall panels and doors (colour pairings, wood and stone looks, finishes, details, layouts, lighting), each with its source site in brackets.
 Then one line starting with «فارسی:» with two Persian sentences for the owner: the most useful idea of the day.
 Also look at what interior, kitchen and wardrobe videos people watch and save on TikTok and Instagram Reels this week (search the web: TikTok Creative Center, articles and lists of trending interior Reels and TikToks) and add one or two bullets on formats or ideas that work there, with the source.
@@ -276,7 +278,7 @@ Output only the notes.`;
 
 export const LINK_RULES = `${ATOSSA}
 The owner sent you posts he likes (from Instagram, TikTok, Pinterest or a magazine) to inspire your next designs. You see each one's picture and words.
-For each, write in English: what to take from it (layout, colour pairing, a detail, the light, the camera, the format of the post) and which ARYAK films from the list could make it.
+For each, write in English: what to take from it (the layout, the colour pairing of the materials, a detail, the lighting style, the camera angle and lens, the format of the post) and which ARYAK films from the list could make it, as a short scene you could build next for ARYAK and the Dubai luxury market.
 Then, for the owner, one line per post starting with «فارسی:», two short Persian sentences: what you will take from it and how you will use it in an ARYAK design.
 Output only that.`;
 
@@ -516,8 +518,9 @@ export function nextGoodTime(ms, timeZone = 'Asia/Dubai') {
 // Atossa's daily proposal takes the kind the week is most short of; real jobs need the owner's photos, so she asks for one.
 export const PILLARS = {
   proof: { share: 0.35, fa: 'اثبات کیفیت', brief: 'PILLAR: product proof. The film is the whole picture: a close vignette (one cabinet front, a drawer, a door edge, a corner), not a whole room, in raking light, where its texture, its matte or gloss surface and its edge are seen up close; one film, at most one partner. The Reel shows the surface.', caption: 'This post proves the product: name one real quality of the film the picture shows (texture, matte surface, edge) with no absolute claim.' },
-  inspiration: { share: 0.25, fa: 'الهام', brief: 'PILLAR: inspiration. A whole room that people want to live in and save.', caption: '' },
-  education: { share: 0.20, fa: 'آموزش', brief: 'PILLAR: education. Teach one thing a joiner or a villa owner can use: where this finish suits and where not, how to pair it, how to match the edge banding, how to care for it. The room shows that lesson clearly.', caption: 'This post teaches: give the lesson in three short, useful points (where it suits, how to pair it, how to care for it) before the codes.' },
+  transform: { share: 0.10, fa: 'پیش و پس', brief: 'PILLAR: before and after. Choose a room people really renovate in the UAE (a dated villa kitchen, a tired wardrobe wall, an old TV wall) and show it after, refaced with ARYAK films: same layout and cabinet sizes, new fronts, light and styling. The scene is the AFTER; a before picture is made from it.', caption: 'This is a before and after: the first picture is the room before, the next one after it was refaced with ARYAK films (a design idea). Open with the change in one line, then the codes.' },
+  inspiration: { share: 0.15, fa: 'الهام', brief: 'PILLAR: inspiration. A whole room that people want to live in and save.', caption: '' },
+  education: { share: 0.15, fa: 'آموزش', brief: 'PILLAR: education. Teach one thing a joiner or a villa owner can use: where this finish suits and where not, how to pair it, how to match the edge banding, how to care for it. The room shows that lesson clearly.', caption: 'This post teaches: give the lesson in three short, useful points (where it suits, how to pair it, how to care for it) before the codes.' },
   real: { share: 0.20, fa: 'کار واقعی', brief: '', caption: '' },
 };
 
@@ -718,12 +721,21 @@ export class SocialDesk {
     for (const { x, i } of order) {
       try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
     }
+    // a before/after (the owner, 15/11): the same room before, with tired plain cabinets, made from the finished room
+    let beforeRaw = null;
+    if (plan.pillar === 'transform') {
+      try {
+        beforeRaw = await fitForInstagram((await this.imager.make({ images: [{ label: 'The finished room', buffer: room, mime: 'image/jpeg' }],
+          prompt: 'The same room photographed from exactly the same camera position BEFORE the renovation: the same walls, windows, layout and cabinet sizes, but the cabinet and wall fronts are tired, dated plain fronts (yellowed white gloss or worn beige laminate with chipped edges and old handles), flat cool daylight, a little clutter. Realistic, not dirty or ruined. Photorealistic interior photograph, 4:5 portrait.' })).image);
+      } catch (err) { this.log(`social: the before picture failed: ${err.message}`); }
+    }
     const mine = {};
     const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true, pillar: plan.pillar || 'inspiration', made: mine });
     const p = this.store.d.posts[mine.id];
     if (!p) return { text };
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene, plan: { ...plan, dialogue_fa: undefined, change_fa: undefined } };
     const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
+    if (beforeRaw) p.lead = save(`${p.id}-before.jpg`, await brandDesign(beforeRaw, { ...this.brandAssets(), codes: [] }));
     p.raw = { room: save(`${p.id}-room.jpg`, room), shots: shots.map((sh, k) => ({ file: save(`${p.id}-shot${k + 1}.jpg`, sh.raw), code: sh.part.code, where: sh.part.where, wood: sh.wood })) };
     const details = [];
     for (const [k, sh] of shots.entries()) {
@@ -733,7 +745,7 @@ export class SocialDesk {
     }
     let video = null;
     if (this.reel) {
-      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
+      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan, before: beforeRaw }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     this.remember(plan);
     const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
@@ -1053,7 +1065,7 @@ export class SocialDesk {
    */
   async watchInstagram() {
     if (!this.client.hasIg || !this.client.igDiscover) return '';
-    const accounts = (this.cfg.watchAccounts || 'archdigest,elledecor,dezeen,housebeautiful,dwellmagazine,houzz,studiomcgee,amberinteriors,kellywearstler').split(/[\s,]+/).filter(Boolean);
+    const accounts = (this.cfg.watchAccounts || 'archdigest,elledecor,dezeen,archdaily,housebeautiful,dwellmagazine,houzz,studiomcgee,amberinteriors,kellywearstler,poliform_official,molteniandc,snaiderocucine,arclinea_official').split(/[\s,]+/).filter(Boolean);
     const posts = [];
     for (const a of accounts) {
       try { for (const m of await this.client.igDiscover(a)) posts.push({ ...m, account: a }); } catch (err) { this.log(`social: Instagram account ${a} not read: ${err.message}`); }
@@ -1084,7 +1096,8 @@ export class SocialDesk {
     const kept = () => { try { return fs.readdirSync(dir).filter((f) => f.endsWith('.mp3')); } catch { return []; } };
     try {
       if (!this.imager?.music) throw new Error('no music model');
-      const mp3 = await this.imager.music(`${mood || 'Warm minimal luxury lounge: soft piano, gentle strings, a slow deep pulse, 78 BPM'}. Instrumental only, no vocals. Calm and elegant, for a short luxury interior design video.`);
+      // the sound design (the owner, 15/11, from a Gemini prompt): quiet sounds of the materials under the music keep people watching
+      const mp3 = await this.imager.music(`${mood || 'Warm minimal luxury lounge: soft piano, gentle strings, a slow deep pulse, 78 BPM'}. Instrumental only, no vocals. Calm and elegant, for a short luxury interior design video. Under the music, quiet close-miked sounds of the room: a soft-close cabinet door settling shut, a hand gliding over a matte surface, a drawer sliding, the soft air of a quiet villa; low in the mix, never louder than the music.`);
       if (dir) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${this.now()}.mp3`), mp3); }
       return mp3;
     } catch (err) {
@@ -1094,7 +1107,7 @@ export class SocialDesk {
     }
   }
 
-  async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '', opts = null, plan = null }) {
+  async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '', opts = null, plan = null, before = null }) {
     const sharp = (await import('sharp')).default;
     let focus = { x: 0.5, y: 0.5 };
     try {
@@ -1120,7 +1133,18 @@ export class SocialDesk {
       const k = Math.min(2.5, Math.max(0.6, (Math.min(45, want) - seconds.card) / Math.max(1, now - seconds.card)));
       seconds.room *= k; seconds.view *= k; for (const d of details) d.seconds *= k;
     }
-    return this.reel({ room, details, views, motion, seconds, focus, overlay, card, music: await this.reelMusic(opts?.music || mood) });
+    // the first second stops the scroll (the owner, 15/11): the main film's texture very close, then the room; a before/after opens on the
+    // room before ARYAK, wiped away by the room after
+    const hook = before ? null : details[0]?.image || null;
+    // cuts on the beat (the owner, 15/11, from a Gemini prompt): the music is asked at a known tempo and every shot lasts whole beats,
+    // so each cross-fade starts on a beat
+    const tune = /(\d{2,3})\s*BPM/i.exec(opts?.music || mood || '') ? (opts?.music || mood) : `${opts?.music || mood || 'Warm minimal luxury lounge: soft piano, gentle strings, a slow deep pulse'}, 80 BPM`;
+    const bpm = Math.min(140, Math.max(60, Number(/(\d{2,3})\s*BPM/i.exec(tune)[1])));
+    const beat = 60 / bpm; const fade = 0.6;
+    const onBeat = (sec, min = 2) => Math.max(min, Math.round((sec - fade) / beat)) * beat + fade;
+    seconds.hook = onBeat(1.6, 2); seconds.before = onBeat(2.6, 3); seconds.room = onBeat(seconds.room, 4); seconds.view = onBeat(seconds.view, 4);
+    for (const d of details) d.seconds = onBeat(d.seconds, 3);
+    return this.reel({ room, details, views, motion, hook, before, seconds, focus, overlay, card, music: await this.reelMusic(tune) });
   }
 
   /** The same room from two other camera places (left and right around it), for a Reel that walks around the design. */
@@ -1212,11 +1236,12 @@ export class SocialDesk {
         return `Post #${c.id} is approved and goes out at ${this.clock(at)} Dubai time, the hour most people look. To post it now: «بله پست ${c.id.slice(2)} الان»; to cancel: «نه پست ${c.id.slice(2)}».`;
       }
     }
-    const image = p.file ? fs.readFileSync(p.file) : Buffer.from(p.image || '', 'base64');
+    let image = p.file ? fs.readFileSync(p.file) : Buffer.from(p.image || '', 'base64');
     p.state = 'posting'; this.store.save(); // a second yes while it runs does nothing
     const done = [];
     const failed = [];
     const extras = (p.extras || []).filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f));
+    if (p.lead && fs.existsSync(p.lead)) { extras.unshift(image); image = fs.readFileSync(p.lead); } // a before/after: «before» is the first picture
     if (extras.length) await this.postAlbum(p, [image, ...extras], done, failed);
     let photoUrl = '';
     if (!extras.length) try {
@@ -1257,7 +1282,7 @@ export class SocialDesk {
 
   /** The posts of the last 7 days by kind (drafts, approved and posted; not cancelled). */
   weekMix() {
-    const mix = { proof: 0, inspiration: 0, education: 0, real: 0 };
+    const mix = { proof: 0, inspiration: 0, education: 0, transform: 0, real: 0 };
     for (const p of Object.values(this.store.d.posts)) {
       if (p.state === 'cancelled' || this.now() - (p.postedAt || p.at) >= 7 * DAY) continue;
       const k = p.pillar || (p.design ? 'inspiration' : '');
@@ -1269,7 +1294,7 @@ export class SocialDesk {
   nextPillar() {
     const mix = this.weekMix();
     const total = Math.max(5, Object.values(mix).reduce((a, b) => a + b, 0) + 1);
-    return ['proof', 'inspiration', 'education'].map((k) => ({ k, short: PILLARS[k].share * total - mix[k] })).sort((a, b) => b.short - a.short)[0].k;
+    return ['proof', 'inspiration', 'education', 'transform'].map((k) => ({ k, short: PILLARS[k].share * total - mix[k] })).sort((a, b) => b.short - a.short)[0].k;
   }
   /** Once a week, when no photo of a real job went out in 7 days: the owner is asked for one. */
   realJobReminder() {
