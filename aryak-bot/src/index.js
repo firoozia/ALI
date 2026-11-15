@@ -115,7 +115,7 @@ import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlan
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
 import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, inspirationRequest, parseSocialCommand, postRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designRequest, inspirationRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2483,6 +2483,23 @@ ${t.authorizeUrl()}`);
       else { try { await t.connect(tk.code); await socialSay('TikTok is connected: every Reel you approve goes there too.'); } catch (e) { await socialSay(`TikTok was not connected: ${e.message}`); } }
       return true;
     }
+    // «پیشنهادهای اچ‌زد»: numbered concepts of the new catalogue; «شماره ۱ …»: the chosen one, edited, produced in full (the owner, 15/11)
+    const cq = !imageOf(content) ? conceptsRequest(text) : null;
+    if (cq && isOwner()) {
+      trace(where, 'owner', `social: ${cq.n} concepts of ${cq.family}`);
+      await socialSay(`Atossa is drawing ${cq.n} concepts of the ${cq.family} catalogue… (a few minutes)`);
+      const list = await socialDesk.draftConcepts(cq);
+      for (const c of list) await socialSay(c.text, c.image || null);
+      if (list.some((c) => c.n)) await socialSay('Choose one: «شماره ۱» (or with your change: «شماره ۲ جزیره روشن‌تر»). Atossa then makes its close-ups, the Reel and the post.');
+      return true;
+    }
+    const cc = !imageOf(content) ? conceptChoice(text) : null;
+    if (cc && isOwner() && socialDesk.store.d.concepts?.items?.length) {
+      trace(where, 'owner', `social: concept ${cc.n}${cc.note ? ' with an edit' : ''}`);
+      await socialSay(`Atossa is producing concept ${cc.n}${cc.note ? ' with your change' : ''}: close-ups, the Reel and the post… (a few minutes)`);
+      await socialSayDesign(await socialDesk.chooseConcept(cc));
+      return true;
+    }
     const dr = !imageOf(content) ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
     if (dr && isOwner()) {
       trace(where, 'owner', `social: design ${dr.code ? `with colour ${dr.code}` : 'chosen by the designer'}`);
@@ -3800,7 +3817,8 @@ async function socialSay(text, image = null, video = null) {
 async function socialSayDesign(d) {
   await socialSay(d.text, d.image || null);
   const id = /Post #(SP\d+)/.exec(d.text)?.[1] || '';
-  if (d.detail) await socialSay(`${id ? `#${id} ` : ''}second picture: the close-up of the film`, d.detail);
+  const details = d.details?.length ? d.details : d.detail ? [{ image: d.detail, code: '' }] : [];
+  for (const x of details) await socialSay(`${id ? `#${id} ` : ''}close-up${x.code ? ` of ${x.code}` : ''}`, x.image);
   if (d.video) await socialSay(`${id ? `#${id} ` : ''}the Reel`, null, d.video);
 }
 if (config.social.enabled) {

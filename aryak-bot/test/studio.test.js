@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, inspirationRequest } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, inspirationRequest } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -53,20 +53,67 @@ test('her morning reading: once a day, kept, read by the designer; the inspirati
   assert.match(d.text, /الهام: ایدهٔ شیار برنجی از ای‌دی/);
 });
 
-test('a design comes with its close-up (second picture) and, with a Reel maker, a Reel pushed in where the main film shows best', async () => {
+test('a design: one close-up per film (up to three, wood first, closer along the grain), and a Reel that visits each film (wood longer)', async () => {
   let reelArgs = null;
   const { desk, made } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
   const d = await desk.draftDesign({});
-  assert.equal(made.length, 2, 'the room, then the close-up');
+  assert.equal(made.length, 3, 'the room, then a close-up of each of the two films');
   assert.deepEqual(made[1].images.map((i) => i.label), ['The room', 'Reference: film HZ812']);
-  assert.match(made[1].prompt, /close-up detail photograph taken in this same room[\s\S]*tall doors in film HZ812/);
-  assert.ok(d.detail && d.video, 'the owner gets both');
+  assert.deepEqual(made[2].images.map((i) => i.label), ['The room', 'Reference: film 1805']);
+  assert.match(made[1].prompt, /about 30 cm from the tall doors in film HZ812, looking along the wood grain/);
+  assert.equal(d.details.length, 2);
+  assert.deepEqual(d.details.map((x) => x.code), ['HZ812', '1805']);
+  assert.ok(d.video);
   assert.deepEqual(reelArgs.focus, { x: 0.7, y: 0.3 });
-  assert.ok(reelArgs.overlay && reelArgs.card && reelArgs.detail);
+  assert.deepEqual(reelArgs.details.map((x) => [x.seconds, x.zoom]), [[4.5, 0.18], [4.5, 0.18]], 'wood: longer and closer');
   const p = desk.store.d.posts.SP1;
-  assert.equal(p.extras.length, 1);
+  assert.equal(p.extras.length, 2);
   assert.ok(fs.existsSync(p.reel));
-  assert.match(d.text, /With the post: a close-up as a second picture and a Reel; one yes posts them all\./);
+  assert.match(d.text, /With the post: 2 close-ups \(HZ812, 1805\) and a Reel; one yes posts them all\./);
+});
+
+test('a stone or solid film gets a gentler, shorter look; wood comes first even when listed second', async () => {
+  const { desk } = await studio();
+  const cat = desk.catalog();
+  cat.HZ812.look = 'dark grey marble with gold veins';
+  fs.writeFileSync(path.join(desk.catalogDir, 'catalog.json'), JSON.stringify(cat));
+  assert.equal(desk.isWood('HZ812'), false);
+  assert.equal(desk.isWood('1805'), true);
+  const shots = [];
+  desk.closeUp = async (room, part) => { shots.push(part.code); return room; };
+  let args = null;
+  desk.reel = async (a) => { args = a; return Buffer.from('MP4'); };
+  await desk.draftDesign({});
+  assert.deepEqual(shots, ['1805', 'HZ812'], 'the wood first');
+  assert.deepEqual(args.details.map((x) => [x.seconds, x.zoom]), [[4.5, 0.18], [3, 0.1]]);
+});
+
+test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that catalogue only; «شماره ۲ …» edits that one and produces it in full', async () => {
+  assert.deepEqual(conceptsRequest('پیشنهادهای اچ‌زد'), { family: 'HZ', n: 4, note: '' });
+  assert.deepEqual(conceptsRequest('پیشنهاد اچ‌زد ۳ آشپزخانه'), { family: 'HZ', n: 3, note: 'آشپزخانه' });
+  assert.deepEqual(conceptsRequest('پیشنهادهای کاتالوگ جدید'), { family: 'HZ', n: 4, note: '' });
+  assert.equal(conceptsRequest('پیشنهاد طرح'), null);
+  assert.deepEqual(conceptChoice('شماره ۲ جزیره روشن‌تر'), { n: 2, note: 'جزیره روشن‌تر' });
+  assert.deepEqual(conceptChoice('شماره 1'), { n: 1, note: '' });
+  const { desk, writes, made } = await studio();
+  const plans = [
+    { title_fa: 'یک', room: 'kitchen', parts: [{ code: 'HZ812', where: 'all doors' }], scene: 'A monochrome kitchen.' },
+    { title_fa: 'دو', room: 'wardrobe', parts: [{ code: 'HZ812', where: 'doors' }, { code: '1805', where: 'shelves' }], scene: 'A wardrobe.' },
+  ];
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'concepts' ? JSON.stringify(plans) : base(r));
+  const list = await desk.draftConcepts({ family: 'HZ', n: 2 });
+  assert.deepEqual(list.map((x) => x.n), [1, 2]);
+  assert.match(list[0].text, /^پیشنهاد شمارهٔ ۱|^پیشنهاد شمارهٔ 1/);
+  assert.deepEqual(desk.store.d.concepts.items[1].plan.parts.map((p) => p.code), ['HZ812'], 'only the HZ films stay');
+  assert.equal(made.length, 2, 'one room per concept, nothing more yet');
+  assert.equal(Object.keys(desk.store.d.posts).length, 0, 'no post before the choice');
+  const d = await desk.chooseConcept({ n: 2, note: 'جزیره روشن‌تر' });
+  assert.match(made[2].prompt, /Edit this interior design exactly as the owner asks: «جزیره روشن‌تر»/);
+  assert.equal(made[2].images[0].label, 'The design to edit');
+  assert.match(d.text, /Post #SP1/);
+  assert.match(desk.store.d.taste.at(-1).text, /chose concept «دو» and asked: جزیره روشن‌تر/);
+  assert.match((await desk.chooseConcept({ n: 9 })).text, /no concept 9/);
 });
 
 test('one yes: both pictures as one swipeable post on Facebook and Instagram, then the Reel on both', async () => {
@@ -87,14 +134,14 @@ test('one yes: both pictures as one swipeable post on Facebook and Instagram, th
   const { desk, g } = await studio({ routes, reel: async () => Buffer.from('MP4') });
   await desk.draftDesign({});
   const out = await desk.handle({ verb: 'yes', kind: 'SP', id: 'SP1' });
-  assert.match(out, /Facebook: posted \(2 pictures\) https:\/\/fb\/post/);
-  assert.match(out, /Instagram: posted \(2 pictures\) https:\/\/ig\/p\/car/);
+  assert.match(out, /Facebook: posted \(3 pictures\) https:\/\/fb\/post/);
+  assert.match(out, /Instagram: posted \(3 pictures\) https:\/\/ig\/p\/car/);
   assert.match(out, /Facebook video: posted/);
   assert.match(out, /Instagram Reel: posted https:\/\/ig\/reel\/1/);
   const feed = g.calls.find((c) => c.key === 'POST /222/feed');
-  assert.deepEqual(JSON.parse(feed.params.attached_media), [{ media_fbid: 'ph1' }, { media_fbid: 'ph2' }]);
+  assert.deepEqual(JSON.parse(feed.params.attached_media), [{ media_fbid: 'ph1' }, { media_fbid: 'ph2' }, { media_fbid: 'ph3' }]);
   const carousel = g.calls.find((c) => c.key === 'POST /111/media' && c.params.media_type === 'CAROUSEL');
-  assert.equal(carousel.params.children.split(',').length, 2);
+  assert.equal(carousel.params.children.split(',').length, 3);
   const up = g.calls.find((c) => c.key === 'POST RUPLOAD /reel');
   assert.equal(up.headers.Authorization, 'OAuth PG');
   assert.equal(up.headers.file_size, '3');

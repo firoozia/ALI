@@ -69,46 +69,45 @@ export async function endCard({ codes = [], logo = null, font = '', line = '' })
  * The Reel: [room] and [detail] pictures (4:5), [focus] { x, y } (0..1) where the camera pushes in on the room, [overlay] a transparent
  * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
  */
-export async function makeReel({ room, detail = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
+export async function makeReel({ room, detail = null, details = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
+  // the close-ups, one per film (the owner, 15/11: up to three films, wood grain longer and closer): [{ image, seconds, zoom }]
+  const shots = (details || (detail ? [{ image: detail, seconds: seconds.detail, zoom: 0.12 }] : [])).filter((d) => d?.image).slice(0, 3);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reel-'));
   try {
     const put = (name, buf) => { const f = path.join(dir, name); fs.writeFileSync(f, buf); return f; };
     const fps = 30;
     const fx = clamp(focus?.x, 0.15, 0.85); const fy = clamp(focus?.y, 0.15, 0.85);
     const args = ['-y', '-loglevel', 'error'];
-    const inputs = [];
-    inputs.push(put('room.jpg', room));
-    if (detail) inputs.push(put('detail.jpg', detail));
-    inputs.push(put('card.png', card));
+    const inputs = [put('room.jpg', room), ...shots.map((d, i) => put(`detail${i}.jpg`, d.image)), put('card.png', card)];
     for (const f of inputs) args.push('-i', f);
+    const cardIn = inputs.length - 1;
     if (overlay) args.push('-i', put('overlay.png', overlay));
     // the sound: the design's own music (an MP3, faded in and out), or silence (Instagram wants a sound track)
-    if (music) args.push('-i', put('music.mp3', music)); else args.push('-f', 'lavfi', '-t', '20', '-i', 'anullsrc=r=44100:cl=stereo');
+    if (music) args.push('-i', put('music.mp3', music)); else args.push('-f', 'lavfi', '-t', '40', '-i', 'anullsrc=r=44100:cl=stereo');
     const fade = 0.6;
-    const n = (s) => Math.round(s * fps);
+    const n = (x) => Math.round(x * fps);
     // each still is enlarged a little above the frame first, so the slow zoom moves smoothly (1.25x: twice froze the 1 GB server)
     const move = (i, frames, zoom, cx, cy) => `[${i}:v]scale=1350:2400:force_original_aspect_ratio=increase,crop=1350:2400,setsar=1,`
       + `zoompan=z='1+${zoom}*on/${frames}':x='(iw-iw/zoom)*${cx}':y='(ih-ih/zoom)*${cy}':d=${frames}:s=1080x1920:fps=${fps},setsar=1,format=yuv420p`;
-    const parts = [];
-    parts.push(`${move(0, n(seconds.room), 0.22, fx, fy)}[a]`);
-    let last = 'a'; let t = seconds.room;
-    let k = 1;
-    if (detail) {
-      parts.push(`${move(1, n(seconds.detail), 0.12, 0.5, 0.5)}[b]`);
-      parts.push(`[a][b]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[ab]`);
-      last = 'ab'; t += seconds.detail - fade; k = 2;
-    }
+    const parts = [`${move(0, n(seconds.room), 0.22, fx, fy)}[m0]`];
+    let last = 'm0'; let t = seconds.room;
+    shots.forEach((d, i) => {
+      const sec = d.seconds || seconds.detail;
+      parts.push(`${move(i + 1, n(sec), d.zoom ?? 0.12, 0.5, 0.5)}[d${i}]`);
+      parts.push(`[${last}][d${i}]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[m${i + 1}]`);
+      last = `m${i + 1}`; t += sec - fade;
+    });
     const moving = t; // the overlay stays on the moving parts only
-    if (overlay) { parts.push(`[${last}][${k + 1}:v]overlay=0:0:enable='lt(t,${(moving - fade).toFixed(2)})'[o]`); last = 'o'; }
-    parts.push(`[${k}:v]loop=loop=${n(seconds.card)}:size=1:start=0,setpts=N/${fps}/TB,fps=${fps},scale=1080:1920,setsar=1,format=yuv420p[c]`);
+    if (overlay) { parts.push(`[${last}][${cardIn + 1}:v]overlay=0:0:enable='lt(t,${(moving - fade).toFixed(2)})'[o]`); last = 'o'; }
+    parts.push(`[${cardIn}:v]loop=loop=${n(seconds.card)}:size=1:start=0,setpts=N/${fps}/TB,fps=${fps},scale=1080:1920,setsar=1,format=yuv420p[c]`);
     parts.push(`[${last}][c]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[v]`);
     const total = t + seconds.card - fade;
-    const audio = overlay ? k + 2 : k + 1;
+    const audio = overlay ? cardIn + 2 : cardIn + 1;
     parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5[s]`);
     args.push('-filter_threads', '1', '-filter_complex_threads', '1', '-filter_complex', parts.join(';'), '-map', '[v]', '-map', '[s]', '-t', total.toFixed(2),
       '-c:v', 'libx264', '-preset', 'veryfast', '-threads', '1', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', path.join(dir, 'reel.mp4'));
-    await run(await ffmpegPath(), args);
+    await run(await ffmpegPath(), args, 360000);
     return fs.readFileSync(path.join(dir, 'reel.mp4'));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }

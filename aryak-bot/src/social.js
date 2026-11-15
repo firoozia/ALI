@@ -245,10 +245,21 @@ export class GeminiImage {
  * Atossa, the head of the ARYAK design studio (the owner, 15/11: «she is the manager and the designer of the design department; the
  * whole job is hers»). One character for everything she makes: the trends she follows, the rooms she designs, the captions she writes.
  */
-export const ATOSSA = `You are Atossa, Creative Director of the ARYAK Design Studio in Dubai.
-Your taste: warm minimal luxury with a Gulf soul. You pair honest wood grains with calm solid colours and one dramatic stone; you love golden-hour light, brass details, arches, palms, pools and the generous volumes of UAE villas; you design for real families, never for show.
-Your eye is editorial: you read Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell and Pinterest every day, you know what Salone del Mobile, Poliform, Molteni, Boffi and Minotti showed this year, and you turn it into rooms our clients can build with our films.
-Your rule: every picture makes the film the hero. Your voice: confident, warm, expert and short; never salesy, never a claim you cannot prove.`;
+export const ATOSSA = `You are Atossa, Creative Director and lead interior designer of the ARYAK Design Studio in Dubai.
+Every design starts with people: who lives there, how they cook, host and store, and the room's size and light. Plan the layout first (work zones, landing space beside sink and hob, clear walkways), then choose the finishes.
+Your rules for surfaces (the craft of the best studios):
+- At most three finishes in a room, in a 60-30-10 balance by visual weight: one dominant film, one supporting film or stone, one small accent.
+- Match undertones, warm with warm and cool with cool; contrast in light, middle and dark steps on the same undertone.
+- Never two loud patterns side by side: every strong wood grain or veined stone sits beside a calm solid or a quiet texture.
+- Pattern scale follows the surface: bold grain or veins on large, focal surfaces (island, TV wall, majlis feature wall), fine quiet patterns on small or busy ones.
+- Wood grain runs in one direction and continues from door to door: horizontal to widen and calm, vertical to lift.
+- Repeat each finish at least twice in the room so it looks intended.
+- Matte, anti-fingerprint films for busy family rooms; gloss only where light must bounce.
+- Light every room in warm, dimmable layers (2700 to 3000 K): ambient, task and accent, with grazing light where texture must show.
+For the Gulf: warm sand, taupe and greige with one deeper accent, veined stone with warm-grey veins, natural textures, quiet luxury, a generous and practical majlis for large families. Timeless over trendy: trends are seasoning, never the meal.
+Your eye is editorial: you read Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell, Houzz and Pinterest, and you know what the great kitchen and wardrobe brands show this season.
+You present every design as a story that sells the film: the hero room first, then slow side-lit close-ups of each film (wood grain longest and closest), then the details, then the codes.
+Your voice: confident, warm, expert and short; never salesy, never a claim you cannot prove.`;
 
 export const TREND_RULES = `${ATOSSA}
 This morning you scan the world's best interior design sources for new ideas: Pinterest (trends and Pinterest Predicts), Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell, Houzz, and what leading kitchen and wardrobe brands show this season. Search the web; prefer pages from the last few weeks.
@@ -336,6 +347,18 @@ export async function fitForInstagram(buf) {
     if (w > 1440) pipe = pipe.resize({ width: 1440 });
     return await pipe.jpeg({ quality: 88 }).toBuffer();
   } catch { return buf; }
+}
+
+/** «پیشنهادهای اچ‌زد» / «پیشنهاد اچ‌زد ۵ آشپزخانه» / «concepts HZ»: numbered concepts of a catalogue family. { family, n, note } or null. */
+export function conceptsRequest(text) {
+  const m = /^(?:پیشنهاد(?:\s*ها(?:ی)?|‌ها(?:ی)?)?|concepts?)\s+(?:از\s+)?(?:کاتالوگ\s+)?(HZ|کاتالوگ\s+جدید|جدید)\s*(\d{1,2})?\s*(?:تا|عدد)?\s*[:،,\-]?\s*([\s\S]*)$/i.exec(plainCode(text));
+  if (!m) return null;
+  return { family: 'HZ', n: Math.min(6, Math.max(1, Number(m[2]) || 4)), note: m[3].trim() };
+}
+/** «شماره ۱» / «شماره ۲ جزیره روشن‌تر»: the concept the owner chose, with his edit. { n, note } or null. */
+export function conceptChoice(text) {
+  const m = /^(?:شماره|number|no\.?)\s*(\d{1,2})(?!\d)\s*[:،,\-]?\s*([\s\S]*)$/i.exec(plainCode(text));
+  return m ? { n: Number(m[1]), note: m[2].trim() } : null;
 }
 
 /** «الهام …» / «inspiration …»: a picture the owner liked; Atossa remakes its mood with ARYAK films. Returns { note } or null. */
@@ -534,51 +557,148 @@ export class SocialDesk {
     const plan = await this.designPlan({ code, note, inspiration });
     if (plan.error) return { text: plan.error };
     if (inspiration) this.addTaste(`The owner's inspiration picture: ${plan.room}${note ? ` (${note})` : ''}`);
-    const all = this.catalog();
-    let made;
-    try {
-      const images = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
-      // the owner's picture guides the room (mood, layout, light) only; the films on the fronts come from the labelled samples
-      if (inspiration) images.push({ label: 'Mood and layout reference (the owner\'s inspiration; do not copy its materials, brands or text)', buffer: inspiration.image, mime: inspiration.mime || 'image/jpeg' });
-      made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. An editorial photograph for a luxury interior design magazine: photorealistic, highly detailed, crisp film textures with visible grain, rich warm light and depth, real reflections and soft shadows. 4:5 portrait.`, images });
-    } catch (err) {
+    let roomRaw;
+    try { roomRaw = await this.renderRoom(plan, { inspiration }); } catch (err) {
       this.log(`social: design failed: ${err.message}`);
       return { text: `The design could not be made: ${err.message}` };
     }
+    return this.produceDesign({ plan, roomRaw, note });
+  }
+
+  /** The room of a plan, drawn by Gemini with each film's own picture (and the owner's inspiration as a mood reference). The raw picture. */
+  async renderRoom(plan, { inspiration = null } = {}) {
+    const all = this.catalog();
+    const images = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
+    // the owner's picture guides the room (mood, layout, light) only; the films on the fronts come from the labelled samples
+    if (inspiration) images.push({ label: 'Mood and layout reference (the owner\'s inspiration; do not copy its materials, brands or text)', buffer: inspiration.image, mime: inspiration.mime || 'image/jpeg' });
+    const made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. An editorial photograph for a luxury interior design magazine: photorealistic, highly detailed, crisp film textures with visible grain, rich warm light and depth, real reflections and soft shadows. 4:5 portrait.`, images });
+    return made.image;
+  }
+
+  /** Is this film a wood grain? (its look or kind): wood gets a closer, longer look in the close-up and the Reel (the owner, 15/11). */
+  isWood(code) {
+    const e = this.catalog()[code] || {};
+    return /wood|walnut|oak|grain|teak|ash|maple|cherry|elm|veneer|timber/i.test(`${e.look || ''} ${e.kind || ''}`);
+  }
+
+  /** One close-up of one film of the room: wood seen closer, along its grain, in raking light; stone and solids slightly further. */
+  async closeUp(room, part, swatch) {
+    const wood = this.isWood(part.code);
+    const how = wood
+      ? `the camera is about 30 cm from the ${part.where} in film ${part.code}, looking along the wood grain, so the grain, its direction and the pores fill three quarters of the frame, crisp and exactly like the reference sample; low warm light grazing across the surface so every line of the grain shows`
+      : `the camera is about 50 cm from the ${part.where} in film ${part.code}, at a slight angle, so the film fills two thirds of the frame and its colour, texture and finish are crisp and exactly like the reference sample; soft warm light across the surface`;
+    const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people, no text.`,
+      images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }] });
+    return fitForInstagram(d.image);
+  }
+
+  /**
+   * The production of a design (the owner, 15/11: «focus on up to three colours; on wood grain more»): the room with the logo and the
+   * codes, one close-up per film (up to three), a Reel that visits each film (wood longer and closer), then a draft #SP like any other.
+   */
+  async produceDesign({ plan, roomRaw, note = '' }) {
+    const all = this.catalog();
     const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.`;
     // the owner's mark (15/11): the ARYAK logo in the top corner, each film's swatch and code along the bottom
     const codes = plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
-    const room = await fitForInstagram(made.image);
+    const room = await fitForInstagram(roomRaw);
     const image = await brandDesign(room, { ...this.brandAssets(), codes });
-    // the second picture: the main film seen close, its grain and finish filling the frame (a swipe in the post, the second shot of the Reel)
-    const main = plan.parts[0];
-    let detail = null;
-    try {
-      const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: the camera is about 40 cm from the ${main.where} in film ${main.code}, at a slight angle, so the film fills two thirds of the frame and its colour, grain or texture and finish are crisp and exactly like the reference sample; at one side a slim brass profile, a handle groove or the edge of the worktop; warm light grazing across the surface; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people, no text.`,
-        images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${main.code}`, buffer: codes[0].swatch, mime: 'image/jpeg' }] });
-      detail = await fitForInstagram(d.image);
-    } catch (err) { this.log(`social: the close-up failed: ${err.message}`); }
+    // the close-ups: one per film, wood first (it sells by its grain), at most three
+    const order = plan.parts.slice(0, 3).map((x, i) => ({ x, i })).sort((a, b) => Number(this.isWood(b.x.code)) - Number(this.isWood(a.x.code)) || a.i - b.i);
+    const shots = [];
+    for (const { x, i } of order) {
+      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
+    }
     const before = new Set(Object.keys(this.store.d.posts));
     const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
     const p = this.store.d.posts[Object.keys(this.store.d.posts).find((k) => !before.has(k))];
     if (!p) return { text };
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene };
     const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
-    let detailImage = null;
-    if (detail) { detailImage = await brandDesign(detail, { ...this.brandAssets(), codes: codes.slice(0, 1) }); p.extras = [save(`${p.id}-2.jpg`, detailImage)].filter(Boolean); }
+    const details = [];
+    for (const [k, sh] of shots.entries()) {
+      const branded = await brandDesign(sh.raw, { ...this.brandAssets(), codes: codes.filter((c) => c.code === sh.part.code) });
+      details.push({ code: sh.part.code, image: branded });
+      p.extras = [...(p.extras || []), save(`${p.id}-${k + 2}.jpg`, branded)].filter(Boolean);
+    }
     let video = null;
     if (this.reel) {
-      try { video = await this.makeReelFor({ room, detail, codes, main, music: plan.music }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
+      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes: p.design.codes });
     this.store.d.designs = this.store.d.designs.slice(-40);
     this.store.save();
     const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
-    return { text: `${head}\n\n${text}${detailImage || video ? `\nWith the post: ${[detailImage ? 'a close-up as a second picture' : '', video ? 'a Reel' : ''].filter(Boolean).join(' and ')}; one yes posts them all.` : ''}`,
-      image: p.file ? fs.readFileSync(p.file) : made.image, detail: detailImage, video };
+    const extra = [details.length ? `${details.length} close-up${details.length > 1 ? 's' : ''} (${details.map((x) => x.code).join(', ')})` : '', video ? 'a Reel' : ''].filter(Boolean).join(' and ');
+    return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}`,
+      image: p.file ? fs.readFileSync(p.file) : image, details, detail: details[0]?.image || null, video };
   }
 
-  /** Today's research notes (Atossa reads the world's design press once a day); '' when none. */
+  // ---- concepts (the owner, 15/11): several numbered proposals of a catalogue, he picks one («شماره ۱ …»), it is then produced
+  /**
+   * [n] concepts that use only the films of one family (HZ…): one plan call for all (so they differ: single-film rooms and pairings),
+   * each room drawn once. Kept as the concepts of the day; returns [{ n, text, image }].
+   */
+  async draftConcepts({ family = 'HZ', n = 4, note = '' } = {}) {
+    if (!this.imager?.enabled) return [{ n: 0, text: 'The design maker (Google Gemini) is not connected yet: its key is missing on the server.' }];
+    await this.ensureLooks();
+    await this.researchTrends().catch((err) => this.log(`social: today's research failed: ${err.message}`));
+    const all = this.catalog();
+    const allowed = Object.keys(all).filter((k) => k.toUpperCase().startsWith(family.toUpperCase()));
+    if (!allowed.length) return [{ n: 0, text: `There is no film of the ${family} catalogue on the server.` }];
+    const text = [
+      `The films you may use (only these, the ${family} catalogue; code: look):`,
+      ...allowed.map((k) => `${k}: ${all[k].look || all[k].kind || 'decorative film'}`),
+      this.todayTrends() ? `\nToday's notes from the world's design press:\n${this.todayTrends()}` : '',
+      this.todayLooks() ? `\nWhat today's press pictures show:\n${this.todayLooks()}` : '',
+      (this.store.d.taste || []).length ? `\nThe owner's notes (follow them):\n${this.store.d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
+      note ? `\nThe owner's words: ${note}` : '',
+      `\nPropose ${n} different concepts: at least one that uses a single film alone (a monochrome room that lets one film speak), the others your best pairings of two or three films. Each a different room. Answer with a JSON array of ${n} objects in the plan format.`,
+    ].filter(Boolean).join('\n');
+    let plans = null;
+    for (let i = 0; i < 2 && !Array.isArray(plans); i++) {
+      const raw = String(await this.write({ kind: 'concepts', system: fill(DESIGNER_RULES, this.cfg), text, effort: 'medium', maxTokens: 20000 }) || '');
+      try { plans = JSON.parse(raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)); } catch { this.log(`social: the concepts were not JSON (${raw.length} characters)`); }
+    }
+    if (!Array.isArray(plans)) return [{ n: 0, text: 'The designer gave no concepts; try again.' }];
+    const items = [];
+    for (const pl of plans.slice(0, n)) {
+      pl.parts = (Array.isArray(pl.parts) ? pl.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => allowed.includes(p.code)).slice(0, 3);
+      if (!pl.parts.length || !pl.scene) continue;
+      try {
+        const raw = await this.renderRoom(pl);
+        const k = items.length + 1;
+        const file = this.mediaDir ? path.join(this.mediaDir, `concept-${this.now().toString(36)}-${k}.jpg`) : '';
+        if (file) { fs.mkdirSync(this.mediaDir, { recursive: true }); fs.writeFileSync(file, raw); }
+        const preview = await brandDesign(await fitForInstagram(raw), { ...this.brandAssets(), codes: pl.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })) });
+        items.push({ n: k, plan: pl, file, image: file ? undefined : raw.toString('base64'), preview });
+      } catch (err) { this.log(`social: concept failed: ${err.message}`); }
+    }
+    this.store.d.concepts = { at: this.now(), family, items: items.map(({ preview, ...x }) => x) };
+    this.store.save();
+    if (!items.length) return [{ n: 0, text: 'No concept could be drawn; try again.' }];
+    return items.map((x) => ({ n: x.n, image: x.preview, text: [`پیشنهاد شمارهٔ ${x.n}: ${x.plan.title_fa || x.plan.room}`, x.plan.why_fa || '', ...x.plan.parts.map((p) => `• کد ${p.code}: ${p.where_fa || p.where}`)].filter(Boolean).join('\n') }));
+  }
+
+  /** «شماره ۱ …»: that concept, edited as the owner says (when he says something), then produced in full (close-ups, Reel, draft #SP). */
+  async chooseConcept({ n, note = '' }) {
+    const set = this.store.d.concepts;
+    const c = set?.items?.find((x) => x.n === n);
+    if (!c) return { text: set?.items?.length ? `There is no concept ${n}; the concepts are 1 to ${set.items.length}.` : 'There are no concepts yet: write «پیشنهادهای اچ‌زد».' };
+    let roomRaw = c.file ? fs.readFileSync(c.file) : Buffer.from(c.image || '', 'base64');
+    if (note) {
+      const all = this.catalog();
+      try {
+        const made = await this.imager.make({ prompt: `Edit this interior design exactly as the owner asks: «${note}». Keep everything else the same: the room, the camera, the light, and every film exactly as in its labelled sample. Photorealistic editorial interior photograph, 4:5 portrait.`,
+          images: [{ label: 'The design to edit', buffer: roomRaw, mime: 'image/jpeg' }, ...c.plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }))] });
+        roomRaw = made.image;
+        this.addTaste(`The owner chose concept «${c.plan.title_fa || c.plan.room}» and asked: ${note}`);
+      } catch (err) { return { text: `The edit could not be made: ${err.message}` }; }
+    } else this.addTaste(`The owner chose concept «${c.plan.title_fa || c.plan.room}» (${c.plan.parts.map((p) => p.code).join(' + ')})`);
+    return this.produceDesign({ plan: c.plan, roomRaw, note });
+  }
+
+    /** Today's research notes (Atossa reads the world's design press once a day); '' when none. */
   todayTrends() {
     const day = new Date(this.now()).toISOString().slice(0, 10);
     return (this.store.d.trends || []).find((t) => t.day === day)?.text || '';
@@ -644,7 +764,7 @@ export class SocialDesk {
     }
   }
 
-  async makeReelFor({ room, detail, codes, main, music: mood = '' }) {
+  async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '' }) {
     const sharp = (await import('sharp')).default;
     let focus = { x: 0.5, y: 0.5 };
     try {
@@ -657,7 +777,9 @@ export class SocialDesk {
     const overlay = await brandDesign(frame, { ...brand, codes, transparent: true });
     const { endCard } = await import('./reel.js');
     const card = await endCard({ codes, logo: brand.logo, font: brand.font, line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
-    return this.reel({ room, detail, focus, overlay, card, music: await this.reelMusic(mood) });
+    // each film's close-up in turn: wood grain longer and closer (the owner, 15/11), the others a shorter, gentler look
+    const details = shots ? shots.map((sh) => ({ image: sh.raw, seconds: sh.wood ? 4.5 : 3, zoom: sh.wood ? 0.18 : 0.1 })) : detail ? [{ image: detail, seconds: 4, zoom: 0.12 }] : [];
+    return this.reel({ room, details, focus, overlay, card, music: await this.reelMusic(mood) });
   }
 
   /** Design drafts still waiting for the owner's answer: the daily proposal waits while there are [max]. */
