@@ -394,8 +394,8 @@ const ago = (ms) => { const h = Math.round(ms / 3600000); return h < 1 ? 'just n
  * [cfg] { brand, contact }, [mediaDir] where the photo of a draft waits for the yes.
  */
 export class SocialDesk {
-  constructor({ client, store, write, research = null, reel = null, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { client, store, write, research, reel, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
+  constructor({ client, store, write, research = null, reel = null, tiktok = null, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { client, store, write, research, reel, tiktok, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
   /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
@@ -706,6 +706,13 @@ export class SocialDesk {
     }
     if (this.client.hasIg) {
       try { const r = await this.client.igReel(video, p.caption); p.igReel = r.id; done.push(`Instagram Reel: posted${r.link ? ` ${r.link}` : ''}`); } catch (e) { failed.push(`Instagram Reel: ${e.message}`); }
+    }
+    if (this.tiktok?.connected) {
+      try {
+        const t = await this.tiktok.postVideo(video, p.caption);
+        p.tiktok = t.publishId;
+        done.push(t.status === 'SEND_TO_USER_INBOX' ? 'TikTok: sent to your TikTok inbox as a draft (open TikTok and tap Post)' : 'TikTok: posted');
+      } catch (e) { failed.push(`TikTok: ${e.message}`); }
     }
   }
 

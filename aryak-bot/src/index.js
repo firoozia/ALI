@@ -114,6 +114,7 @@ import { acquireSingleInstance } from './singleinstance.js';
 import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
+import { TikTokClient, tiktokCommand } from './tiktok.js';
 import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
@@ -2472,6 +2473,16 @@ async function handleStaffChat(raw, chatId, group) {
     const sc = !imageOf(content) ? parseSocialCommand(text) : null;
     const cr = !imageOf(content) ? catalogRequest(text) : null; // «پست کاتالوگ ۱۸۰۵ …»: the colour's own picture from the catalogues
     if (cr && isOwner()) { trace(where, 'owner', `social: catalogue colour ${cr.code}`); const t = await socialDesk.draftFromCatalog(cr); await socialSay(t, socialDesk.draftPicture(t)); return true; }
+    const tk = !imageOf(content) ? tiktokCommand(text) : null; // «تیک‌تاک وصل» / «تیک‌تاک کد …»: the owner connects TikTok once
+    if (tk && isOwner()) {
+      trace(where, 'owner', `social: tiktok ${tk.verb}`);
+      const t = socialDesk.tiktok;
+      if (!t?.configured) await socialSay('TikTok is not set up on the server yet: the app keys from TikTok for Developers are missing.');
+      else if (tk.verb === 'connect') await socialSay(`Open this link, sign in to the ARYAK TikTok account and allow. TikTok then opens ${config.social.tiktokRedirect} with a code in the address: copy the whole address and send «تیک‌تاک کد <the address>».
+${t.authorizeUrl()}`);
+      else { try { await t.connect(tk.code); await socialSay('TikTok is connected: every Reel you approve goes there too.'); } catch (e) { await socialSay(`TikTok was not connected: ${e.message}`); } }
+      return true;
+    }
     const dr = !imageOf(content) ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
     if (dr && isOwner()) {
       trace(where, 'owner', `social: design ${dr.code ? `with colour ${dr.code}` : 'chosen by the designer'}`);
@@ -3741,6 +3752,7 @@ const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
   reel: makeReel,
+  tiktok: new TikTokClient({ clientKey: config.social.tiktokKey, clientSecret: config.social.tiktokSecret, redirectUri: config.social.tiktokRedirect, mode: config.social.tiktokMode, store: socialStore }),
   // Atossa's morning reading of the world's design press: Claude's own web search and web fetch (server tools)
   research: async ({ system, text }) => {
     const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4 }];

@@ -157,6 +157,9 @@ export function loadConfig(env = process.env) {
       geminiKey: (env.GEMINI_API_KEY || '').trim(),
       geminiImageModel: (env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image').trim(), // the owner, 15/11: the pictures sell the films, so the best model
       geminiImageSize: (env.GEMINI_IMAGE_SIZE || '2K').trim(),
+      // TikTok (the owner, 15/11): the Reels go there too; the app's keys come from TikTok for Developers, the account is connected in chat
+      tiktokKey: (env.TIKTOK_CLIENT_KEY || '').trim(), tiktokSecret: (env.TIKTOK_CLIENT_SECRET || '').trim(),
+      tiktokRedirect: (env.TIKTOK_REDIRECT_URI || 'https://aryak.ae/').trim(), tiktokMode: /^direct$/i.test(env.TIKTOK_MODE || '') ? 'direct' : 'inbox',
       designHour: /^off$/i.test(env.SOCIAL_DESIGN_HOUR || '') ? -1 : Math.min(23, Math.max(0, Number(env.SOCIAL_DESIGN_HOUR || 10))), // the designer's proposal of the day, Dubai time
     },
     kbDir: env.KB_DIR || './kb',
