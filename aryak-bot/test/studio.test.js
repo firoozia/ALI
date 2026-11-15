@@ -95,6 +95,9 @@ test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that cat
   assert.equal(conceptsRequest('پیشنهاد طرح'), null);
   assert.deepEqual(conceptChoice('شماره ۲ جزیره روشن‌تر'), { n: 2, note: 'جزیره روشن‌تر' });
   assert.deepEqual(conceptChoice('شماره 1'), { n: 1, note: '' });
+  assert.deepEqual(conceptChoice('شماره یک ولی جزئیات و کیفیت بالاتری ارائه بده'), { n: 1, note: 'جزئیات و کیفیت بالاتری ارائه بده' });
+  assert.deepEqual(conceptChoice('پیشنهاد دوم'), { n: 2, note: '' });
+  assert.equal(conceptChoice('شماره یکی از این‌ها'), null);
   const { desk, writes, made } = await studio();
   const plans = [
     { title_fa: 'یک', room: 'kitchen', parts: [{ code: 'HZ812', where: 'all doors' }], scene: 'A monochrome kitchen.' },
@@ -114,6 +117,10 @@ test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that cat
   assert.match(d.text, /Post #SP1/);
   assert.match(desk.store.d.taste.at(-1).text, /chose concept «دو» and asked: جزیره روشن‌تر/);
   assert.match((await desk.chooseConcept({ n: 9 })).text, /no concept 9/);
+  const before = made.length;
+  await desk.chooseConcept({ n: 1, note: 'جزئیات و کیفیت بالاتر' });
+  assert.ok(made.slice(before).every((m) => m.size === '4K'), 'a quality request: the edit and the close-ups at 4K');
+  assert.match(made[before].prompt, /highest quality/);
 });
 
 test('one yes: both pictures as one swipeable post on Facebook and Instagram, then the Reel on both', async () => {

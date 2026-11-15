@@ -216,10 +216,10 @@ export function designRequest(text) {
 export class GeminiImage {
   constructor({ apiKey, model = 'gemini-3-pro-image', size = '2K', fetchImpl = globalThis.fetch }) { Object.assign(this, { apiKey, model, size, fetchImpl }); }
   get enabled() { return !!this.apiKey; }
-  async make({ prompt, images = [], aspect = '4:5' }) {
+  async make({ prompt, images = [], aspect = '4:5', size = '' }) {
     const body = {
       contents: [{ role: 'user', parts: [...images.flatMap((i) => [...(i.label ? [{ text: i.label }] : []), { inline_data: { mime_type: i.mime || 'image/jpeg', data: i.buffer.toString('base64') } }]), { text: prompt }] }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect, ...(this.size ? { imageSize: this.size } : {}) } },
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect, ...((size || this.size) ? { imageSize: size || this.size } : {}) } },
     };
     const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
@@ -357,8 +357,11 @@ export function conceptsRequest(text) {
 }
 /** «شماره ۱» / «شماره ۲ جزیره روشن‌تر»: the concept the owner chose, with his edit. { n, note } or null. */
 export function conceptChoice(text) {
-  const m = /^(?:شماره|number|no\.?)\s*(\d{1,2})(?!\d)\s*[:،,\-]?\s*([\s\S]*)$/i.exec(plainCode(text));
-  return m ? { n: Number(m[1]), note: m[2].trim() } : null;
+  // «شماره یک …» / «پیشنهاد دوم …»: the number as a word too (the owner wrote «شماره یک ولی …», 15/11)
+  const words = { 'یک': 1, 'اول': 1, 'یکم': 1, 'دو': 2, 'دوم': 2, 'سه': 3, 'سوم': 3, 'چهار': 4, 'چهارم': 4, 'پنج': 5, 'پنجم': 5, 'شش': 6, 'ششم': 6 };
+  const t = plainCode(text).replace(/^((?:شماره|پیشنهاد|طرح)\s*(?:ی\s+)?)(یکم|یک|اول|دوم|دو|سوم|سه|چهارم|چهار|پنجم|پنج|ششم|شش)(?=\s|$|[:،,\-])/u, (_, a, w) => `${a.startsWith('شماره') ? a : 'شماره '}${words[w]}`);
+  const m = /^(?:شماره|number|no\.?)\s*(\d{1,2})(?!\d)\s*[:،,\-]?\s*([\s\S]*)$/i.exec(t);
+  return m ? { n: Number(m[1]), note: m[2].replace(/^(?:ولی|اما|و|but|with)\s+/i, '').trim() } : null;
 }
 
 /** «الهام …» / «inspiration …»: a picture the owner liked; Atossa remakes its mood with ARYAK films. Returns { note } or null. */
@@ -582,13 +585,13 @@ export class SocialDesk {
   }
 
   /** One close-up of one film of the room: wood seen closer, along its grain, in raking light; stone and solids slightly further. */
-  async closeUp(room, part, swatch) {
+  async closeUp(room, part, swatch, { size = '' } = {}) {
     const wood = this.isWood(part.code);
     const how = wood
       ? `the camera is about 30 cm from the ${part.where} in film ${part.code}, looking along the wood grain, so the grain, its direction and the pores fill three quarters of the frame, crisp and exactly like the reference sample; low warm light grazing across the surface so every line of the grain shows`
       : `the camera is about 50 cm from the ${part.where} in film ${part.code}, at a slight angle, so the film fills two thirds of the frame and its colour, texture and finish are crisp and exactly like the reference sample; soft warm light across the surface`;
     const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people, no text.`,
-      images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }] });
+      images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
     return fitForInstagram(d.image);
   }
 
@@ -596,7 +599,7 @@ export class SocialDesk {
    * The production of a design (the owner, 15/11: «focus on up to three colours; on wood grain more»): the room with the logo and the
    * codes, one close-up per film (up to three), a Reel that visits each film (wood longer and closer), then a draft #SP like any other.
    */
-  async produceDesign({ plan, roomRaw, note = '' }) {
+  async produceDesign({ plan, roomRaw, note = '', size = '' }) {
     const all = this.catalog();
     const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.`;
     // the owner's mark (15/11): the ARYAK logo in the top corner, each film's swatch and code along the bottom
@@ -607,7 +610,7 @@ export class SocialDesk {
     const order = plan.parts.slice(0, 3).map((x, i) => ({ x, i })).sort((a, b) => Number(this.isWood(b.x.code)) - Number(this.isWood(a.x.code)) || a.i - b.i);
     const shots = [];
     for (const { x, i } of order) {
-      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
+      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
     }
     const before = new Set(Object.keys(this.store.d.posts));
     const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true });
@@ -686,16 +689,19 @@ export class SocialDesk {
     const c = set?.items?.find((x) => x.n === n);
     if (!c) return { text: set?.items?.length ? `There is no concept ${n}; the concepts are 1 to ${set.items.length}.` : 'There are no concepts yet: write «پیشنهادهای اچ‌زد».' };
     let roomRaw = c.file ? fs.readFileSync(c.file) : Buffer.from(c.image || '', 'base64');
+    // «جزئیات و کیفیت بالاتر»: the room redrawn and the close-ups made at 4K (sharper detail; the post is cut to Instagram's size after)
+    const hq = /کیفیت|جزئیات|دقیق|وضوح|quality|detail|sharp/i.test(note);
+    const size = hq ? '4K' : '';
     if (note) {
       const all = this.catalog();
       try {
-        const made = await this.imager.make({ prompt: `Edit this interior design exactly as the owner asks: «${note}». Keep everything else the same: the room, the camera, the light, and every film exactly as in its labelled sample. Photorealistic editorial interior photograph, 4:5 portrait.`,
+        const made = await this.imager.make({ size, prompt: `Edit this interior design exactly as the owner asks: «${note}». Keep everything else the same: the room, the camera, the light, and every film exactly as in its labelled sample.${hq ? ' Render it at the highest quality: finer detail in every material, crisp film grain and texture, realistic joinery edges, accurate reflections and soft shadows.' : ''} Photorealistic editorial interior photograph, 4:5 portrait.`,
           images: [{ label: 'The design to edit', buffer: roomRaw, mime: 'image/jpeg' }, ...c.plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }))] });
         roomRaw = made.image;
         this.addTaste(`The owner chose concept «${c.plan.title_fa || c.plan.room}» and asked: ${note}`);
       } catch (err) { return { text: `The edit could not be made: ${err.message}` }; }
     } else this.addTaste(`The owner chose concept «${c.plan.title_fa || c.plan.room}» (${c.plan.parts.map((p) => p.code).join(' + ')})`);
-    return this.produceDesign({ plan: c.plan, roomRaw, note });
+    return this.produceDesign({ plan: c.plan, roomRaw, note, size });
   }
 
     /** Today's research notes (Atossa reads the world's design press once a day); '' when none. */
