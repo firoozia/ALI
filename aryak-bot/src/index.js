@@ -2470,7 +2470,7 @@ async function handleStaffChat(raw, chatId, group) {
     const isOwner = () => isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(sctx.isForwarded || sctx.forwardingScore > 0) });
     const sc = !imageOf(content) ? parseSocialCommand(text) : null;
     const cr = !imageOf(content) ? catalogRequest(text) : null; // «پست کاتالوگ ۱۸۰۵ …»: the colour's own picture from the catalogues
-    if (cr && isOwner()) { trace(where, 'owner', `social: catalogue colour ${cr.code}`); await socialSay(await socialDesk.draftFromCatalog(cr)); return true; }
+    if (cr && isOwner()) { trace(where, 'owner', `social: catalogue colour ${cr.code}`); const t = await socialDesk.draftFromCatalog(cr); await socialSay(t, socialDesk.draftPicture(t)); return true; }
     const dr = !imageOf(content) ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
     if (dr && isOwner()) {
       trace(where, 'owner', `social: design with colour ${dr.code}`);
@@ -2489,7 +2489,8 @@ async function handleStaffChat(raw, chatId, group) {
       trace(where, 'owner', `social: a photo to post${photoRaw === raw ? '' : ' (the photo sent just before)'}`);
       let buf = null;
       try { buf = await downloadMedia(photoRaw); } catch (e) { logger.warn(`social: photo download failed: ${e.message}`); }
-      await socialSay(buf ? await socialDesk.draftPost({ image: buf, mime: imageOf(normalizeMessageContent(photoRaw.message))?.mimetype || 'image/jpeg', note: pr.note }) : 'The photo could not be read; send it again.');
+      const t = buf ? await socialDesk.draftPost({ image: buf, mime: imageOf(normalizeMessageContent(photoRaw.message))?.mimetype || 'image/jpeg', note: pr.note }) : 'The photo could not be read; send it again.';
+      await socialSay(t, socialDesk.draftPicture(t)); // the owner sees the picture as it will be posted (cut, with the logo)
       return true;
     }
   }

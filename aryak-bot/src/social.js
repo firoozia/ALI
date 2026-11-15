@@ -438,6 +438,13 @@ export class SocialDesk {
   /** Design drafts still waiting for the owner's answer: the daily proposal waits while there are [max]. */
   designsWaiting() { return Object.values(this.store.d.posts).filter((p) => p.design && p.state === 'draft').length; }
 
+  /** The picture of the draft a preview names («Post #SP7 …»), so the owner sees what will be posted; null when none. */
+  draftPicture(text) {
+    const m = /Post #(SP\d+)/.exec(String(text || ''));
+    const p = m && this.store.d.posts[m[1]];
+    try { return p ? (p.file ? fs.readFileSync(p.file) : p.image ? Buffer.from(p.image, 'base64') : null) : null; } catch { return null; }
+  }
+
   postPreview(id) {
     const p = this.store.d.posts[id];
     const to = [this.client.hasIg ? 'Instagram' : '', this.client.hasFb ? 'Facebook' : ''].filter(Boolean).join(' + ');
@@ -449,7 +456,8 @@ export class SocialDesk {
     const p = this.store.d.posts[c.id];
     if (!p) return `There is no post #${c.id}.`;
     if (p.state !== 'draft') return `Post #${c.id} was already ${p.state}.`;
-    if (p.design && (c.verb === 'no' || c.verb === 'yes')) this.addTaste(`${c.verb === 'yes' ? 'Approved' : 'Rejected'}: ${p.design.room} with ${p.design.codes.join(' + ')}${c.text ? `: ${c.text}` : ''}`);
+    const trial = /^(?:آزمون|آزمایش|تست|test)$/i.test(c.text || ''); // «نه پست 7 آزمون»: a test, not the owner's taste
+    if (p.design && !trial && (c.verb === 'no' || c.verb === 'yes')) this.addTaste(`${c.verb === 'yes' ? 'Approved' : 'Rejected'}: ${p.design.room} with ${p.design.codes.join(' + ')}${c.text ? `: ${c.text}` : ''}`);
     if (c.verb === 'no') { p.state = 'cancelled'; this.store.save(); return `Post #${c.id} cancelled; nothing was posted.${p.design ? (c.text ? ' Your reason is kept for the next designs.' : ' (A reason after the number, e.g. «نه پست 5 too dark», teaches the designer.)') : ''}`; }
     if (c.verb === 'edit') { p.caption = c.text; this.store.save(); return this.postPreview(c.id); }
     if (c.verb !== 'yes') return null;

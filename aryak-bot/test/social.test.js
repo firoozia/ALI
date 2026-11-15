@@ -363,3 +363,14 @@ test('the black logo turns white on a dark corner and stays black on a light one
   assert.ok(await corner('#f0f0f0') < 40, 'black on a light wall');
   assert.ok(await corner('#202020') > 215, 'white on a dark cabinet');
 });
+
+test('the preview names its picture; a «test» no teaches nothing', async () => {
+  const media = dir();
+  const desk = new SocialDesk({ client: client(fakeGraph({}).fetchImpl), store: new SocialStore(''), mediaDir: media, write: async () => 'caption' });
+  const text = await desk.draftPost({ image: Buffer.from('PIC'), fitted: true });
+  assert.equal(desk.draftPicture(text).toString(), 'PIC');
+  assert.equal(desk.draftPicture('no post here'), null);
+  desk.store.d.posts.SP1.design = { room: 'kitchen', codes: ['HZ1'] };
+  await desk.handle({ verb: 'no', kind: 'SP', id: 'SP1', text: 'آزمون' });
+  assert.equal((desk.store.d.taste || []).length, 0, 'a test answer is not the owner\'s taste');
+});
