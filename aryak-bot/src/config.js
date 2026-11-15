@@ -159,6 +159,7 @@ export function loadConfig(env = process.env) {
       geminiImageSize: (env.GEMINI_IMAGE_SIZE || '2K').trim(),
       // TikTok (the owner, 15/11): the Reels go there too; the app's keys come from TikTok for Developers, the account is connected in chat
       tiktokKey: (env.TIKTOK_CLIENT_KEY || '').trim(), tiktokSecret: (env.TIKTOK_CLIENT_SECRET || '').trim(),
+      publicBucket: (env.SOCIAL_PUBLIC_BUCKET ?? 'aryak-social-media').trim(), // the public folder TikTok takes post pictures from (verified in TikTok's portal)
       tiktokRedirect: (env.TIKTOK_REDIRECT_URI || 'https://aryak.ae/').trim(), tiktokMode: /^direct$/i.test(env.TIKTOK_MODE || '') ? 'direct' : 'inbox',
       designHour: /^off$/i.test(env.SOCIAL_DESIGN_HOUR || '') ? -1 : Math.min(23, Math.max(0, Number(env.SOCIAL_DESIGN_HOUR || 10))), // the designer's proposal of the day, Dubai time
     },

@@ -55,6 +55,29 @@ export class TikTokClient {
    * A video from its own bytes (one piece up to 64 MB). [mode] 'inbox': a draft in the owner's TikTok inbox; 'direct': posted with the
    * caption (needs TikTok's audit). Returns { publishId, status }.
    */
+  /**
+   * A photo post (the pictures of a post, swipeable) from their public addresses (the verified folder): a draft in the inbox, or posted
+   * at once in direct mode. [aigc] labels AI-made pictures as TikTok asks. Returns { publishId, status }.
+   */
+  async postPhotos(urls, caption = '', { aigc = false } = {}) {
+    const direct = this.mode === 'direct';
+    const title = String(caption).split('\n')[0].slice(0, 90);
+    const init = await this.api('/v2/post/publish/content/init/', {
+      post_info: { title, description: String(caption).slice(0, 4000), ...(direct ? { privacy_level: this.privacy, disable_comment: false, auto_add_music: true, brand_organic_toggle: true } : {}) },
+      source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: urls.slice(0, 35) },
+      post_mode: direct ? 'DIRECT_POST' : 'MEDIA_UPLOAD', media_type: 'PHOTO', is_aigc: !!aigc,
+    });
+    let status = 'PROCESSING_DOWNLOAD';
+    for (let i = 0; i < 30; i++) {
+      const s = await this.api('/v2/post/publish/status/fetch/', { publish_id: init.publish_id });
+      status = s.status || status;
+      if (status === 'FAILED') throw new Error(`TikTok could not take the pictures (${s.fail_reason || 'no reason given'})`);
+      if (status === 'PUBLISH_COMPLETE' || status === 'SEND_TO_USER_INBOX') break;
+      await this.wait(5000);
+    }
+    return { publishId: init.publish_id, status };
+  }
+
   async postVideo(video, caption = '') {
     const size = video.length;
     const source_info = { source: 'FILE_UPLOAD', video_size: size, chunk_size: size, total_chunk_count: 1 };
@@ -73,6 +96,27 @@ export class TikTokClient {
       await this.wait(5000);
     }
     return { publishId: init.publish_id, status };
+  }
+}
+
+/**
+ * A public folder for the pictures TikTok takes (photo posts are taken only from a verified web address, never from the bytes):
+ * a Google Cloud Storage bucket readable by everyone (the owner allowed it, 15/11: only pictures of posts he approved go there), written
+ * with the server's own service account (the metadata token). put() returns the public address.
+ */
+export class PublicBucket {
+  constructor({ bucket = '', fetchImpl = globalThis.fetch } = {}) { Object.assign(this, { bucket, fetchImpl }); }
+  get enabled() { return !!this.bucket; }
+  async token() {
+    const r = await this.fetchImpl('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token', { headers: { 'Metadata-Flavor': 'Google' } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.access_token) throw new Error('no server token for the picture folder');
+    return d.access_token;
+  }
+  async put(name, buf, type = 'image/jpeg') {
+    const res = await this.fetchImpl(`https://storage.googleapis.com/upload/storage/v1/b/${this.bucket}/o?uploadType=media&name=${encodeURIComponent(name)}`, { method: 'POST', headers: { Authorization: `Bearer ${await this.token()}`, 'Content-Type': type }, body: buf });
+    if (!res.ok) throw new Error(`the picture folder refused the picture (HTTP ${res.status})`);
+    return `https://storage.googleapis.com/${this.bucket}/${name.split('/').map(encodeURIComponent).join('/')}`;
   }
 }
 

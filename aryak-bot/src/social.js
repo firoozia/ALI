@@ -394,8 +394,8 @@ const ago = (ms) => { const h = Math.round(ms / 3600000); return h < 1 ? 'just n
  * [cfg] { brand, contact }, [mediaDir] where the photo of a draft waits for the yes.
  */
 export class SocialDesk {
-  constructor({ client, store, write, research = null, reel = null, tiktok = null, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { client, store, write, research, reel, tiktok, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
+  constructor({ client, store, write, research = null, reel = null, tiktok = null, bucket = null, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { client, store, write, research, reel, tiktok, bucket, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
   /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
@@ -667,6 +667,7 @@ export class SocialDesk {
       } catch (e) { failed.push(`Instagram: ${e.message}`); }
     }
     if (p.reel && fs.existsSync(p.reel)) await this.postReel(p, fs.readFileSync(p.reel), done, failed);
+    await this.postTikTokPhotos(p, [image, ...extras], done, failed);
     p.state = done.length ? 'posted' : 'draft'; // nothing went out: the draft stays, a later yes tries again
     p.postedAt = this.now();
     this.store.save();
@@ -697,6 +698,21 @@ export class SocialDesk {
         done.push(`Instagram: posted (${images.length} pictures)${ig.link ? ` ${ig.link}` : ''}`);
       } catch (e) { failed.push(`Instagram: ${e.message}`); }
     }
+  }
+
+  /**
+   * The pictures of a post on TikTok too (the owner, 15/11: «only the Reels are on TikTok, not the pictures»): put in the public folder,
+   * then one photo post (a draft in the inbox until TikTok's audit). AI design pictures carry TikTok's AI label.
+   */
+  async postTikTokPhotos(p, images, done, failed) {
+    if (!this.tiktok?.connected || !this.bucket?.enabled || !images.length) return;
+    try {
+      const urls = [];
+      for (let i = 0; i < images.length; i++) urls.push(await this.bucket.put(`posts/${p.id}-${i + 1}-${this.now().toString(36)}.jpg`, images[i]));
+      const t = await this.tiktok.postPhotos(urls, p.caption, { aigc: !!p.design });
+      p.tiktokPhotos = t.publishId;
+      done.push(t.status === 'SEND_TO_USER_INBOX' ? `TikTok photos: sent to your TikTok inbox as a draft (${images.length} pictures; open TikTok and tap Post)` : `TikTok photos: posted (${images.length} pictures)`);
+    } catch (e) { failed.push(`TikTok photos: ${e.message}`); }
   }
 
   /** The Reel of a design: a Facebook video and an Instagram Reel, with the same caption. */

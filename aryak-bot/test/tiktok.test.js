@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SocialStore } from '../src/social.js';
-import { TikTokClient, tiktokCommand } from '../src/tiktok.js';
+import { PublicBucket, TikTokClient, tiktokCommand } from '../src/tiktok.js';
 
 function fakeTikTok({ status = 'SEND_TO_USER_INBOX', tokenError = null } = {}) {
   const calls = [];
@@ -63,4 +63,33 @@ test('a Reel: an expired access is renewed, the video goes up in one piece and l
   assert.equal(di.path, '/v2/post/publish/video/init/');
   assert.equal(di.body.post_info.title, 'Code HZ812');
   assert.equal(di.body.post_info.privacy_level, 'PUBLIC_TO_EVERYONE');
+});
+
+test('photos: put in the public folder with the server token, then one photo post (inbox draft, AI label for designs)', async () => {
+  const calls = [];
+  const fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    calls.push({ host: u.host, path: u.pathname, search: u.search, opts, body: typeof opts.body === 'string' && String(opts.headers?.['Content-Type'] || '').startsWith('application/json') ? JSON.parse(opts.body) : null });
+    const r = (d, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => d });
+    if (u.host === 'metadata.google.internal') return r({ access_token: 'GCS' });
+    if (u.host === 'storage.googleapis.com') return r({ name: 'x' });
+    if (u.pathname === '/v2/post/publish/content/init/') return r({ data: { publish_id: 'p1' }, error: { code: 'ok' } });
+    if (u.pathname === '/v2/post/publish/status/fetch/') return r({ data: { status: 'SEND_TO_USER_INBOX' }, error: { code: 'ok' } });
+    return r({ error: { code: 'x', message: u.pathname } }, false);
+  };
+  const bucket = new PublicBucket({ bucket: 'aryak-social-media', fetchImpl });
+  const url = await bucket.put('posts/SP1-1-x.jpg', Buffer.from('JPG'));
+  assert.equal(url, 'https://storage.googleapis.com/aryak-social-media/posts/SP1-1-x.jpg');
+  const up = calls.find((c) => c.host === 'storage.googleapis.com');
+  assert.equal(up.opts.headers.Authorization, 'Bearer GCS');
+  assert.match(up.search, /uploadType=media&name=posts%2FSP1-1-x\.jpg/);
+  const t = new TikTokClient({ clientKey: 'CK', clientSecret: 'CS', store: { d: { tiktok: { refresh: 'R', access: 'A', until: Date.now() + 1e6 } }, save() {} }, fetchImpl, wait: async () => {} });
+  const out = await t.postPhotos([url, url], 'Design idea with Code HZ806\nmore words', { aigc: true });
+  assert.deepEqual(out, { publishId: 'p1', status: 'SEND_TO_USER_INBOX' });
+  const init = calls.find((c) => c.path === '/v2/post/publish/content/init/').body;
+  assert.equal(init.post_mode, 'MEDIA_UPLOAD');
+  assert.equal(init.media_type, 'PHOTO');
+  assert.equal(init.is_aigc, true);
+  assert.equal(init.post_info.title, 'Design idea with Code HZ806');
+  assert.deepEqual(init.source_info, { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: [url, url] });
 });

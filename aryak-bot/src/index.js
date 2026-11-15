@@ -114,7 +114,7 @@ import { acquireSingleInstance } from './singleinstance.js';
 import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlang.js';
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
-import { TikTokClient, tiktokCommand } from './tiktok.js';
+import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
 import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
@@ -3752,6 +3752,7 @@ const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
   reel: makeReel,
+  bucket: new PublicBucket({ bucket: config.social.publicBucket }),
   tiktok: new TikTokClient({ clientKey: config.social.tiktokKey, clientSecret: config.social.tiktokSecret, redirectUri: config.social.tiktokRedirect, mode: config.social.tiktokMode, store: socialStore }),
   // Atossa's morning reading of the world's design press: Claude's own web search and web fetch (server tools)
   research: async ({ system, text }) => {
