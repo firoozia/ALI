@@ -15,6 +15,8 @@ if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split("."
   apt-get install -y nodejs
 fi
 command -v git >/dev/null || apt-get install -y git
+# 1 GB of swap: the machine has 1 GB of memory and a Reel once froze it (15/11); never fatal
+{ [ -f /swapfile ] || { fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null; }; } && { swapon /swapfile 2>/dev/null || true; } || say "swap could not be made"
 # the Reels of the design studio are made with ffmpeg (social.js, reel.js); a failed install never stops the bot
 command -v ffmpeg >/dev/null || { apt-get update -y && apt-get install -y ffmpeg; } || say "ffmpeg install failed: the Reels are skipped"
 
