@@ -355,3 +355,27 @@ test('the weekly mix: Atossa makes the kind the week is short of, the plan and t
   assert.match(d.text, /نوع پست: آموزش/);
   assert.equal(Object.values(desk.store.d.posts).at(-1).pillar, 'education');
 });
+
+test('two concepts produced at once: each keeps its own post, picture, close-ups and note (live 15/11 they were mixed)', async () => {
+  const { desk } = await studio();
+  const plans = [
+    { title_fa: 'کتابخانه', room: 'library', parts: [{ code: 'HZ812', where: 'all doors' }], scene: 'A library.' },
+    { title_fa: 'اتاق خواب', room: 'bedroom', parts: [{ code: 'HZ812', where: 'headboard wall' }], scene: 'A bedroom.' },
+  ];
+  const base = desk.write;
+  let slow = 0;
+  desk.write = async (r) => {
+    if (r.kind === 'concepts') return JSON.stringify(plans);
+    if (r.kind === 'caption') { await new Promise((res) => setTimeout(res, slow++ === 0 ? 60 : 5)); return `Caption ${slow}`; }
+    return base(r);
+  };
+  await desk.draftConcepts({ family: 'HZ', n: 2 });
+  const [a, b] = await Promise.all([desk.chooseConcept({ n: 1 }), desk.chooseConcept({ n: 2 })]);
+  const posts = Object.values(desk.store.d.posts);
+  assert.equal(posts.length, 2);
+  for (const p of posts) assert.ok(p.design, `post ${p.id} has its design`);
+  assert.deepEqual(posts.map((p) => p.design.room).sort(), ['bedroom', 'library']);
+  for (const p of posts) assert.ok((p.extras || []).every((f) => path.basename(f).startsWith(`${p.id}-`)), 'its own close-ups');
+  assert.match(a.text, /کتابخانه/);
+  assert.match(b.text, /اتاق خواب/);
+});

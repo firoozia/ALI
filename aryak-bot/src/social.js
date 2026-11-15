@@ -489,7 +489,7 @@ export class SocialDesk {
   }
 
   /** A photo from the owner with «post …»: a caption is written and shown as #SP n; nothing is posted. */
-  async draftPost({ image, mime = 'image/jpeg', note = '', facts = '', fitted = false, pillar = '' }) {
+  async draftPost({ image, mime = 'image/jpeg', note = '', facts = '', fitted = false, pillar = '', made = null }) {
     await this.ready();
     if (!this.enabled) return 'Instagram and Facebook are not connected yet, so nothing can be posted.';
     // a tall phone photo is cut to 4:5, or Instagram refuses it; the owner's own photos carry the logo like every post (15/11)
@@ -498,6 +498,7 @@ export class SocialDesk {
     const caption = String(await this.write({ kind: 'caption', system: fill(CAPTION_RULES, this.cfg), text: ask, image, mime }) || '').trim();
     if (!caption) return 'No caption could be written; send the photo again.';
     const id = this.store.next('SP');
+    if (made) made.id = id; // the caller's own post (two designs made at once must not take each other's: live 15/11)
     let file = '';
     if (this.mediaDir) { fs.mkdirSync(this.mediaDir, { recursive: true }); file = path.join(this.mediaDir, `${id}.jpg`); fs.writeFileSync(file, image); }
     this.store.d.posts[id] = { id, at: this.now(), note, caption, file, mime, state: 'draft', pillar: pillar || (fitted ? '' : 'real'), image: file ? undefined : image?.toString('base64') };
@@ -672,9 +673,9 @@ export class SocialDesk {
     for (const { x, i } of order) {
       try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
     }
-    const before = new Set(Object.keys(this.store.d.posts));
-    const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true, pillar: plan.pillar || 'inspiration' });
-    const p = this.store.d.posts[Object.keys(this.store.d.posts).find((k) => !before.has(k))];
+    const mine = {};
+    const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true, pillar: plan.pillar || 'inspiration', made: mine });
+    const p = this.store.d.posts[mine.id];
     if (!p) return { text };
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene };
     const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
