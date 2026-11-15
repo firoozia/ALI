@@ -326,6 +326,16 @@ export function extractPo(...texts) {
 export function lineCandidates(line) {
   const t = latin(line).replace(/^\s*(?:\d+\s*[.)]\s+|[-•*]\s+)/u, '').trim();
   const isNum = (x) => /^\d+(?:\.\d+)?$/.test(x);
+  // «212 50 E22» / «212 50 3.5 E50» (the owner, 15/11: PVC film was taken for edge banding): the code, the metres, the price when
+  // needed, and E22 or E50 at the end name the EDGE22-212 / EDGE50-212 edge banding item; never the PVC film of that code
+  const edge = /^(.*?)\s+E\s?(22|50)$/i.exec(t);
+  if (edge) {
+    const tk = edge[1].trim().split(/\s+/).map((x) => x.replace(/(?:m|mtr|متر)$/i, ''));
+    if (/^\d{3,5}$/.test(tk[0]) && (tk.length === 2 || tk.length === 3) && tk.slice(1).every(isNum)) {
+      return [{ item: `edge ${tk[0]} ${edge[2]}`, qty: Number(tk[1]), price: tk.length === 3 ? Number(tk[2]) : null }];
+    }
+    return [];
+  }
   if (/[,،|;\t]/.test(t)) {
     const f = t.split(/[,،|;\t]/).map((x) => x.trim());
     if (f.length >= 2 && isNum(f[1]) && (f.length === 2 || (f.length === 3 && isNum(f[2])))) return [{ item: f[0], qty: Number(f[1]), price: f[2] === undefined ? null : Number(f[2]) }];
@@ -407,11 +417,21 @@ const itemLabel = (i) => `${i.Name}${i.Sku && norm(i.Sku) !== norm(i.Name) ? ` [
  */
 export function pickItem(name, ctx = {}) {
   const items = ctx.items || [];
+  // «212 E22» / «E50 212» in any way of asking (the «code = qty» blocks, the read message): the edge banding of that code and width
+  const raw = String(name).trim();
+  const e1 = /^(\d{3,5})\s*E\s?(22|50)$/i.exec(raw); // «212 E22»
+  const e2 = /^E\s?(22|50)\s*(\d{3,5})$/i.exec(raw); // «E22 212»
+  if (e1) name = `edge ${e1[1]} ${e1[2]}`; else if (e2) name = `edge ${e2[2]} ${e2[1]}`;
   const taught = ctx.taught?.(name);
   if (taught) return { item: taught, via: 'taught' };
   // "نوار لبه 1801 سایز 22": the colour number and the width name the one edge banding item whose SKU is EDGE22-1801
   const sz = /^(?:نوار\s*لبه\s+|edge\s+)?(\d{3,5})\s+(?:سایز\s+|size\s+|عرض\s+)?(22|50)$/iu.exec(nameKey(name).replace(/(\d)\s*mm\b/g, '$1'));
-  if (sz) { const bySize = items.filter((i) => i.Type !== 'Category' && norm(i.Sku) === `edge${sz[2]}-${sz[1]}`); if (bySize.length === 1) return { item: bySize[0], via: 'size' }; }
+  if (sz) {
+    const bySize = items.filter((i) => i.Type !== 'Category' && norm(i.Sku) === `edge${sz[2]}-${sz[1]}`);
+    if (bySize.length === 1) return { item: bySize[0], via: 'size' };
+    // the owner's E22 / E50 mark asks for edge banding only: no PVC film or other item is taken in its place
+    if (/^edge\s/i.test(String(name).trim())) return { stop: (n) => `سطر ${fa(n)}: نوار لبهٔ ${fa(sz[2])} میلی‌متری برای کد ${fa(sz[1])} در کوییک‌بوکس نیست (کالایی با کد EDGE${sz[2]}-${sz[1]})؛ اول آن را معرفی کنید.` };
+  }
   const exact = itemsNamed(items, name);
   if (exact.length === 1) return { item: exact[0], via: '' };
   const cands = exact.length ? exact : itemsContaining(items, name);

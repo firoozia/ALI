@@ -675,6 +675,19 @@ test('after the job: matching uses the name, the new SKU, the bare code and the 
   assert.equal(pickItem('نوار لبه 1801 سایز 22', { items }).item?.Id, '701');
   assert.equal(pickItem('1801 50', { items }).item?.Id, '702');
   assert.equal(pickItem('EDGE 1801 size 50', { items }).item?.Id, '702');
+  // the owner's E22 / E50 at the end of a line (15/11): code, metres, price when needed, then the edge banding width
+  const { lineCandidates } = await import('../src/qboinvoice.js');
+  assert.deepEqual(lineCandidates('1801 50 E22'), [{ item: 'edge 1801 22', qty: 50, price: null }]);
+  assert.deepEqual(lineCandidates('۱۸۰۱ ۱۰۰ ۳.۵ e50'), [{ item: 'edge 1801 50', qty: 100, price: 3.5 }]);
+  assert.deepEqual(lineCandidates('1801 50m E 22'), [{ item: 'edge 1801 22', qty: 50, price: null }]);
+  assert.deepEqual(lineCandidates('PVC 1801 E22'), [], 'no metres: not read');
+  assert.equal(pickItem(lineCandidates('1801 50 E22')[0].item, { items }).item?.Id, '701');
+  assert.equal(pickItem(lineCandidates('1801 50 E50')[0].item, { items }).item?.Id, '702');
+  const none = pickItem(lineCandidates('108 20 E22')[0].item, { items });
+  assert.equal(none.item, undefined, 'never the PVC film 108 in place of its edge banding');
+  assert.match(none.stop(2), /نوار لبهٔ ۲۲ میلی‌متری برای کد ۱۰۸ در کوییک‌بوکس نیست/);
+  assert.equal(pickItem('1801 E50', { items }).item?.Id, '702', 'the «code = qty» blocks: «1801 E50 = 30»');
+  assert.equal(pickItem('E22 1801', { items }).item?.Id, '701');
   // both sizes exist: the bare colour number asks for the size
   const bare = pickItem('1801', { items });
   assert.equal(bare.item, undefined);
