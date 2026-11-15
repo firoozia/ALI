@@ -115,7 +115,7 @@ import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlan
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
 import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, parseSocialCommand, postRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, designRequest, inspirationRequest, parseSocialCommand, postRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2491,6 +2491,20 @@ ${t.authorizeUrl()}`);
       await socialSayDesign(d);
       return true;
     }
+    // «الهام …» with a picture (or typed within 15 minutes after it): Atossa designs that mood with ARYAK films (the owner, 15/11)
+    const ir = inspirationRequest(text);
+    if (ir && isOwner()) {
+      const near = !imageOf(content) ? lastPhotos.get(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) : null;
+      const picRaw = imageOf(content) ? raw : near && Date.now() - near.at < 15 * 60 * 1000 ? near.raw : null;
+      if (!picRaw) { await socialSay('Which picture? Send the picture you liked with «الهام» as its caption (or write «الهام» right after it).'); return true; }
+      trace(where, 'owner', 'social: an inspiration picture');
+      let buf = null;
+      try { buf = await downloadMedia(picRaw); } catch (e) { logger.warn(`social: inspiration download failed: ${e.message}`); }
+      if (!buf) { await socialSay('The picture could not be read; send it again.'); return true; }
+      await socialSay('Atossa is designing from your picture with ARYAK films… (one or two minutes)');
+      await socialSayDesign(await socialDesk.draftDesign({ note: ir.note, inspiration: { image: buf, mime: imageOf(normalizeMessageContent(picRaw.message))?.mimetype || 'image/jpeg' } }));
+      return true;
+    }
     const pr = postRequest(text);
     // the photo: this message's own, or (a typed «post …» alone) the photo sent in this chat in the last 15 minutes, forwarded or not
     const recent = !imageOf(content) && pr ? lastPhotos.get(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) : null;
@@ -3766,8 +3780,9 @@ const socialDesk = new SocialDesk({
     return '';
   },
   imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize }),
-  write: async ({ system, text, image, mime, effort = 'low', maxTokens = 800 }) => {
-    const content = [...(image ? [{ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: image.toString('base64') } }] : []), { type: 'text', text }];
+  write: async ({ system, text, image, images = [], mime, effort = 'low', maxTokens = 800 }) => {
+    const pic = (b) => ({ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: b.toString('base64') } });
+    const content = [...images.map(pic), ...(image ? [pic(image)] : []), { type: 'text', text }];
     const res = await client.beta.messages.create({ model: config.model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }], output_config: { effort }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
   },

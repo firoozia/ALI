@@ -254,7 +254,11 @@ export const TREND_RULES = `${ATOSSA}
 This morning you scan the world's best interior design sources for new ideas: Pinterest (trends and Pinterest Predicts), Architectural Digest, Elle Decor, Dezeen, ArchDaily, Dwell, Houzz, and what leading kitchen and wardrobe brands show this season. Search the web; prefer pages from the last few weeks.
 Write today's notes for your studio: 5 to 8 short English bullet points of concrete ideas you can use with decorative films on cabinets, wardrobes, wall panels and doors (colour pairings, wood and stone looks, finishes, details, layouts, lighting), each with its source site in brackets.
 Then one line starting with «فارسی:» with two Persian sentences for the owner: the most useful idea of the day.
+Last, one line starting with «IMAGES:» and up to four direct addresses of interior pictures from the pages you read (jpg, png or webp, the article's own photos), separated by spaces.
 Output only the notes.`;
+
+export const LOOKS_RULES = `${ATOSSA}
+These are interior pictures from today's design press. For each one, write one short English line of what a designer can take from it for decorative films on cabinets, wardrobes and wall panels: the colours and how they are paired, the wood or stone look, the finish, the light, one detail. Then one line «Together:» with the strongest common idea. Output only the lines.`;
 
 export const FOCUS_RULES = `Look at this interior picture. Give the point at the centre of the largest, best-lit area of the named film, where its colour and texture show best.
 x and y go from 0 to 1, from the left and from the top. Answer with JSON only, for example {"x":0.62,"y":0.41}.`;
@@ -332,6 +336,12 @@ export async function fitForInstagram(buf) {
     if (w > 1440) pipe = pipe.resize({ width: 1440 });
     return await pipe.jpeg({ quality: 88 }).toBuffer();
   } catch { return buf; }
+}
+
+/** «الهام …» / «inspiration …»: a picture the owner liked; Atossa remakes its mood with ARYAK films. Returns { note } or null. */
+export function inspirationRequest(caption) {
+  const m = /^\s*(?:الهام|inspiration|inspire)(?=\s|:|$)\s*:?\s*([\s\S]*)$/i.exec(String(caption || ''));
+  return m ? { note: m[1].trim() } : null;
 }
 
 /** A photo's caption that asks for a post: «post …», «پست …», «instagram …», «اینستا …». Returns { note } (the rest of the caption) or null. */
@@ -483,7 +493,7 @@ export class SocialDesk {
   }
 
   /** The designer's plan: { title_fa, why_fa, room, parts: [{ code, where, where_fa }], scene } or { error }. */
-  async designPlan({ code = '', note = '' } = {}) {
+  async designPlan({ code = '', note = '', inspiration = null } = {}) {
     const all = this.catalog();
     const d = this.store.d;
     const text = [
@@ -494,11 +504,13 @@ export class SocialDesk {
       this.todayTrends() ? `\nToday's notes from the world's design press (your own research this morning):\n${this.todayTrends()}` : '',
       code ? `\nThe owner asks for a design built around film ${code}: it is the main film.` : '',
       note ? `\nThe owner's words: ${note}` : '',
+      inspiration ? '\nThe owner liked the attached picture (his inspiration). Design the same kind of room with the same mood, layout, light and style, but with ARYAK films from the list on the fronts, chosen to match its colours and feeling. Never copy a brand, a logo or text from it. Say in inspiration_fa that the idea is the owner\'s picture.' : '',
+      this.todayLooks() ? `\nWhat today's pictures from the design press show (your own eye this morning):\n${this.todayLooks()}` : '',
     ].filter(Boolean).join('\n');
     // room to think: the morning's notes made the brief longer, and a cut answer has no JSON (live test 15/11); one more try when it is cut
     let plan;
     for (let i = 0; i < 2 && !plan; i++) {
-      const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text, effort: 'medium', maxTokens: 12000 }) || '');
+      const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text, effort: 'medium', maxTokens: 12000, ...(inspiration ? { image: inspiration.image, mime: inspiration.mime || 'image/jpeg' } : {}) }) || '');
       try { plan = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { this.log(`social: the plan was not JSON (${raw.length} characters)`); }
     }
     if (!plan) return { error: 'The designer gave no plan; try again.' };
@@ -513,18 +525,21 @@ export class SocialDesk {
    * picture, and it becomes a draft #SP like any other (nothing is posted before the yes). Returns { text, image }: the owner sees the
    * picture with the designer's Persian reasons above the caption.
    */
-  async draftDesign({ code: asked = '', note = '' } = {}) {
+  async draftDesign({ code: asked = '', note = '', inspiration = null } = {}) {
     if (!this.imager?.enabled) return { text: 'The design maker (Google Gemini) is not connected yet: its key is missing on the server.' };
     let code = '';
     if (asked) { const c = this.catalogColour(asked); if (c.error) return { text: c.error }; code = c.code; }
     await this.ensureLooks();
     await this.researchTrends().catch((err) => this.log(`social: today's research failed: ${err.message}`));
-    const plan = await this.designPlan({ code, note });
+    const plan = await this.designPlan({ code, note, inspiration });
     if (plan.error) return { text: plan.error };
+    if (inspiration) this.addTaste(`The owner's inspiration picture: ${plan.room}${note ? ` (${note})` : ''}`);
     const all = this.catalog();
     let made;
     try {
       const images = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
+      // the owner's picture guides the room (mood, layout, light) only; the films on the fronts come from the labelled samples
+      if (inspiration) images.push({ label: 'Mood and layout reference (the owner\'s inspiration; do not copy its materials, brands or text)', buffer: inspiration.image, mime: inspiration.mime || 'image/jpeg' });
       made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. An editorial photograph for a luxury interior design magazine: photorealistic, highly detailed, crisp film textures with visible grain, rich warm light and depth, real reflections and soft shadows. 4:5 portrait.`, images });
     } catch (err) {
       this.log(`social: design failed: ${err.message}`);
@@ -570,12 +585,43 @@ export class SocialDesk {
   }
   async researchTrends() {
     if (!this.research || this.todayTrends()) return this.todayTrends();
-    const text = String(await this.research({ system: fill(TREND_RULES, this.cfg), text: `Today is ${new Date(this.now()).toISOString().slice(0, 10)}. Your notes for today.` }) || '').trim();
-    if (!text) return '';
-    (this.store.d.trends ||= []).push({ day: new Date(this.now()).toISOString().slice(0, 10), at: this.now(), text: text.slice(0, 4000) });
+    const raw = String(await this.research({ system: fill(TREND_RULES, this.cfg), text: `Today is ${new Date(this.now()).toISOString().slice(0, 10)}. Your notes for today.` }) || '').trim();
+    if (!raw) return '';
+    // the last line «IMAGES: url url …»: the pictures she wants to look at (the owner, 15/11: ideas from the pictures too, not only the words)
+    const m = /^\s*IMAGES?\s*:\s*(.*)$/im.exec(raw);
+    const text = raw.replace(/^\s*IMAGES?\s*:.*$/gim, '').trim();
+    const urls = m ? (m[1].match(/https?:\/\/\S+/g) || []).map((u) => u.replace(/[),.;]+$/, '')).slice(0, 4) : [];
+    const entry = { day: new Date(this.now()).toISOString().slice(0, 10), at: this.now(), text: text.slice(0, 4000) };
+    (this.store.d.trends ||= []).push(entry);
     this.store.d.trends = this.store.d.trends.slice(-14);
     this.store.save();
+    if (urls.length) {
+      try { entry.looks = await this.lookAtPictures(urls); this.store.save(); } catch (err) { this.log(`social: the press pictures were not read: ${err.message}`); }
+    }
     return text;
+  }
+  /** Today's notes on the press pictures ('' when none). */
+  todayLooks() {
+    const day = new Date(this.now()).toISOString().slice(0, 10);
+    return (this.store.d.trends || []).find((t) => t.day === day)?.looks || '';
+  }
+  /** The pictures of the day's articles: fetched (pictures only, at most 8 MB each), made small, looked at together once. */
+  async lookAtPictures(urls) {
+    const sharp = (await import('sharp')).default;
+    const fetchImpl = this.fetchImpl || globalThis.fetch;
+    const pics = [];
+    for (const u of urls) {
+      try {
+        const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 15000);
+        const r = await fetchImpl(u, { signal: ac.signal, headers: { 'User-Agent': 'Mozilla/5.0 ARYAK design studio' } }).finally(() => clearTimeout(t));
+        if (!r.ok || !/^image\//.test(r.headers.get('content-type') || '')) continue;
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (buf.length > 8 * 1024 * 1024) continue;
+        pics.push(await sharp(buf).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer());
+      } catch { /* that picture is skipped */ }
+    }
+    if (!pics.length) return '';
+    return String(await this.write({ kind: 'press-pictures', system: LOOKS_RULES, text: `${pics.length} interior pictures from today's design press.`, images: pics, mime: 'image/jpeg', effort: 'low', maxTokens: 1500 }) || '').trim().slice(0, 2000);
   }
 
   /** The Reel of a design: the camera pushes in on the main film (Atossa finds where it shows best), then the close-up, then the codes. */

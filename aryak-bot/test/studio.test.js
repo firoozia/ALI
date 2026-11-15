@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, inspirationRequest } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -158,4 +158,38 @@ test('Lyria: the audio of the model output is taken; its error is said', async (
   assert.equal(JSON.parse(sent.o.body).model, 'lyria-3-clip-preview');
   const bad = new GeminiImage({ apiKey: 'K', fetchImpl: async () => ({ ok: false, status: 429, json: async () => ({ error: { message: 'quota' } }) }) });
   await assert.rejects(bad.music('x'), /Lyria: quota/);
+});
+
+test('«الهام»: the picture of the owner guides the plan (Atossa sees it) and the room (a labelled mood reference), and is kept as his taste', async () => {
+  assert.deepEqual(inspirationRequest('الهام آشپزخانه'), { note: 'آشپزخانه' });
+  assert.deepEqual(inspirationRequest('inspiration'), { note: '' });
+  assert.equal(inspirationRequest('الهامی نیست'), null);
+  const { desk, writes, made } = await studio();
+  const insp = await pic('#556677');
+  await desk.draftDesign({ note: 'آشپزخانه', inspiration: { image: insp, mime: 'image/jpeg' } });
+  const plan = writes.find((w) => w.kind === 'design-plan');
+  assert.ok(plan.image.equals(insp), 'the designer sees the picture');
+  assert.match(plan.text, /The owner liked the attached picture/);
+  const ref = made[0].images.at(-1);
+  assert.match(ref.label, /Mood and layout reference/);
+  assert.ok(ref.buffer.equals(insp));
+  assert.match(desk.store.d.taste.at(-1).text, /The owner's inspiration picture: kitchen \(آشپزخانه\)/);
+});
+
+test('the press pictures: the research names them, they are fetched (pictures only), looked at once, and the designer reads what they show', async () => {
+  const { desk, writes } = await studio({ research: async () => '- Walnut with brass [AD]\nفارسی: گردو.\nIMAGES: https://img.example/a.jpg https://img.example/b.png https://img.example/page.html' });
+  const fetched = [];
+  desk.fetchImpl = async (u) => {
+    fetched.push(u);
+    if (u.endsWith('.html')) return { ok: true, headers: { get: () => 'text/html' }, arrayBuffer: async () => new ArrayBuffer(4) };
+    const b = await pic('#8a6a4a', 1200, 900);
+    return { ok: true, headers: { get: () => 'image/jpeg' }, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) };
+  };
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'press-pictures' ? 'Picture 1: walnut slats with brass.\nTogether: warm wood with thin brass lines.' : base(r));
+  await desk.draftDesign({});
+  assert.equal(fetched.length, 3);
+  assert.doesNotMatch(desk.todayTrends(), /IMAGES/, 'the address line is not kept in the notes');
+  assert.match(desk.todayLooks(), /Together: warm wood with thin brass lines/);
+  assert.match(writes.find((w) => w.kind === 'design-plan').text, /What today's pictures from the design press show[\s\S]*thin brass lines/);
 });
