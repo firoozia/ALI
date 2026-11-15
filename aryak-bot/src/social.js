@@ -689,7 +689,7 @@ export class SocialDesk {
       try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     this.remember(plan);
-    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
+    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
     const extra = [details.length ? `${details.length} close-up${details.length > 1 ? 's' : ''} (${details.map((x) => x.code).join(', ')})` : '', video ? 'a Reel' : ''].filter(Boolean).join(' and ');
     return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}`,
       image: p.file ? fs.readFileSync(p.file) : image, details, detail: details[0]?.image || null, video };
@@ -760,16 +760,64 @@ export class SocialDesk {
     // «جزئیات و کیفیت بالاتر»: the room redrawn and the close-ups made at 4K (sharper detail; the post is cut to Instagram's size after)
     const hq = /کیفیت|جزئیات|دقیق|وضوح|quality|detail|sharp/i.test(note);
     const size = hq ? '4K' : '';
+    let plan = c.plan;
     if (note) {
-      const all = this.catalog();
+      // the owner's change is a new brief, not a touch-up (live 15/11: «more space in the view» came back as the same picture, «more
+      // detail» unchanged): Atossa rewrites the plan around his words, the room is drawn again from it with the old picture only as the
+      // version to move away from, and a look at both pictures checks that the change can be seen; once more when it cannot
       try {
-        const made = await this.imager.make({ size, prompt: `Edit this interior design exactly as the owner asks: «${note}». Keep everything else the same: the room, the camera, the light, and every film exactly as in its labelled sample.${hq ? ' Render it at the highest quality: finer detail in every material, crisp film grain and texture, realistic joinery edges, accurate reflections and soft shadows.' : ''} Photorealistic editorial interior photograph, 4:5 portrait.`,
-          images: [{ label: 'The design to edit', buffer: roomRaw, mime: 'image/jpeg' }, ...c.plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }))] });
-        roomRaw = made.image;
+        plan = await this.revisePlan(c.plan, note, set.family);
+        roomRaw = await this.redraw(plan, roomRaw, note, { size, hq });
         this.addTaste(`The owner chose concept «${c.plan.title_fa || c.plan.room}» and asked: ${note}`);
       } catch (err) { return { text: `The edit could not be made: ${err.message}` }; }
     } else this.addTaste(`The owner chose concept «${c.plan.title_fa || c.plan.room}» (${c.plan.parts.map((p) => p.code).join(' + ')})`);
-    return this.produceDesign({ plan: c.plan, roomRaw, note, size });
+    return this.produceDesign({ plan, roomRaw, note, size });
+  }
+
+  /** Atossa's plan rewritten around the owner's words (films of the same catalogue); the old plan when no JSON comes back. */
+  async revisePlan(plan, note, family = '') {
+    const all = this.catalog();
+    const allowed = Object.keys(all).filter((k) => !family || k.toUpperCase().startsWith(family.toUpperCase()));
+    const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), effort: 'medium', maxTokens: 12000, text: [
+      'The films you may use (code: look):', ...allowed.map((k) => `${k}: ${all[k].look || all[k].kind || 'decorative film'}`),
+      `\nThe owner chose this concept of yours:\n${JSON.stringify(plan)}`,
+      `\nHe asks for this change: «${note}».`,
+      'Rewrite the plan so that his change is the first thing anyone sees in the new picture. Read his words as a designer: «more space in the view» = a wider room and a wider camera (more floor, ceiling and depth, the walls further away, a lighter balance so the dark film does not close the room in); «more modern» = cleaner lines, slimmer profiles, fewer ornaments; «more detail» = more visible joinery, profiles, lighting and styling details, closer textures; «change the design» = another style or layout, not the same room recoloured. Keep his chosen films unless he asks otherwise.',
+      'Add "change_fa": one Persian sentence for the owner saying exactly what you changed. Answer with the full JSON.',
+    ].join('\n') }) || '');
+    try {
+      const p = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+      if (p?.scene && Array.isArray(p.parts) && p.parts.length && p.parts.every((x) => all[x.code])) return { ...plan, ...p, dialogue_fa: '' };
+    } catch { this.log('social: the revised plan was not JSON; the change goes to the picture only'); }
+    return { ...plan, scene: `${plan.scene}\nThe owner's change, clearly visible: ${note}.` };
+  }
+
+  /** The room drawn again from the revised plan; the old picture is the version to change. Checked once by eye, drawn again if needed. */
+  async redraw(plan, oldRaw, note, { size = '', hq = false } = {}) {
+    const all = this.catalog();
+    const films = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
+    let missing = '';
+    let made = null;
+    for (let i = 0; i < 2; i++) {
+      const res = await this.imager.make({ size, images: [{ label: 'The previous version: the owner did not accept it as it is; change it as asked', buffer: oldRaw, mime: 'image/jpeg' }, ...films],
+        prompt: `A new photograph of this design, redrawn for the owner who asked: «${note}». His change must be obvious at first glance: never return the previous picture or a crop of it.${missing ? ` The last try still missed: ${missing}.` : ''}\n${plan.scene}\nEach labelled film picture is the exact surface for the fronts named in its label: reproduce its colour, pattern and scale faithfully.${hq ? ' Render it at the highest quality: finer detail in every material, crisp film grain, realistic joinery edges, accurate reflections and soft shadows.' : ''} Photorealistic editorial interior photograph, 4:5 portrait.` });
+      made = res.image;
+      const verdict = await this.changeSeen(oldRaw, made, note);
+      if (verdict.done) break;
+      missing = verdict.missing || 'the change is not visible enough';
+      this.log(`social: the redraw missed «${note}»: ${missing}`);
+    }
+    return made;
+  }
+
+  /** One look at the old and the new picture: is the owner's change visible? { done, missing }; done when the look cannot be read. */
+  async changeSeen(oldRaw, newRaw, note) {
+    try {
+      const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+      const raw = String(await this.write({ kind: 'check-change', system: 'You compare two interior pictures for a design studio. Answer only JSON: {"done":true or false,"missing":"what of the request is not visible yet, in English, short"}.', text: `The first picture is the old version, the second the new one. The owner asked: «${note}». Is his change clearly visible in the new picture?`, images: [await small(oldRaw), await small(newRaw)], mime: 'image/jpeg', effort: 'low', maxTokens: 400 }) || '');
+      const v = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+      return { done: v.done !== false, missing: String(v.missing || '') };
+    } catch { return { done: true, missing: '' }; }
   }
 
     /** Today's research notes (Atossa reads the world's design press once a day); '' when none. */

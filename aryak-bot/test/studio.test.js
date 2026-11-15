@@ -112,8 +112,10 @@ test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that cat
   assert.equal(made.length, 2, 'one room per concept, nothing more yet');
   assert.equal(Object.keys(desk.store.d.posts).length, 0, 'no post before the choice');
   const d = await desk.chooseConcept({ n: 2, note: 'جزیره روشن‌تر' });
-  assert.match(made[2].prompt, /Edit this interior design exactly as the owner asks: «جزیره روشن‌تر»/);
-  assert.equal(made[2].images[0].label, 'The design to edit');
+  assert.match(made[2].prompt, /redrawn for the owner who asked: «جزیره روشن‌تر»/);
+  assert.match(made[2].images[0].label, /^The previous version/);
+  assert.ok(writes.some((w) => w.kind === 'design-plan' && /He asks for this change: «جزیره روشن‌تر»/.test(w.text)), 'Atossa rewrites the plan around his words');
+  assert.ok(writes.some((w) => w.kind === 'check-change'), 'the change is checked by eye');
   assert.match(d.text, /Post #SP1/);
   assert.match(desk.store.d.taste.at(-1).text, /chose concept «دو» and asked: جزیره روشن‌تر/);
   assert.match((await desk.chooseConcept({ n: 9 })).text, /no concept 9/);
@@ -121,6 +123,27 @@ test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that cat
   await desk.chooseConcept({ n: 1, note: 'جزئیات و کیفیت بالاتر' });
   assert.ok(made.slice(before).every((m) => m.size === '4K'), 'a quality request: the edit and the close-ups at 4K');
   assert.match(made[before].prompt, /highest quality/);
+});
+
+test('the owner\'s change is checked: a redraw that does not show it is drawn once more with what it missed; the change is said', async () => {
+  const { desk, made } = await studio();
+  const plans = [{ title_fa: 'یک', room: 'library', parts: [{ code: 'HZ812', where: 'all doors' }], scene: 'A library.' }];
+  const base = desk.write;
+  const looks = [];
+  desk.write = async (r) => {
+    if (r.kind === 'concepts') return JSON.stringify(plans);
+    if (r.kind === 'design-plan' && /He asks for this change/.test(r.text)) return JSON.stringify({ ...plans[0], scene: 'A much wider library.', change_fa: 'دوربین بازتر شد.' });
+    if (r.kind === 'check-change') { looks.push(r); return looks.length === 1 ? '{"done":false,"missing":"the room is not wider"}' : '{"done":true}'; }
+    return base(r);
+  };
+  await desk.draftConcepts({ family: 'HZ', n: 1 });
+  const before = made.length;
+  const d = await desk.chooseConcept({ n: 1, note: 'فضای بیشتری تو ویو باشه' });
+  assert.equal(looks.length, 2);
+  assert.equal(looks[0].images.length, 2, 'old and new side by side');
+  assert.match(made[before].prompt, /A much wider library/);
+  assert.match(made[before + 1].prompt, /The last try still missed: the room is not wider/);
+  assert.match(d.text, /تغییر به خواست شما: دوربین بازتر شد/);
 });
 
 test('Atossa and Dariush: he reads every plan before it is drawn, she revises what he sends back; the talk is shown; no composition twice', async () => {
