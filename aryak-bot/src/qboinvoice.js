@@ -244,6 +244,25 @@ const SPACED_TAIL = /(?:\s+[A-Za-z]?\d{2,5}[A-Za-z-]*\s+\d+(?:\.\d+)?\s*(?:m|mtr
 const EN_HEAD = /^\s*(?:(?:hey|hi|hello)[\s,]+)?(?:(?:atossa|atosa|atousa|atoosa|atusa|آتوسا|اتوسا)[\s,:]+)?(?:please\s+)?(?:(?:make|create|issue|prepare)\s+(?:an?\s+)?)?(?:invoice|inv(?=\s+(?:for|to)\s))\s+(?:for\s+|to\s+)?(.+?)\s*$/iu;
 
 /**
+ * An item named by words with its count and price (the owner, 16/11: «Jowat glue 1pc 1500aed» was «not understood»): the unit words after
+ * the numbers are dropped; a price marked AED (or after @ or /) makes the line exact («Jowat glue, 1, 1500»); otherwise the numbers at
+ * the end are left to the item names to settle (lineCandidates: only a reading that names one item is taken). '' when it is no such line.
+ */
+export function namedLine(row) {
+  const unit = String.raw`(?:pcs?|pieces?|nos?|units?|rolls?|kg|kgs|ltrs?|litres?|liters?|cans?|box(?:es)?|drums?|m|mtrs?|meters?|metres?|عدد|تا|دانه|متر|رول|کیلو)`;
+  const money = String.raw`(?:aed|dhs?|dirhams?|درهم)`;
+  const t = latin(String(row || '')).replace(/^\s*(?:\d+\s*[.)]\s+|[-•*]\s+)/u, '').trim();
+  const m = new RegExp(String.raw`^(.*?[A-Za-z؀-ۿ].*?)\s+(\d+(?:\.\d+)?)\s*${unit}?\s*(?:(?:[/@x×]\s*|\s+)(\d+(?:\.\d+)?)\s*(${money})?)?\s*$`, 'iu').exec(t);
+  if (!m) return '';
+  const name = m[1].replace(/[\s,:=-]+$/u, '').trim();
+  if (!/[A-Za-z؀-ۿ]{2,}/u.test(name) || /^\d/.test(name)) return '';
+  const marked = !!m[4] || /[/@x×]\s*\d+(?:\.\d+)?\s*\S*\s*$/u.test(t) || new RegExp(`\d\s*${unit}\b`, 'iu').test(t);
+  if (m[3] !== undefined && marked) return `${name}, ${m[2]}, ${m[3]}`;
+  if (m[3] === undefined) return `${name}, ${m[2]}`;
+  return `${name} ${m[2]} ${m[3]}`;
+}
+
+/**
  * An invoice asked for in plain English: «Atossa invoice for burtomani» then one line per item («603 = 30 mtr», «A603 30 m»). A one-letter prefix before a code
  * (A603) is the sender's own mark: the code is 603. Lines the format does not fit (rolls, prices, words) are not read here (the model reads them).
  * Returns { customer, lines: ['603 30', …] } or null.
@@ -276,7 +295,10 @@ export function readEnglishInvoice(text) {
   rows.slice(1).forEach((row, i) => {
     const m = QTY_LINE.exec(row);
     if (m) { lines.push(lineOf(m)); return; }
-    if (!extractPo(row)) unread.push({ n: i + 2, text: row }); // not an item and not the PO line: said, never guessed
+    if (extractPo(row)) return; // the PO line
+    const named = namedLine(row); // «Jowat glue 1pc 1500aed» (live 16/11: an item with a name, not a code)
+    if (named) { lines.push(named); return; }
+    unread.push({ n: i + 2, text: row }); // not an item and not the PO line: said, never guessed
   });
   return { customer, lines, unread };
 }
@@ -304,7 +326,7 @@ function strictRequest(text) {
 
 /** The reply to a request with unreadable lines: financial requests are exact, so nothing is made and nothing is guessed. */
 export function partialText(ic) {
-  const read = (ic.lines || []).map((l) => { const [code, qty, price] = String(l).split(/,\s*|\s+/).map((x) => x.trim()); return `• ${code} — ${qty}${price ? `, price ${Number(price).toFixed(2)} AED` : ', system price'}`; });
+  const read = (ic.lines || []).map((l) => { const [code, qty, price] = String(l).split(String(l).includes(',') ? /,\s*/ : /\s+/).map((x) => x.trim()); return `• ${code} — ${qty}${price ? `, price ${Number(price).toFixed(2)} AED` : ', system price'}`; });
   return [
     `Invoice request${ic.customer ? ` for ${ic.customer}` : ''} was NOT made: ${ic.noItems ? 'no item line was found' : 'a line could not be read'}.`,
     ...(read.length ? ['Read so far:', ...read] : []),

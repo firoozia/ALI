@@ -1212,3 +1212,18 @@ test('tax inclusive, purchase side: when the sales side is all OFF the check off
   const clean = mk({ items: [I(1, 'PVC FILM215', { SalesTaxIncluded: false, PurchaseTaxIncluded: false })] });
   assert.match((await clean.bulk.planTaxInclusive())[1], /already OFF on every item, sales and purchase side/);
 });
+
+test('an item named by words with its count and price («Jowat glue 1pc 1500aed», live 16/11) is read; the item names settle a bare «1 1500»', async () => {
+  const { namedLine, readEnglishInvoice, lineCandidates, pickItem } = await import('../src/qboinvoice.js');
+  assert.equal(namedLine('Jowat glue 1pc 1500aed'), 'Jowat glue, 1, 1500');
+  assert.equal(namedLine('Jowat glue 1 1500 AED'), 'Jowat glue, 1, 1500');
+  assert.equal(namedLine('Jowat glue 2 pcs'), 'Jowat glue, 2');
+  assert.equal(namedLine('Jowat glue 1 1500'), 'Jowat glue 1 1500', 'no mark: both readings stay');
+  assert.equal(namedLine('603 = 30 mtr'), '', 'a code line is not this');
+  assert.equal(namedLine('thanks'), '');
+  assert.deepEqual(readEnglishInvoice('Atossa invoice Mice Interiors\n\nJowat glue 1pc 1500aed'), { customer: 'Mice Interiors', lines: ['Jowat glue, 1, 1500'], unread: [] });
+  const items = [{ Id: '9', Name: 'Jowat Glue', Type: 'Inventory', Active: true, UnitPrice: 1400 }, { Id: '10', Name: 'PVC FILM 603', Type: 'Inventory', Active: true }];
+  const c = lineCandidates('Jowat glue 1 1500');
+  assert.equal(c.filter((x) => pickItem(x.item, { items }).item).length, 1, 'only «Jowat glue», 1 piece at 1500 names an item');
+  assert.equal(pickItem(lineCandidates('Jowat glue, 1, 1500')[0].item, { items }).item.Id, '9');
+});
