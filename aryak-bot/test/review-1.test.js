@@ -1708,3 +1708,15 @@ test('the assistant\'s own reply in the Confirmation group is no money (live 16/
   assert.match(index, /const nameless = e\.pendingName && !e\.customer && Math\.abs\(Number\(e\.amount\) - ic\.amount\) < 0\.01/, '«fix receipt» names a bank message too');
   assert.match(index, /const dr = !imageOf\(content\) && !quotedDesign \? designRequest\(text\)/, 'a reply on a design is a change to it');
 });
+
+test('a statement of account PDF is no payment (live 16/11: our Tiger statement was read as a 3,016.65 AED transfer), new or stored', async () => {
+  const { isStatementFile } = await import('../src/paymentfix.js');
+  const { cleanPaymentEvents } = await import('../src/payments.js');
+  assert.ok(isStatementFile('statement-TIGER_TEST_LLC-2026-10-01..2026-11-16.pdf'));
+  assert.ok(isStatementFile('x.pdf', 'ARYAK\nStatement of account\nTIGER TEST'));
+  assert.ok(!isStatementFile('transfer receipt.pdf', 'Payment confirmation AED 3,016.65'));
+  const rows = [{ type: 'payment', kind: 'transfer', ref: 's', at: 1, amount: 3016.65, source: 'pdf', file: 'statement-TIGER_TEST_LLC-2026-10-01..2026-11-16.pdf', pendingName: true }, { type: 'payment', kind: 'transfer', ref: 'r', at: 2, amount: 500, source: 'pdf', file: 'receipt.pdf', customer: 'ZETA CO' }];
+  assert.deepEqual(cleanPaymentEvents({ events: rows, isKnown: () => true }).map((e) => e.ref), ['r']);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /if \(isStatementFile\(fileName, /);
+});

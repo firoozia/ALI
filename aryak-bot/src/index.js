@@ -74,7 +74,7 @@ import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, isBareAnswer, pendingView, viewAnswer, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, parseCashBoxCommand, rederiveCashOut } from './cashbox.js';
 import { answerAdd, requestAdd, undoAdd } from './addentries.js';
-import { isInvoiceFile, replyNameAmount } from './paymentfix.js';
+import { isInvoiceFile, isStatementFile, replyNameAmount } from './paymentfix.js';
 import { stripBotName } from './namelead.js';
 import { RawLog } from './rawlog.js';
 import { typedFitsName } from './qboname.js';
@@ -735,6 +735,7 @@ async function trackPaymentPdf(raw, groupId) {
   const fileName = normalizeMessageContent(raw.message)?.documentMessage?.fileName || '';
   const read = receiptOfPdf(buf);
   if (isInvoiceFile(fileName, String(read?.text || '').slice(0, 400))) { trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a forwarded invoice pdf is no payment'); return; }
+  if (isStatementFile(fileName, String(read?.text || '').slice(0, 600))) { trace(`group "${(await groupInfo(groupId)).subject}"`, 'tracker', 'a statement of account is no payment'); return; } // live 16/11: our Tiger statement read as 3,016.65 AED
   const merged = mergePayment(baseOfReceipt(read), {});
   const said = replyNameAmount(normalizeMessageContent(raw.message)?.documentMessage?.caption || ''); // «DERWAZAA BANK TRANSFER 294 AED» written as the caption of the receipt
   if (said) { if (!(Number(merged.amount) > 0)) merged.amount = said.amount; if (!merged.payer && !merged.customer) { merged.payer = said.name; merged.customer = said.name; } merged.kind = merged.kind || 'transfer'; }

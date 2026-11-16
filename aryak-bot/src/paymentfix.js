@@ -33,6 +33,8 @@ export const collectedAmount = (text) => {
   return m ? Number(m[1].replace(/,/g, '')) : 0;
 };
 export const isInvoiceFile = (name, text = '') => /(?:^|[^a-z])invoice[-_ ]*inv[-_]?\d|^inv[-_]?\d{3,}|tax invoice/i.test(String(name || '') + ' ' + String(text || ''));
+/** Our own statement of account (live 16/11: «statement-TIGER_…pdf», posted by the assistant, was read as a 3,016.65 AED transfer): never a payment. */
+export const isStatementFile = (name, text = '') => /^statement[-_]/i.test(String(name || '').trim()) || /statement of account|transaction statement|balance forward/i.test(String(text || '').slice(0, 600));
 const WORD_ONLY = new Set(['delivery', 'deliveries']);
 
 const cleanName = (n) => String(n || '').replace(/[-_.\s]+$/g, '').trim();
@@ -52,7 +54,7 @@ export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages =
     }
     if (bad.size) events = events.filter((e) => !(e.type === 'payment' && bad.has(e.ref)));
   }
-  events = events.filter((e) => !(e.type === 'payment' && OWN_REPLY.test(String(e.text || e.customer || '')))); // the assistant's own reply stored as money by an older code: dropped on read
+  events = events.filter((e) => !(e.type === 'payment' && (OWN_REPLY.test(String(e.text || e.customer || '')) || isStatementFile(e.file)))); // the assistant's own reply or statement stored as money by an older code: dropped on read
   let list = events.filter((e) => !(e.type === 'payment' && isStockQuestion(e.text || e.customer) && !isBankSms(e.text || e.customer) && !/cheque|chq/i.test(e.text || ''))); // a question about stock is no money
   list = list.filter((e) => !(e.type === 'payment' && e.kind === 'cash' && (driverCashAmount(e.text) > 0 || (!e.text && WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()))))); // «3000 aed delivery»: the amount to collect on delivery, not money received
   list = list.map((e) => {
