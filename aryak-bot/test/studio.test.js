@@ -66,8 +66,9 @@ test('a design: one close-up per film (up to three, wood first, closer along the
   assert.ok(d.video);
   assert.deepEqual(reelArgs.focus, { x: 0.7, y: 0.3 });
   assert.deepEqual(reelArgs.details.map((x) => [x.seconds, x.zoom]), [[4.35, 0.18], [4.35, 0.18]], 'wood: longer and closer (whole beats at 80 BPM, plus the cross-fade)');
-  assert.ok(reelArgs.hook, 'the Reel opens on the texture, very close');
-  for (const sec of [reelArgs.seconds.room, reelArgs.seconds.hook, ...reelArgs.details.map((x) => x.seconds)]) assert.ok(Math.abs(((sec - 0.6) / 0.75) - Math.round((sec - 0.6) / 0.75)) < 1e-9, `${sec} s: cuts on the beat`);
+  assert.equal(reelArgs.intro.length, 2, 'two films: the Reel opens on their pairing cards (first tile, then both with +)');
+  assert.equal(reelArgs.hook, null);
+  for (const sec of [reelArgs.seconds.room, reelArgs.seconds.intro, ...reelArgs.details.map((x) => x.seconds)]) assert.ok(Math.abs(((sec - 0.6) / 0.75) - Math.round((sec - 0.6) / 0.75)) < 1e-9, `${sec} s: cuts on the beat`);
   const p = desk.store.d.posts.SP1;
   assert.equal(p.extras.length, 2);
   assert.ok(fs.existsSync(p.reel));
@@ -589,4 +590,33 @@ test('a change that only asks about the Reel makes only the Reel again: the pict
   assert.match(d.text, /فقط ریلز را خواستید/);
   assert.ok(d.video);
   void writes;
+});
+
+test('the pairing cards and the open picture: «reveal» draws the same room opened, first in the album and dissolved in after the room', async () => {
+  const { pairCards } = await import('../src/reel.js');
+  const cards = await pairCards({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }, { code: 'HZ818', swatch: await pic('#efe6d8') }] });
+  assert.equal(cards.length, 2);
+  const m = await sharp(cards[1]).metadata();
+  assert.deepEqual([m.width, m.height], [1080, 1920]);
+  assert.deepEqual(await pairCards({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }] }), [], 'one film: no pairing');
+  let reelArgs = null;
+  const { desk, made } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'design-plan' ? JSON.stringify({ title_fa: 'آشپزخانه', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors' }], reel_open: 'texture', reveal: 'the tall pantry doors open on lit shelves', scene: 'A kitchen.' }) : base(r));
+  const d = await desk.draftDesign({});
+  const id = /Post #(SP\d+)/.exec(d.text)[1];
+  const p = desk.store.d.posts[id];
+  assert.ok(made.some((x) => /everything the same, except: the tall pantry doors open on lit shelves/.test(x.prompt)));
+  assert.match(path.basename(p.extras[0]), /-open\.jpg$/, 'the open picture comes right after the room in the album');
+  assert.ok(reelArgs.reveal, 'the Reel dissolves into it');
+  assert.ok(reelArgs.hook && !reelArgs.intro.length, 'texture chosen: no cards');
+  assert.ok(fs.existsSync(p.raw.reveal), 'kept for a Reel made again');
+});
+
+test('the Reel with pairing cards and the open room: a real MP4', { skip: !fs.existsSync(await ffmpegPath()) && 'no ffmpeg here' }, async () => {
+  const { pairCards } = await import('../src/reel.js');
+  const card = await endCard({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }], line: 'WhatsApp +971000' });
+  const intro = await pairCards({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }, { code: 'HZ818', swatch: await pic('#efe6d8') }] });
+  const mp4 = await makeReel({ room: await pic('#806040', 1440, 1800), intro, reveal: await pic('#907050', 1440, 1800), card, seconds: { room: 1.35, intro: 1.35, reveal: 1.35, card: 1 } });
+  assert.equal(mp4.subarray(4, 8).toString(), 'ftyp');
 });

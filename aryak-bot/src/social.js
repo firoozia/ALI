@@ -320,7 +320,7 @@ You design the rooms that sell our decorative films: a client must look at the p
 - Never repeat a composition (the owner, 15/11: «we must be different»): your recent compositions are listed; change the room type, or at least the layout, the camera angle, the light and the key elements (no second island with drum pendants in front of a wall of tall doors). Rotate styles: Arabic contemporary, Japandi, organic modern, classic shaker, mid-century, minimal monolith, warm industrial, coastal Gulf villa; and rooms: kitchen, walk-in closet, wardrobe wall, TV wall, majlis, home office, library, vanity and bathroom, entrance and console, bedroom headboard wall, kids room, hotel suite, reception desk, dining sideboard.
 - The scene: ONE English paragraph of 120 to 180 words for an image model, written as the brief of an editorial photograph for a luxury interior magazine: the camera (35 mm lens, eye level, three-quarter view, slightly close so the film texture is crisp), the light, the materials, each film named by the fronts it covers ("the tall wardrobe doors in film HZ812, its walnut grain running vertically, lit by a warm LED strip"). No people, no text, no logos.
 Answer with JSON only:
-{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","music":"one English line for the background music of this room's Reel: the mood, the instruments and the tempo, calm and elegant (no artist or song names)","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"signature":"one English line: style, room, layout and its three key elements, camera angle","scene":"the English paragraph"}`;
+{"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","music":"one English line for the background music of this room's Reel: the mood, the instruments and the tempo, calm and elegant (no artist or song names)","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"signature":"one English line: style, room, layout and its three key elements, camera angle","reel_open":"pair (the Reel opens on the films as cards side by side: for a pairing of two or three films) or texture (very close on the main film)","reveal":"when the design has a storage or appliance feature worth showing, what opens in the Reel, in English (the tall pantry doors open on lit shelves; the oven drawer slides out); else empty","scene":"the English paragraph"}`;
 
 /**
  * The owner's mark on a design picture (15/11): the ARYAK logo in the top corner and, along the bottom, a band with each film's swatch
@@ -757,6 +757,15 @@ export class SocialDesk {
           prompt: 'The same room photographed from exactly the same camera position BEFORE the renovation: the same walls, windows, layout and cabinet sizes, but the cabinet and wall fronts are tired, dated plain fronts (yellowed white gloss or worn beige laminate with chipped edges and old handles), flat cool daylight, a little clutter. Realistic, not dirty or ruined. Photorealistic interior photograph, 4:5 portrait.' })).image);
       } catch (err) { this.log(`social: the before picture failed: ${err.message}`); }
     }
+    // the function reveal (the owner, 16/11): the same room, the same camera, with what Atossa named opened
+    let revealRaw = null;
+    if (plan.reveal && String(plan.reveal).trim()) {
+      try {
+        const all2 = this.catalog();
+        revealRaw = await fitForInstagram((await this.imager.make({ images: [{ label: 'The room: keep this exact design and camera', buffer: room, mime: 'image/jpeg' }, ...plan.parts.filter((x) => all2[x.code]).map((x) => ({ label: `Reference: film ${x.code}, for ${x.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all2[x.code].file)), mime: 'image/jpeg' }))],
+          prompt: `The same room from exactly the same camera position, everything the same, except: ${plan.reveal}. Show the inside clearly and beautifully lit (warm LED strips, tidy styled contents), the opened fronts still showing their film. Photorealistic editorial interior photograph, 4:5 portrait.` })).image);
+      } catch (err) { this.log(`social: the open picture failed: ${err.message}`); }
+    }
     const mine = {};
     const text = await this.draftPost({ image, mime: 'image/jpeg', note, facts, fitted: true, pillar: plan.pillar || 'inspiration', made: mine });
     const p = this.store.d.posts[mine.id];
@@ -764,7 +773,8 @@ export class SocialDesk {
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene, plan: { ...plan, dialogue_fa: undefined, change_fa: undefined } };
     const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
     if (beforeRaw) p.lead = save(`${p.id}-before.jpg`, await brandDesign(beforeRaw, { ...this.brandAssets(), codes: [] }));
-    p.raw = { room: save(`${p.id}-room.jpg`, room), shots: shots.map((sh, k) => ({ file: save(`${p.id}-shot${k + 1}.jpg`, sh.raw), code: sh.part.code, where: sh.part.where, wood: sh.wood })) };
+    if (revealRaw) p.extras = [save(`${p.id}-open.jpg`, await brandDesign(revealRaw, { ...this.brandAssets(), codes })), ...(p.extras || [])].filter(Boolean);
+    p.raw = { ...(revealRaw ? { reveal: save(`${p.id}-open-raw.jpg`, revealRaw) } : {}), room: save(`${p.id}-room.jpg`, room), shots: shots.map((sh, k) => ({ file: save(`${p.id}-shot${k + 1}.jpg`, sh.raw), code: sh.part.code, where: sh.part.where, wood: sh.wood })) };
     const details = [];
     for (const [k, sh] of shots.entries()) {
       const branded = await brandDesign(sh.raw, { ...this.brandAssets(), codes: codes.filter((c) => c.code === sh.part.code) });
@@ -773,7 +783,7 @@ export class SocialDesk {
     }
     let video = null;
     if (this.reel) {
-      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan, before: beforeRaw }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
+      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan, before: beforeRaw, reveal: revealRaw }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     this.remember(plan);
     const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
@@ -935,7 +945,7 @@ export class SocialDesk {
       } catch { /* the plan's own wishes */ }
     }
     const codes = plan.parts.filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
-    const video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts, plan });
+    const video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts, plan, reveal: read(p.raw?.reveal) });
     if (this.mediaDir) { const f = path.join(this.mediaDir, `${p.id}-reel-${this.now().toString(36)}.mp4`); fs.writeFileSync(f, video); p.reel = f; }
     p.design.plan = { ...plan, reel: opts };
     this.store.save();
@@ -1188,7 +1198,7 @@ export class SocialDesk {
     }
   }
 
-  async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '', opts = null, plan = null, before = null }) {
+  async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '', opts = null, plan = null, before = null, reveal = null }) {
     const sharp = (await import('sharp')).default;
     let focus = { x: 0.5, y: 0.5 };
     try {
@@ -1216,7 +1226,10 @@ export class SocialDesk {
     }
     // the first second stops the scroll (the owner, 15/11): the main film's texture very close, then the room; a before/after opens on the
     // room before ARYAK, wiped away by the room after
-    const hook = before ? null : details[0]?.image || null;
+    // the colour pairing cards (the owner, 16/11) open a design of two or three films when Atossa chose «pair» (or did not choose)
+    const pair = !before && codes.length >= 2 && (plan?.reel_open ? /^pair/i.test(plan.reel_open) : true);
+    const intro = pair ? await (await import('./reel.js')).pairCards({ codes, font: this.brandAssets().font }).catch(() => []) : [];
+    const hook = before || intro.length ? null : details[0]?.image || null;
     // cuts on the beat (the owner, 15/11, from a Gemini prompt): the music is asked at a known tempo and every shot lasts whole beats,
     // so each cross-fade starts on a beat
     const tune = /(\d{2,3})\s*BPM/i.exec(opts?.music || mood || '') ? (opts?.music || mood) : `${opts?.music || mood || 'Warm minimal luxury lounge: soft piano, gentle strings, a slow deep pulse'}, 80 BPM`;
@@ -1225,7 +1238,8 @@ export class SocialDesk {
     const onBeat = (sec, min = 2) => Math.max(min, Math.round((sec - fade) / beat)) * beat + fade;
     seconds.hook = onBeat(1.6, 2); seconds.before = onBeat(2.6, 3); seconds.room = onBeat(seconds.room, 4); seconds.view = onBeat(seconds.view, 4);
     for (const d of details) d.seconds = onBeat(d.seconds, 3);
-    return this.reel({ room, details, views, motion, hook, before, seconds, focus, overlay, card, music: await this.reelMusic(tune) });
+    seconds.intro = onBeat(1.35, 2); seconds.reveal = onBeat(3.6, 4);
+    return this.reel({ room, details, views, motion, hook, before, intro, reveal, seconds, focus, overlay, card, music: await this.reelMusic(tune) });
   }
 
   /** The same room from two other camera places (left and right around it), for a Reel that walks around the design. */

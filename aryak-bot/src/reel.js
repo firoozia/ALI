@@ -66,10 +66,48 @@ export async function endCard({ codes = [], logo = null, font = '', line = '' })
 }
 
 /**
+ * The colour pairing cards (the owner, 16/11, from a reel he liked: «WOOD + WHITE» tiles, then the room): a warm off-white ground with each
+ * film's swatch as a rounded tile and its code under it. Two frames: the first tile alone, then all of them with «+» between, so the pair
+ * builds. PNGs 1080 x 1920.
+ */
+export async function pairCards({ codes = [], font = '' }) {
+  const sharp = (await import('sharp')).default;
+  const W = 1080; const H = 1920;
+  const tiles = codes.filter((c) => c?.swatch).slice(0, 3);
+  if (tiles.length < 2) return [];
+  const size = tiles.length === 3 ? 290 : 400; const gap = tiles.length === 3 ? 70 : 110;
+  const top = 760;
+  const text = async (t, px, colour) => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${px}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+  const round = Buffer.from(`<svg width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${Math.round(size * 0.12)}" ry="${Math.round(size * 0.12)}"/></svg>`);
+  const shadow = await sharp({ create: { width: size + 80, height: size + 80, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: Buffer.from(`<svg width="${size + 80}" height="${size + 80}"><rect x="40" y="52" width="${size}" height="${size}" rx="${Math.round(size * 0.12)}" fill="rgba(60,40,20,0.28)"/></svg>`) }]).blur(18).png().toBuffer();
+  const frame = async (count) => {
+    const comps = [];
+    const total = count * size + (count - 1) * gap; // the tiles shown are centred: the first alone, then all
+    let x = Math.round((W - total) / 2);
+    for (let k = 0; k < count; k++) {
+      {
+        const tile = await sharp(tiles[k].swatch).resize(size, size, { fit: 'cover' }).composite([{ input: round, blend: 'dest-in' }]).png().toBuffer();
+        comps.push({ input: shadow, top: top - 40, left: x - 40 }, { input: tile, top, left: x });
+        const t = await text(tiles[k].code, 54, '#2b2622'); const tm = await sharp(t).metadata();
+        comps.push({ input: t, top: top + size + 44, left: x + Math.round((size - tm.width) / 2) });
+      }
+      if (k < count - 1) {
+        const plus = await text('+', 96, '#8a7a66'); const pm = await sharp(plus).metadata();
+        comps.push({ input: plus, top: top + Math.round((size - pm.height) / 2), left: x + size + Math.round((gap - pm.width) / 2) });
+      }
+      x += size + gap;
+    }
+    return sharp({ create: { width: W, height: H, channels: 3, background: '#F4EFE8' } }).composite(comps).jpeg({ quality: 92 }).toBuffer();
+  };
+  return [await frame(1), await frame(tiles.length)];
+}
+
+/**
  * The Reel: [room] and [detail] pictures (4:5), [focus] { x, y } (0..1) where the camera pushes in on the room, [overlay] a transparent
  * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
  */
-export async function makeReel({ room, detail = null, details = null, views = [], motion = 'zoom', hook = null, before = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
+export async function makeReel({ room, detail = null, details = null, views = [], motion = 'zoom', hook = null, before = null, intro = [], reveal = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   // the close-ups, one per film (the owner, 15/11: up to three films, wood grain longer and closer): [{ image, seconds, zoom }]
   const shots = (details || (detail ? [{ image: detail, seconds: seconds.detail, zoom: 0.12 }] : [])).filter((d) => d?.image).slice(0, 3);
@@ -93,9 +131,13 @@ export async function makeReel({ room, detail = null, details = null, views = []
     // the shots in order: [hook] (the film's texture very close, the first 1.5 s that stop the scroll), [before] (the room before ARYAK,
     // wiped away by the room after), the room, its other views, the close-ups
     const seq = [];
+    // the pairing cards first (they are the hook), each held a moment on a gentle push
+    intro.filter(Boolean).slice(0, 2).forEach((c, k) => seq.push({ file: put(`intro${k}.jpg`, c), sec: seconds.intro || 1.35, make: (i, f) => move(i, f, 0.04, 0.5, 0.45) }));
     if (hook) seq.push({ file: put('hook.jpg', hook), sec: seconds.hook || 1.6, make: (i, f) => move(i, f, 0.3, 0.5, 0.5) });
     if (before) seq.push({ file: put('before.jpg', before), sec: seconds.before || 2.6, make: (i, f) => move(i, f, 0.06, 0.5, 0.5) });
     seq.push({ file: put('room.jpg', room), sec: seconds.room, make: (i, f) => (orbit ? pan(i, f, true) : move(i, f, 0.22, fx, fy)), cut: before ? 'wipeleft' : 'fade' });
+    // the function reveal (the owner, 16/11): the same room with its doors open, dissolved in slowly after the room
+    if (reveal) seq.push({ file: put('reveal.jpg', reveal), sec: seconds.reveal || 3.6, make: (i, f) => (orbit ? pan(i, f, false) : move(i, f, 0.1, fx, fy)), cut: 'dissolve' });
     angles.forEach((v, k) => seq.push({ file: put(`view${k}.jpg`, v), sec: seconds.view || seconds.room, make: (i, f) => pan(i, f, k % 2 === 1) }));
     shots.forEach((d, k) => seq.push({ file: put(`detail${k}.jpg`, d.image), sec: d.seconds || seconds.detail, make: (i, f) => (orbit ? pan(i, f, k % 2 === 0) : move(i, f, d.zoom ?? 0.12, 0.5, 0.5)) }));
     for (const x of seq) args.push('-i', x.file);
