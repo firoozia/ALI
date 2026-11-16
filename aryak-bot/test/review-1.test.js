@@ -1616,7 +1616,8 @@ test('the kind of a payment comes from its method words: transfer / bank / TT / 
   const bk = one('bank transfer from atlas 1575 aed'); assert.equal(bk.kind, 'transfer'); assert.equal(bk.customer, 'atlas'); assert.match(describeEvent(bk), /^payment: bank transfer, 1,575\.00 AED, from atlas/);
   for (const t of ['Master wood 500 TT', 'master wood 500 IPP', 'master wood 500 Aani', 'master wood 500 deposited', 'online payment master wood 500', 'master wood 500 wire', 'حواله از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'transfer', t);
   for (const t of ['cheque from tiger 2000 aed PDC', 'tiger 2000 pdc', 'چک ۲۰۰۰ از ببر']) assert.equal(one(t).kind, 'cheque', t);
-  for (const t of ['cash received from alia wood 250 aed', 'master wood 300', 'نقد از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'cash', t);
+  for (const t of ['cash received from alia wood 250 aed', 'master wood 300 aed', 'نقد از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'cash', t);
+  assert.equal(one('master wood 300').kind, 'unclear', 'no word of money nor currency: never counted, the owner is asked (the owner, 16/11)');
   assert.equal(one('cash received from alia wood 250 aed').customer, 'alia wood');
   assert.equal(one('18000 deposit to boss').kind, 'cash_to_boss'); // a deposit to the boss is still cash leaving the box
 });

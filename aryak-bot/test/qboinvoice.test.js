@@ -1421,7 +1421,7 @@ test('simulation: wiring — a preview made in the test group is flagged, its cr
   assert.match(index, /quotedText: quoted, origin: \{ jid: chatId \}, test \}\)/);
   assert.match(index, /crossCheck\(trackerOf\(!!opts\.test\), customer, lines/); // the test data, not the real tracker
   const at = index.indexOf('async function simulatedPost');
-  const block = index.slice(at, at + 2100);
+  const block = index.slice(at, at + 3200);
   assert.match(block, /\[\(orders\|delivery\|confirm\)\\\]/);
   assert.match(block, /testTracker\.add\(event\)/); assert.doesNotMatch(block, /[^t]tracker\.add\(/); // only the test tracker
   assert.match(index, /if \(group\?\.test && ownerPerson && text && !audio && !image && \(await simulatedPost\(/); // the test group and the owner only

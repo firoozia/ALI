@@ -12,6 +12,21 @@ import { STAR_END, isStarred, parseCutCaption, parseDeliveryCaption, parseGoodsC
 /** The assistant's own replies (live 16/11: a statement it sent was read as 1.00 AED cash). */
 export const OWN_REPLY = /^\s*(?:🤖\s*)?(?:Statement of account for\b|Statement\s+-\s|Invoice request for\b|Invoice #Q\d|Post #SP\d|Customer group\b|From whom\?|Done:\s)/i;
 
+// ---- the accountant's rules for the Confirmation group (the owner, 16/11: «money is no place for mistakes: count only what is clearly a
+// payment or a receipt, ask about anything that is not clear»). A message counts as money received only when it says so.
+/** Words that say money came in (en, fa, ar). */
+export const MONEY_WORDS = /\bcash\b|\brecei?ved?\b|\brcvd\b|\brecd\b|\bpaid\b|\bpayment\b|\bche+a?ques?\b|\bcheq\b|\bchqs?\b|\bpdc\b|\btransfer(?:red)?\b|\btt\b|\bbank\b|\bdeposit(?:ed)?\b|\bcredited\b|\bipp\b|\baani\b|\bclear(?:ed)?\b|نقد|دریافت|واریز|حواله|چک|پرداخت\s*(?:شد|کرد)|گرفتیم|گرفتم|استلم|استلمنا|استلام|نقدا|كاش|شيك|حوالة|تحويل|دفع/i;
+/** A currency next to the amount: in this group «483 aed Alwan alsham» is how the staff write money received (the real rows). */
+const CURRENCY = /\b(?:aed|dhs?|dirhams?)\b|درهم/i;
+/** Not money received: a promise, a request, a balance, a price, an order (it is never counted, whatever amount it holds). */
+const NOT_RECEIVED = /\bwill\b|\bshall\b|going to|\btomorrow\b|\blater\b|next (?:week|month)|\bpromise[sd]?\b|\bcollect\b|\bowes?\b|\bowing\b|\bbalance\b|\bremaining\b|\boutstanding\b|\bpending\b|\basked\b|\bprice\b|per (?:meter|mtr|m)\b|\bquotation\b|\boffer\b|\bhow much\b|فردا|میده|می‌دهد|میدهد|خواهد|باقی|مانده|بدهی|طلب|قیمت|بعدا|سيدفع|غدا|باقي|متبقي|سعر|بكرة/i;
+/** Words that are never a customer's name (a reply, a thanks, an order word). */
+export const FILLER_NAME = /^(?:done|ok|okay|noted|thanks?|thank you|thx|plz|please|plz clear it|clear it|also this|this|that|it|yes|no|sure|send|sent|check|confirm(?:ed)?|good|fine|received|بله|باشه|مرسی|ممنون|تمام|اوکی|ok شد|تم|شكرا|حاضر)(?:\s+(?:it|this|that|please|plz|done))*$/i;
+/** A date alone («15/11 Zeta») holds no amount. */
+const DATE = /(?<![\d.])\d{1,2}\s*[\/-]\s*\d{1,2}(?:\s*[\/-]\s*\d{2,4})?(?![\d.])/g;
+/** An order or product line («410 - 4m», «check 603», «2 rolls 410»): codes and lengths, not money. */
+const ORDER_LINE = /\b\d+(?:\.\d+)?\s*(?:m|mtr|mtrs|meters?|metres?|rolls?|pcs|pieces|sheets?)\b|^\s*(?:check|available|stock|colou?r|code)\b/i;
+
 export function eventsFromCaption(role, text) {
   if (role === 'payment' && isStarred(text)) { // a star at the end: the star is taken off the name and the amount; the money needs no invoice
     const r = eventsFromCaption(role, String(text).replace(STAR_END, '').trim());
@@ -49,8 +64,21 @@ export function eventsFromCaption(role, text) {
   if (role === 'payment') {
     const out = cashOutKind(text); // cash leaving the cash box (to the boss, a salary advance): its own kind, never a customer payment
     if (out) return { events: [{ type: 'payment', kind: out.kind, customer: '', amount: out.amount, currency: 'AED', lines: [], ...(out.employee ? { employee: out.employee } : {}) }] };
+    const t = String(text || '').replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))); // Persian and Arabic digits read as digits
+    const said = MONEY_WORDS.test(t);
+    // a promise, a request, a balance or a price is never money received (a cheque keeps its due date: «PDC 5000 due 01/12»)
+    if (NOT_RECEIVED.test(t) && !/\bche+a?ques?\b|\bcheq\b|\bchqs?\b|\bpdc\b|چک|شيك/i.test(t)) return { ignore: true };
+    // an order or product line with no word of money
+    if (!said && !CURRENCY.test(t) && ORDER_LINE.test(t)) return { ignore: true };
+    // only a date and a name: no amount at all
+    if (!said && (t.match(DATE) || []).length && !/\d/.test(t.replace(DATE, ' '))) return { ignore: true };
     const p = parsePaymentCaption(text);
     if (!p) return null;
+    if (p.kind === 'name' && FILLER_NAME.test(String(p.customer || '').trim())) return { ignore: true }; // «Done», «plz clear it»: never a name
+    // an amount and a name and NO word of money nor currency («Zeta 1500»): unclear — kept apart, never counted, the owner is asked
+    if (p.kind === 'cash' && !said && !CURRENCY.test(t) && !p.cheque && !p.transfer && !(p.invoices?.length)) {
+      return { events: [{ type: 'payment', kind: 'unclear', customer: (p.customers || []).join(' + '), amount: p.amount, currency: 'AED', lines: [], unclear: true }] };
+    }
     if (p.kind === 'cleared') return { cleared: true };
     if (p.kind === 'clear-invoices') return { clearInvoices: p.invoices };
     if (p.kind === 'expense') return { ignore: true };

@@ -242,7 +242,7 @@ export function parsePaymentCaption(text) {
   if (!(amount > 0)) return null;
   let rest = (work.slice(0, a ? a.index : 0) + ' ' + (a ? work.slice(a.index + a[0].length) : work))
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer
-    .replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|حواله|انتقال|بانکی|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور)(?![\p{L}])/gu, ' ')
+    .replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|حواله|انتقال|بانکی|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور|استلمنا|استلمت|استلام|استلم|نقدا|نقدًا|من|دفع|دفعة|شيك|حوالة|تحويل|بنكي|كاش)(?![\p{L}])/gu, ' ')
     .replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|PDC|TRANSFER(?:RED)?|BANK|ONLINE|WIRE|IPP|AANI|DEPOSIT(?:ED)?|NAQD|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
     .replace(/[=\/.]+/g, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));

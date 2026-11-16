@@ -15,6 +15,7 @@ const when = (ms, timeZone = 'Asia/Dubai') => new Intl.DateTimeFormat('en-GB', {
 /** One tracker event as a line a tester can check: its kind, amount, name, cheque date, star, invoices, driver cash. */
 export function describeEvent(ev) {
   if (!ev) return '';
+  if (ev.type === 'payment' && ev.kind === 'unclear') return `UNCLEAR, NOT counted: ${money(ev.amount || 0)} ${ev.currency || 'AED'}${ev.customer ? ' beside "' + ev.customer + '"' : ''} with no word of money — the owner is asked: cash / cheque / transfer / not money`;
   if (ev.type === 'payment') {
     const parts = [KIND_TEXT[ev.kind] || String(ev.kind || 'payment'), money(ev.amount || 0) + ' ' + (ev.currency || 'AED')];
     const who = ev.customer || ev.employee || '';

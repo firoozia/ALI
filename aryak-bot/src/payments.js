@@ -214,6 +214,7 @@ export const isClearingText = (t) => /(?:cheque|chq|check)s?\s+clearance|(?:cheq
 /** The entries as they really are, before the repeats are dropped: no estimates, no rows made by filler replies, one row for a cheque seen under its customer and its drawer. */
 export function cleanPaymentEvents({ events, since = 0, isKnown = () => false }) {
   events = events.filter((e) => !(e.type === 'payment' && (OWN_REPLY.test(String(e.text || e.customer || '')) || isStatementFile(e.file)))); // the assistant's own reply or statement is never money (live 16/11)
+  events = events.filter((e) => !(e.type === 'payment' && (e.kind === 'unclear' || e.kind === 'not-money'))); // the accountant (16/11): unclear until the owner says, and «not money» never is
   const FOREIGN_WORD = /\b(OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i;
   // Re-derived on every read: an estimate or a quotation was never a payment; a row made from a reply of filler («plz clear it», «also this») is no payment of its own — it goes when the same
   // amount stands in the list under its real post, else it stays with no customer, cleared when the reply said so.

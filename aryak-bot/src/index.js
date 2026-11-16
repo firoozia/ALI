@@ -672,6 +672,13 @@ const unknownPayer = (event) => {
 /** A payment with nobody named, or with a name that is not our customer: ONE question to the owner's own chat (never a group), marked on the entry so it is asked once. */
 async function paymentFollowUps(event) {
   if (CASH_OUT_KINDS.includes(event.kind) || replayCtx.getStore()?.quiet || event.askedName) return;
+  // the accountant's question (16/11): an amount with no word of money is never counted until the owner says what it was
+  if (event.kind === 'unclear') {
+    const hm0 = new Intl.DateTimeFormat('en-GB', { timeZone: config.timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(event.at));
+    tracker.update(event.ref, { askedName: true });
+    await sock.sendMessage(ownIds()[0], { text: `🤖 Is this money received? "${String(event.text || '').replace(/\s+/g, ' ').slice(0, 80)}" (${Number(event.amount).toFixed(2)}${event.customer ? ', ' + event.customer : ''}) posted at ${hm0} in the confirmation group has no word of money, so it is NOT counted.\nReply: cash ${hm0} / cheque ${hm0} / transfer ${hm0} (a name after the time if needed) / not money ${hm0}` }).catch((e) => logger.warn('payment question failed: ' + e.message));
+    return;
+  }
   const nameless = !event.customer && Number(event.amount) > 0 && event.pendingName;
   // a bank clearing of a cheque already recorded (same amount, in the last 30 days) names itself: no question (live 16/11, Tiger 579.60)
   const clearing = event.bankSms && isClearingText(event.text || '');
@@ -1297,6 +1304,17 @@ async function qboInvoiceCommand(ic, text, here = {}) {
       if (ic.cmd.op === 'opening') return ['The cash box report shows only the month\'s own movements now: there is no opening balance to set.'];
       return [(await cashBoxMonth(todayDubai().slice(0, 7))).text];
     }
+    case 'payment_kind': { // the owner's answer to the accountant's question: what an unclear entry was (16/11)
+      const clock = String(ic.hh).padStart(2, '0') + ':' + String(ic.mm).padStart(2, '0');
+      const hits = tracker.events.filter((e) => {
+        if (e.type !== 'payment' || !(e.kind === 'unclear' || e.pendingName)) return false;
+        const p = localParts(e.at, config.timezone);
+        return Math.floor(p.minutes / 60) === ic.hh && p.minutes % 60 === ic.mm && (!ic.day || p.day.slice(5) === String(ic.day).split('-').map((x) => String(x).padStart(2, '0')).join('-'));
+      });
+      if (!hits.length) return ['No unclear or nameless entry at ' + clock + ' was found.'];
+      for (const e of hits) tracker.update(e.ref, ic.kind === 'not-money' ? { kind: 'not-money', unclear: false } : { kind: ic.kind, unclear: false, ...(ic.name ? { customer: canon(ic.name), customerTyped: ic.name, pendingName: false } : {}) });
+      return [ic.kind === 'not-money' ? `Done: the entry at ${clock} is not money; it is left out of every report.` : `Done: the entry at ${clock} is now ${ic.kind}${ic.name ? ' from ' + ic.name.toUpperCase() : ''}. Nothing was written to QuickBooks.`];
+    }
     case 'fix_receipt': { // the name and amount of a receipt whose amount was never read, by its time
       const clock = String(ic.hh).padStart(2, '0') + ':' + String(ic.mm).padStart(2, '0');
       const hits = tracker.events.filter((e) => {
@@ -1718,6 +1736,8 @@ async function simulatedPost({ raw, text, where, role, reply }) {
   const asRole = { orders: 'cut', delivery: 'delivery', confirm: 'payment' }[kind];
   const det = eventsFromCaption(asRole, m[2].trim());
   if (det?.noCustomer) { await reply(`SIMULATION: a cut with nobody named (code ${det.noCustomer.code}, ${det.noCustomer.quantity} m): not recorded. In the real orders group the owner is told once: «cut without customer».`); return true; }
+  if (asRole === 'payment' && det?.ignore) { await reply('SIMULATION: read as NOT money (a promise, a request, a price, an order line, a reply or our own message): nothing recorded, nothing counted.'); return true; }
+  if (asRole === 'payment' && det?.name) { await reply(`SIMULATION: a name alone («${det.name}»): it names the nameless payment posted just before or after it; nothing counted by itself.`); return true; }
   if (!det?.events?.length) { await reply(`SIMULATION: that text was not read as a post of the ${kind} group (nothing recorded).`); return true; }
   const lines = [];
   const listState = asRole === 'payment' ? await warmCustomers() : null;
