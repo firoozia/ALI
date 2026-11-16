@@ -1296,7 +1296,8 @@ export class SocialDesk {
   }
 
   /** Design drafts still waiting for the owner's answer: the daily proposal waits while there are [max]. */
-  designsWaiting() { return Object.values(this.store.d.posts).filter((p) => p.design && p.state === 'draft').length; }
+  // only the last day counts (live 16/11: nine old drafts the owner had moved past stopped every proposal of the day)
+  designsWaiting(ms = DAY) { return Object.values(this.store.d.posts).filter((p) => p.design && p.state === 'draft' && this.now() - p.at < ms).length; }
 
   /** The picture of the draft a preview names («Post #SP7 …»), so the owner sees what will be posted; null when none. */
   draftPicture(text) {

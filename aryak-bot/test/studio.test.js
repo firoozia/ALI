@@ -620,3 +620,13 @@ test('the Reel with pairing cards and the open room: a real MP4', { skip: !fs.ex
   const mp4 = await makeReel({ room: await pic('#806040', 1440, 1800), intro, reveal: await pic('#907050', 1440, 1800), card, seconds: { room: 1.35, intro: 1.35, reveal: 1.35, card: 1 } });
   assert.equal(mp4.subarray(4, 8).toString(), 'ftyp');
 });
+
+test('the proposal of the day waits only for the last two days\' drafts: old unanswered ones do not stop it', async () => {
+  const { desk } = await studio();
+  const T = Date.now();
+  desk.now = () => T;
+  desk.store.d.posts = Object.fromEntries([1, 2, 3, 4].map((k) => [`SP${k}`, { id: `SP${k}`, at: T - 5 * 864e5, state: 'draft', design: { room: 'x', codes: [] } }]));
+  assert.equal(desk.designsWaiting(), 0, 'five-day-old drafts do not count');
+  desk.store.d.posts.SP9 = { id: 'SP9', at: T - 3600e3, state: 'draft', design: { room: 'x', codes: [] } };
+  assert.equal(desk.designsWaiting(), 1);
+});

@@ -3876,10 +3876,16 @@ if (config.social.enabled) {
   setInterval(async () => {
     if (designing || config.social.designHour < 0 || !sock?.user || botState.paused || !socialDesk.imager?.enabled) return;
     const p = localParts(Date.now(), config.timezone);
-    if (p.minutes < config.social.designHour * 60 || socialStore.d.designDay === p.day || socialDesk.designsWaiting() >= 3) return;
+    if (p.minutes < config.social.designHour * 60 || socialStore.d.designDay === p.day) return;
     designing = true;
     try {
       socialStore.d.designDay = p.day; socialStore.save();
+      // three of the last day's designs still wait: no new one, but the morning reading still happens and the owner is told once
+      if (socialDesk.designsWaiting() >= 3) {
+        await socialDesk.researchTrends().catch((e) => logger.warn(`social: today's research failed: ${e.message}`));
+        await socialSay(`آتوسا امروز طرح تازه نساخت، چون ${socialDesk.designsWaiting()} طرح دیروز و امروز هنوز منتظر «بله» یا «نه» شماست. پژوهش امروزش را انجام داد. برای یک طرح تازه بنویسید «طرح».`);
+        return;
+      }
       await socialDesk.ready();
       if (!socialDesk.enabled) return;
       const ask = socialDesk.realJobReminder();
