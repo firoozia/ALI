@@ -3,7 +3,7 @@
 //   a TRANSFER (or a cheque clearing), our own invoice PDF forwarded, and a word like «delivery» in the place of a customer.
 import { createHash } from 'node:crypto';
 import { isClearingText } from './payments.js';
-import { eventsFromCaption } from './captionevents.js';
+import { OWN_REPLY, eventsFromCaption } from './captionevents.js';
 import { typedFitsName } from './qboname.js';
 
 /** «DERWAZAA BANK TRANSFER 294 AED» -> { name, amount } or null (the office's words on a receipt, as its caption or as a reply). */
@@ -52,6 +52,7 @@ export function fixStoredPayments(events, timeZone = 'Asia/Dubai', rawMessages =
     }
     if (bad.size) events = events.filter((e) => !(e.type === 'payment' && bad.has(e.ref)));
   }
+  events = events.filter((e) => !(e.type === 'payment' && OWN_REPLY.test(String(e.text || e.customer || '')))); // the assistant's own reply stored as money by an older code: dropped on read
   let list = events.filter((e) => !(e.type === 'payment' && isStockQuestion(e.text || e.customer) && !isBankSms(e.text || e.customer) && !/cheque|chq/i.test(e.text || ''))); // a question about stock is no money
   list = list.filter((e) => !(e.type === 'payment' && e.kind === 'cash' && (driverCashAmount(e.text) > 0 || (!e.text && WORD_ONLY.has(String(e.customer || '').trim().toLowerCase()))))); // «3000 aed delivery»: the amount to collect on delivery, not money received
   list = list.map((e) => {

@@ -9,6 +9,9 @@ import { cashOutKind } from './cashbox.js';
 import { bankSmsAmount, collectedAmount, driverCashAmount, isGenericBankSms, isStockQuestion } from './paymentfix.js';
 import { STAR_END, isStarred, parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
 
+/** The assistant's own replies (live 16/11: a statement it sent was read as 1.00 AED cash). */
+export const OWN_REPLY = /^\s*(?:🤖\s*)?(?:Statement of account for\b|Statement\s+-\s|Invoice request for\b|Invoice #Q\d|Post #SP\d|Customer group\b|From whom\?|Done:\s)/i;
+
 export function eventsFromCaption(role, text) {
   if (role === 'payment' && isStarred(text)) { // a star at the end: the star is taken off the name and the amount; the money needs no invoice
     const r = eventsFromCaption(role, String(text).replace(STAR_END, '').trim());
@@ -39,6 +42,7 @@ export function eventsFromCaption(role, text) {
   if (role === 'payment' && isGenericBankSms(text) && bankSmsAmount(text) > 0) { // the bank's SMS: a transfer (a cheque clearing keeps its own handling); its sentence is never a customer
     return { events: [{ type: 'payment', kind: /outward cheque clearing/i.test(text) ? 'cash' : 'transfer', customer: '', amount: bankSmsAmount(text), currency: 'AED', lines: [], pendingName: true, bankSms: true }] };
   }
+  if (role === 'payment' && OWN_REPLY.test(String(text || ''))) return { ignore: true }; // the assistant's own reply in the group (a statement sent, an invoice preview) is no money
   if (role === 'payment' && driverCashAmount(text) > 0) return { ignore: true }; // «3000 aed delivery»: the amount to collect on delivery of an order, not money received
   if (role === 'payment' && !/received?|receive|cash|paid|\bpay\b|payment|cleared?|credited|cheque|chq|check|transfer|deposit|bank|inv(?:oice)?[-\s]?\d|statement/i.test(String(text)) && /deliver\w*|confirm|\broll\b|\bsend\b|\border\b|\bpcs\b|pieces|meters?|\bmtr\b/i.test(String(text))) return { ignore: true }; // an amount beside order words, with no word of money coming in, is no payment
   if (role === 'payment' && isStockQuestion(text)) return { ignore: true }; // «307 available one roll in China stock?» is a question, not money

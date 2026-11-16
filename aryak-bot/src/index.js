@@ -673,11 +673,14 @@ const unknownPayer = (event) => {
 async function paymentFollowUps(event) {
   if (CASH_OUT_KINDS.includes(event.kind) || replayCtx.getStore()?.quiet || event.askedName) return;
   const nameless = !event.customer && Number(event.amount) > 0 && event.pendingName;
+  // a bank clearing of a cheque already recorded (same amount, in the last 30 days) names itself: no question (live 16/11, Tiger 579.60)
+  const clearing = event.bankSms && isClearingText(event.text || '');
+  if (nameless && clearing && tracker.events.some((c) => c.type === 'payment' && c.kind === 'cheque' && Math.abs(Number(c.amount) - Number(event.amount)) < 0.01 && event.at - c.at >= 0 && event.at - c.at < 30 * 86400000)) return;
   const unknown = unknownPayer(event);
   if (!nameless && !unknown) return;
   const hm = new Intl.DateTimeFormat('en-GB', { timeZone: config.timezone, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(event.at));
   if (unknown) tracker.update(event.ref, { unknownCustomer: true, askedName: true }); else tracker.update(event.ref, { askedName: true });
-  const head = nameless ? 'From whom? ' + Number(event.amount).toFixed(2) + ' AED (' + (event.kind || 'cash') + ') posted at ' + hm + ' in the confirmation group has no name.'
+  const head = nameless ? 'From whom? ' + Number(event.amount).toFixed(2) + ' AED (' + (clearing ? 'bank: cheque clearing' : event.bankSms ? 'bank transfer' : event.kind || 'cash') + ') posted at ' + hm + ' in the confirmation group has no name.'
     : Number(event.amount).toFixed(2) + ' AED from "' + event.customer + '": not one of our QuickBooks customers? — check.';
   await sock.sendMessage(ownIds()[0], { text: '🤖 ' + head + '\nTo name it here: fix receipt ' + hm + ' <customer name> ' + Number(event.amount).toFixed(2) }).catch((e) => logger.warn('payment question failed: ' + e.message));
 }
@@ -1296,12 +1299,15 @@ async function qboInvoiceCommand(ic, text, here = {}) {
     case 'fix_receipt': { // the name and amount of a receipt whose amount was never read, by its time
       const clock = String(ic.hh).padStart(2, '0') + ':' + String(ic.mm).padStart(2, '0');
       const hits = tracker.events.filter((e) => {
-        if (e.type !== 'payment' || !(e.source === 'pdf' || e.source === 'photo') || Number(e.amount) > 0) return false;
+        if (e.type !== 'payment') return false;
+        const unread = (e.source === 'pdf' || e.source === 'photo') && !(Number(e.amount) > 0);
+        const nameless = e.pendingName && !e.customer && Math.abs(Number(e.amount) - ic.amount) < 0.01; // a bank message of that amount (live 16/11)
+        if (!unread && !nameless) return false;
         const p = localParts(e.at, config.timezone);
         return Math.floor(p.minutes / 60) === ic.hh && p.minutes % 60 === ic.mm && (!ic.day || p.day.slice(5) === String(ic.day).split('-').map((x) => String(x).padStart(2, '0')).join('-'));
       });
       if (!hits.length) return ['No receipt with an unread amount at ' + clock + ' was found.'];
-      for (const e of hits) tracker.update(e.ref, { customer: canon(ic.name), customerTyped: ic.name, amount: ic.amount, kind: 'transfer', pendingName: false, noAmount: false });
+      for (const e of hits) tracker.update(e.ref, { customer: canon(ic.name), customerTyped: ic.name, amount: ic.amount, ...(isClearingText(e.text || '') ? {} : { kind: 'transfer' }), pendingName: false, noAmount: false });
       return ['Done: ' + hits.length + ' receipt(s) at ' + clock + ' now read as ' + ic.name.toUpperCase() + ' ' + Number(ic.amount).toFixed(2) + ' (transfer). Nothing was written to QuickBooks.'];
     }
     case 'add_entries': {
@@ -2500,7 +2506,8 @@ ${t.authorizeUrl()}`);
       await socialSayDesign(await socialDesk.chooseConcept(cc));
       return true;
     }
-    const dr = !imageOf(content) ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
+    const quotedDesign = sctx.quotedMessage ? /#SP\d+/i.test(String(textOf(normalizeMessageContent(sctx.quotedMessage)) || normalizeMessageContent(sctx.quotedMessage)?.imageMessage?.caption || normalizeMessageContent(sctx.quotedMessage)?.videoMessage?.caption || '')) : false;
+    const dr = !imageOf(content) && !quotedDesign ? designRequest(text) : null; // «طرح ۸۳۲ کمد دیواری»: a room drawn by Gemini with that colour, a draft like any other
     if (dr && isOwner()) {
       trace(where, 'owner', `social: design ${dr.code ? `with colour ${dr.code}` : 'chosen by the designer'}`);
       await socialSay(dr.code ? `The designer is working on a design around colour ${dr.code}… (one or two minutes)` : 'The designer is working on a proposal… (one or two minutes)');

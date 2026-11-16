@@ -1693,3 +1693,16 @@ test('statements of all customers with an open account: the phrases, the selecti
   assert.ok(ix.includes('let allRunning = false;') && ix.includes('A run of all statements is already going on') && ix.includes('const own = ownIds()[0];') && ix.includes("privateJid: own, period, style: r.style, found: { id: row.id, name: row.name, via: 'exact' }"));
   assert.ok(ix.includes("'Done: ' + sent + ' sent, '") && ix.includes('setTimeout(res, 5000)') && ix.includes("case 'statement_all':") && ix.includes('await allStatementFlow({ text, say: (t) => reply(t) })'));
 });
+
+test('the assistant\'s own reply in the Confirmation group is no money (live 16/11: a statement it sent became 1.00 AED cash), new or already stored', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const { fixStoredPayments } = await import('../src/paymentfix.js');
+  const own = 'Statement of account for "TIGER TEST LLC" from 01/10/2026 to 16/11/2026 sent (balance *0.00 AED*, closing balance of the period).';
+  assert.deepEqual(eventsFromCaption('payment', own), { ignore: true });
+  const stored = [{ type: 'payment', kind: 'cash', ref: 'x', at: 1, amount: 1, customer: own, text: own }, { type: 'payment', kind: 'cash', ref: 'y', at: 2, amount: 500, customer: 'ZETA CO', text: 'cash from zeta co 500' }];
+  assert.deepEqual(fixStoredPayments(stored).map((e) => e.ref), ['y']);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /a bank clearing of a cheque already recorded[\s\S]*?c\.kind === 'cheque'[\s\S]*?return;/, 'no «From whom?» for a clearing a cheque explains');
+  assert.match(index, /const nameless = e\.pendingName && !e\.customer && Math\.abs\(Number\(e\.amount\) - ic\.amount\) < 0\.01/, '«fix receipt» names a bank message too');
+  assert.match(index, /const dr = !imageOf\(content\) && !quotedDesign \? designRequest\(text\)/, 'a reply on a design is a change to it');
+});
