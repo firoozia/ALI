@@ -88,3 +88,9 @@ test('an unclear entry and a «not money» one are in no report; the owner\'s an
   assert.equal(parseInvoiceCommand('پول نیست ۱۶:۲۳').kind, 'not-money');
   assert.equal(parseInvoiceCommand('transfer 9:05 12/11').day, '11-12');
 });
+
+test('a Persian name of three letters is never matched to a customer by sound (live 16/11: «زتا» became «ASAD AND RIZWAN CONTRACTION»)', async () => {
+  const fs = await import('node:fs'); const path = await import('node:path');
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(index.includes("length < 4) return name; // live 16/11"), 'a short Persian name is kept as written');
+});

@@ -438,6 +438,7 @@ const knownCustomers = () => [...groups.values()].map((g) => String(g.subject ||
 const rowOfName = (name) => customerRowFor(name, { list: customerGroups, aliases });
 const canon = (name) => { // the approved list and the approved aliases first; a loose match must fit the typed name word by word («Al masar» never becomes «MASTER WOOD»)
   if (hasPersianLetters(name)) { // «مستر وود» is MASTER WOOD: matched by sound to the customer names, never translated; no clear match keeps the written name
+    if (String(name).replace(/[^\p{L}]/gu, '').length < 4) return name; // live 16/11: «زتا» became «ASAD AND RIZWAN CONTRACTION»: three letters are too few to name a customer by sound
     const names = [...new Set([...(qboDesk.cache?.customers || []).map((r) => r.DisplayName).filter(Boolean), ...knownCustomers()])];
     const pick = names.length ? pickSpoken(String(name).trim(), names) : null;
     return pick?.kind === 'one' ? pick.best.name : name;
