@@ -1701,6 +1701,8 @@ test('the assistant\'s own reply in the Confirmation group is no money (live 16/
   assert.deepEqual(eventsFromCaption('payment', own), { ignore: true });
   const stored = [{ type: 'payment', kind: 'cash', ref: 'x', at: 1, amount: 1, customer: own, text: own }, { type: 'payment', kind: 'cash', ref: 'y', at: 2, amount: 500, customer: 'ZETA CO', text: 'cash from zeta co 500' }];
   assert.deepEqual(fixStoredPayments(stored).map((e) => e.ref), ['y']);
+  const { cleanPaymentEvents } = await import('../src/payments.js');
+  assert.deepEqual(cleanPaymentEvents({ events: stored, isKnown: () => true }).map((e) => e.ref), ['y'], 'every read drops it');
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(index, /a bank clearing of a cheque already recorded[\s\S]*?c\.kind === 'cheque'[\s\S]*?return;/, 'no «From whom?» for a clearing a cheque explains');
   assert.match(index, /const nameless = e\.pendingName && !e\.customer && Math\.abs\(Number\(e\.amount\) - ic\.amount\) < 0\.01/, '«fix receipt» names a bank message too');
