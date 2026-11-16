@@ -428,6 +428,16 @@ export function looksLikeDesignNote(text) {
   return /طرح|ریلز|reel|دوربین|رنگ|نور|کابینت|درب|دیوار|زاویه|موزیک|آهنگ|بافت|چوب|سنگ|جزیره|سقف|کف|عکس|نما|HZ\s*\d|TS\s*\d|\bکد\b/i.test(t);
 }
 
+/**
+ * Words only about the Reel (live 16/11: «make this Reel longer and let the camera turn in the space», a reply to #SP23, redrew the room
+ * twice and made a new post): its length, the music, the camera move; nothing about what the room shows.
+ */
+export function reelOnlyNote(text) {
+  const t = String(text || '');
+  if (!/ریلز|reel|ویدیو|ویدئو|video|دوربین|camera|موزیک|موسیقی|آهنگ|music|تایم|زمان|طول|ثانیه|کوتاه|بلند/i.test(t)) return false;
+  return !/رنگ|کابینت|چوب|سنگ|نور|دیوار|درب|در ها|جزیره|سقف|کف|عکس|طرح|سبک|کمد|میز|صندلی|HZ\s*\d|TS\s*\d|\bکد\b|اضافه|حذف|بردار|جزئیات|دیتیل|مدرن|کلاسیک/i.test(t);
+}
+
 /** «رتوش پست ۲۵ …»: a small fix of a drafted design's picture, the design kept. { id, note } or null. */
 export function retouchRequest(text) {
   const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
@@ -862,11 +872,17 @@ export class SocialDesk {
   }
 
   async reviseDesign({ id, note }) {
+    const asked = note;
     // «the camera like reel 24»: the Reel wishes of that post are told to Atossa
     for (const m of String(note).replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).matchAll(/(?:ریلز|reel|پست|post)\s*(?:پست|post)?\s*#?\s*(?:SP)?\s*(\d+)/gi)) {
       const other = this.store.d.posts[`SP${m[1]}`];
       const wish = other?.design?.plan?.reel || (other?.design?.plan ? { motion: 'zoom' } : null);
       if (wish && `SP${m[1]}` !== id) note += ` (the Reel of post ${m[1]} was made with: ${JSON.stringify(wish)}; when he says like it, use the same "reel" values)`;
+    }
+    // only the Reel asked for: the picture stays, only the Reel is made again (no redraw, no new post)
+    if (reelOnlyNote(asked) && this.store.d.posts[id]?.design) {
+      const r = await this.remakeReel({ id, note });
+      return { ...r, text: `${r.text}\n(فقط ریلز را خواستید؛ عکس و پست ${id.slice(2)} همان ماند.)` };
     }
     const p = this.store.d.posts[id];
     if (!p?.design) return { text: `There is no design #${id} to change.` };

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, looksLikeDesignNote, parseSocialCommand, reelRequest, retouchRequest } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, looksLikeDesignNote, parseSocialCommand, reelOnlyNote, reelRequest, retouchRequest } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -564,9 +564,29 @@ test('plain words right after a design are a change to it; «like reel 24» tell
   desk.store.d.posts[b].at += 1;
   assert.equal(desk.latestDesignDraft(), b, 'the newest draft');
   const base = desk.write;
-  desk.write = async (r) => (r.kind === 'check-change' ? '{"done":true}' : base(r));
+  desk.write = async (r) => { if (r.kind === 'reel-wish') { writes.push(r); return '{}'; } return r.kind === 'check-change' ? '{"done":true}' : base(r); };
   await desk.reviseDesign({ id: b, note: `حرکت دوربین مثل ریلز ${a.slice(2)} شود` });
-  const asked = writes.filter((w) => w.kind === 'design-plan').at(-1).text;
+  const asked = (writes.filter((w) => w.kind === 'design-plan' || w.kind === 'reel-wish').at(-1) || {}).text || '';
   assert.match(asked, /the Reel of post \d+ was made with: \{"seconds":22,"motion":"orbit","music":"oud"\}/);
   void reelArgs;
+});
+
+test('a change that only asks about the Reel makes only the Reel again: the picture and the post stay (live 16/11, #SP23)', async () => {
+  assert.equal(reelOnlyNote('اتوسا تایم ریلز اینو بیشتر کن چرخش دوربین در فضا هم باشه'), true);
+  assert.equal(reelOnlyNote('رنگ درها روشن‌تر و ریلز بلندتر'), false, 'a change to the room too');
+  assert.equal(reelOnlyNote('کابینت بالا حذف شود'), false);
+  let reelArgs = null;
+  const { desk, made, writes } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const id = /Post #(SP\d+)/.exec((await desk.draftDesign({})).text)[1];
+  const before = made.length; const posts = Object.keys(desk.store.d.posts).length;
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'reel-wish' ? '{"seconds":22,"music":"","motion":"orbit"}' : base(r));
+  const d = await desk.reviseDesign({ id, note: 'اتوسا تایم ریلز اینو بیشتر کن چرخش دوربین در فضا هم باشه' });
+  assert.equal(Object.keys(desk.store.d.posts).length, posts, 'no new post');
+  assert.equal(desk.store.d.posts[id].state, 'draft', 'the same post');
+  assert.ok(made.slice(before).every((m) => !/redrawn for the owner/.test(m.prompt)), 'the room is not drawn again');
+  assert.equal(reelArgs.motion, 'orbit');
+  assert.match(d.text, /فقط ریلز را خواستید/);
+  assert.ok(d.video);
+  void writes;
 });
