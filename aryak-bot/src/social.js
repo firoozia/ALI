@@ -189,6 +189,7 @@ export function parseSocialCommand(text) {
   if ((m = /^(?:no|cancel|نه|خیر|لغو)\s*#?\s*(SP|SR)\s*(\d+)\s*[.!]?(?:\s*[:\-،,]?\s*([\s\S]+))?$/i.exec(t))) return { verb: 'no', kind: m[1].toUpperCase(), id: `${m[1].toUpperCase()}${m[2]}`, ...(m[3]?.trim() ? { text: m[3].trim() } : {}) };
   if ((m = /^(?:taste|سلیقه|سلیقه‌ی من|سلیقه من)\s*[:\-]?\s*([\s\S]+)$/i.exec(t))) return { verb: 'taste', text: m[1].trim() };
   if ((m = /^(?:edit|ویرایش|اصلاح)\s*#?\s*SP\s*(\d+)\s*[:\-]?\s*([\s\S]+)$/i.exec(t))) return { verb: 'edit', kind: 'SP', id: `SP${m[1]}`, text: m[2].trim() };
+  if ((m = /^(?:retry|again|دوباره|مجدد)\s*#?\s*SP\s*(\d+)\s*[.!]?$/i.exec(t))) return { verb: 'retry', kind: 'SP', id: `SP${m[1]}` };
   if ((m = /^(?:reply|answer|جواب|پاسخ)\s*#?\s*SR\s*(\d+)\s*[:\-]?\s*([\s\S]+)$/i.exec(t))) return { verb: 'reply', kind: 'SR', id: `SR${m[1]}`, text: m[2].trim() };
   if (/^(?:social|social status|سوشال|وضعیت سوشال|وضعیت اینستاگرام)\s*[?؟]?$/i.test(t)) return { verb: 'status' };
   if (/^(?:leads|social leads|لیدها|مشتری(?:‌|\s)?های بالقوه)\s*[?؟]?$/i.test(t)) return { verb: 'leads' };
@@ -1316,6 +1317,16 @@ export class SocialDesk {
     await this.ready();
     const p = this.store.d.posts[c.id];
     if (!p) return `There is no post #${c.id}.`;
+    // «دوباره پست ۳۱»: a posted post whose Reel did not go out somewhere: only the missing parts are tried again (the owner's yes was given)
+    if (c.verb === 'retry') {
+      if (p.state !== 'posted') return `Post #${c.id} is not posted yet (${p.state}); «بله پست ${c.id.slice(2)}» posts it.`;
+      const only = [p.reel && !p.fbReel && this.client.hasFb ? 'fbReel' : '', p.reel && !p.igReel && this.client.hasIg ? 'igReel' : '', p.reel && !p.tiktok && this.tiktok?.connected ? 'tiktok' : ''].filter(Boolean);
+      if (!only.length || !p.reel || !fs.existsSync(p.reel)) return `Post #${c.id}: nothing is missing that can be sent again.`;
+      const done = []; const failed = [];
+      await this.postReel(p, fs.readFileSync(p.reel), done, failed, { only });
+      this.store.save();
+      return [`Post #${c.id}, sent again:`, ...done, ...failed.map((f) => `NOT posted, ${f}`)].join(String.fromCharCode(10));
+    }
     const waiting = p.state === 'scheduled';
     if (waiting && c.verb === 'yes' && !c.now) return `Post #${c.id} already goes out at ${this.clock(p.postAt)} Dubai time. To post it now: «بله پست ${c.id.slice(2)} الان».`;
     if (p.state !== 'draft' && !waiting) return `Post #${c.id} was already ${p.state}.`;
@@ -1447,14 +1458,17 @@ export class SocialDesk {
   }
 
   /** The Reel of a design: a Facebook video and an Instagram Reel, with the same caption. */
-  async postReel(p, video, done, failed) {
-    if (this.client.hasFb) {
-      try { const v = await this.client.fbVideo(video, p.caption); p.fbReel = v.id; done.push(`Facebook video: posted https://www.facebook.com/${v.id}`); } catch (e) { failed.push(`Facebook video: ${e.message}`); }
+  async postReel(p, video, done, failed, { only = null } = {}) {
+    const want = (k) => !only || only.includes(k);
+    // one more try after a pause (live 16/11: #SP31's Instagram Reel came back «Request processing failed» while #SP30 posted)
+    const twice = async (fn) => { try { return await fn(); } catch (e) { await this.client.wait?.(20000); return fn(); } };
+    if (this.client.hasFb && want('fbReel')) {
+      try { const v = await twice(() => this.client.fbVideo(video, p.caption)); p.fbReel = v.id; done.push(`Facebook video: posted https://www.facebook.com/${v.id}`); } catch (e) { failed.push(`Facebook video: ${e.message}`); }
     }
-    if (this.client.hasIg) {
-      try { const r = await this.client.igReel(video, p.caption); p.igReel = r.id; done.push(`Instagram Reel: posted${r.link ? ` ${r.link}` : ''}`); } catch (e) { failed.push(`Instagram Reel: ${e.message}`); }
+    if (this.client.hasIg && want('igReel')) {
+      try { const r = await twice(() => this.client.igReel(video, p.caption)); p.igReel = r.id; done.push(`Instagram Reel: posted${r.link ? ` ${r.link}` : ''}`); } catch (e) { failed.push(`Instagram Reel: ${e.message}`); }
     }
-    if (this.tiktok?.connected) {
+    if (this.tiktok?.connected && want('tiktok')) {
       try {
         const t = await this.tiktok.postVideo(video, p.caption);
         p.tiktok = t.publishId;

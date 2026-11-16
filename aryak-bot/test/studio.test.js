@@ -630,3 +630,20 @@ test('the proposal of the day waits only for the last two days\' drafts: old una
   desk.store.d.posts.SP9 = { id: 'SP9', at: T - 3600e3, state: 'draft', design: { room: 'x', codes: [] } };
   assert.equal(desk.designsWaiting(), 1);
 });
+
+test('«دوباره پست N»: a posted post whose Instagram Reel failed sends only that again; an upload is tried twice before it fails', async () => {
+  assert.deepEqual(parseSocialCommand('دوباره پست ۳۱'), { verb: 'retry', kind: 'SP', id: 'SP31' });
+  const { desk } = await studio();
+  let tries = 0;
+  desk.client.wait = async () => {};
+  desk.client.igReel = async () => { tries++; if (tries < 2) throw new Error('Request processing failed'); return { id: 'R1', link: 'https://ig/reel/1' }; };
+  desk.client.fbVideo = async () => { throw new Error('should not be sent again'); };
+  Object.defineProperty(desk.client, 'hasIg', { get: () => true });
+  const f = path.join(tmp('reel-'), 'x.mp4'); fs.writeFileSync(f, 'MP4');
+  desk.store.d.posts.SP31 = { id: 'SP31', state: 'posted', reel: f, fbReel: 'V1', tiktok: 'T1', caption: 'c', at: Date.now() };
+  const out = await desk.decidePost({ verb: 'retry', kind: 'SP', id: 'SP31' });
+  assert.equal(tries, 2, 'tried twice');
+  assert.match(out, /Instagram Reel: posted/);
+  assert.equal(desk.store.d.posts.SP31.igReel, 'R1');
+  assert.match(await desk.decidePost({ verb: 'retry', kind: 'SP', id: 'SP31' }), /nothing is missing/);
+});
