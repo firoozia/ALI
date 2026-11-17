@@ -126,6 +126,8 @@ test('the cash box: money to the boss, staff advances and company cash expenses 
     assert.ok(want === 'PAY' ? got.startsWith('PAY') : got.startsWith(want), `${text} -> ${got} (wanted ${want})`);
   }
   assert.equal(eventsFromCaption('payment', 'Zeta Work paid 900 aed for invoice 1203').events[0].customer, 'Zeta Work'); // no «for» left on the name
+  // live 17/11: what the money was for and the word «advance» are no part of the customer's name
+  for (const [text, name] of [['advance payment 2000 from Zeta Work', 'Zeta Work'], ['Zeta paid 1500 cash for 2 rolls', 'Zeta'], ['Omega Co paid advance 3000 cheque', 'Omega Co'], ['cash 1200 from Nova for advance', 'Nova'], ['cash 800 for Nova', 'Nova'], ['Cash from Lions for Kitchens 164 aed', 'Lions for Kitchens']]) assert.equal(eventsFromCaption('payment', text).events[0].customer, name, text);
 });
 
 const exp = [
