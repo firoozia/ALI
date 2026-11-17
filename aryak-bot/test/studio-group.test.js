@@ -73,3 +73,8 @@ test('the stock group: its name and switch come from the environment, and the gu
   assert.equal(observedGroup('موجودی مشتری‌ها', loadConfig({ OBSERVE_GROUP_NAMES: 'مشتری' }).config), false);
   assert.equal(groupAllowed('موجودی مشتری‌ها', loadConfig({ STOCK_GROUP: 'off' }).config).ok, false);
 });
+
+test('memory: pictures with a small cache and one thread; low memory is written down with the program\'s own use (17/11: the server froze twice with no reason in the log)', () => {
+  assert.match(src, /m\.default\.cache\(\{ memory: 48, items: 40, files: 0 \}\); m\.default\.concurrency\(1\);/);
+  assert.match(src, /logger\.warn\(`memory low: free \$\{Math\.round\(free\)\} MB; this program rss/);
+});

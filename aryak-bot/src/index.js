@@ -7,6 +7,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import pino from 'pino';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { answer } from './assistant.js';
 import { SheetCache, fetchReport, fetchStock, isTimeout, managerMessage, warmSheet } from './stock.js';
@@ -156,6 +157,17 @@ const systemPrompt = () => {
   return systemCache.text;
 };
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+// Memory (17/11: the 2 GB server froze twice while the studio drew pictures; the log stopped with no reason). Pictures are handled with a
+// small cache and one thread, and when memory runs low the program's own use is written down once a minute, so the step that grows is seen.
+void import('sharp').then((m) => { m.default.cache({ memory: 48, items: 40, files: 0 }); m.default.concurrency(1); }).catch(() => {});
+let memoSaid = 0;
+setInterval(() => {
+  const free = os.freemem() / 1048576;
+  if (free > 450 || Date.now() - memoSaid < 60000) return;
+  memoSaid = Date.now();
+  const u = process.memoryUsage(); const mb = (x) => Math.round(x / 1048576);
+  logger.warn(`memory low: free ${Math.round(free)} MB; this program rss ${mb(u.rss)} MB, heap ${mb(u.heapUsed)} MB, buffers ${mb(u.arrayBuffers)} MB, external ${mb(u.external)} MB`);
+}, 5000).unref();
 config.log = (s) => logger.warn(s);
 config.logInfo = (s) => logger.info(s);
 // ONE bot process per WhatsApp session: a second one (a double start) waits for the first to stop, or leaves; the lock lives in the auth folder
