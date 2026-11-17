@@ -2389,7 +2389,7 @@ async function onDemandInvoiceRun({ doc, reply, where, role, test, hint = '', af
   if (after) await after({ number, customer: read.invoice_customer || inv.customer || '', total: inv.total ?? null, urgent: problems.filter((p) => p.severity !== 'info').length, noOrder: problems.some((p) => p.kind === 'order-note'), points: problems.filter((p) => p.severity !== 'info').map(shortPoint).slice(0, 6) });
 }
 
-async function handleStaffChat(raw, chatId, group) {
+async function handleStaffChat(raw, chatId, group, place = {}) {
   const content = normalizeMessageContent(raw.message);
   let audio = config.voiceEnabled ? content?.audioMessage : null;
   let audioRaw = raw; // the message the voice note is downloaded from (the quoted one when the person replies to a voice note with «this one»)
@@ -2407,7 +2407,7 @@ async function handleStaffChat(raw, chatId, group) {
   if (sent.has(raw.key.id) || text.startsWith('🤖')) return true; // the bot's own message coming back
   const where = group ? `group "${(await groupInfo(chatId)).subject}"` : 'private';
   const own = ownIds();
-  const isSelf = own.some((o) => jidDigits(o) === jidDigits(chatId));
+  const isSelf = !!place.studio || own.some((o) => jidDigits(o) === jidDigits(chatId));
   // The line from the public QuickBooks page carries an authorization code: only the owner's own chat may take it, and it never reaches a model, a trace or anyone else.
   if (text && looksLikeConnectLine(text) && !(isSelf && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(((content.extendedTextMessage || audio || image)?.contextInfo || {}).isForwarded) }))) {
     trace(where, 'owner', 'ignored: a QuickBooks connect line that is not from the owner\'s own chat');
@@ -2492,7 +2492,7 @@ async function handleStaffChat(raw, chatId, group) {
   // A voice note that would change something waits for its «بله»: the same person's yes runs the transcript as if typed, a no drops it,
   // and any other text is the corrected text that takes its place (it is simply handled as typed).
   const gateKey = `vg:${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`;
-  const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group);
+  const rerunAsText = async (said) => handleStaffChat({ key: { ...raw.key, id: `VOICE-${raw.key.id}-${Date.now()}` }, message: { conversation: said }, pushName: raw.pushName, messageTimestamp: Math.floor(Date.now() / 1000) }, chatId, group, place);
   // Instagram and Facebook (his own chat, the owner only): a photo with «post …» becomes a draft #SP; yes / no / edit for #SP, yes / no / reply for #SR;
   // «social» and «leads». Nothing reaches Meta before his yes (social.js).
   if (config.social.enabled && !group && isSelf && !audio) {
@@ -3875,11 +3875,13 @@ const socialDesk = new SocialDesk({
   },
 });
 /** A social notice to the owner's own chat, in its own languages (an Arabic caption is never turned into English); with [image] the notice is that picture's caption. */
+/** The studio's group (the owner, 17/11: his own chat was full): its id when it is set up, else null (then his own chat). */
+const studioJid = () => (config.social.studioGroup && socialStore.d.studioGroup?.id) || null;
 async function socialSay(text, image = null, video = null) {
   const content = video ? { video, caption: `🤖 ${text}`, mimetype: 'video/mp4' } : image ? { image, caption: `🤖 ${text}` } : { text: `🤖 ${text}` };
   keepLang.add(content);
   asWritten.add(content);
-  const r = await sock.sendMessage(ownIds()[0], content);
+  const r = await sock.sendMessage(studioJid() || ownIds()[0], content);
   if (r?.key?.id) sent.add(r.key.id);
   return r;
 }
@@ -3969,9 +3971,36 @@ setInterval(async () => {
   } catch (e) { logger.warn(`expenses timer failed: ${e.message}`); }
 }, 5 * 60 * 1000).unref();
 
+/**
+ * The studio's group, found by its id or its name, or made once with the account alone in it; a first message says what goes there.
+ * Kept in the social store on the server. Nothing is sent to anyone else.
+ */
+async function ensureStudioGroup() {
+  const name = config.social.studioGroupName;
+  const all = Object.values(await sock.groupFetchAllParticipating());
+  const had = socialStore.d.studioGroup?.id;
+  if (had && all.some((g) => g.id === had)) return had;
+  const found = all.find((g) => String(g.subject || '').trim() === name);
+  let id = found?.id || '';
+  if (!id) { const made = await sock.groupCreate(name, []); id = made?.id || made?.gid || ''; logger.info(`studio group made: "${name}" (${id})`); }
+  if (!id) throw new Error('the group could not be made');
+  socialStore.d.studioGroup = { id, subject: name, at: Date.now() }; socialStore.save();
+  if (!found) {
+    const r = await sock.sendMessage(id, { text: [
+      '🤖 این گروه استودیوی آتوسا است. از این پس طرح‌ها، عکس‌های نزدیک، ریلزها، گفت‌وگوی آتوسا و داریوش، و خبر انتشار پست‌ها اینجا می‌آید.',
+      'فرمان‌ها همان قبلی‌اند و اینجا نوشته می‌شوند: «بله پست ۳۳»، «نه پست ۳۳ …»، «تغییر پست ۳۳ …»، «ریلز پست ۳۳ دوباره بساز»، «پیشنهاد طرح»، عکس با «الهام»، پیوند برای بررسی.',
+      'پیام‌های مالی، صورت‌حساب و فاکتور مثل قبل در گفت‌وگوی شخصی شما می‌مانند.',
+    ].join('\n') });
+    if (r?.key?.id) sent.add(r.key.id);
+  }
+  return id;
+}
+
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
+  // the studio's group: the owner's own messages there are taken like his own chat (the studio's commands); nobody else is answered
+  if (groupId === studioJid()) { if (raw.key.fromMe) await handleStaffChat(raw, groupId, null, { studio: true }); return; }
   const store = usageCtx.getStore();
   if (store) store.group = groupLabel((await groupInfo(groupId)).subject);
   { const info = await groupInfo(groupId); try { keepPhotoMessage(raw, groupId, info); } catch (e) { logger.warn(`photo keep failed: ${e.message}`); } if (await maybeSetExpensesGroup(raw, groupId, info) || (isExpensesSubject(info.subject) && await expensesTurn(raw, groupId, info))) return; } // the expenses group: receipts, answers, the owner's «this is the expenses group»
@@ -4117,6 +4146,7 @@ async function start() {
     if (qr) onQr();
     if (connection === 'open') {
       logger.info('connected to WhatsApp');
+      if (config.social.enabled && config.social.studioGroup) setTimeout(() => { void ensureStudioGroup().catch((e) => logger.warn(`studio group: ${e.message}`)); }, 20 * 1000).unref();
       sock.groupFetchAllParticipating().then((g) => { for (const r of watchList.sync(Object.values(g).map((x) => ({ id: x.id, subject: x.subject || '' })), config)) logger.info(`watched group renamed: "${r.from}" -> "${r.to}" (kept watched)`); }).catch((e) => logger.warn(`watch list: ${e.message}`));
       setTimeout(async () => {
         try {

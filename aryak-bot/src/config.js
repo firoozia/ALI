@@ -145,6 +145,9 @@ export function loadConfig(env = process.env) {
     // Instagram and Facebook (the owner, 14/11): official Graph API tokens from the VM metadata; nothing is posted or answered without his yes.
     social: {
       enabled: (env.SOCIAL || 'on').toLowerCase() !== 'off',
+      // the studio's own group (the owner, 17/11: «my own chat is full; separate it»): designs, Reels, posts and their commands there
+      studioGroup: (env.STUDIO_GROUP || 'on').toLowerCase() !== 'off',
+      studioGroupName: (env.STUDIO_GROUP_NAME || 'استودیو آتوسا').trim(),
       igToken: (env.META_IG_TOKEN || '').trim(), igUserId: (env.META_IG_USER_ID || '').trim(),
       pageId: (env.META_PAGE_ID || '').trim(), pageToken: (env.META_PAGE_TOKEN || '').trim(),
       systemToken: (env.META_SYSTEM_TOKEN || '').trim(), // the business's system-user token (never expires): the Page and its Instagram account through it
