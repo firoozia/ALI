@@ -804,13 +804,21 @@ export class SocialDesk {
       details.push({ code: sh.part.code, image: branded });
       p.extras = [...(p.extras || []), save(`${p.id}-${k + 2}.jpg`, branded)].filter(Boolean);
     }
+    // the design board (the owner, 17/11): the room with the real samples, codes, names and parts of its films, the last page of the album
+    try {
+      const { moodBoard } = await import('./reel.js');
+      const board = await moodBoard({ room, codes: plan.parts.filter((x) => all[x.code]).map((x) => ({ code: x.code, name: all[x.code].name || '', swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })), logo: this.brandAssets().logo, font: this.brandAssets().font });
+      details.push({ code: '', board: true, image: board });
+      p.extras = [...(p.extras || []), save(`${p.id}-board.jpg`, board)].filter(Boolean);
+    } catch (err) { this.log(`social: the design board failed: ${err.message}`); }
     let video = null;
     if (this.reel) {
       try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan, before: beforeRaw, reveal: revealRaw }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     this.remember(plan);
     const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
-    const extra = [details.length ? `${details.length} close-up${details.length > 1 ? 's' : ''} (${details.map((x) => x.code).join(', ')})` : '', video ? 'a Reel' : ''].filter(Boolean).join(' and ');
+    const ups = details.filter((x) => !x.board);
+    const extra = [ups.length ? `${ups.length} close-up${ups.length > 1 ? 's' : ''} (${ups.map((x) => x.code).join(', ')})` : '', details.some((x) => x.board) ? 'the design board' : '', video ? 'a Reel' : ''].filter(Boolean).join(', ');
     return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}`,
       image: p.file ? fs.readFileSync(p.file) : image, details, detail: details[0]?.image || null, video };
   }

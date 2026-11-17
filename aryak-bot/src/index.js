@@ -3906,7 +3906,7 @@ async function socialSayDesign(d) {
   await socialSay(d.text, d.image || null);
   const id = /Post #(SP\d+)/.exec(d.text)?.[1] || '';
   const details = d.details?.length ? d.details : d.detail ? [{ image: d.detail, code: '' }] : [];
-  for (const x of details) await socialSay(`${id ? `#${id} ` : ''}close-up${x.code ? ` of ${x.code}` : ''}`, x.image);
+  for (const x of details) await socialSay(`${id ? `#${id} ` : ''}${x.board ? 'the design board (the last page of the post)' : `close-up${x.code ? ` of ${x.code}` : ''}`}`, x.image);
   if (d.video) await socialSay(`${id ? `#${id} ` : ''}the Reel`, null, d.video);
 }
 if (config.social.enabled) {

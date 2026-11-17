@@ -61,8 +61,8 @@ test('a design: one close-up per film (up to three, wood first, closer along the
   assert.deepEqual(made[1].images.map((i) => i.label), ['The room', 'Reference: film HZ812']);
   assert.deepEqual(made[2].images.map((i) => i.label), ['The room', 'Reference: film 1805']);
   assert.match(made[1].prompt, /about 30 cm from the tall doors in film HZ812, looking along the wood grain/);
-  assert.equal(d.details.length, 2);
-  assert.deepEqual(d.details.map((x) => x.code), ['HZ812', '1805']);
+  assert.equal(d.details.filter((x) => !x.board).length, 2);
+  assert.deepEqual(d.details.filter((x) => !x.board).map((x) => x.code), ['HZ812', '1805']);
   assert.ok(d.video);
   assert.deepEqual(reelArgs.focus, { x: 0.7, y: 0.3 });
   // the owner's review of the Reels (17/11): the room first (never the cards), the cards a quick insert, quick cuts on the beat, at most 20 s
@@ -79,9 +79,9 @@ test('a design: one close-up per film (up to three, wood first, closer along the
   assert.ok(seq.reduce((a, x) => a + x.sec, 0) - 0.35 * (seq.length - 1) + 2.5 - 0.35 <= 20, 'at most 20 s');
   assert.equal(new Set(seq.map((x) => x.image)).size, seq.length, 'every shot once');
   const p = desk.store.d.posts.SP1;
-  assert.equal(p.extras.length, 2);
+  assert.equal(p.extras.length, 3, 'two close-ups and the design board');
   assert.ok(fs.existsSync(p.reel));
-  assert.match(d.text, /With the post: 2 close-ups \(HZ812, 1805\) and a Reel; one yes posts them all\./);
+  assert.match(d.text, /With the post: 2 close-ups \(HZ812, 1805\), the design board, a Reel; one yes posts them all\./);
 });
 
 test('a stone or solid film gets a gentler, shorter look; wood comes first even when listed second', async () => {
@@ -203,14 +203,15 @@ test('one yes: both pictures as one swipeable post on Facebook and Instagram, th
   const { desk, g } = await studio({ routes, reel: async () => Buffer.from('MP4') });
   await desk.draftDesign({});
   const out = await desk.handle({ verb: 'yes', kind: 'SP', id: 'SP1' });
-  assert.match(out, /Facebook: posted \(3 pictures\) https:\/\/fb\/post/);
-  assert.match(out, /Instagram: posted \(3 pictures\) https:\/\/ig\/p\/car/);
+  // the room, two close-ups and the design board (17/11)
+  assert.match(out, /Facebook: posted \(4 pictures\) https:\/\/fb\/post/);
+  assert.match(out, /Instagram: posted \(4 pictures\) https:\/\/ig\/p\/car/);
   assert.match(out, /Facebook video: posted/);
   assert.match(out, /Instagram Reel: posted https:\/\/ig\/reel\/1/);
   const feed = g.calls.find((c) => c.key === 'POST /222/feed');
-  assert.deepEqual(JSON.parse(feed.params.attached_media), [{ media_fbid: 'ph1' }, { media_fbid: 'ph2' }, { media_fbid: 'ph3' }]);
+  assert.deepEqual(JSON.parse(feed.params.attached_media), [{ media_fbid: 'ph1' }, { media_fbid: 'ph2' }, { media_fbid: 'ph3' }, { media_fbid: 'ph4' }]);
   const carousel = g.calls.find((c) => c.key === 'POST /111/media' && c.params.media_type === 'CAROUSEL');
-  assert.equal(carousel.params.children.split(',').length, 3);
+  assert.equal(carousel.params.children.split(',').length, 4);
   const up = g.calls.find((c) => c.key === 'POST RUPLOAD /reel');
   assert.equal(up.headers.Authorization, 'OAuth PG');
   assert.equal(up.headers.file_size, '3');
@@ -790,4 +791,25 @@ test('an empty answer of a picture check is never a pass for a view, a close-up 
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /any of them changed is not done', \{ strict: true \}\);\n\s*const clean = await this\.cleanCheck\(v\.image, \(plan\?\.parts[\s\S]{0,200}\{ strict: true \}\);/);
   assert.match(src, /\{ close: true, strict: true \}\);\n\s*if \(look\.ok\) return fitForInstagram/);
+});
+
+test('the design board (the owner, 17/11): the room above, the real samples with code, name and part below; the last page of the album, sent to the owner', async () => {
+  const { moodBoard } = await import('../src/reel.js');
+  const sharp = (await import('sharp')).default;
+  const swatch = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#a0522d' } }).jpeg().toBuffer();
+  const room = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#cccccc' } }).jpeg().toBuffer();
+  const b = await moodBoard({ room, codes: [{ code: 'HZ1', name: 'Honey oak', swatch }, { code: 'HZ2', name: 'Black', swatch }] });
+  const m = await sharp(b).metadata();
+  assert.deepEqual([m.width, m.height], [1080, 1350], 'a 4:5 page');
+  const at = async (x, y) => [...(await sharp(b).extract({ left: x, top: y, width: 1, height: 1 }).raw().toBuffer())];
+  const [r, g] = await at(540, 400); assert.ok(r > 180 && g > 180, 'the room above');
+  const [dr, dg, db] = await at(20, 1330); assert.ok(dr < 40 && dg < 40 && db < 40, 'a dark band below');
+  const [sr, sg, sb] = await at(355, 1060); assert.ok(sr > 130 && sg < 110 && sb < 80, 'the real sample, not a drawn one');
+  const { desk } = await studio({ reel: async () => Buffer.from('MP4') });
+  const d = await desk.draftDesign({});
+  const id = /Post #(SP\d+)/.exec(d.text)[1];
+  const p = desk.store.d.posts[id];
+  assert.match(p.extras[p.extras.length - 1], /-board\.jpg$/, 'the last page of the album');
+  assert.ok(d.details.some((x) => x.board), 'the owner sees it with the draft');
+  assert.match(d.text, /the design board/);
 });

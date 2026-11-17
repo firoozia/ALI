@@ -76,6 +76,46 @@ export async function endCard({ codes = [], logo = null, font = '', line = '', c
 }
 
 /**
+ * The design board (the owner, 17/11, from a mood-board prompt he liked): the room above, below it the real sample of every film of the
+ * design from the catalogue, with its code, its name and its part (main, second, accent). Drawn here, never by the image model, so the
+ * codes, names and samples are exactly ARYAK's. One 4:5 page of the post's album (1080x1350).
+ */
+export async function moodBoard({ room, codes = [], logo = null, font = '' }) {
+  const sharp = (await import('sharp')).default;
+  const W = 1080; const H = 1350; const top = 860;
+  const text = async (t, size, colour = '#ffffff') => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${size}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+  const fit = async (t, size, colour, width) => { let px = size; let b = await text(t, px, colour); let m = await sharp(b).metadata(); while (m.width > width && px > 18) { px -= 2; b = await text(t, px, colour); m = await sharp(b).metadata(); } return { b, m }; };
+  const comps = [{ input: await sharp(room).resize(W, top, { fit: 'cover', position: 'centre' }).jpeg({ quality: 92 }).toBuffer(), top: 0, left: 0 }];
+  comps.push({ input: await sharp({ create: { width: W, height: 3, channels: 3, background: '#d6b25e' } }).png().toBuffer(), top, left: 0 });
+  if (logo) {
+    const lg = await sharp(logo).resize({ width: 150 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const shade = Buffer.from(lg.data); for (let i = 0; i < shade.length; i += 4) { shade[i] = 0; shade[i + 1] = 0; shade[i + 2] = 0; shade[i + 3] = Math.round(shade[i + 3] * 0.7); }
+    for (let i = 0; i < lg.data.length; i += 4) { lg.data[i] = 255; lg.data[i + 1] = 255; lg.data[i + 2] = 255; }
+    // a soft shadow under the white logo: it stays readable on a bright window or wall
+    comps.push({ input: await sharp(shade, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } }).extend({ top: 16, bottom: 16, left: 16, right: 16, background: { r: 0, g: 0, b: 0, alpha: 0 } }).blur(7).png().toBuffer(), top: 42 - 16, left: 46 - 16 });
+    comps.push({ input: await sharp(lg.data, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } }).png().toBuffer(), top: 40, left: 44 });
+  }
+  const head = await text('The films of this design', 30, '#d6b25e'); const hm = await sharp(head).metadata();
+  comps.push({ input: head, top: top + 30, left: Math.round((W - hm.width) / 2) });
+  const tiles = codes.filter((c) => c?.swatch).slice(0, 3);
+  const roles = tiles.length === 1 ? ['Main'] : tiles.length === 2 ? ['Main', 'Second'] : ['Main', 'Second', 'Accent'];
+  const size = tiles.length === 3 ? 200 : tiles.length === 2 ? 230 : 260;
+  const gap = tiles.length === 3 ? 90 : 140;
+  const total = tiles.length * size + (tiles.length - 1) * gap;
+  let x = Math.round((W - total) / 2);
+  const y = top + 90;
+  for (const [k, c] of tiles.entries()) {
+    comps.push({ input: await sharp(c.swatch).resize(size, size, { fit: 'cover' }).extend({ top: 3, bottom: 3, left: 3, right: 3, background: '#cfc4b4' }).png().toBuffer(), top: y - 3, left: x - 3 });
+    const room4 = size + gap - 16;
+    const code = await fit(c.code, 40, '#ffffff', room4); comps.push({ input: code.b, top: y + size + 24, left: Math.max(0, x + Math.round((size - code.m.width) / 2)) });
+    if (c.name) { const n = await fit(c.name, 28, '#cfc4b4', room4); comps.push({ input: n.b, top: y + size + 76, left: Math.max(0, x + Math.round((size - n.m.width) / 2)) }); }
+    const r = await fit(roles[k], 22, '#8a7a66', room4); comps.push({ input: r.b, top: y + size + 116, left: Math.max(0, x + Math.round((size - r.m.width) / 2)) });
+    x += size + gap;
+  }
+  return sharp({ create: { width: W, height: H, channels: 3, background: '#14110E' } }).composite(comps).jpeg({ quality: 92 }).toBuffer();
+}
+
+/**
  * The colour pairing cards (the owner, 16/11, from a reel he liked: «WOOD + WHITE» tiles, then the room): a warm off-white ground with each
  * film's swatch as a rounded tile and its code under it. Two frames: the first tile alone, then all of them with «+» between, so the pair
  * builds. PNGs 1080 x 1920.
