@@ -746,7 +746,7 @@ export class SocialDesk {
     for (let k = 0; k < 2; k++) {
       const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
         images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
-      const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true });
+      const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true, strict: true });
       if (look.ok) return fitForInstagram(d.image);
       miss = look.problem;
     }
@@ -975,9 +975,9 @@ export class SocialDesk {
     }
     let reveal = read(p.raw?.reveal);
     const left = [];
-    if (reveal && !(await this.cleanCheck(reveal, codes)).ok) { reveal = null; left.push('عکس کشوی باز'); }
+    if (reveal && !(await this.cleanCheck(reveal, codes, { strict: true })).ok) { reveal = null; left.push('عکس کشوی باز'); }
     const kept = [];
-    for (const s of shots) { const sw = codes.find((c) => c.code === s.part.code); if ((await this.cleanCheck(s.raw, sw ? [sw] : [], { close: true })).ok) kept.push(s); else left.push(`عکس نزدیک ${s.part.code}`); }
+    for (const s of shots) { const sw = codes.find((c) => c.code === s.part.code); if ((await this.cleanCheck(s.raw, sw ? [sw] : [], { close: true, strict: true })).ok) kept.push(s); else left.push(`عکس نزدیک ${s.part.code}`); }
     shots = kept;
     if (left.length) this.log(`social: ${id}: left out of the Reel: ${left.join(', ')}`);
     const video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts, plan, reveal });
@@ -1067,14 +1067,21 @@ export class SocialDesk {
 
   /** One look at the old and the new picture: is the owner's change visible? { done, missing }; done when the look cannot be read. */
   /** An AI picture checked before use: no text or cards in it, one photograph (no grid), each film like its sample. { ok, problem }; ok when the check cannot be read. */
-  async cleanCheck(image, refs = [], { close = false } = {}) {
+  async cleanCheck(image, refs = [], { close = false, strict = false } = {}) {
+    // live 17/11: the checks think before they answer and 400 tokens were used up by the thinking, so the answer came back empty and was
+    // taken as «fine» (SP34's view with a black worktop went out that way). Room for the thinking, one more try, and a picture that is only
+    // nice to have (a view, a close-up, a stored picture in a Reel made again) is left out when the check still cannot be read.
+    for (let k = 0; k < 2; k++) {
     try {
       const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-      const raw = String(await this.write({ kind: 'clean-check', system: CLEAN_RULES, text: `The picture, then the samples: ${refs.map((r) => `film ${r.code}`).join(', ') || 'none'}.`, images: [await small(image), ...(await Promise.all(refs.map((r) => small(r.swatch))))], mime: 'image/jpeg', effort: 'low', maxTokens: 400 }) || '');
+      const raw = String(await this.write({ kind: 'clean-check', system: CLEAN_RULES, text: `The picture, then the samples: ${refs.map((r) => `film ${r.code}`).join(', ') || 'none'}.`, images: [await small(image), ...(await Promise.all(refs.map((r) => small(r.swatch))))], mime: 'image/jpeg', effort: 'low', maxTokens: 3000 }) || '');
       const v = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
       const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`, close && v.hidden === true && 'the film can hardly be seen (too dark or too blurred)'].filter(Boolean);
       return { ok: !problems.length, problem: problems.join('; ') };
-    } catch { return { ok: true, problem: '' }; }
+    } catch { /* unreadable: once more */ }
+    }
+    this.log('social: a picture check could not be read twice');
+    return strict ? { ok: false, problem: 'the check of the picture could not be read' } : { ok: true, problem: '' };
   }
 
   /** A short trade name of every colour («Honey oak»), asked once from its look and kept in catalog.json: a buyer does not read codes. */
@@ -1095,13 +1102,17 @@ export class SocialDesk {
     return done;
   }
 
-  async changeSeen(oldRaw, newRaw, note) {
+  async changeSeen(oldRaw, newRaw, note, { strict = false } = {}) {
+    for (let k = 0; k < 2; k++) {
     try {
       const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-      const raw = String(await this.write({ kind: 'check-change', system: 'You compare two interior pictures for a design studio. Answer only JSON: {"done":true or false,"missing":"what of the request is not visible yet, in English, short"}.', text: `The first picture is the old version, the second the new one. The owner asked: «${note}». Is his change clearly visible in the new picture?`, images: [await small(oldRaw), await small(newRaw)], mime: 'image/jpeg', effort: 'low', maxTokens: 400 }) || '');
+      const raw = String(await this.write({ kind: 'check-change', system: 'You compare two interior pictures for a design studio. Answer only JSON: {"done":true or false,"missing":"what of the request is not visible yet, in English, short"}.', text: `The first picture is the old version, the second the new one. The owner asked: «${note}». Is his change clearly visible in the new picture?`, images: [await small(oldRaw), await small(newRaw)], mime: 'image/jpeg', effort: 'low', maxTokens: 3000 }) || '');
       const v = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
       return { done: v.done !== false, missing: String(v.missing || '') };
-    } catch { return { done: true, missing: '' }; }
+    } catch { /* unreadable (live 17/11: the thinking used up the answer's room): once more */ }
+    }
+    this.log('social: a picture comparison could not be read twice');
+    return strict ? { done: false, missing: 'the comparison could not be read' } : { done: true, missing: '' };
   }
 
     /** Today's research notes (Atossa reads the world's design press once a day); '' when none. */
@@ -1349,8 +1360,8 @@ export class SocialDesk {
         try {
           const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
             prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait. ${NO_TEXT}` });
-          const look = await this.changeSeen(room, v.image, 'the same room seen from a clearly different camera position: another side, height or distance, so the framing is plainly not the same (it need not match any particular lens or corner); and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects (live 17/11, SP34: a view with a black worktop instead of the white marble was used), any of them changed is not done');
-          const clean = await this.cleanCheck(v.image);
+          const look = await this.changeSeen(room, v.image, 'the same room seen from a clearly different camera position: another side, height or distance, so the framing is plainly not the same (it need not match any particular lens or corner); and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects (live 17/11, SP34: a view with a black worktop instead of the white marble was used), any of them changed is not done', { strict: true });
+          const clean = await this.cleanCheck(v.image, (plan?.parts || []).filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })), { strict: true });
           // only a view that is really another camera place, and clean (the owner's review, 17/11: a view that came back as the same framing
           // was used anyway on the second try, so the Reel showed the same doors twice)
           if (look.done && clean.ok) { out.push(await fitForInstagram(v.image)); break; }

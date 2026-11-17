@@ -280,7 +280,7 @@ test('the designer around a code: the code is kept as the main film; no key, an 
   const plan = { title_fa: 'ت', why_fa: 'چ', room: 'kitchen', parts: [{ code: 'HZ818', where: 'upper doors' }], scene: 'A kitchen.' };
   const writes = [];
   const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, imager: { enabled: true, make: async (r) => { made.push(r); return { image: Buffer.from('R'), mime: 'image/png' }; } },
-    write: async (r) => { writes.push(r); return r.kind === 'design-plan' ? JSON.stringify(plan) : 'caption'; } });
+    write: async (r) => { writes.push(r); return r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":"","hidden":false}' : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify(plan) : 'caption'; } });
   await desk.draftDesign(designRequest('طرح ۸۳۲ آشپزخانه'));
   assert.match(writes[0].text, /built around film HZ832: it is the main film/);
   assert.deepEqual(made[0].images.map((i) => i.buffer.toString()), ['S832', 'S818'], 'the asked code is added when the designer left it out');

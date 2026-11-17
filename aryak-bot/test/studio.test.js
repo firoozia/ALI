@@ -38,7 +38,7 @@ async function studio({ routes = {}, research = null, reel = null } = {}) {
   const g = fakeGraph(routes);
   const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000' },
     imager: { enabled: true, make: async (r) => { made.push(r); return { image: await pic(made.length === 1 ? '#806040' : '#402010'), mime: 'image/jpeg' }; } },
-    write: async (r) => { writes.push(r); return r.kind === 'design-plan' ? JSON.stringify(plan) : r.kind === 'focus' ? '{"x":0.7,"y":0.3}' : 'Design idea with Code HZ812.'; } });
+    write: async (r) => { writes.push(r); return r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":"","hidden":false}' : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify(plan) : r.kind === 'focus' ? '{"x":0.7,"y":0.3}' : 'Design idea with Code HZ812.'; } });
   return { desk, writes, made, g };
 }
 
@@ -776,4 +776,18 @@ test('the camera moves in fractions of a pixel and every length is whole frames 
   assert.match(src, /settb=1\/\$\{fps\},setpts=N,fps=\$\{fps\}/);
   assert.match(src, /const fade = Math\.round\(cross \* fps\) \/ fps;/);
   assert.match(src, /n\(seq\[i\]\.sec\) \+ 4/);
+});
+
+test('an empty answer of a picture check is never a pass for a view, a close-up or a stored picture (live 17/11: the thinking used up 400 tokens; SP34\'s view with a black worktop went out)', async () => {
+  const { desk } = await studio({});
+  let asked = 0;
+  desk.write = async (r) => { if (r.kind === 'clean-check' || r.kind === 'check-change') { asked++; assert.ok(r.maxTokens >= 3000, 'room for the thinking'); return ''; } return ''; };
+  const pic = fs.readFileSync(path.join(desk.catalogDir, 'HZ812.jpg'));
+  assert.deepEqual(await desk.cleanCheck(pic, [], { strict: true }), { ok: false, problem: 'the check of the picture could not be read' });
+  assert.equal(asked, 2, 'asked once more before giving up');
+  assert.equal((await desk.cleanCheck(pic)).ok, true, 'the room itself is not lost for an unreadable check');
+  assert.equal((await desk.changeSeen(pic, pic, 'x', { strict: true })).done, false);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /any of them changed is not done', \{ strict: true \}\);\n\s*const clean = await this\.cleanCheck\(v\.image, \(plan\?\.parts[\s\S]{0,200}\{ strict: true \}\);/);
+  assert.match(src, /\{ close: true, strict: true \}\);\n\s*if \(look\.ok\) return fitForInstagram/);
 });
