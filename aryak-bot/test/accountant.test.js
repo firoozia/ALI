@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { eventsFromCaption } from '../src/captionevents.js';
 import { cleanPaymentEvents } from '../src/payments.js';
-import { parseInvoiceCommand } from '../src/qboinvoice.js';
+import { parseInvoiceCommand, readEnglishInvoice } from '../src/qboinvoice.js';
+import { isExpenseText, makeEntry, parseExpenseCaption } from '../src/expenses.js';
 
 const cases = [
   // clear cash
@@ -93,4 +94,91 @@ test('a Persian name of three letters is never matched to a customer by sound (l
   const fs = await import('node:fs'); const path = await import('node:path');
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(index.includes("length < 4) return name; // live 16/11"), 'a short Persian name is kept as written');
+});
+
+// ---- part 2 (the owner, 17/11: «yes, all of them»): the cash box, the expenses group and invoice requests, message by message
+
+const box = [
+  ['18000 deposit to boss', 'cash_to_boss 18000'],
+  ['gave 5000 to boss', 'cash_to_boss 5000'],
+  ['5000 cash handed to boss', 'cash_to_boss 5000'],
+  ['advance 500 Raju', 'salary_advance 500'],
+  ['salary advance 750 to Ahmed', 'salary_advance 750'],
+  ['سلف ۵۰۰ راجو', 'salary_advance 500'],
+  ['مساعده ۳۰۰ علی', 'salary_advance 300'],
+  ['Pay by cash 157 aed for garbage box', 'cash_expense 157'],
+  ['paid 200 aed for water', 'cash_expense 200'],
+  ['handed 1000 to Ali', 'cash_unclear 1000'],
+  ['loan 2000 to Ahmed', 'cash_unclear 2000'],
+  // money coming IN, never cash out
+  ['received 2000 from boss for cash box', 'ASK'],
+  ['boss gave 5000 to cash box', 'ASK'],
+  ['advance payment 2000 from Zeta Work', 'PAY'],
+  ['Zeta paid 1500 cash for 2 rolls', 'PAY'],
+  ['Zeta Work paid 900 aed for invoice 1203', 'PAY'],
+  ['cash 1200 from Nova for advance', 'PAY'],
+  ['Omega Co paid advance 3000 cheque', 'PAY'],
+];
+test('the cash box: money to the boss, staff advances and company cash expenses are cash out; money FROM the boss is asked; a customer advance or payment is money received', () => {
+  for (const [text, want] of box) {
+    const r = eventsFromCaption('payment', text); const e = r?.events?.[0];
+    const got = !r || r.ignore ? 'IGNORE' : e.kind === 'unclear' ? 'ASK' : ['cash', 'cheque', 'transfer'].includes(e.kind) ? `PAY ${e.kind} ${e.amount} ${e.customer || ''}` : `${e.kind} ${e.amount} ${e.employee || ''}`;
+    assert.ok(want === 'PAY' ? got.startsWith('PAY') : got.startsWith(want), `${text} -> ${got} (wanted ${want})`);
+  }
+  assert.equal(eventsFromCaption('payment', 'Zeta Work paid 900 aed for invoice 1203').events[0].customer, 'Zeta Work'); // no «for» left on the name
+});
+
+const exp = [
+  ['85.5', 'E 85.5 other ask'],
+  ['85.5 fuel', 'E 85.5 fuel ask'],
+  ['85.5 aed petrol', 'E 85.5 fuel ask'],
+  ['fuel 85.5', 'E 85.5 fuel ask'],
+  ['petrol 120 aed cash', 'E 120 fuel done'],
+  ['۸۵٫۵ بنزین', 'E 85.5 fuel ask'],
+  ['۱۲۰ ناهار', 'E 120 food ask'],
+  ['150 lunch staff', 'E 150 food ask'],
+  ['60 car wash', 'E 60 vehicles ask'],
+  ['200 cash', 'E 200 other done'],
+  ['1,250 tyre card', 'E 1250 vehicles done'],
+  // not an expense
+  ['0501234567', 'NO'],
+  ['050 123 4567', 'NO'],
+  ['100 50', 'NO'],
+  ['12/11', 'NO'],
+  ['tomorrow 200 fuel', 'NO'],
+  ['how much fuel 300?', 'NO'],
+  ['room 12', 'NO'],
+  ['ok', 'NO'],
+];
+test('the expenses group: a text with no photo is an expense only when it is plainly one (never a phone number, two numbers, a date, a question or a plan)', () => {
+  for (const [text, want] of exp) {
+    let got = 'NO';
+    if (parseExpenseCaption(text).amount && isExpenseText(text)) { const e = makeEntry({ caption: text, at: Date.parse('2026-11-17T08:00:00Z') }); got = `E ${e.amount} ${e.type} ${e.state === 'done' ? 'done' : e.state === 'ask_method' ? 'ask' : e.state}`; }
+    assert.equal(got, want, text);
+  }
+});
+
+const inv = [
+  ['invoice for Zeta Work\n603 = 30 mtr', 'Zeta Work | 603 30'],
+  ['invoice for Zeta Work\n603 30m 25aed', 'Zeta Work | 603, 30, 25'],
+  ['invoice for Zeta Work\nJowat glue 1pc 1500aed', 'Zeta Work | Jowat glue, 1, 1500'],
+  ['invoice for Zeta Work\n603 30m @ 25', 'Zeta Work | 603, 30, 25'],
+  ['invoice for Zeta Work\n۶۰۳ = ۳۰ متر', 'Zeta Work | 603 30'],
+  ['Atossa invoice for Nova 215=97M 220=12M', 'Nova | 215 97 ; 220 12'],
+  ['invoice for Zeta Work\nJowat glue 1500aed', 'UNREAD'],
+  ['invoice for Zeta Work\n603 30m\ndiscount 10%', 'UNREAD'],
+  ['invoice for Zeta Work\n603 30m 25', 'UNREAD'],
+  ['invoice for Zeta Work\n603 1,000m', 'UNREAD'],
+  ['invoice for Zeta Work\n603 0m', 'UNREAD'],
+  ['invoice for Zeta Work\n603 -30m', 'UNREAD'],
+  ['invoice for Zeta Work\n603', 'UNREAD'],
+  ['invoice for Zeta Work?', 'NONE'],
+  ['invoice for Zeta Work\n603 30m\nPO 1029', 'Zeta Work | 603 30'],
+];
+test('an invoice request: every line is read exactly or said as not understood (a bare code, a quantity of 0, «-30» are never guessed)', () => {
+  for (const [text, want] of inv) {
+    const r = readEnglishInvoice(text);
+    const got = !r ? 'NONE' : (r.unread.length || !r.lines.length) ? 'UNREAD' : `${r.customer} | ${r.lines.join(' ; ')}`;
+    assert.equal(got, want, text);
+  }
 });

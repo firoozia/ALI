@@ -244,7 +244,8 @@ export function parsePaymentCaption(text) {
     .replace(/\bBY\b.*$/i, ' ') // "RECEIVED BY <courier>": the courier is not a customer
     .replace(/(?<![\p{L}])(?:نقد|نقدی|از|درهم|دریافت|شد|شده|واریز|حواله|انتقال|بانکی|چک|پرداخت|پول|مبلغ|به|حساب|دادند|داد|گرفتیم|گرفتم|تومن|فاکتور|استلمنا|استلمت|استلام|استلم|نقدا|نقدًا|من|دفع|دفعة|شيك|حوالة|تحويل|بنكي|كاش)(?![\p{L}])/gu, ' ')
     .replace(/\b(AED|OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR|DHS?|CASH|CHE+A?QUES?|CHEQ|CHQS?|CHECKS?|PDC|TRANSFER(?:RED)?|BANK|ONLINE|WIRE|IPP|AANI|DEPOSIT(?:ED)?|NAQD|RECEIVED?|PAID|FROM|PAYMENT|PAYMENTS|PAY|RECEIPTS?|CLEAR(?:ED)?|INV(?:OICES?)?|SLIP|TT|NO)\b/gi, ' ')
-    .replace(/[=\/.]+/g, ' ');
+    .replace(/[=\/.]+/g, ' ')
+    .replace(/\s+for\s*$/i, ' ');
   const customers = rest.split(/\s*(?:\+|&|\band\b)\s*/i).map((x) => title(x.replace(/\s+/g, ' '))).filter((x) => /\p{L}{2,}/u.test(x));
   return { kind: 'cash', amount, customers, ...(foreign && !a ? { currency: foreign.currency } : {}), ...(foreign && a ? { foreign } : {}), ...(eqPair ? { foreign: eqPair.foreign } : {}), ...(cheque ? { cheque: true } : {}), ...(transfer ? { transfer: true } : {}), ...(chequeDay ? { chequeDate: chequeDay } : {}), ...(invoices.length ? { invoices } : {}), ...(/^clear(?:ed)?\b/i.test(s) ? { cleared: true } : {}) };
 }

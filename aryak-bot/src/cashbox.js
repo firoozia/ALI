@@ -13,7 +13,14 @@ const AMOUNT = /(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/;
 const BOSS = /(?:^|[^a-z])boss(?![a-z])|رئیس|رییس|مدیرعامل|آقای\s*مدیر/i;
 const ADVANCE = /(?:^|[^a-z])(?:advance|salary)(?![a-z])|سلف|مساعده/i;
 // «Pay by cash 157 aed for garbage box»: a cash EXPENSE of the company (never customer cash). An invoice, «from …» or «received» makes it a customer's payment instead.
-const PAYFOR = /(?:^|[^a-z])(?:pay|pays|paid|payment)(?![a-z])[\s\S]*?(?:^|[^a-z])for(?![a-z])\s+(.+)$/i;
+// The pay word opens the message («Pay by cash …», «paid 200 for water»): «Zeta paid 1500 cash for 2 rolls» names a customer who paid (the accountant's test, 17/11).
+const PAYFOR = /^\s*(?:(?:we|i|today|company)\s+)?(?:pay|pays|paid|payment)(?![a-z])[\s\S]*?(?:^|[^a-z])for(?![a-z])\s+(.+)$/i;
+/** Money coming IN from the boss («received 2000 from boss», «boss gave 5000 to cash box»): never cash out; the owner is asked what it was. */
+const FROM_BOSS = /(?:^|[^a-z])from\s+(?:the\s+)?boss(?![a-z])|(?:^|[^a-z])boss\s+(?:gave|give|gives|sent|put|added|returned)(?![a-z])|(?:^|[^a-z])(?:received?|got)(?![a-z])[\s\S]*(?:^|[^a-z])boss(?![a-z])|از\s*(?:رئیس|رییس|مدیر)/i;
+export const fromBoss = (text) => FROM_BOSS.test(normalizeDigits(String(text || '')));
+/** A customer's money: «advance payment 2000 from Zeta», «Omega paid advance 3000 cheque» is money received, not a salary advance. */
+const CUSTOMER_MONEY = /(?:^|[^a-z])(?:from|received?|receive|payment|cheques?|cheq|chq|pdc|transfer|bank)(?![a-z])/i;
+const STAFF = /(?:^|[^a-z])salary(?![a-z])|سلف|مساعده/i;
 const NOT_EXPENSE = /invoice|(?:^|[^a-z])inv[-\s#]?\d|(?:^|[^a-z])(?:from|received|receipt|customer|cheque|check)(?![a-z])/i;
 const VERB_ONLY = /^(?:pay|pays|paid|paying|payment|for|by)$/i;
 const UNCLEAR = /(?:^|[^a-z])(?:handed|gave|given|withdraw|withdrawal|loan)(?![a-z])/i;
@@ -26,8 +33,9 @@ export function cashOutKind(text) {
   const amount = m ? Math.round(Number(m[1].replace(/,/g, '')) * 100) / 100 : 0;
   if (!(amount > 0)) return null;
   const rest = t.replace(AMOUNT, ' ').split(/[^\p{L}\p{N}]+/u).filter((w) => w && !NOISE.has(w.toLowerCase()));
+  if (FROM_BOSS.test(t)) return null; // money from the boss comes IN
   if (BOSS.test(t)) return { kind: 'cash_to_boss', amount, employee: '' };
-  if (ADVANCE.test(t)) return { kind: 'salary_advance', amount, employee: rest.join(' ').toUpperCase().slice(0, 40) };
+  if (ADVANCE.test(t) && (STAFF.test(t) || !CUSTOMER_MONEY.test(t))) return { kind: 'salary_advance', amount, employee: rest.join(' ').toUpperCase().slice(0, 40) };
   { const pf = PAYFOR.exec(t); if (pf && !NOT_EXPENSE.test(t) && !BOSS.test(t) && !ADVANCE.test(t)) return { kind: 'cash_expense', amount, employee: pf[1].replace(AMOUNT, ' ').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, 40) }; } // the description after «for»
   if (UNCLEAR.test(t)) return { kind: 'cash_unclear', amount, employee: rest.join(' ').toUpperCase().slice(0, 40) };
   return null;

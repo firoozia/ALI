@@ -240,7 +240,7 @@ export function looksLikeInvoiceRequest(text) {
 }
 
 const PRICE_PART = String.raw`(?:(?:\s*[/@]\s*|\s+(?=\d+(?:\.\d+)?\s*(?:aed|dhs?|dirhams?)\b))(\d+(?:\.\d+)?)\s*(?:aed|dhs?|dirhams?)?)?`; // «/10aed», «/10 aed», «@10», and «10aed» / «10 aed» right after the quantity: the unit price asked for this line
-const QTY_LINE = new RegExp(String.raw`^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|-|x|×)?\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}\s*$`, 'iu');
+const QTY_LINE = new RegExp(String.raw`^\s*([A-Za-z]?\d{2,5}[A-Za-z-]*?)(?:\s*[=:x×]\s*|\s*-\s+|-(?=\d)|\s+)(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}\s*$`, 'iu');
 const INLINE_ITEM = new RegExp(String.raw`(?:^|[\s,;])([A-Za-z]?\d{2,5}[A-Za-z-]*)\s*(?:=|:|x|×)\s*(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}(?=$|[\s,;])`, 'giu');
 const SPACED_ITEM = new RegExp(String.raw`([A-Za-z]?\d{2,5}[A-Za-z-]*)\s+(\d+(?:\.\d+)?)\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?${PRICE_PART}(?=$|[\s,;])`, 'giu');
 const SPACED_TAIL = /(?:\s+[A-Za-z]?\d{2,5}[A-Za-z-]*\s+\d+(?:\.\d+)?\s*(?:m|mtr|mtrs|meter|meters|metre|metres|pcs?|pieces?|متر)?)+\s*$/iu;
@@ -293,14 +293,17 @@ export function readEnglishInvoice(text) {
   const customer = named.replace(/\b(?:please|pls|thanks)\b/gi, '').replace(/\s+/g, ' ').trim();
   if (!customer || customer.split(/\s+/).length > 6) return null;
   const lineOf = (m) => `${m[1].replace(/^[A-Za-z](?=\d)/, '')}${m[3] ? `, ${m[2]}, ${m[3]}` : ` ${m[2]}`}`; // a price given for the line makes it exact: code, quantity, price
-  const lines = inline.map(lineOf);
   const unread = [];
+  const zero = (m) => !(Number(m[2]) > 0); // a quantity of 0 is never an invoice line
+  const lines = inline.filter((m) => !zero(m)).map(lineOf);
+  if (inline.some(zero)) unread.push({ n: 1, text: inline.filter(zero).map((m) => m[0].trim()).join(' ') });
   rows.slice(1).forEach((row, i) => {
     const m = QTY_LINE.exec(row);
-    if (m) { lines.push(lineOf(m)); return; }
+    if (m && !zero(m)) { lines.push(lineOf(m)); return; }
+    if (m) { unread.push({ n: i + 2, text: row }); return; }
     if (extractPo(row)) return; // the PO line
     const named = namedLine(row); // «Jowat glue 1pc 1500aed» (live 16/11: an item with a name, not a code)
-    if (named) { lines.push(named); return; }
+    if (named && Number(named.split(/,\s*|\s+/).filter((x) => /^\d+(?:\.\d+)?$/.test(x))[0]) > 0) { lines.push(named); return; }
     unread.push({ n: i + 2, text: row }); // not an item and not the PO line: said, never guessed
   });
   return { customer, lines, unread };

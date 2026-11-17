@@ -101,7 +101,7 @@ import { shouldProcess, OwnerSeen } from './intake.js';
 import { documentBlock, pdfTextLayer, setDocMeter } from './pdftext.js';
 import { setVisionMeter, visionRead } from './vision.js';
 import { PHOTO_RULES, TEST_MODEL, costOf, photoGroupLabel, parseReading, photoMessage, summaryText } from './photoread.js';
-import { ExpenseStore, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, TYPES, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses, qbKindOf, driverBreakdown } from './expenses.js';
+import { ExpenseStore, isExpenseText, expenseAsk, RECEIPT_RULES, entryText, expensesText, handleReply, makeEntry, matchReceipts, monthlyFullText, whyNotFound, parseExpenseCaption, parseExpenseReply, rangeOf, receivedItems, receivedText, TYPES, swapCandidate, weeklyCheckText, findExpenseDuplicate, matchExpenses, qbKindOf, driverBreakdown } from './expenses.js';
 import { CostMeter } from './cost.js';
 import { planVoice, VoiceGate, bareAnswerYieldsToPending, looksLikeCorrection } from './voicegate.js';
 import { deliver, captionCustomerName } from './photoflow.js';
@@ -3579,7 +3579,7 @@ async function expensesTurn(raw, groupId, info) {
   }
   if (mayEdit && isBareAnswer(text)) { await say('Nothing is waiting for an answer.'); return true; } // only the owner and the allowed staff; nothing else in the group is answered
   const cap = parseExpenseCaption(text);
-  if (cap.amount && /^[\s\d.,]+(?:aed|dhs?|درهم)?\s*[\p{L}]{0,12}\s*$/iu.test(normalizeDigits(text))) { // only an amount (and a type word): an expense with no receipt
+  if (cap.amount && isExpenseText(text)) { // only an amount and a few words of its type or how it was paid: an expense with no receipt
     await afterExpenseEntry(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData })), say);
     return true;
   }

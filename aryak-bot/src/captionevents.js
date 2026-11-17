@@ -5,7 +5,7 @@
 //   { clearInvoices: ['inv-1'] }   a reply that lists the invoices the money cleared
 //   { ignore: true }               something to leave out (an expense)
 
-import { cashOutKind } from './cashbox.js';
+import { cashOutKind, fromBoss } from './cashbox.js';
 import { bankSmsAmount, collectedAmount, driverCashAmount, isGenericBankSms, isStockQuestion } from './paymentfix.js';
 import { STAR_END, isStarred, parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
 
@@ -62,6 +62,10 @@ export function eventsFromCaption(role, text) {
   if (role === 'payment' && !/received?|receive|cash|paid|\bpay\b|payment|cleared?|credited|cheque|chq|check|transfer|deposit|bank|inv(?:oice)?[-\s]?\d|statement/i.test(String(text)) && /deliver\w*|confirm|\broll\b|\bsend\b|\border\b|\bpcs\b|pieces|meters?|\bmtr\b/i.test(String(text))) return { ignore: true }; // an amount beside order words, with no word of money coming in, is no payment
   if (role === 'payment' && isStockQuestion(text)) return { ignore: true }; // «307 available one roll in China stock?» is a question, not money
   if (role === 'payment') {
+    if (fromBoss(text)) { // money from the boss into the cash box: no customer's money and no cash out; kept apart, never counted, the owner is asked
+      const a = /(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/.exec(String(text || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+      if (a && Number(a[1].replace(/,/g, '')) > 0) return { events: [{ type: 'payment', kind: 'unclear', customer: '', amount: Number(a[1].replace(/,/g, '')), currency: 'AED', lines: [], unclear: true, fromBoss: true }] };
+    }
     const out = cashOutKind(text); // cash leaving the cash box (to the boss, a salary advance): its own kind, never a customer payment
     if (out) return { events: [{ type: 'payment', kind: out.kind, customer: '', amount: out.amount, currency: 'AED', lines: [], ...(out.employee ? { employee: out.employee } : {}) }] };
     const t = String(text || '').replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))); // Persian and Arabic digits read as digits

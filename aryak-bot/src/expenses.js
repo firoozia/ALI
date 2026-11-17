@@ -46,6 +46,25 @@ export function parseExpenseCaption(text) {
   return { amount: m && num(m[1]) > 0 ? round2(num(m[1])) : null, type: typeFromWords(t) };
 }
 
+/**
+ * A text with no photo in the expenses group that is plainly an expense (the accountant's test, 17/11): ONE amount and a few words, where any word
+ * beyond one after the amount names a type or the way it was paid («85.5», «85.5 fuel», «fuel 85.5», «150 lunch staff», «petrol 120 aed cash»).
+ * Never a phone number (a leading 0, more than six digits), two numbers, a date, a question or a plan («tomorrow 200 fuel»).
+ */
+export function isExpenseText(text) {
+  const t = normalizeDigits(String(text || '')).replace(/٫/g, '.').replace(/٬/g, ',').trim();
+  if (!t || t.length > 60 || /[?؟\/+]/.test(t)) return false;
+  const nums = t.match(new RegExp(AMOUNT, 'g')) || [];
+  if (nums.length !== 1 || /^0\d/.test(nums[0]) || nums[0].replace(/[,.]\d*$/, '').replace(/,/g, '').length > 6 || !(num(nums[0]) > 0)) return false;
+  if (/(?:^|[^a-z])(?:tomorrow|later|will|next|yesterday|how|price|owe|balance|remaining)(?![a-z])|فردا|بعدا|قیمت|مانده|غدا/i.test(t)) return false;
+  const words = tokens(t.replace(new RegExp(AMOUNT), ' ')).filter((w) => !/^(?:aed|dhs?|درهم)$/i.test(w));
+  if (!words.length) return true;
+  if (words.length > 4 || words.some((w) => /\d/.test(w))) return false;
+  const known = words.filter((w) => typeFromWords(w) || methodFromWords(w));
+  const amountFirst = new RegExp(`^${AMOUNT}`).test(t);
+  return known.length > 0 || (amountFirst && words.length === 1 && words[0].length <= 12);
+}
+
 /** A reply in the group: { pick, id } for «1» / «2» / «1 #E12»; { amount, id }; { method, id }; { type, id }; { cancel, id }; or null. */
 export function parseExpenseReply(text) {
   const t = normalizeDigits(String(text || '')).replace(/\s+/g, ' ').trim().toLowerCase();
