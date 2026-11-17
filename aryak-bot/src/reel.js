@@ -168,12 +168,14 @@ export async function makeReel({ room, detail = null, details = null, views = []
     const fx = clamp(focus?.x, 0.15, 0.85); const fy = clamp(focus?.y, 0.15, 0.85);
     const args = ['-y', '-loglevel', 'error'];
     const n = (x) => Math.round(x * fps);
-    // each still is enlarged a little above the frame first, so the slow zoom moves smoothly (1.25x: twice froze the 1 GB server)
-    const move = (i, frames, zoom, cx, cy) => `[${i}:v]scale=1350:2400:force_original_aspect_ratio=increase,crop=1350:2400,setsar=1,`
-      + `zoompan=z='1+${zoom}*on/${frames}':x='(iw-iw/zoom)*${cx}':y='(ih-ih/zoom)*${cy}':d=${frames}:s=1080x1920:fps=${fps},setsar=1,format=yuv420p`;
+    // the camera moves in fractions of a pixel (the owner, 17/11: «the Reels do not run smoothly, small pauses»: zoompan crops at whole
+    // pixels, so a slow move stepped 4, 2, 4, 2 px frame after frame). Each still is repeated for its frames and a moving window of it is
+    // drawn by [perspective] with cubic interpolation, then fitted to 1080x1920; the still stays 1350x2400 (the 1 GB server froze on more).
+    const still = (i, frames) => `[${i}:v]scale=1350:2400:force_original_aspect_ratio=increase,crop=1350:2400,setsar=1,loop=loop=${frames - 1}:size=1:start=0,settb=1/${fps},setpts=N,fps=${fps},`; // exact frame times (N/30/TB on a 1/25 time base dropped every sixth frame)
+    const windowOf = (zx, x0, y0) => { const x1 = `(${x0})+W/(${zx})`; const y2 = `(${y0})+H/(${zx})`; return `perspective=x0='${x0}':y0='${y0}':x1='${x1}':y1='${y0}':x2='${x0}':y2='${y2}':x3='${x1}':y3='${y2}':interpolation=cubic:eval=frame,scale=1080:1920:flags=bicubic,setsar=1,format=yuv420p`; };
+    const move = (i, frames, zoom, cx, cy) => { const z = `(1+${zoom}*on/${frames})`; return still(i, frames) + windowOf(z, `(W-W/${z})*${cx}`, `(H-H/${z})*${cy}`); };
     // the sideways move: a fixed small enlargement, the window travelling from one side to the other (every other shot the other way)
-    const pan = (i, frames, toRight) => `[${i}:v]scale=1350:2400:force_original_aspect_ratio=increase,crop=1350:2400,setsar=1,`
-      + `zoompan=z='1.18':x='(iw-iw/zoom)*${toRight ? '' : '(1-'}on/${frames}${toRight ? '' : ')'}':y='(ih-ih/zoom)*0.5':d=${frames}:s=1080x1920:fps=${fps},setsar=1,format=yuv420p`;
+    const pan = (i, frames, toRight) => still(i, frames) + windowOf('1.18', `(W-W/1.18)*${toRight ? `on/${frames}` : `(1-on/${frames})`}`, '(H-H/1.18)*0.5');
     // «the camera turns in the room, not a zoom» (the owner, 15/11): with motion 'orbit' each still is crossed by a slow sideways move,
     // and [views] (the same room from other camera places) follow the room, so the camera seems to walk around it
     const orbit = motion === 'orbit';
@@ -205,13 +207,16 @@ export async function makeReel({ room, detail = null, details = null, views = []
     // the sound: the design's own music (an MP3, faded in and out), or silence (Instagram wants a sound track)
     const audio = next;
     if (music) args.push('-i', put('music.mp3', music)); else args.push('-f', 'lavfi', '-t', '60', '-i', 'anullsrc=r=44100:cl=stereo');
-    const fade = cross;
-    const parts = [`${seq[0].make(0, n(seq[0].sec))}[m0]`];
+    // every length in whole frames (live 17/11: a shot of 1.85 s is 55.5 frames and a fade of 0.35 s is 10.5, so one frame stood still at a cut)
+    const fade = Math.round(cross * fps) / fps;
+    for (const x of seq) x.sec = n(x.sec) / fps;
+    seconds = { ...seconds, card: n(seconds.card) / fps };
+    const parts = [`${seq[0].make(0, n(seq[0].sec) + 4)}[m0]`]; // four spare frames (measured 17/11: with 0, 1 or 2 one frame stood still at a cut; with 4 none)
     let last = 'm0'; let t = seq[0].sec;
     const starts = [0];
     for (let i = 1; i < seq.length; i++) {
-      parts.push(`${seq[i].make(i, n(seq[i].sec))}[s${i}]`);
-      parts.push(`[${last}][s${i}]xfade=transition=${seq[i].cut || 'fade'}:duration=${fade}:offset=${(t - fade).toFixed(2)}[m${i}]`);
+      parts.push(`${seq[i].make(i, n(seq[i].sec) + 4)}[s${i}]`);
+      parts.push(`[${last}][s${i}]xfade=transition=${seq[i].cut || 'fade'}:duration=${(fade - 0.002).toFixed(4)}:offset=${(t - fade).toFixed(4)}[m${i}]`);
       starts.push(t - fade);
       last = `m${i}`; t += seq[i].sec - fade;
     }
@@ -219,8 +224,8 @@ export async function makeReel({ room, detail = null, details = null, views = []
     if (overlay) { parts.push(`[${last}][${overlayIn}:v]overlay=0:0:enable='lt(t,${(moving - fade).toFixed(2)})'[o]`); last = 'o'; }
     // each shot's label (its film's code and name) while that shot is on screen
     seq.forEach((x, k) => { if (labelIn[k] < 0) return; parts.push(`[${last}][${labelIn[k]}:v]overlay=0:0:enable='between(t,${(starts[k] + 0.15).toFixed(2)},${(starts[k] + x.sec - fade - 0.05).toFixed(2)})'[l${k}]`); last = `l${k}`; });
-    parts.push(`[${cardIn}:v]loop=loop=${n(seconds.card)}:size=1:start=0,setpts=N/${fps}/TB,fps=${fps},scale=1080:1920,setsar=1,format=yuv420p[c]`);
-    parts.push(`[${last}][c]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[v]`);
+    parts.push(`[${cardIn}:v]loop=loop=${n(seconds.card)}:size=1:start=0,settb=1/${fps},setpts=N,fps=${fps},scale=1080:1920,setsar=1,format=yuv420p[c]`);
+    parts.push(`[${last}][c]xfade=transition=fade:duration=${(fade - 0.002).toFixed(4)}:offset=${(t - fade).toFixed(4)}[v]`);
     const total = t + seconds.card - fade;
     // the peaks held under full scale (the owner's review, 17/11: every Reel touched 0 dB, which can crack on a phone's speaker)
     parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5,alimiter=limit=0.89:level=0[s]`);

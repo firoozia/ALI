@@ -768,3 +768,12 @@ test('SP34 review (17/11): a view is judged as another camera place (not the nam
   assert.match(src, /in deep shadow, or covering less than half of the picture/);
   assert.match(src, /if \(reveal\) seq\.push\(\{ image: reveal, sec: onBeat\(2\.6\), move: 'push', zoom: 0\.3, cx: focus\.x, cy: focus\.y, cut: 'dissolve' \}\)/);
 });
+
+test('the camera moves in fractions of a pixel and every length is whole frames (the owner, 17/11: «small pauses»; zoompan stepped 4, 2, 4, 2 px)', async () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
+  assert.doesNotMatch(src, /zoompan=/);
+  assert.match(src, /perspective=x0=.*interpolation=cubic:eval=frame/);
+  assert.match(src, /settb=1\/\$\{fps\},setpts=N,fps=\$\{fps\}/);
+  assert.match(src, /const fade = Math\.round\(cross \* fps\) \/ fps;/);
+  assert.match(src, /n\(seq\[i\]\.sec\) \+ 4/);
+});
