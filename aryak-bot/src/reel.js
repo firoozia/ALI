@@ -243,7 +243,7 @@ export async function makeReel({ room, detail = null, details = null, views = []
     let next = cardIn + 1;
     const overlayIn = overlay ? next++ : -1;
     if (overlay) args.push('-i', put('overlay.png', overlay));
-    const labelIn = seq.map((x, k) => (x.label ? (args.push('-i', put(`label${k}.png`, x.label)), next++) : -1));
+    const labelIn = seq.map((x, k) => (x.label ? (args.push('-loop', '1', '-framerate', String(fps), '-i', put(`label${k}.png`, x.label)), next++) : -1));
     // the sound: the design's own music (an MP3, faded in and out), or silence (Instagram wants a sound track)
     const audio = next;
     if (music) args.push('-i', put('music.mp3', music)); else args.push('-f', 'lavfi', '-t', '60', '-i', 'anullsrc=r=44100:cl=stereo');
@@ -263,7 +263,12 @@ export async function makeReel({ room, detail = null, details = null, views = []
     const moving = t; // the overlay stays on the moving parts only
     if (overlay) { parts.push(`[${last}][${overlayIn}:v]overlay=0:0:enable='lt(t,${(moving - fade).toFixed(2)})'[o]`); last = 'o'; }
     // each shot's label (its film's code and name) while that shot is on screen
-    seq.forEach((x, k) => { if (labelIn[k] < 0) return; parts.push(`[${last}][${labelIn[k]}:v]overlay=0:0:enable='between(t,${(starts[k] + 0.15).toFixed(2)},${(starts[k] + x.sec - fade - 0.05).toFixed(2)})'[l${k}]`); last = `l${k}`; });
+    seq.forEach((x, k) => {
+      if (labelIn[k] < 0) return;
+      const a = starts[k] + 0.15; const b = starts[k] + x.sec - fade - 0.05;
+      parts.push(`[${labelIn[k]}:v]format=rgba,fade=t=in:st=${a.toFixed(3)}:d=0.3:alpha=1,fade=t=out:st=${(b - 0.3).toFixed(3)}:d=0.3:alpha=1[lb${k}]`);
+      parts.push(`[${last}][lb${k}]overlay=0:0:eof_action=pass:enable='between(t,${a.toFixed(3)},${b.toFixed(3)})'[l${k}]`); last = `l${k}`;
+    });
     parts.push(`[${cardIn}:v]loop=loop=${n(seconds.card)}:size=1:start=0,settb=1/${fps},setpts=N,fps=${fps},scale=1080:1920,setsar=1,format=yuv420p[c]`);
     parts.push(`[${last}][c]xfade=transition=fade:duration=${(fade - 0.002).toFixed(4)}:offset=${(t - fade).toFixed(4)}[v]`);
     const total = t + seconds.card - fade;

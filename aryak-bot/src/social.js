@@ -737,20 +737,20 @@ export class SocialDesk {
   }
 
   /** One close-up of one film of the room: wood seen closer, along its grain, in raking light; stone and solids slightly further. */
-  async closeUp(room, part, swatch, { size = '' } = {}) {
+  async closeUp(room, part, swatch, { size = '', tries = 2 } = {}) {
     const wood = this.isWood(part.code);
     const how = wood
       ? `the camera is about 30 cm from the ${part.where} in film ${part.code}, looking along the wood grain, so the grain, its direction and the pores fill three quarters of the frame, crisp and exactly like the reference sample; low warm light grazing across the surface so every line of the grain shows`
       : `the camera is about 40 cm from the ${part.where} in film ${part.code}, at a slight angle, so the flat film surface itself fills at least three quarters of the frame, evenly and clearly lit (never a dark gradient or a shadow), its exact colour and fine matte texture crisp and exactly like the reference sample; a soft light raking across the surface`;
     let miss = '';
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < tries; k++) {
       const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
         images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
       const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true, strict: true });
       if (look.ok) return fitForInstagram(d.image);
       miss = look.problem;
     }
-    throw new Error(`not like the film or not clean twice: ${miss}`); // left out: a wrong close-up is worse than none
+    throw new Error(`not like the film or not clean ${tries} times: ${miss}`); // left out: a wrong close-up is worse than none
   }
 
   /**
@@ -768,7 +768,7 @@ export class SocialDesk {
     const order = plan.parts.slice(0, 3).map((x, i) => ({ x, i })).sort((a, b) => Number(this.isWood(b.x.code)) - Number(this.isWood(a.x.code)) || a.i - b.i);
     const shots = [];
     for (const { x, i } of order) {
-      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
+      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size, tries: i === 0 ? 3 : 2 }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
     }
     // a before/after (the owner, 15/11): the same room before, with tired plain cabinets, made from the finished room
     let beforeRaw = null;
@@ -1314,7 +1314,7 @@ export class SocialDesk {
     const recent = (d.reelOpens || []).slice(-2);
     let open = before ? 'before' : plan?.reel_open && /^tex/i.test(plan.reel_open) ? 'texture' : 'room';
     if (!before && recent.length === 2 && recent.every((o) => o === open)) open = open === 'room' ? 'texture' : 'room';
-    if (open === 'texture' && !details.length) open = 'room';
+    if (open === 'texture' && !details.some((x) => x.wood)) open = 'room'; // the grain stops the scroll; a plain door does not (SP35, 17/11)
     // the pairing cards: a quick insert after the opening, and not in two Reels in a row
     const pairWanted = codes.length >= 2 && !before && (plan?.reel_open ? /^pair/i.test(plan.reel_open) : true);
     const usePair = pairWanted && !(d.reelPairs || []).slice(-1)[0];
@@ -1323,7 +1323,7 @@ export class SocialDesk {
     const seq = [];
     const rest = [...details];
     if (open === 'before') { seq.push({ image: before, sec: onBeat(1.8), move: 'push', zoom: 0.06 }); seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18), cut: 'wipeleft' }); }
-    else if (open === 'texture') { const first = rest.shift(); seq.push({ image: first.image, sec: onBeat(1.8), move: 'push', zoom: 0.25, label: await label(first.code) }); } // shown once: not again later
+    else if (open === 'texture') { const first = rest.splice(rest.findIndex((x) => x.wood), 1)[0]; seq.push({ image: first.image, sec: onBeat(1.8), move: 'push', zoom: 0.25, label: await label(first.code) }); } // shown once: not again later
     else seq.push({ image: room, sec: onBeat(views.length ? 1.8 : 2.6), ...roomMove(0.2) });
     if (cards.length) seq.push({ image: cards[cards.length - 1], sec: onBeat(1.1, 1), move: 'push', zoom: 0.03, cy: 0.45 });
     if (open === 'texture') seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18) });

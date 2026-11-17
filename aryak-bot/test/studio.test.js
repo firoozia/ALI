@@ -693,7 +693,7 @@ test('an AI picture with text, a grid or a wrong film is drawn again with its fa
   let checks = 0;
   desk.write = async (r) => (r.kind === 'clean-check' ? (checks++, '{"text":true,"collage":false,"mismatch":"the oak is shown as deep carved grain"}') : base(r));
   const room = await pic('#806040');
-  await assert.rejects(desk.closeUp(room, { code: 'HZ812', where: 'tall doors' }, await pic('#3a2a1e')), /not like the film or not clean twice/);
+  await assert.rejects(desk.closeUp(room, { code: 'HZ812', where: 'tall doors' }, await pic('#3a2a1e')), /not like the film or not clean 2 times/);
   assert.equal(checks, 2);
   assert.match(made.at(-1).prompt, /The last try was wrong: there is text, a label, a card or a logo in the picture; a film does not look like its sample: the oak is shown as deep carved grain/);
   for (const m of made) { assert.match(m.prompt, /No text, letters, numbers, labels/); assert.match(m.prompt, /never a collage, a grid/); assert.match(m.prompt, /never deep carved, brushed or embossed wood/); }
@@ -812,4 +812,13 @@ test('the design board (the owner, 17/11): the room above, the real samples with
   assert.match(p.extras[p.extras.length - 1], /-board\.jpg$/, 'the last page of the album');
   assert.ok(d.details.some((x) => x.board), 'the owner sees it with the draft');
   assert.match(d.text, /the design board/);
+});
+
+test('SP35 review (17/11): a texture opening is a wood close-up only, the main film gets a third try at its close-up, a label fades in and out', () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /if \(open === 'texture' && !details\.some\(\(x\) => x\.wood\)\) open = 'room';/);
+  assert.match(src, /const first = rest\.splice\(rest\.findIndex\(\(x\) => x\.wood\), 1\)\[0\];/);
+  assert.match(src, /tries: i === 0 \? 3 : 2/);
+  const reel = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
+  assert.match(reel, /fade=t=in:st=\$\{a\.toFixed\(3\)\}:d=0\.3:alpha=1,fade=t=out/);
 });
