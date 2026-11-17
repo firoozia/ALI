@@ -55,6 +55,9 @@ export function loadConfig(env = process.env) {
     eveningReportTo: (env.EVENING_REPORT_TO || 'owner').trim().toLowerCase(), // owner (his own chat) or info (the Information group)
     // The customer availability flow (ask the quantity, answer or ask the sales manager); AVAILABILITY_FLOW=off keeps the old answer.
     availabilityFlow: (env.AVAILABILITY_FLOW || 'on').toLowerCase() !== 'off',
+    // the drafts that answer the customers' stock questions get their own group (the owner, 17/11: his own chat was full)
+    stockGroup: (env.STOCK_GROUP || 'on').toLowerCase() !== 'off',
+    stockGroupName: (env.STOCK_GROUP_NAME || 'موجودی مشتری‌ها').trim(),
     // The supervised pipeline: where goods are cut, where they are delivered, and the money side (a word of each group's name).
     trackerEnabled: (env.TRACKER || 'on').toLowerCase() !== 'off',
     cutGroupName: (env.CUT_GROUP_NAME || '').trim().toLowerCase(),

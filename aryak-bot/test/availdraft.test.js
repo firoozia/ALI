@@ -64,7 +64,7 @@ test('the wiring: the draft goes privately (the manager, the owner in a simulati
   assert.deepEqual(parseInvoiceCommand('yes #V1'), { type: 'yes', id: 'V1' }); assert.deepEqual(parseInvoiceCommand('no V2'), { type: 'no', id: 'V2' });
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   const fn = index.slice(index.indexOf('async function customerAsksAvailability'), index.indexOf('async function decideAvailability'));
-  assert.match(fn, /const to = !simulated && managerDigits \? `\$\{managerDigits\}@s\.whatsapp\.net` : ownIds\(\)\[0\];/);
+  assert.match(fn, /const toOwner = simulated \|\| !managerDigits;/); assert.match(fn, /const to = toOwner \? stockJid\(\) \|\| ownIds\(\)\[0\] : `\$\{managerDigits\}@s\.whatsapp\.net`;/); // the owner's stock group (17/11) or his own chat
   assert.match(fn, /await sock\.sendMessage\(to, \{ text:/); assert.doesNotMatch(fn, /sock\.sendMessage\(groupId/); // never to the customer group
   const decide = index.slice(index.indexOf('async function decideAvailability'), index.indexOf('function decideAlias'));
   assert.ok(decide.indexOf("verb !== 'yes'") < decide.indexOf('oneShot.grantText(')); assert.match(decide, /if \(d\.simulated\) return \[`SIMULATION: would post/);

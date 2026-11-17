@@ -19,7 +19,11 @@ export function internalWords(config) {
 
 const holds = (subject, words) => words.some((w) => low(subject).includes(w));
 /** The studio's own group (the owner, 17/11): an internal group the assistant writes to (designs, Reels, posts). */
-const studioNames = (config) => (config.social?.enabled !== false && config.social?.studioGroup && config.social?.studioGroupName ? [config.social.studioGroupName] : []);
+const studioNames = (config) => [
+  ...(config.social?.enabled !== false && config.social?.studioGroup && config.social?.studioGroupName ? [config.social.studioGroupName] : []),
+  // and the group of the stock drafts (the owner, 17/11): the answers wait there for his yes
+  ...(config.availabilityFlow !== false && config.stockGroup && config.stockGroupName ? [config.stockGroupName] : []),
+];
 
 /** { ok, why }: may the assistant write into the group with this name? */
 export function groupAllowed(subject, config) {

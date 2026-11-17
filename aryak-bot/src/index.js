@@ -1090,9 +1090,11 @@ async function customerAsksAvailability({ messageId, groupId, subject, text, sim
   const draft = states.some((x) => x.state === 'ambiguous') ? '' : draftText(states, ask.quantity);
   const id = draft ? availDrafts.add({ groupId, subject, draft, simulated, codes: ask.codes, messageId }) : '';
   const managerDigits = jidDigits(config.salesManager);
-  const to = !simulated && managerDigits ? `${managerDigits}@s.whatsapp.net` : ownIds()[0];
-  logger.info(`availability draft ${id || '(none)'} for "${subject}" sent privately to ${simulated ? 'the owner (simulation)' : managerDigits ? 'the sales manager' : 'the owner'}`);
-  await sock.sendMessage(to, { text: `${to === ownIds()[0] ? '🤖 ' : ''}${managerText({ id, subject, asked: text.slice(0, 120), states, draft, simulated })}` });
+  const toOwner = simulated || !managerDigits;
+  const to = toOwner ? stockJid() || ownIds()[0] : `${managerDigits}@s.whatsapp.net`;
+  logger.info(`availability draft ${id || '(none)'} for "${subject}" sent privately to ${simulated ? 'the owner (simulation)' : managerDigits ? 'the sales manager' : 'the owner'}${toOwner && stockJid() ? ' in the stock group' : ''}`);
+  const r = await sock.sendMessage(to, { text: `${toOwner ? '🤖 ' : ''}${managerText({ id, subject, asked: text.slice(0, 120), states, draft, simulated })}` });
+  if (r?.key?.id) sent.add(r.key.id);
   return true;
 }
 
@@ -1717,7 +1719,7 @@ async function simulateCustomerText({ raw, text }) {
   const subject = 'TEST CUSTOMER';
   const out = [];
   const drafted = await customerAsksAvailability({ messageId: raw.key.id, groupId: raw.key.remoteJid, subject, text, simulated: true });
-  out.push(drafted ? 'an availability question: the draft and the sheet figures went to your own chat' : 'not an availability question (no stock code asked as a question): no draft');
+  out.push(drafted ? `an availability question: the draft and the sheet figures went to ${stockJid() ? 'the stock group' : 'your own chat'}` : 'not an availability question (no stock code asked as a question): no draft');
   const need = parseOfficeRequest(text);
   if (need) { await sock.sendMessage(ownIds()[0], { text: '🤖 ' + officeNote(subject, text, need) }).catch((e) => logger.warn('office note failed: ' + e.message)); out.push('an office request: one note went to your own chat'); } else out.push('no office request (invoice, statement, goods) found');
   out.push('a price or any other question: she never answers in a customer group; the staff answer it');
@@ -1728,7 +1730,7 @@ async function simulatedPost({ raw, text, where, role, reply }) {
   const cm = /^\s*\[customer\s+([^\]]+)\]\s*([\s\S]+)$/i.exec(text); // «[customer MASTER WOOD] 209 available?»: a message in that customer's group
   if (cm) {
     const done = await customerAsksAvailability({ messageId: raw.key.id, groupId: raw.key.remoteJid, subject: cm[1].trim(), text: cm[2].trim(), simulated: true });
-    await reply(done ? `SIMULATION: the question was read; the draft and the sheet figures went to your own chat (nothing is posted anywhere).` : 'SIMULATION: that text was not read as an availability question (a code with "available?").');
+    await reply(done ? `SIMULATION: the question was read; the draft and the sheet figures went to ${stockJid() ? 'the stock group' : 'your own chat'} (nothing is posted anywhere).` : 'SIMULATION: that text was not read as an availability question (a code with "available?").');
     return true;
   }
   const m = /^\s*\[(orders|delivery|confirm)\]\s*([\s\S]+)$/i.exec(text);
@@ -2407,7 +2409,7 @@ async function handleStaffChat(raw, chatId, group, place = {}) {
   if (sent.has(raw.key.id) || text.startsWith('🤖')) return true; // the bot's own message coming back
   const where = group ? `group "${(await groupInfo(chatId)).subject}"` : 'private';
   const own = ownIds();
-  const isSelf = !!place.studio || own.some((o) => jidDigits(o) === jidDigits(chatId));
+  const isSelf = !!place.studio || !!place.stock || own.some((o) => jidDigits(o) === jidDigits(chatId));
   // The line from the public QuickBooks page carries an authorization code: only the owner's own chat may take it, and it never reaches a model, a trace or anyone else.
   if (text && looksLikeConnectLine(text) && !(isSelf && isOwnerCommand({ fromMe: !!raw.key.fromMe, id: raw.key.id, text, sentIds: sent, forwarded: !!(((content.extendedTextMessage || audio || image)?.contextInfo || {}).isForwarded) }))) {
     trace(where, 'owner', 'ignored: a QuickBooks connect line that is not from the owner\'s own chat');
@@ -2608,7 +2610,7 @@ ${t.authorizeUrl()}`);
     }
   }
   // The sales manager's (or the owner's) answer to an availability draft, in a private chat: «yes #V1» / «no #V1» (the full code is needed).
-  if (!group && text && !audio && !image && (ownerPerson || [chatId, raw.key.remoteJidAlt].some((j) => j && jidDigits(j) === jidDigits(config.salesManager) && jidDigits(config.salesManager)))) {
+  if ((!group || place.stock) && text && !audio && !image && (ownerPerson || place.stock || [chatId, raw.key.remoteJidAlt].some((j) => j && jidDigits(j) === jidDigits(config.salesManager) && jidDigits(config.salesManager)))) {
     const dv = parseInvoiceCommand(text);
     if (dv && (dv.type === 'yes' || dv.type === 'no') && /^V\d+$/.test(dv.id || '')) { for (const part of await decideAvailability(dv.type, dv.id)) await reply(part); return true; }
   }
@@ -3877,6 +3879,8 @@ const socialDesk = new SocialDesk({
 /** A social notice to the owner's own chat, in its own languages (an Arabic caption is never turned into English); with [image] the notice is that picture's caption. */
 /** The studio's group (the owner, 17/11: his own chat was full): its id when it is set up, else null (then his own chat). */
 const studioJid = () => (config.social.studioGroup && socialStore.d.studioGroup?.id) || null;
+/** The group of the stock drafts (the owner, 17/11): the customers' stock questions and their drafts wait there for his «yes #V1». */
+const stockJid = () => (config.availabilityFlow && config.stockGroup && socialStore.d.stockGroup?.id) || null;
 async function socialSay(text, image = null, video = null) {
   const content = video ? { video, caption: `🤖 ${text}`, mimetype: 'video/mp4' } : image ? { image, caption: `🤖 ${text}` } : { text: `🤖 ${text}` };
   keepLang.add(content);
@@ -3975,32 +3979,41 @@ setInterval(async () => {
  * The studio's group, found by its id or its name, or made once with the account alone in it; a first message says what goes there.
  * Kept in the social store on the server. Nothing is sent to anyone else.
  */
-async function ensureStudioGroup() {
-  const name = config.social.studioGroupName;
+async function ensureOwnGroup(key, name, welcome) {
   const all = Object.values(await sock.groupFetchAllParticipating());
-  const had = socialStore.d.studioGroup?.id;
-  if (had && all.some((g) => g.id === had) && socialStore.d.studioGroup.welcomed) return had;
+  const had = socialStore.d[key]?.id;
+  if (had && all.some((g) => g.id === had) && socialStore.d[key].welcomed) return had;
   const found = (had && all.find((g) => g.id === had)) || all.find((g) => String(g.subject || '').trim() === name);
   let id = found?.id || '';
-  if (!id) { const made = await sock.groupCreate(name, []); id = made?.id || made?.gid || ''; logger.info(`studio group made: "${name}" (${id})`); }
+  if (!id) { const made = await sock.groupCreate(name, []); id = made?.id || made?.gid || ''; logger.info(`own group made: "${name}" (${id})`); }
   if (!id) throw new Error('the group could not be made');
-  if (socialStore.d.studioGroup?.id !== id) { socialStore.d.studioGroup = { id, subject: name, at: Date.now() }; socialStore.save(); }
-  if (!socialStore.d.studioGroup.welcomed) { // once, when it is really delivered (live 17/11: the first one was blocked by the guard)
-    const r = await sock.sendMessage(id, { text: [
-      '🤖 این گروه استودیوی آتوسا است. از این پس طرح‌ها، عکس‌های نزدیک، ریلزها، گفت‌وگوی آتوسا و داریوش، و خبر انتشار پست‌ها اینجا می‌آید.',
-      'فرمان‌ها همان قبلی‌اند و اینجا نوشته می‌شوند: «بله پست ۳۳»، «نه پست ۳۳ …»، «تغییر پست ۳۳ …»، «ریلز پست ۳۳ دوباره بساز»، «پیشنهاد طرح»، عکس با «الهام»، پیوند برای بررسی.',
-      'پیام‌های مالی، صورت‌حساب و فاکتور مثل قبل در گفت‌وگوی شخصی شما می‌مانند.',
-    ].join('\n') });
-    if (r?.key?.id) { sent.add(r.key.id); socialStore.d.studioGroup.welcomed = Date.now(); socialStore.save(); }
+  if (socialStore.d[key]?.id !== id) { socialStore.d[key] = { id, subject: name, at: Date.now() }; socialStore.save(); }
+  if (!socialStore.d[key].welcomed) { // once, when it is really delivered (live 17/11: the first one was blocked by the guard)
+    const content = { text: welcome.join('\n') };
+    keepLang.add(content); // said in Persian as written (live 17/11: the studio's first message arrived in English)
+    const r = await sock.sendMessage(id, content);
+    if (r?.key?.id) { sent.add(r.key.id); socialStore.d[key].welcomed = Date.now(); socialStore.save(); }
   }
   return id;
 }
+const ensureStudioGroup = () => ensureOwnGroup('studioGroup', config.social.studioGroupName, [
+  '🤖 این گروه استودیوی آتوسا است. از این پس طرح‌ها، عکس‌های نزدیک، ریلزها، گفت‌وگوی آتوسا و داریوش، و خبر انتشار پست‌ها اینجا می‌آید.',
+  'فرمان‌ها همان قبلی‌اند و اینجا نوشته می‌شوند: «بله پست ۳۳»، «نه پست ۳۳ …»، «تغییر پست ۳۳ …»، «ریلز پست ۳۳ دوباره بساز»، «پیشنهاد طرح»، عکس با «الهام»، پیوند برای بررسی.',
+  'پیام‌های مالی، صورت‌حساب و فاکتور مثل قبل در گفت‌وگوی شخصی شما می‌مانند.',
+]);
+const ensureStockGroup = () => ensureOwnGroup('stockGroup', config.stockGroupName, [
+  '🤖 این گروه پرسش‌های موجودی مشتری‌هاست. هر بار مشتری‌ای در گروه خودش بپرسد «۲۰۹ موجود است؟»، پرسش او، رقم‌های جدول موجودی و پیش‌نویس جواب اینجا می‌آید.',
+  'برای فرستادن جواب در گروه مشتری بنویسید «yes #V1» و برای کنار گذاشتنش «no #V1» (با همان شمارهٔ پیش‌نویس). بی‌این جواب، هیچ چیزی در گروه مشتری نوشته نمی‌شود و هر پیش‌نویس پس از نیم ساعت کنار می‌رود.',
+  'اگر کسی خودش در گروه مشتری جواب بدهد، پیش‌نویس کنار می‌رود و همین‌جا گفته می‌شود.',
+]);
 
 async function onMessage(raw) {
   const groupId = raw.key.remoteJid;
   if (!isJidGroup(groupId)) { await handleStaffChat(raw, groupId, null); return; }
   // the studio's group: the owner's own messages there are taken like his own chat (the studio's commands); nobody else is answered
   if (groupId === studioJid()) { if (raw.key.fromMe) await handleStaffChat(raw, groupId, null, { studio: true }); return; }
+  // the group of the stock drafts: the same, for the owner's «yes #V1» / «no #V1»
+  if (groupId === stockJid()) { if (raw.key.fromMe) await handleStaffChat(raw, groupId, null, { stock: true }); return; }
   const store = usageCtx.getStore();
   if (store) store.group = groupLabel((await groupInfo(groupId)).subject);
   { const info = await groupInfo(groupId); try { keepPhotoMessage(raw, groupId, info); } catch (e) { logger.warn(`photo keep failed: ${e.message}`); } if (await maybeSetExpensesGroup(raw, groupId, info) || (isExpensesSubject(info.subject) && await expensesTurn(raw, groupId, info))) return; } // the expenses group: receipts, answers, the owner's «this is the expenses group»
@@ -4038,7 +4051,7 @@ async function onMessage(raw) {
       const quotedId = (normalizeMessageContent(raw.message)?.extendedTextMessage?.contextInfo || {}).stanzaId || '';
       for (const d of availDrafts.dropAnswered({ groupId, text: said, quotedId })) {
         const name = raw.key.fromMe ? 'the owner' : (raw.pushName || 'a colleague');
-        void sock.sendMessage(ownIds()[0], { text: '🤖 #' + d.id + ' dropped: answered in the group by ' + name }).catch((e) => logger.warn('draft drop note failed: ' + e.message));
+        void sock.sendMessage(stockJid() || ownIds()[0], { text: '🤖 #' + d.id + ' dropped: answered in the group by ' + name }).catch((e) => logger.warn('draft drop note failed: ' + e.message));
       }
     }
   }
@@ -4147,6 +4160,7 @@ async function start() {
     if (connection === 'open') {
       logger.info('connected to WhatsApp');
       if (config.social.enabled && config.social.studioGroup) setTimeout(() => { void ensureStudioGroup().catch((e) => logger.warn(`studio group: ${e.message}`)); }, 20 * 1000).unref();
+      if (config.availabilityFlow && config.stockGroup) setTimeout(() => { void ensureStockGroup().catch((e) => logger.warn(`stock group: ${e.message}`)); }, 30 * 1000).unref();
       sock.groupFetchAllParticipating().then((g) => { for (const r of watchList.sync(Object.values(g).map((x) => ({ id: x.id, subject: x.subject || '' })), config)) logger.info(`watched group renamed: "${r.from}" -> "${r.to}" (kept watched)`); }).catch((e) => logger.warn(`watch list: ${e.message}`));
       setTimeout(async () => {
         try {
