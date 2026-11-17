@@ -65,10 +65,19 @@ test('a design: one close-up per film (up to three, wood first, closer along the
   assert.deepEqual(d.details.map((x) => x.code), ['HZ812', '1805']);
   assert.ok(d.video);
   assert.deepEqual(reelArgs.focus, { x: 0.7, y: 0.3 });
-  assert.deepEqual(reelArgs.details.map((x) => [x.seconds, x.zoom]), [[4.35, 0.18], [4.35, 0.18]], 'wood: longer and closer (whole beats at 80 BPM, plus the cross-fade)');
-  assert.equal(reelArgs.intro.length, 2, 'two films: the Reel opens on their pairing cards (first tile, then both with +)');
-  assert.equal(reelArgs.hook, null);
-  for (const sec of [reelArgs.seconds.room, reelArgs.seconds.intro, ...reelArgs.details.map((x) => x.seconds)]) assert.ok(Math.abs(((sec - 0.6) / 0.75) - Math.round((sec - 0.6) / 0.75)) < 1e-9, `${sec} s: cuts on the beat`);
+  // the owner's review of the Reels (17/11): the room first (never the cards), the cards a quick insert, quick cuts on the beat, at most 20 s
+  const seq = reelArgs.sequence;
+  assert.equal(reelArgs.open, 'room');
+  assert.equal(seq[0].image, made[0].image ? seq[0].image : seq[0].image);
+  assert.ok(seq[0].sec < 2.2, 'the opening is short');
+  assert.equal(reelArgs.intro.length, 2, 'two films: their pairing cards');
+  assert.equal(seq[1].image, reelArgs.intro[1], 'the cards come right after the opening, never first');
+  const wood = seq.filter((x) => x.label);
+  assert.equal(wood.length, 2, 'each close-up says its film');
+  assert.deepEqual(wood.map((x) => [x.sec, x.zoom]), [[3.35, 0.18], [3.35, 0.18]], 'wood: longer and closer (whole beats at 80 BPM, plus the quick cross-fade)');
+  for (const x of seq) assert.ok(Math.abs(((x.sec - 0.35) / 0.75) - Math.round((x.sec - 0.35) / 0.75)) < 1e-9, `${x.sec} s: cuts on the beat`);
+  assert.ok(seq.reduce((a, x) => a + x.sec, 0) - 0.35 * (seq.length - 1) + 2.5 - 0.35 <= 20, 'at most 20 s');
+  assert.equal(new Set(seq.map((x) => x.image)).size, seq.length, 'every shot once');
   const p = desk.store.d.posts.SP1;
   assert.equal(p.extras.length, 2);
   assert.ok(fs.existsSync(p.reel));
@@ -88,7 +97,7 @@ test('a stone or solid film gets a gentler, shorter look; wood comes first even 
   desk.reel = async (a) => { args = a; return Buffer.from('MP4'); };
   await desk.draftDesign({});
   assert.deepEqual(shots, ['1805', 'HZ812'], 'the wood first');
-  assert.deepEqual(args.details.map((x) => [x.seconds, x.zoom]), [[4.35, 0.18], [2.85, 0.1]]);
+  assert.deepEqual(args.sequence.filter((x) => x.label).map((x) => [x.sec, x.zoom]), [[3.35, 0.18], [1.85, 0.1]]);
 });
 
 test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that catalogue only; «شماره ۲ …» edits that one and produces it in full', async () => {
@@ -475,8 +484,9 @@ test('the owner\'s change to a drafted design: by quoting it or «تغییر پ�
   assert.equal(reelArgs.motion, 'orbit');
   assert.equal(reelArgs.views.length, 2, 'two more camera places');
   assert.ok(made.some((m) => /wide establishing shot from the far opposite corner/.test(m.prompt)), 'a really different camera place');
-  const total = reelArgs.seconds.room + reelArgs.views.length * (reelArgs.seconds.view - 0.6) + reelArgs.details.reduce((a, x) => a + x.seconds - 0.6, 0) + reelArgs.seconds.card - 0.6;
-  assert.ok(Math.abs(total - 22) < 1, `about 22 s (${total.toFixed(1)})`);
+  const total = reelArgs.sequence.reduce((a, x) => a + x.sec, 0) - 0.35 * (reelArgs.sequence.length - 1) + reelArgs.seconds.card - 0.35;
+  assert.ok(Math.abs(total - 22) < 2.5, `about the 22 s he asked (${total.toFixed(1)})`);
+  assert.ok(reelArgs.sequence.filter((x) => x.move === 'pan').length >= 3, 'the camera walks around the room');
   assert.match((await desk.decidePost({ verb: 'yes', kind: 'SP', id })), /already replaced/, 'the old draft cannot be posted');
   assert.match((await desk.reviseDesign({ id, note: 'x' })).text, /already replaced/);
 });
@@ -646,4 +656,71 @@ test('«دوباره پست N»: a posted post whose Instagram Reel failed sends
   assert.match(out, /Instagram Reel: posted/);
   assert.equal(desk.store.d.posts.SP31.igReel, 'R1');
   assert.match(await desk.decidePost({ verb: 'retry', kind: 'SP', id: 'SP31' }), /nothing is missing/);
+});
+
+// ---- the owner's review of the Reels (17/11): each criticism is a rule that a test keeps
+const alphaBox = async (png) => { // the rows and columns where a transparent layer has any mark
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let top = info.height; let bottom = -1; let left = info.width; let right = -1;
+  for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) if (data[(y * info.width + x) * 4 + 3] > 8) { top = Math.min(top, y); bottom = Math.max(bottom, y); left = Math.min(left, x); right = Math.max(right, x); }
+  return { top, bottom, left, right };
+};
+
+test('every mark of a Reel stays inside Instagram\'s safe area: the logo, and each close-up\'s label with the film\'s name (no band of codes at the bottom)', async () => {
+  const { reelOverlay, shotLabel, SAFE } = await import('../src/reel.js');
+  const logo = await sharp({ create: { width: 400, height: 300, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
+  const o = await alphaBox(await reelOverlay({ logo }));
+  assert.ok(o.top >= SAFE.top - 20 && o.bottom < SAFE.bottom && o.left >= SAFE.left - 20 && o.right <= SAFE.right, `the logo ${JSON.stringify(o)}`);
+  const l = await alphaBox(await shotLabel({ code: 'HZ810', name: 'Honey oak' }));
+  assert.ok(l.top >= SAFE.top && l.bottom < SAFE.bottom && l.left >= SAFE.left && l.right <= SAFE.right, `the label ${JSON.stringify(l)}`);
+});
+
+test('the end card names each film under its code and says what to do; the pairing cards name the films too', async () => {
+  const { pairCards } = await import('../src/reel.js');
+  const codes = [{ code: 'HZ816', name: 'Black-green ash', swatch: await pic('#1d2420') }, { code: 'HZ827', name: 'Black-green solid', swatch: await pic('#1c231f') }];
+  const lit = async (png, y0, y1) => { const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true }); let n = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < info.width; x++) { const i = (y * info.width + x) * 3; if (data[i] > 150) n++; } return n; };
+  const withNames = await endCard({ codes, line: 'WhatsApp +971000', cta: 'Send this code on WhatsApp' });
+  const without = await endCard({ codes: codes.map(({ name, ...c }) => c), line: 'WhatsApp +971000' });
+  assert.ok(await lit(withNames, 1220, 1290) > await lit(without, 1220, 1290) + 50, 'the names are drawn under the codes');
+  assert.ok(await lit(withNames, 1440, 1510) > 200, 'the call to action is drawn');
+  assert.equal((await pairCards({ codes })).length, 2);
+});
+
+test('an AI picture with text, a grid or a wrong film is drawn again with its fault named; a close-up wrong twice is left out', async () => {
+  const { desk, made } = await studio({ reel: async () => Buffer.from('MP4') });
+  const base = desk.write;
+  let checks = 0;
+  desk.write = async (r) => (r.kind === 'clean-check' ? (checks++, '{"text":true,"collage":false,"mismatch":"the oak is shown as deep carved grain"}') : base(r));
+  const room = await pic('#806040');
+  await assert.rejects(desk.closeUp(room, { code: 'HZ812', where: 'tall doors' }, await pic('#3a2a1e')), /not like the film or not clean twice/);
+  assert.equal(checks, 2);
+  assert.match(made.at(-1).prompt, /The last try was wrong: there is text, a label, a card or a logo in the picture; a film does not look like its sample: the oak is shown as deep carved grain/);
+  for (const m of made) { assert.match(m.prompt, /No text, letters, numbers, labels/); assert.match(m.prompt, /never a collage, a grid/); assert.match(m.prompt, /never deep carved, brushed or embossed wood/); }
+  desk.write = async (r) => (r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":""}' : base(r));
+  assert.ok(await desk.closeUp(room, { code: 'HZ812', where: 'tall doors' }, await pic('#3a2a1e')), 'a clean close-up is kept');
+});
+
+test('a camera place that came back as the same framing is never used (live: the same doors twice in #SP31)', async () => {
+  const { desk } = await studio();
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'check-change' ? '{"done":false,"missing":"the same framing"}' : base(r));
+  assert.deepEqual(await desk.otherAngles(await pic('#806040'), { parts: [] }), [], 'no view at all rather than the same picture again');
+});
+
+test('the Reels vary: never the same opening three times in a row, never the pairing cards in two Reels in a row', async () => {
+  const opens = []; const pairs = [];
+  const { desk } = await studio({ reel: async (a) => { opens.push(a.open); pairs.push(a.intro.length > 0); return Buffer.from('MP4'); } });
+  for (let i = 0; i < 4; i++) await desk.draftDesign({});
+  assert.deepEqual(opens, ['room', 'room', 'texture', 'room']);
+  assert.deepEqual(pairs, [true, false, true, false]);
+});
+
+test('a Reel made from a chosen sequence: the labels shown on their shots, the sound held under full scale', { skip: !(await ffmpegPath()) }, async () => {
+  const { shotLabel } = await import('../src/reel.js');
+  const card = await endCard({ codes: [{ code: 'HZ812', name: 'Dark walnut', swatch: await pic('#3a2a1e') }], line: 'WhatsApp +971000', cta: 'Send this code on WhatsApp' });
+  const mp4 = await makeReel({ room: await pic('#806040', 1440, 1800), card, fade: 0.35, seconds: { card: 1 }, sequence: [
+    { image: await pic('#806040', 1440, 1800), sec: 1.1, move: 'push', zoom: 0.2 },
+    { image: await pic('#402010', 1440, 1800), sec: 1.1, move: 'push', zoom: 0.18, label: await shotLabel({ code: 'HZ812', name: 'Dark walnut' }) },
+  ] });
+  assert.ok(mp4.length > 1000 && mp4.subarray(4, 8).toString() === 'ftyp', 'an MP4');
 });

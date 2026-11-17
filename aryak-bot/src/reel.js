@@ -36,7 +36,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : 
  * The end card: the dark ARYAK ground, the logo (white), each film's swatch and code, the WhatsApp number. A PNG 1080 x 1920.
  * [codes] [{ code, swatch }], [logo] the black logo PNG, [font] a font file, [line] the words under the codes.
  */
-export async function endCard({ codes = [], logo = null, font = '', line = '' }) {
+export async function endCard({ codes = [], logo = null, font = '', line = '', cta = '' }) {
   const sharp = (await import('sharp')).default;
   const W = 1080; const H = 1920;
   const comps = [];
@@ -55,7 +55,17 @@ export async function endCard({ codes = [], logo = null, font = '', line = '' })
     const t = await text(c.code, 58);
     const tm = await sharp(t).metadata();
     comps.push({ input: t, top: 860 + sw + 40, left: x + Math.round((sw - tm.width) / 2) });
+    if (c.name) { // a code means nothing to a buyer: the film's short name under it (the owner's review, 17/11)
+      let px = 36; let nt = await text(c.name, px, '#cfc4b4'); let nm = await sharp(nt).metadata();
+      while (nm.width > sw + gap - 10 && px > 24) { px -= 3; nt = await text(c.name, px, '#cfc4b4'); nm = await sharp(nt).metadata(); }
+      comps.push({ input: nt, top: 860 + sw + 116, left: Math.max(0, x + Math.round((sw - nm.width) / 2)) });
+    }
     x += sw + gap;
+  }
+  if (cta) { // what to do next, in words (the owner's review, 17/11)
+    const t = await text(cta, 50);
+    const tm = await sharp(t).metadata();
+    comps.push({ input: t, top: 1440, left: Math.max(20, Math.round((W - tm.width) / 2)) });
   }
   if (line) {
     const t = await text(line, 46, '#d6b25e');
@@ -91,6 +101,7 @@ export async function pairCards({ codes = [], font = '' }) {
         comps.push({ input: shadow, top: top - 40, left: x - 40 }, { input: tile, top, left: x });
         const t = await text(tiles[k].code, 54, '#2b2622'); const tm = await sharp(t).metadata();
         comps.push({ input: t, top: top + size + 44, left: x + Math.round((size - tm.width) / 2) });
+        if (tiles[k].name) { const nt = await text(tiles[k].name, tiles.length === 3 ? 30 : 38, '#6d6258'); const nm = await sharp(nt).metadata(); comps.push({ input: nt, top: top + size + 116, left: Math.max(0, x + Math.round((size - nm.width) / 2)) }); }
       }
       if (k < count - 1) {
         const plus = await text('+', 96, '#8a7a66'); const pm = await sharp(plus).metadata();
@@ -104,10 +115,49 @@ export async function pairCards({ codes = [], font = '' }) {
 }
 
 /**
+ * Instagram covers the top of a Reel (about 220 px of 1920: the «Reels» title and the camera) and the bottom (about 420 px: the caption,
+ * the name, the sound) and a column on the right (the buttons). Every mark of a Reel stays inside the rest (the owner's review, 17/11:
+ * the band of codes at the very bottom was under Instagram's own words, and a card ran off the edge of the frame).
+ */
+export const SAFE = { top: 250, bottom: 1500, left: 64, right: 930 };
+
+/** The Reel's own mark: the white logo with a soft shadow (it reads on light and dark), inside the safe area. A transparent PNG 1080 x 1920. */
+export async function reelOverlay({ logo = null } = {}) {
+  const sharp = (await import('sharp')).default;
+  const W = 1080; const H = 1920;
+  const comps = [];
+  if (logo) {
+    const lg = await sharp(logo).resize({ width: 170 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const white = Buffer.from(lg.data); const dark = Buffer.from(lg.data);
+    for (let i = 0; i < white.length; i += 4) { white[i] = 255; white[i + 1] = 255; white[i + 2] = 255; dark[i] = 0; dark[i + 1] = 0; dark[i + 2] = 0; dark[i + 3] = Math.round(dark[i + 3] * 0.55); }
+    const raw = (b) => sharp(b, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } });
+    const shadow = await raw(dark).extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 0, g: 0, b: 0, alpha: 0 } }).blur(8).png().toBuffer();
+    comps.push({ input: shadow, top: SAFE.top - 20 + 3, left: SAFE.left - 20 + 3 }, { input: await raw(white).png().toBuffer(), top: SAFE.top, left: SAFE.left });
+  }
+  return sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer();
+}
+
+/** A shot's label (the film on screen, its code and short name), a dark rounded plate low in the safe area. A transparent PNG 1080 x 1920. */
+export async function shotLabel({ code = '', name = '', font = '' } = {}) {
+  const sharp = (await import('sharp')).default;
+  const W = 1080; const H = 1920;
+  const text = async (t, px, colour) => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${px}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+  const parts = [await text(code, 46, '#ffffff'), ...(name ? [await text(name, 40, '#e9dfcf')] : [])];
+  const metas = await Promise.all(parts.map((b) => sharp(b).metadata()));
+  const padX = 30; const gap = 22; const h = 92;
+  const w = Math.min(SAFE.right - SAFE.left, padX * 2 + metas.reduce((a, m) => a + m.width, 0) + gap * (parts.length - 1));
+  const top = 1330;
+  const comps = [{ input: Buffer.from(`<svg width="${w}" height="${h}"><rect width="${w}" height="${h}" rx="18" ry="18" fill="rgba(20,17,14,0.72)"/></svg>`), top, left: SAFE.left }];
+  let x = SAFE.left + padX;
+  for (const [k, b] of parts.entries()) { if (x + metas[k].width > SAFE.left + w) break; comps.push({ input: b, top: top + Math.round((h - metas[k].height) / 2), left: x }); x += metas[k].width + gap; }
+  return sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer();
+}
+
+/**
  * The Reel: [room] and [detail] pictures (4:5), [focus] { x, y } (0..1) where the camera pushes in on the room, [overlay] a transparent
  * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
  */
-export async function makeReel({ room, detail = null, details = null, views = [], motion = 'zoom', hook = null, before = null, intro = [], reveal = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 } }) {
+export async function makeReel({ room, detail = null, details = null, views = [], motion = 'zoom', hook = null, before = null, intro = [], reveal = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 }, sequence = null, fade: cross = 0.6 }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   // the close-ups, one per film (the owner, 15/11: up to three films, wood grain longer and closer): [{ image, seconds, zoom }]
   const shots = (details || (detail ? [{ image: detail, seconds: seconds.detail, zoom: 0.12 }] : [])).filter((d) => d?.image).slice(0, 3);
@@ -131,36 +181,49 @@ export async function makeReel({ room, detail = null, details = null, views = []
     // the shots in order: [hook] (the film's texture very close, the first 1.5 s that stop the scroll), [before] (the room before ARYAK,
     // wiped away by the room after), the room, its other views, the close-ups
     const seq = [];
-    // the pairing cards first (they are the hook), each held a moment on a gentle push
-    intro.filter(Boolean).slice(0, 2).forEach((c, k) => seq.push({ file: put(`intro${k}.jpg`, c), sec: seconds.intro || 1.35, make: (i, f) => move(i, f, 0.04, 0.5, 0.45) }));
-    if (hook) seq.push({ file: put('hook.jpg', hook), sec: seconds.hook || 1.6, make: (i, f) => move(i, f, 0.3, 0.5, 0.5) });
-    if (before) seq.push({ file: put('before.jpg', before), sec: seconds.before || 2.6, make: (i, f) => move(i, f, 0.06, 0.5, 0.5) });
-    seq.push({ file: put('room.jpg', room), sec: seconds.room, make: (i, f) => (orbit ? pan(i, f, true) : move(i, f, 0.22, fx, fy)), cut: before ? 'wipeleft' : 'fade' });
+    // [sequence]: the shots already chosen and timed by the studio (the owner's review, 17/11: the strongest picture first, quick cuts,
+    // every shot once): [{ image, sec, move: 'push' | 'pan', zoom, cx, cy, toRight, cut, label }]
+    if (Array.isArray(sequence) && sequence.length) {
+      sequence.filter((s) => s?.image).forEach((s, k) => seq.push({ file: put(`shot${k}.jpg`, s.image), sec: s.sec, cut: s.cut, label: s.label || null,
+        make: (i, f) => (s.move === 'pan' ? pan(i, f, !!s.toRight) : move(i, f, s.zoom ?? 0.12, clamp(s.cx, 0.15, 0.85), clamp(s.cy, 0.15, 0.85))) }));
+    }
+    if (!seq.length) intro.filter(Boolean).slice(0, 2).forEach((c, k) => seq.push({ file: put(`intro${k}.jpg`, c), sec: seconds.intro || 1.35, make: (i, f) => move(i, f, 0.04, 0.5, 0.45) }));
+    if (!sequence?.length && hook) seq.push({ file: put('hook.jpg', hook), sec: seconds.hook || 1.6, make: (i, f) => move(i, f, 0.3, 0.5, 0.5) });
+    if (!sequence?.length && before) seq.push({ file: put('before.jpg', before), sec: seconds.before || 2.6, make: (i, f) => move(i, f, 0.06, 0.5, 0.5) });
+    if (!sequence?.length) seq.push({ file: put('room.jpg', room), sec: seconds.room, make: (i, f) => (orbit ? pan(i, f, true) : move(i, f, 0.22, fx, fy)), cut: before ? 'wipeleft' : 'fade' });
     // the function reveal (the owner, 16/11): the same room with its doors open, dissolved in slowly after the room
-    if (reveal) seq.push({ file: put('reveal.jpg', reveal), sec: seconds.reveal || 3.6, make: (i, f) => (orbit ? pan(i, f, false) : move(i, f, 0.1, fx, fy)), cut: 'dissolve' });
-    angles.forEach((v, k) => seq.push({ file: put(`view${k}.jpg`, v), sec: seconds.view || seconds.room, make: (i, f) => pan(i, f, k % 2 === 1) }));
-    shots.forEach((d, k) => seq.push({ file: put(`detail${k}.jpg`, d.image), sec: d.seconds || seconds.detail, make: (i, f) => (orbit ? pan(i, f, k % 2 === 0) : move(i, f, d.zoom ?? 0.12, 0.5, 0.5)) }));
+    if (!sequence?.length && reveal) seq.push({ file: put('reveal.jpg', reveal), sec: seconds.reveal || 3.6, make: (i, f) => (orbit ? pan(i, f, false) : move(i, f, 0.1, fx, fy)), cut: 'dissolve' });
+    if (!sequence?.length) angles.forEach((v, k) => seq.push({ file: put(`view${k}.jpg`, v), sec: seconds.view || seconds.room, make: (i, f) => pan(i, f, k % 2 === 1) }));
+    if (!sequence?.length) shots.forEach((d, k) => seq.push({ file: put(`detail${k}.jpg`, d.image), sec: d.seconds || seconds.detail, make: (i, f) => (orbit ? pan(i, f, k % 2 === 0) : move(i, f, d.zoom ?? 0.12, 0.5, 0.5)) }));
     for (const x of seq) args.push('-i', x.file);
     args.push('-i', put('card.png', card));
     const cardIn = seq.length;
+    let next = cardIn + 1;
+    const overlayIn = overlay ? next++ : -1;
     if (overlay) args.push('-i', put('overlay.png', overlay));
+    const labelIn = seq.map((x, k) => (x.label ? (args.push('-i', put(`label${k}.png`, x.label)), next++) : -1));
     // the sound: the design's own music (an MP3, faded in and out), or silence (Instagram wants a sound track)
+    const audio = next;
     if (music) args.push('-i', put('music.mp3', music)); else args.push('-f', 'lavfi', '-t', '60', '-i', 'anullsrc=r=44100:cl=stereo');
-    const fade = 0.6;
+    const fade = cross;
     const parts = [`${seq[0].make(0, n(seq[0].sec))}[m0]`];
     let last = 'm0'; let t = seq[0].sec;
+    const starts = [0];
     for (let i = 1; i < seq.length; i++) {
       parts.push(`${seq[i].make(i, n(seq[i].sec))}[s${i}]`);
       parts.push(`[${last}][s${i}]xfade=transition=${seq[i].cut || 'fade'}:duration=${fade}:offset=${(t - fade).toFixed(2)}[m${i}]`);
+      starts.push(t - fade);
       last = `m${i}`; t += seq[i].sec - fade;
     }
     const moving = t; // the overlay stays on the moving parts only
-    if (overlay) { parts.push(`[${last}][${cardIn + 1}:v]overlay=0:0:enable='lt(t,${(moving - fade).toFixed(2)})'[o]`); last = 'o'; }
+    if (overlay) { parts.push(`[${last}][${overlayIn}:v]overlay=0:0:enable='lt(t,${(moving - fade).toFixed(2)})'[o]`); last = 'o'; }
+    // each shot's label (its film's code and name) while that shot is on screen
+    seq.forEach((x, k) => { if (labelIn[k] < 0) return; parts.push(`[${last}][${labelIn[k]}:v]overlay=0:0:enable='between(t,${(starts[k] + 0.15).toFixed(2)},${(starts[k] + x.sec - fade - 0.05).toFixed(2)})'[l${k}]`); last = `l${k}`; });
     parts.push(`[${cardIn}:v]loop=loop=${n(seconds.card)}:size=1:start=0,setpts=N/${fps}/TB,fps=${fps},scale=1080:1920,setsar=1,format=yuv420p[c]`);
     parts.push(`[${last}][c]xfade=transition=fade:duration=${fade}:offset=${(t - fade).toFixed(2)}[v]`);
     const total = t + seconds.card - fade;
-    const audio = overlay ? cardIn + 2 : cardIn + 1;
-    parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5[s]`);
+    // the peaks held under full scale (the owner's review, 17/11: every Reel touched 0 dB, which can crack on a phone's speaker)
+    parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5,alimiter=limit=0.89:level=0[s]`);
     args.push('-filter_threads', '1', '-filter_complex_threads', '1', '-filter_complex', parts.join(';'), '-map', '[v]', '-map', '[s]', '-t', total.toFixed(2),
       '-c:v', 'libx264', '-preset', 'veryfast', '-threads', '1', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', path.join(dir, 'reel.mp4'));
     await run(await ffmpegPath(), args, 360000);

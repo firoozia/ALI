@@ -12,6 +12,15 @@ export const GRAPH_IG = 'https://graph.instagram.com';
 export const GRAPH_FB = 'https://graph.facebook.com';
 export const WINDOW_MS = 24 * 3600 * 1000; // Meta's standard messaging window
 const DAY = 24 * 3600 * 1000;
+// The owner's review of the Reels (17/11): the image model drew spec cards, codes, a nine-picture grid and a line of words INTO the
+// pictures (cut at the frame's edge), and close-ups showed deep carved grain and bright gold veins where the real film is a smooth print.
+export const NO_TEXT = 'One single photograph: never a collage, a grid, a split screen or several panels. No text, letters, numbers, labels, cards, captions, logos or watermarks anywhere in the picture.';
+export const TRUE_FILM = "Each film's surface looks exactly like its reference sample: the same colour, pattern, vein colour and surface relief (a printed decorative film is smooth or as finely textured as its sample, never deep carved, brushed or embossed wood).";
+export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)"}';
+export const NAME_RULES = 'Give a short English trade name of two or three words for this decorative film, from its description, the way a showroom labels a sample: «Honey oak», «Charcoal black», «Grey gold marble», «Olive khaki». Two films that differ only by pattern must get different names («Black-green ash», «Black-green solid»). Output only the name.';
+// Reels (the owner's review, 17/11): quick cuts, at most 20 s, the strongest picture first, every shot once
+export const REEL_FADE = 0.35;
+export const REEL_MAX_SECONDS = 20;
 
 /** The Graph API calls the assistant uses, nothing more. [fetchImpl] is replaced in the tests. */
 export class MetaClient {
@@ -294,7 +303,7 @@ x and y go from 0 to 1, from the left and from the top. Answer with JSON only, f
 
 export const DARIUSH = `You are Dariush, ARYAK's marketing strategist and Atossa's sparring partner. Atossa designs; you make sure every design sells the films on Instagram, TikTok and Facebook and never looks like the last one. The audience: UAE carpentry workshops, kitchen and wardrobe makers, contractors, designers and villa owners. Your one question: would a joiner send this to a client? (Instagram's top signals are watch time, likes and sends; sends reach new people.)
 - Novelty first: if a plan repeats a recent composition (same room type with the same layout and key elements), or shares the room type and the camera angle with any of the last three, send it back with a concrete different idea (another room, layout, camera and focal length, style, time of day and light, palette). Lived-in details and real props beat the sterile AI look.
-- The design rules: at most three finishes, 60-30-10, matched undertones, one loud pattern, pattern scale fits the surface, grain in one direction.
+- The design rules: at most three finishes, 60-30-10, matched undertones, one loud pattern, pattern scale fits the surface, grain in one direction. Two films that look almost the same at a glance (two near-black solids, two near-white solids) are never paired: the viewer cannot tell them apart.
 - The hook: in the first two seconds the viewer sees motion or the payoff (the film filling the frame in raking light, the finished room), never a logo; a 5 to 7 word keyword headline. The film is the hero, not the furniture.
 - Proof: a benefit (anti-fingerprint, scratch resistance, super-matte) only with a visible test or a spec; never an absolute ("scratch-proof").
 - Useful and saveable: a clear pairing idea or a detail worth copying; the film code and its place named.
@@ -712,8 +721,13 @@ export class SocialDesk {
     const images = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
     // the owner's picture guides the room (mood, layout, light) only; the films on the fronts come from the labelled samples
     if (inspiration) images.push({ label: 'Mood and layout reference (the owner\'s inspiration; do not copy its materials, brands or text)', buffer: inspiration.image, mime: inspiration.mime || 'image/jpeg' });
-    const made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. An editorial photograph for a luxury interior design magazine: photorealistic, highly detailed, crisp film textures with visible grain, rich warm light and depth, real reflections and soft shadows. 4:5 portrait.`, images });
-    return made.image;
+    const made = await this.imager.make({ prompt: `${plan.scene}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. An editorial photograph for a luxury interior design magazine: photorealistic, highly detailed, crisp film textures, rich warm light and depth, real reflections and soft shadows. ${TRUE_FILM} ${NO_TEXT} 4:5 portrait.`, images });
+    // checked by eye before anything is made from it: drawn once more with the fault named when it carries text, a grid or a wrong film
+    const refs = plan.parts.filter((p) => all[p.code]).map((p) => ({ code: p.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)) }));
+    const look = await this.cleanCheck(made.image, refs);
+    if (look.ok) return made.image;
+    this.log(`social: the room was drawn again: ${look.problem}`);
+    try { return (await this.imager.make({ prompt: `${plan.scene}\nThe last try was wrong: ${look.problem}. Each labelled reference picture is the exact surface film for the fronts named in its label, each only on its own fronts. An editorial photograph for a luxury interior design magazine, photorealistic. ${TRUE_FILM} ${NO_TEXT} 4:5 portrait.`, images })).image; } catch { return made.image; }
   }
 
   /** Is this film a wood grain? (its look or kind): wood gets a closer, longer look in the close-up and the Reel (the owner, 15/11). */
@@ -728,9 +742,15 @@ export class SocialDesk {
     const how = wood
       ? `the camera is about 30 cm from the ${part.where} in film ${part.code}, looking along the wood grain, so the grain, its direction and the pores fill three quarters of the frame, crisp and exactly like the reference sample; low warm light grazing across the surface so every line of the grain shows`
       : `the camera is about 50 cm from the ${part.where} in film ${part.code}, at a slight angle, so the film fills two thirds of the frame and its colour, texture and finish are crisp and exactly like the reference sample; soft warm light across the surface`;
-    const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people, no text.`,
-      images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
-    return fitForInstagram(d.image);
+    let miss = '';
+    for (let k = 0; k < 2; k++) {
+      const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
+        images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
+      const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }]);
+      if (look.ok) return fitForInstagram(d.image);
+      miss = look.problem;
+    }
+    throw new Error(`not like the film or not clean twice: ${miss}`); // left out: a wrong close-up is worse than none
   }
 
   /**
@@ -755,7 +775,8 @@ export class SocialDesk {
     if (plan.pillar === 'transform') {
       try {
         beforeRaw = await fitForInstagram((await this.imager.make({ images: [{ label: 'The finished room', buffer: room, mime: 'image/jpeg' }],
-          prompt: 'The same room photographed from exactly the same camera position BEFORE the renovation: the same walls, windows, layout and cabinet sizes, but the cabinet and wall fronts are tired, dated plain fronts (yellowed white gloss or worn beige laminate with chipped edges and old handles), flat cool daylight, a little clutter. Realistic, not dirty or ruined. Photorealistic interior photograph, 4:5 portrait.' })).image);
+          prompt: 'The same room photographed from exactly the same camera position BEFORE the renovation: the same walls, windows, layout and cabinet sizes, but the cabinet and wall fronts are tired, dated plain fronts (yellowed white gloss or worn beige laminate with chipped edges and old handles), flat cool daylight, a little clutter. Realistic, not dirty or ruined. Photorealistic interior photograph, 4:5 portrait. ' + NO_TEXT })).image);
+        if (!(await this.cleanCheck(beforeRaw)).ok) { this.log('social: the before picture carried text or a grid: left out'); beforeRaw = null; }
       } catch (err) { this.log(`social: the before picture failed: ${err.message}`); }
     }
     // the function reveal (the owner, 16/11): the same room, the same camera, with what Atossa named opened
@@ -764,7 +785,8 @@ export class SocialDesk {
       try {
         const all2 = this.catalog();
         revealRaw = await fitForInstagram((await this.imager.make({ images: [{ label: 'The room: keep this exact design and camera', buffer: room, mime: 'image/jpeg' }, ...plan.parts.filter((x) => all2[x.code]).map((x) => ({ label: `Reference: film ${x.code}, for ${x.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all2[x.code].file)), mime: 'image/jpeg' }))],
-          prompt: `The same room from exactly the same camera position, everything the same, except: ${plan.reveal}. Show the inside clearly and beautifully lit (warm LED strips, tidy styled contents), the opened fronts still showing their film. Photorealistic editorial interior photograph, 4:5 portrait.` })).image);
+          prompt: `The same room from exactly the same camera position, everything the same, except: ${plan.reveal}. Show the inside clearly and beautifully lit (warm LED strips, tidy styled contents), the opened fronts still showing their film. Photorealistic editorial interior photograph, 4:5 portrait. ${TRUE_FILM} ${NO_TEXT}` })).image);
+        if (!(await this.cleanCheck(revealRaw)).ok) { this.log('social: the open picture carried text or a grid: left out'); revealRaw = null; }
       } catch (err) { this.log(`social: the open picture failed: ${err.message}`); }
     }
     const mine = {};
@@ -968,7 +990,7 @@ export class SocialDesk {
     let miss = '';
     for (let i = 0; i < 2 && !fixed; i++) {
       const r = await this.imager.make({ images: [{ label: 'The picture', buffer: room, mime: 'image/jpeg' }],
-        prompt: `Make only this small change: «${note}».${miss ? ` The last try missed: ${miss}.` : ''} Keep everything else exactly as it is: the room, the camera, the light, every surface, colour and object. Photorealistic, the same size, 4:5 portrait.` });
+        prompt: `Make only this small change: «${note}».${miss ? ` The last try missed: ${miss}.` : ''} Keep everything else exactly as it is: the room, the camera, the light, every surface, colour and object. Photorealistic, the same size, 4:5 portrait. ${NO_TEXT}` });
       const look = await this.changeSeen(room, r.image, note);
       if (look.done || i === 1) fixed = await fitForInstagram(r.image); else miss = look.missing || 'not done';
     }
@@ -1021,7 +1043,7 @@ export class SocialDesk {
     let made = null;
     for (let i = 0; i < 2; i++) {
       const res = await this.imager.make({ size, images: [{ label: 'The previous version: the owner did not accept it as it is; change it as asked', buffer: oldRaw, mime: 'image/jpeg' }, ...films],
-        prompt: `A new photograph of this design, redrawn for the owner who asked: «${note}». His change must be obvious at first glance: never return the previous picture or a crop of it.${missing ? ` The last try still missed: ${missing}.` : ''}\n${plan.scene}\nEach labelled film picture is the exact surface for the fronts named in its label: reproduce its colour, pattern and scale faithfully.${hq ? ' Render it at the highest quality: finer detail in every material, crisp film grain, realistic joinery edges, accurate reflections and soft shadows.' : ''} Photorealistic editorial interior photograph, 4:5 portrait.` });
+        prompt: `A new photograph of this design, redrawn for the owner who asked: «${note}». His change must be obvious at first glance: never return the previous picture or a crop of it.${missing ? ` The last try still missed: ${missing}.` : ''}\n${plan.scene}\nEach labelled film picture is the exact surface for the fronts named in its label: reproduce its colour, pattern and scale faithfully. ${TRUE_FILM} ${NO_TEXT}${hq ? ' Render it at the highest quality: finer detail in every material, crisp film grain, realistic joinery edges, accurate reflections and soft shadows.' : ''} Photorealistic editorial interior photograph, 4:5 portrait.` });
       made = res.image;
       const verdict = await this.changeSeen(oldRaw, made, note);
       if (verdict.done) break;
@@ -1032,6 +1054,35 @@ export class SocialDesk {
   }
 
   /** One look at the old and the new picture: is the owner's change visible? { done, missing }; done when the look cannot be read. */
+  /** An AI picture checked before use: no text or cards in it, one photograph (no grid), each film like its sample. { ok, problem }; ok when the check cannot be read. */
+  async cleanCheck(image, refs = []) {
+    try {
+      const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+      const raw = String(await this.write({ kind: 'clean-check', system: CLEAN_RULES, text: `The picture, then the samples: ${refs.map((r) => `film ${r.code}`).join(', ') || 'none'}.`, images: [await small(image), ...(await Promise.all(refs.map((r) => small(r.swatch))))], mime: 'image/jpeg', effort: 'low', maxTokens: 400 }) || '');
+      const v = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+      const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`].filter(Boolean);
+      return { ok: !problems.length, problem: problems.join('; ') };
+    } catch { return { ok: true, problem: '' }; }
+  }
+
+  /** A short trade name of every colour («Honey oak»), asked once from its look and kept in catalog.json: a buyer does not read codes. */
+  async ensureNames() {
+    const all = this.catalog();
+    const todo = Object.keys(all).filter((k) => all[k].look && !all[k].name);
+    if (!todo.length) return 0;
+    let done = 0;
+    for (let i = 0; i < todo.length; i += 8) {
+      await Promise.all(todo.slice(i, i + 8).map(async (code) => {
+        try {
+          const name = String(await this.write({ kind: 'name', system: NAME_RULES, text: `Film ${code}: ${all[code].look}`, effort: 'low', maxTokens: 60 }) || '').trim().replace(/^["«']|["»'.]$/g, '').replace(/\s+/g, ' ');
+          if (name && name.split(' ').length <= 4 && name.length <= 28) { all[code].name = name; done++; }
+        } catch (err) { this.log(`social: the name of ${code} failed: ${err.message}`); }
+      }));
+    }
+    try { fs.writeFileSync(path.join(this.catalogDir, 'catalog.json'), JSON.stringify(all, null, 1)); } catch (err) { this.log(`social: the names could not be kept: ${err.message}`); }
+    return done;
+  }
+
   async changeSeen(oldRaw, newRaw, note) {
     try {
       const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
@@ -1200,47 +1251,74 @@ export class SocialDesk {
   }
 
   async makeReelFor({ room, detail = null, shots = null, codes, main, music: mood = '', opts = null, plan = null, before = null, reveal = null }) {
-    const sharp = (await import('sharp')).default;
     let focus = { x: 0.5, y: 0.5 };
     try {
       const raw = String(await this.write({ kind: 'focus', system: FOCUS_RULES, text: `The film: ${main.code}, on ${main.where}.`, image: room, mime: 'image/jpeg' }) || '');
       const f = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
       if (Number.isFinite(f.x) && Number.isFinite(f.y)) focus = f;
     } catch { /* the middle */ }
+    await this.ensureNames().catch(() => 0);
     const brand = this.brandAssets();
-    const frame = await sharp(room).resize(1080, 1920, { fit: 'cover' }).jpeg().toBuffer();
-    const overlay = await brandDesign(frame, { ...brand, codes, transparent: true });
-    const { endCard } = await import('./reel.js');
-    const card = await endCard({ codes, logo: brand.logo, font: brand.font, line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
-    // each film's close-up in turn: wood grain longer and closer (the owner, 15/11), the others a shorter, gentler look
-    const details = shots ? shots.map((sh) => ({ image: sh.raw, seconds: sh.wood ? 4.5 : 3, zoom: sh.wood ? 0.18 : 0.1 })) : detail ? [{ image: detail, seconds: 4, zoom: 0.12 }] : [];
+    const all = this.catalog();
+    const named = codes.map((c) => ({ ...c, name: c.name || all[c.code]?.name || '' }));
+    const { endCard, pairCards, reelOverlay, shotLabel } = await import('./reel.js');
+    // the marks inside Instagram's safe area: the logo only (the band of codes at the bottom was under Instagram's own words); each
+    // close-up says its own film; the end card names the films and says what to do (the owner's review, 17/11)
+    const overlay = await reelOverlay({ logo: brand.logo });
+    const card = await endCard({ codes: named, logo: brand.logo, font: brand.font, cta: 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
+    const label = async (code) => { const c = named.find((x) => x.code === code); return c ? shotLabel({ code: c.code, name: c.name, font: brand.font }).catch(() => null) : null; };
+    const details = shots ? shots.map((sh) => ({ image: sh.raw, code: sh.part?.code || sh.code || '', wood: !!sh.wood })) : detail ? [{ image: detail, code: main?.code || '', wood: false }] : [];
     // the owner's wishes for the Reel (15/11): its length, new music, the camera turning around the room instead of a zoom
     const motion = opts?.motion === 'orbit' ? 'orbit' : 'zoom';
-    const views = motion === 'orbit' ? await this.otherAngles(room, plan) : [];
-    const seconds = { room: 5, detail: 4, card: 3, view: 4.5 };
-    const want = Number(opts?.seconds);
-    if (Number.isFinite(want) && want > 0) {
-      const fade = 0.6;
-      const now = seconds.room + views.length * (seconds.view - fade) + details.reduce((a, d) => a + d.seconds - fade, 0) + seconds.card - fade;
-      const k = Math.min(2.5, Math.max(0.6, (Math.min(45, want) - seconds.card) / Math.max(1, now - seconds.card)));
-      seconds.room *= k; seconds.view *= k; for (const d of details) d.seconds *= k;
-    }
-    // the first second stops the scroll (the owner, 15/11): the main film's texture very close, then the room; a before/after opens on the
-    // room before ARYAK, wiped away by the room after
-    // the colour pairing cards (the owner, 16/11) open a design of two or three films when Atossa chose «pair» (or did not choose)
-    const pair = !before && codes.length >= 2 && (plan?.reel_open ? /^pair/i.test(plan.reel_open) : true);
-    const intro = pair ? await (await import('./reel.js')).pairCards({ codes, font: this.brandAssets().font }).catch(() => []) : [];
-    const hook = before || intro.length ? null : details[0]?.image || null;
-    // cuts on the beat (the owner, 15/11, from a Gemini prompt): the music is asked at a known tempo and every shot lasts whole beats,
-    // so each cross-fade starts on a beat
+    const orbit = motion === 'orbit';
+    const views = orbit ? await this.otherAngles(room, plan) : [];
+    // cuts on the beat (the owner, 15/11): the music is asked at a known tempo and every shot lasts whole beats
     const tune = /(\d{2,3})\s*BPM/i.exec(opts?.music || mood || '') ? (opts?.music || mood) : `${opts?.music || mood || 'Warm minimal luxury lounge: soft piano, gentle strings, a slow deep pulse'}, 80 BPM`;
     const bpm = Math.min(140, Math.max(60, Number(/(\d{2,3})\s*BPM/i.exec(tune)[1])));
-    const beat = 60 / bpm; const fade = 0.6;
+    const beat = 60 / bpm; const fade = REEL_FADE;
     const onBeat = (sec, min = 2) => Math.max(min, Math.round((sec - fade) / beat)) * beat + fade;
-    seconds.hook = onBeat(1.6, 2); seconds.before = onBeat(2.6, 3); seconds.room = onBeat(seconds.room, 4); seconds.view = onBeat(seconds.view, 4);
-    for (const d of details) d.seconds = onBeat(d.seconds, 3);
-    seconds.intro = onBeat(1.35, 2); seconds.reveal = onBeat(3.6, 4);
-    return this.reel({ room, details, views, motion, hook, before, intro, reveal, seconds, focus, overlay, card, music: await this.reelMusic(tune) });
+    // the opening (the owner's review, 17/11: three or four seconds of an almost empty card lost the viewer): the payoff first, the room or
+    // the film's texture, never the cards; and never the same opening three Reels in a row
+    const d = this.store.d;
+    const recent = (d.reelOpens || []).slice(-2);
+    let open = before ? 'before' : plan?.reel_open && /^tex/i.test(plan.reel_open) ? 'texture' : 'room';
+    if (!before && recent.length === 2 && recent.every((o) => o === open)) open = open === 'room' ? 'texture' : 'room';
+    if (open === 'texture' && !details.length) open = 'room';
+    // the pairing cards: a quick insert after the opening, and not in two Reels in a row
+    const pairWanted = codes.length >= 2 && !before && (plan?.reel_open ? /^pair/i.test(plan.reel_open) : true);
+    const usePair = pairWanted && !(d.reelPairs || []).slice(-1)[0];
+    const cards = usePair ? await pairCards({ codes: named, font: brand.font }).catch(() => []) : [];
+    const roomMove = (zoom) => (orbit ? { move: 'pan', toRight: true } : { move: 'push', zoom, cx: focus.x, cy: focus.y });
+    const seq = [];
+    const rest = [...details];
+    if (open === 'before') { seq.push({ image: before, sec: onBeat(1.8), move: 'push', zoom: 0.06 }); seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18), cut: 'wipeleft' }); }
+    else if (open === 'texture') { const first = rest.shift(); seq.push({ image: first.image, sec: onBeat(1.8), move: 'push', zoom: 0.25, label: await label(first.code) }); } // shown once: not again later
+    else seq.push({ image: room, sec: onBeat(1.8), ...roomMove(0.2) });
+    if (cards.length) seq.push({ image: cards[cards.length - 1], sec: onBeat(1.1, 1), move: 'push', zoom: 0.03, cy: 0.45 });
+    if (open === 'texture') seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18) });
+    if (reveal) seq.push({ image: reveal, sec: onBeat(2.6), ...(orbit ? { move: 'pan', toRight: false } : { move: 'push', zoom: 0.08, cx: focus.x, cy: focus.y }), cut: 'dissolve' });
+    views.forEach((v, k) => seq.push({ image: v, sec: onBeat(2.2), move: 'pan', toRight: k % 2 === 1 }));
+    for (const [k, x] of rest.entries()) seq.push({ image: x.image, sec: onBeat(x.wood ? 3 : 2.2), ...(orbit ? { move: 'pan', toRight: k % 2 === 0 } : { move: 'push', zoom: x.wood ? 0.18 : 0.1 }), label: await label(x.code) });
+    // the length: 20 s at most (the owner's review, 17/11: 41 s with the same doors twice), or what the owner asked (8 to 30 s)
+    const cardSec = 2.5;
+    const want = Number(opts?.seconds);
+    const cap = Number.isFinite(want) && want > 0 ? Math.min(30, Math.max(8, want)) : REEL_MAX_SECONDS;
+    const length = () => seq.reduce((a, x) => a + x.sec, 0) - fade * (seq.length - 1) + cardSec - fade;
+    while (length() > cap && seq.length > 3) { // the extra camera places go first, then the last close-ups
+      const k = seq.map((x) => views.includes(x.image)).lastIndexOf(true);
+      seq.splice(k >= 0 ? k : seq.length - 1, 1);
+    }
+    if (length() > cap) for (const x of seq.slice(1)) x.sec = onBeat(x.sec * 0.7, 2);
+    // a longer Reel the owner asked for: one beat more at a time to the shortest shot (the opening stays quick; his wish allows a shot up to about 6 s)
+    for (let guard = 0; Number.isFinite(want) && want > 0 && length() < cap - beat && guard < 60; guard++) {
+      const grow = seq.slice(1).filter((x) => x.sec + beat <= 6.3).sort((a, b) => a.sec - b.sec)[0];
+      if (!grow) break;
+      grow.sec += beat;
+    }
+    d.reelOpens = [...(d.reelOpens || []), open].slice(-6);
+    d.reelPairs = [...(d.reelPairs || []), cards.length > 0].slice(-6);
+    this.store.save();
+    return this.reel({ room, sequence: seq, fade, open, intro: cards, hook: open === 'texture' ? seq[0].image : null, before, reveal, views, motion, details: rest, seconds: { card: cardSec }, focus, overlay, card, music: await this.reelMusic(tune) });
   }
 
   /** The same room from two other camera places (left and right around it), for a Reel that walks around the design. */
@@ -1258,10 +1336,13 @@ export class SocialDesk {
       for (let i = 0; i < 2; i++) {
         try {
           const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
-            prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait.` });
+            prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait. ${NO_TEXT}` });
           const look = await this.changeSeen(room, v.image, `the same room from a clearly different camera position (${shot})`);
-          if (look.done || i === 1) { out.push(await fitForInstagram(v.image)); break; }
-          miss = look.missing || 'the framing is almost the same';
+          const clean = await this.cleanCheck(v.image);
+          // only a view that is really another camera place, and clean (the owner's review, 17/11: a view that came back as the same framing
+          // was used anyway on the second try, so the Reel showed the same doors twice)
+          if (look.done && clean.ok) { out.push(await fitForInstagram(v.image)); break; }
+          miss = [look.done ? '' : look.missing || 'the framing is almost the same', clean.ok ? '' : clean.problem].filter(Boolean).join('; ');
         } catch (err) { this.log(`social: a view of the room failed: ${err.message}`); break; }
       }
     }
