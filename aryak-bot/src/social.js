@@ -1349,7 +1349,7 @@ export class SocialDesk {
         try {
           const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
             prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait. ${NO_TEXT}` });
-          const look = await this.changeSeen(room, v.image, 'the same room seen from a clearly different camera position: another side, height or distance, so the framing is plainly not the same (it need not match any particular lens or corner)');
+          const look = await this.changeSeen(room, v.image, 'the same room seen from a clearly different camera position: another side, height or distance, so the framing is plainly not the same (it need not match any particular lens or corner); and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects (live 17/11, SP34: a view with a black worktop instead of the white marble was used), any of them changed is not done');
           const clean = await this.cleanCheck(v.image);
           // only a view that is really another camera place, and clean (the owner's review, 17/11: a view that came back as the same framing
           // was used anyway on the second try, so the Reel showed the same doors twice)
