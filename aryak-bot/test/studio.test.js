@@ -69,7 +69,7 @@ test('a design: one close-up per film (up to three, wood first, closer along the
   const seq = reelArgs.sequence;
   assert.equal(reelArgs.open, 'room');
   assert.equal(seq[0].image, made[0].image ? seq[0].image : seq[0].image);
-  assert.ok(seq[0].sec < 2.2, 'the opening is short');
+  assert.ok(seq[0].sec < (reelArgs.views.length ? 2.2 : 3.2), 'the opening is short (longer when no other camera place shows the room: live 17/11, the room was on screen 2 s)');
   assert.equal(reelArgs.intro.length, 2, 'two films: their pairing cards');
   assert.equal(seq[1].image, reelArgs.intro[1], 'the cards come right after the opening, never first');
   const wood = seq.filter((x) => x.label);
@@ -723,4 +723,40 @@ test('a Reel made from a chosen sequence: the labels shown on their shots, the s
     { image: await pic('#402010', 1440, 1800), sec: 1.1, move: 'push', zoom: 0.18, label: await shotLabel({ code: 'HZ812', name: 'Dark walnut' }) },
   ] });
   assert.ok(mp4.length > 1000 && mp4.subarray(4, 8).toString() === 'ftyp', 'an MP4');
+});
+
+test('a Reel made again checks its stored pictures first (live 17/11: SP33\'s open picture, drawn before the rules, carried spec cards; the black close-up was a dark blur)', async () => {
+  let reelArgs = null;
+  const { desk } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const id = /Post #(SP\d+)/.exec((await desk.draftDesign({})).text)[1];
+  const p = desk.store.d.posts[id];
+  const reveal = fs.readFileSync(p.raw.room); p.raw.reveal = p.raw.room + '.open.jpg'; fs.writeFileSync(p.raw.reveal, reveal);
+  const shots = p.raw.shots.length;
+  const asked = [];
+  // the open picture carries a card, the first close-up hides its film, the room is clean
+  desk.cleanCheck = async (image, refs = [], o = {}) => { asked.push(o.close ? 'close' : 'wide'); return asked.length === 2 ? { ok: false, problem: 'there is text' } : asked.length === 3 ? { ok: o.close !== true, problem: 'the film can hardly be seen' } : { ok: true, problem: '' }; };
+  const r = await desk.remakeReel({ id });
+  assert.equal(reelArgs.reveal, null, 'the open picture with a card is left out');
+  assert.equal(reelArgs.details.length + (reelArgs.open === 'texture' ? 1 : 0), shots - 1, 'the hidden close-up is left out');
+  assert.match(r.text, /کنار گذاشته شد/);
+  assert.match(r.text, /عکس کشوی باز/);
+  // a room with a fault: no Reel, the owner is told to redraw it
+  desk.cleanCheck = async () => ({ ok: false, problem: 'a film does not look like its sample' });
+  reelArgs = null;
+  const bad = await desk.remakeReel({ id });
+  assert.equal(reelArgs, null);
+  assert.match(bad.text, /خود عکس اتاق ایراد دارد/);
+  assert.match(bad.text, /تغییر پست/);
+});
+
+test('the pairing card is on the end card\'s dark ground (live 17/11: a cream card flashed white between dark shots); two films: «the code you like»', async () => {
+  const { pairCards } = await import('../src/reel.js');
+  const sharp = (await import('sharp')).default;
+  const sw = await sharp({ create: { width: 200, height: 200, channels: 3, background: '#808080' } }).jpeg().toBuffer();
+  const [, both] = await pairCards({ codes: [{ code: 'HZ1', swatch: sw }, { code: 'HZ2', swatch: sw }] });
+  const { data } = await sharp(both).extract({ left: 10, top: 10, width: 4, height: 4 }).raw().toBuffer({ resolveWithObject: true });
+  assert.ok(data[0] < 40 && data[1] < 40 && data[2] < 40, 'dark ground');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /cta: codes\.length > 1 \? 'Send the code you like on WhatsApp' : 'Send this code on WhatsApp'/);
+  assert.match(src, /this\.log\(`social: a view of the room was not used/);
 });

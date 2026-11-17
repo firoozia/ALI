@@ -90,7 +90,7 @@ export async function pairCards({ codes = [], font = '' }) {
   const text = async (t, px, colour) => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${px}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
   const round = Buffer.from(`<svg width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${Math.round(size * 0.12)}" ry="${Math.round(size * 0.12)}"/></svg>`);
   const shadow = await sharp({ create: { width: size + 80, height: size + 80, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
-    .composite([{ input: Buffer.from(`<svg width="${size + 80}" height="${size + 80}"><rect x="40" y="52" width="${size}" height="${size}" rx="${Math.round(size * 0.12)}" fill="rgba(60,40,20,0.28)"/></svg>`) }]).blur(18).png().toBuffer();
+    .composite([{ input: Buffer.from(`<svg width="${size + 80}" height="${size + 80}"><rect x="40" y="52" width="${size}" height="${size}" rx="${Math.round(size * 0.12)}" fill="rgba(0,0,0,0.55)"/></svg>`) }]).blur(18).png().toBuffer();
   const frame = async (count) => {
     const comps = [];
     const total = count * size + (count - 1) * gap; // the tiles shown are centred: the first alone, then all
@@ -99,17 +99,17 @@ export async function pairCards({ codes = [], font = '' }) {
       {
         const tile = await sharp(tiles[k].swatch).resize(size, size, { fit: 'cover' }).composite([{ input: round, blend: 'dest-in' }]).png().toBuffer();
         comps.push({ input: shadow, top: top - 40, left: x - 40 }, { input: tile, top, left: x });
-        const t = await text(tiles[k].code, 54, '#2b2622'); const tm = await sharp(t).metadata();
+        const t = await text(tiles[k].code, 54, '#ffffff'); const tm = await sharp(t).metadata();
         comps.push({ input: t, top: top + size + 44, left: x + Math.round((size - tm.width) / 2) });
-        if (tiles[k].name) { const nt = await text(tiles[k].name, tiles.length === 3 ? 30 : 38, '#6d6258'); const nm = await sharp(nt).metadata(); comps.push({ input: nt, top: top + size + 116, left: Math.max(0, x + Math.round((size - nm.width) / 2)) }); }
+        if (tiles[k].name) { const nt = await text(tiles[k].name, tiles.length === 3 ? 30 : 38, '#cfc4b4'); const nm = await sharp(nt).metadata(); comps.push({ input: nt, top: top + size + 116, left: Math.max(0, x + Math.round((size - nm.width) / 2)) }); }
       }
       if (k < count - 1) {
-        const plus = await text('+', 96, '#8a7a66'); const pm = await sharp(plus).metadata();
+        const plus = await text('+', 96, '#d6b25e'); const pm = await sharp(plus).metadata();
         comps.push({ input: plus, top: top + Math.round((size - pm.height) / 2), left: x + size + Math.round((gap - pm.width) / 2) });
       }
       x += size + gap;
     }
-    return sharp({ create: { width: W, height: H, channels: 3, background: '#F4EFE8' } }).composite(comps).jpeg({ quality: 92 }).toBuffer();
+    return sharp({ create: { width: W, height: H, channels: 3, background: '#14110E' } }).composite(comps).jpeg({ quality: 92 }).toBuffer();
   };
   return [await frame(1), await frame(tiles.length)];
 }

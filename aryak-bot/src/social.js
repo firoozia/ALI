@@ -16,7 +16,7 @@ const DAY = 24 * 3600 * 1000;
 // pictures (cut at the frame's edge), and close-ups showed deep carved grain and bright gold veins where the real film is a smooth print.
 export const NO_TEXT = 'One single photograph: never a collage, a grid, a split screen or several panels. No text, letters, numbers, labels, cards, captions, logos or watermarks anywhere in the picture.';
 export const TRUE_FILM = "Each film's surface looks exactly like its reference sample: the same colour, pattern, vein colour and surface relief (a printed decorative film is smooth or as finely textured as its sample, never deep carved, brushed or embossed wood).";
-export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)"}';
+export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)","hidden":true or false (the surface of the film can hardly be seen: too dark, too blurred or too small to read its colour and pattern)}';
 export const NAME_RULES = 'Give a short English trade name of two or three words for this decorative film, from its description, the way a showroom labels a sample: «Honey oak», «Charcoal black», «Grey gold marble», «Olive khaki». Two films that differ only by pattern must get different names («Black-green ash», «Black-green solid»). Output only the name.';
 // Reels (the owner's review, 17/11): quick cuts, at most 20 s, the strongest picture first, every shot once
 export const REEL_FADE = 0.35;
@@ -746,7 +746,7 @@ export class SocialDesk {
     for (let k = 0; k < 2; k++) {
       const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
         images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
-      const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }]);
+      const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true });
       if (look.ok) return fitForInstagram(d.image);
       miss = look.problem;
     }
@@ -968,11 +968,23 @@ export class SocialDesk {
       } catch { /* the plan's own wishes */ }
     }
     const codes = plan.parts.filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
-    const video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts, plan, reveal: read(p.raw?.reveal) });
+    const roomLook = await this.cleanCheck(room, codes);
+    if (!roomLook.ok) {
+      this.log(`social: the room of ${id} is not fit for a Reel: ${roomLook.problem}`);
+      return { text: `ریلز پست ${id.slice(2)} ساخته نشد: خود عکس اتاق ایراد دارد (${roomLook.problem}). با «تغییر پست ${id.slice(2)} …» اتاق دوباره کشیده و بازبینی می‌شود، بعد ریلز از آن ساخته می‌شود.` };
+    }
+    let reveal = read(p.raw?.reveal);
+    const left = [];
+    if (reveal && !(await this.cleanCheck(reveal, codes)).ok) { reveal = null; left.push('عکس کشوی باز'); }
+    const kept = [];
+    for (const s of shots) { const sw = codes.find((c) => c.code === s.part.code); if ((await this.cleanCheck(s.raw, sw ? [sw] : [], { close: true })).ok) kept.push(s); else left.push(`عکس نزدیک ${s.part.code}`); }
+    shots = kept;
+    if (left.length) this.log(`social: ${id}: left out of the Reel: ${left.join(', ')}`);
+    const video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts, plan, reveal });
     if (this.mediaDir) { const f = path.join(this.mediaDir, `${p.id}-reel-${this.now().toString(36)}.mp4`); fs.writeFileSync(f, video); p.reel = f; }
     p.design.plan = { ...plan, reel: opts };
     this.store.save();
-    return { text: `ریلز تازهٔ پست ${id.slice(2)} آماده است${opts.motion === 'orbit' ? ' (دوربین دور اتاق می‌چرخد)' : ''}. با «بله پست ${id.slice(2)}» همراه پست منتشر می‌شود.`, video };
+    return { text: `ریلز تازهٔ پست ${id.slice(2)} آماده است${opts.motion === 'orbit' ? ' (دوربین دور اتاق می‌چرخد)' : ''}.${left.length ? ` کنار گذاشته شد چون نوشته داشت، شبیه فیلم نبود یا فیلم در آن دیده نمی‌شد: ${left.join('، ')}.` : ''} با «بله پست ${id.slice(2)}» همراه پست منتشر می‌شود.`, video };
   }
 
   /**
@@ -1055,12 +1067,12 @@ export class SocialDesk {
 
   /** One look at the old and the new picture: is the owner's change visible? { done, missing }; done when the look cannot be read. */
   /** An AI picture checked before use: no text or cards in it, one photograph (no grid), each film like its sample. { ok, problem }; ok when the check cannot be read. */
-  async cleanCheck(image, refs = []) {
+  async cleanCheck(image, refs = [], { close = false } = {}) {
     try {
       const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
       const raw = String(await this.write({ kind: 'clean-check', system: CLEAN_RULES, text: `The picture, then the samples: ${refs.map((r) => `film ${r.code}`).join(', ') || 'none'}.`, images: [await small(image), ...(await Promise.all(refs.map((r) => small(r.swatch))))], mime: 'image/jpeg', effort: 'low', maxTokens: 400 }) || '');
       const v = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-      const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`].filter(Boolean);
+      const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`, close && v.hidden === true && 'the film can hardly be seen (too dark or too blurred)'].filter(Boolean);
       return { ok: !problems.length, problem: problems.join('; ') };
     } catch { return { ok: true, problem: '' }; }
   }
@@ -1265,7 +1277,7 @@ export class SocialDesk {
     // the marks inside Instagram's safe area: the logo only (the band of codes at the bottom was under Instagram's own words); each
     // close-up says its own film; the end card names the films and says what to do (the owner's review, 17/11)
     const overlay = await reelOverlay({ logo: brand.logo });
-    const card = await endCard({ codes: named, logo: brand.logo, font: brand.font, cta: 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
+    const card = await endCard({ codes: named, logo: brand.logo, font: brand.font, cta: codes.length > 1 ? 'Send the code you like on WhatsApp' : 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
     const label = async (code) => { const c = named.find((x) => x.code === code); return c ? shotLabel({ code: c.code, name: c.name, font: brand.font }).catch(() => null) : null; };
     const details = shots ? shots.map((sh) => ({ image: sh.raw, code: sh.part?.code || sh.code || '', wood: !!sh.wood })) : detail ? [{ image: detail, code: main?.code || '', wood: false }] : [];
     // the owner's wishes for the Reel (15/11): its length, new music, the camera turning around the room instead of a zoom
@@ -1293,7 +1305,7 @@ export class SocialDesk {
     const rest = [...details];
     if (open === 'before') { seq.push({ image: before, sec: onBeat(1.8), move: 'push', zoom: 0.06 }); seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18), cut: 'wipeleft' }); }
     else if (open === 'texture') { const first = rest.shift(); seq.push({ image: first.image, sec: onBeat(1.8), move: 'push', zoom: 0.25, label: await label(first.code) }); } // shown once: not again later
-    else seq.push({ image: room, sec: onBeat(1.8), ...roomMove(0.2) });
+    else seq.push({ image: room, sec: onBeat(views.length ? 1.8 : 2.6), ...roomMove(0.2) });
     if (cards.length) seq.push({ image: cards[cards.length - 1], sec: onBeat(1.1, 1), move: 'push', zoom: 0.03, cy: 0.45 });
     if (open === 'texture') seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18) });
     if (reveal) seq.push({ image: reveal, sec: onBeat(2.6), ...(orbit ? { move: 'pan', toRight: false } : { move: 'push', zoom: 0.08, cx: focus.x, cy: focus.y }), cut: 'dissolve' });
@@ -1343,6 +1355,7 @@ export class SocialDesk {
           // was used anyway on the second try, so the Reel showed the same doors twice)
           if (look.done && clean.ok) { out.push(await fitForInstagram(v.image)); break; }
           miss = [look.done ? '' : look.missing || 'the framing is almost the same', clean.ok ? '' : clean.problem].filter(Boolean).join('; ');
+          this.log(`social: a view of the room was not used (try ${i + 1}): ${miss}`);
         } catch (err) { this.log(`social: a view of the room failed: ${err.message}`); break; }
       }
     }
