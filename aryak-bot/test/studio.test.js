@@ -764,7 +764,7 @@ test('the pairing card is on the end card\'s dark ground (live 17/11: a cream ca
 
 test('SP34 review (17/11): a view is judged as another camera place (not the named lens), a solid close-up shows the lit surface itself, the open picture pushes into the open part', () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /changeSeen\(room, v\.image, 'the same room seen from a clearly different camera position: another side, height or distance[^']*it need not match any particular lens or corner\); and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects/);
+  assert.match(src, /changeSeen\(room, v\.image, 'the same room seen from a clearly different camera position: another side, height or distance[^']*it need not match any particular lens or corner\)\. A slightly closer, slightly wider or slightly shifted version of the same view is NOT done[^']*and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects/);
   assert.match(src, /the flat film surface itself fills at least three quarters of the frame, evenly and clearly lit \(never a dark gradient or a shadow\)/);
   assert.match(src, /in deep shadow, or covering less than half of the picture/);
   assert.match(src, /if \(reveal\) seq\.push\(\{ image: reveal, sec: onBeat\(2\.6\), move: 'push', zoom: 0\.3, cx: focus\.x, cy: focus\.y, cut: 'dissolve' \}\)/);
