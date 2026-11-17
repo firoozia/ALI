@@ -3990,7 +3990,7 @@ async function ensureOwnGroup(key, name, welcome) {
   if (socialStore.d[key]?.id !== id) { socialStore.d[key] = { id, subject: name, at: Date.now() }; socialStore.save(); }
   if (!socialStore.d[key].welcomed) { // once, when it is really delivered (live 17/11: the first one was blocked by the guard)
     const content = { text: welcome.join('\n') };
-    keepLang.add(content); // said in Persian as written (live 17/11: the studio's first message arrived in English)
+    // put in the bot's reply language like every message of the team (REPLY_LANGUAGE): the welcome is read in English when that is set
     const r = await sock.sendMessage(id, content);
     if (r?.key?.id) { sent.add(r.key.id); socialStore.d[key].welcomed = Date.now(); socialStore.save(); }
   }
