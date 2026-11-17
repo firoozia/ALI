@@ -13,17 +13,19 @@ export function internalWords(config) {
   return [
     ...(config.staffGroupNames || []), ...(config.commandGroupNames || []), ...(config.testGroupNames || []), ...(config.goodsGroupNames || []),
     config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...(config.expensesGroupNames || []),
-    ...(config.observeExcludeNames || []),
+    ...(config.observeExcludeNames || []), ...studioNames(config),
   ].map(low).filter(Boolean);
 }
 
 const holds = (subject, words) => words.some((w) => low(subject).includes(w));
+/** The studio's own group (the owner, 17/11): an internal group the assistant writes to (designs, Reels, posts). */
+const studioNames = (config) => (config.social?.enabled !== false && config.social?.studioGroup && config.social?.studioGroupName ? [config.social.studioGroupName] : []);
 
 /** { ok, why }: may the assistant write into the group with this name? */
 export function groupAllowed(subject, config) {
   if (holds(subject, (config.testGroupNames || []).map(low).filter(Boolean))) return { ok: true, why: 'test group' };
   if (holds(subject, [...(config.staffGroupNames || []), ...(config.commandGroupNames || []), ...(config.goodsGroupNames || []),
-    config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...(config.expensesGroupNames || [])].map(low).filter(Boolean))) return { ok: true, why: 'internal group' };
+    config.invoiceGroupName, config.infoGroupName, config.cutGroupName, config.deliveryGroupName, config.confirmGroupName, ...(config.expensesGroupNames || []), ...studioNames(config)].map(low).filter(Boolean))) return { ok: true, why: 'internal group' };
   if (holds(subject, (config.morningGroupNames || []).map(low).filter(Boolean))) return { ok: true, why: 'good-morning list' };
   if (config.allowCustomerGroupSends) return { ok: true, why: 'customer sends switched on' };
   return { ok: false, why: 'customer or unknown group' };

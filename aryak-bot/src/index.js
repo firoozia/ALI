@@ -3979,19 +3979,19 @@ async function ensureStudioGroup() {
   const name = config.social.studioGroupName;
   const all = Object.values(await sock.groupFetchAllParticipating());
   const had = socialStore.d.studioGroup?.id;
-  if (had && all.some((g) => g.id === had)) return had;
-  const found = all.find((g) => String(g.subject || '').trim() === name);
+  if (had && all.some((g) => g.id === had) && socialStore.d.studioGroup.welcomed) return had;
+  const found = (had && all.find((g) => g.id === had)) || all.find((g) => String(g.subject || '').trim() === name);
   let id = found?.id || '';
   if (!id) { const made = await sock.groupCreate(name, []); id = made?.id || made?.gid || ''; logger.info(`studio group made: "${name}" (${id})`); }
   if (!id) throw new Error('the group could not be made');
-  socialStore.d.studioGroup = { id, subject: name, at: Date.now() }; socialStore.save();
-  if (!found) {
+  if (socialStore.d.studioGroup?.id !== id) { socialStore.d.studioGroup = { id, subject: name, at: Date.now() }; socialStore.save(); }
+  if (!socialStore.d.studioGroup.welcomed) { // once, when it is really delivered (live 17/11: the first one was blocked by the guard)
     const r = await sock.sendMessage(id, { text: [
       '🤖 این گروه استودیوی آتوسا است. از این پس طرح‌ها، عکس‌های نزدیک، ریلزها، گفت‌وگوی آتوسا و داریوش، و خبر انتشار پست‌ها اینجا می‌آید.',
       'فرمان‌ها همان قبلی‌اند و اینجا نوشته می‌شوند: «بله پست ۳۳»، «نه پست ۳۳ …»، «تغییر پست ۳۳ …»، «ریلز پست ۳۳ دوباره بساز»، «پیشنهاد طرح»، عکس با «الهام»، پیوند برای بررسی.',
       'پیام‌های مالی، صورت‌حساب و فاکتور مثل قبل در گفت‌وگوی شخصی شما می‌مانند.',
     ].join('\n') });
-    if (r?.key?.id) sent.add(r.key.id);
+    if (r?.key?.id) { sent.add(r.key.id); socialStore.d.studioGroup.welcomed = Date.now(); socialStore.save(); }
   }
   return id;
 }

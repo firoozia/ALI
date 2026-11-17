@@ -34,3 +34,11 @@ test('the group\'s name and switch come from the environment (on by default, «�
   assert.equal(c.social.studioGroupName, 'استودیو آتوسا');
   assert.equal(loadConfig({ STUDIO_GROUP: 'off' }).config.social.studioGroup, false);
 });
+
+test('the guard lets the assistant write into the studio group (live 17/11: its first message and its answers were blocked as an unknown group), and it is never watched as a customer group', async () => {
+  const { groupAllowed, observedGroup } = await import('../src/guard.js');
+  const { config } = loadConfig({ OBSERVE_GROUP_NAMES: 'آتوسا' });
+  assert.deepEqual(groupAllowed('استودیو آتوسا', config), { ok: true, why: 'internal group' });
+  assert.equal(observedGroup('استودیو آتوسا', config), false);
+  assert.equal(groupAllowed('استودیو آتوسا', loadConfig({ STUDIO_GROUP: 'off' }).config).ok, false);
+});
