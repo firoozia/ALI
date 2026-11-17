@@ -16,7 +16,7 @@ const DAY = 24 * 3600 * 1000;
 // pictures (cut at the frame's edge), and close-ups showed deep carved grain and bright gold veins where the real film is a smooth print.
 export const NO_TEXT = 'One single photograph: never a collage, a grid, a split screen or several panels. No text, letters, numbers, labels, cards, captions, logos or watermarks anywhere in the picture.';
 export const TRUE_FILM = "Each film's surface looks exactly like its reference sample: the same colour, pattern, vein colour and surface relief (a printed decorative film is smooth or as finely textured as its sample, never deep carved, brushed or embossed wood).";
-export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)","hidden":true or false (the surface of the film can hardly be seen: too dark, too blurred or too small to read its colour and pattern)}';
+export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)","hidden":true or false (the surface of the film can hardly be seen: too dark, too blurred, in deep shadow, or covering less than half of the picture, so its colour and pattern cannot be read)}';
 export const NAME_RULES = 'Give a short English trade name of two or three words for this decorative film, from its description, the way a showroom labels a sample: «Honey oak», «Charcoal black», «Grey gold marble», «Olive khaki». Two films that differ only by pattern must get different names («Black-green ash», «Black-green solid»). Output only the name.';
 // Reels (the owner's review, 17/11): quick cuts, at most 20 s, the strongest picture first, every shot once
 export const REEL_FADE = 0.35;
@@ -741,7 +741,7 @@ export class SocialDesk {
     const wood = this.isWood(part.code);
     const how = wood
       ? `the camera is about 30 cm from the ${part.where} in film ${part.code}, looking along the wood grain, so the grain, its direction and the pores fill three quarters of the frame, crisp and exactly like the reference sample; low warm light grazing across the surface so every line of the grain shows`
-      : `the camera is about 50 cm from the ${part.where} in film ${part.code}, at a slight angle, so the film fills two thirds of the frame and its colour, texture and finish are crisp and exactly like the reference sample; soft warm light across the surface`;
+      : `the camera is about 40 cm from the ${part.where} in film ${part.code}, at a slight angle, so the flat film surface itself fills at least three quarters of the frame, evenly and clearly lit (never a dark gradient or a shadow), its exact colour and fine matte texture crisp and exactly like the reference sample; a soft light raking across the surface`;
     let miss = '';
     for (let k = 0; k < 2; k++) {
       const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room: ${how}; at one side a slim brass profile, a handle groove or the edge of the worktop; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
@@ -1308,7 +1308,7 @@ export class SocialDesk {
     else seq.push({ image: room, sec: onBeat(views.length ? 1.8 : 2.6), ...roomMove(0.2) });
     if (cards.length) seq.push({ image: cards[cards.length - 1], sec: onBeat(1.1, 1), move: 'push', zoom: 0.03, cy: 0.45 });
     if (open === 'texture') seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18) });
-    if (reveal) seq.push({ image: reveal, sec: onBeat(2.6), ...(orbit ? { move: 'pan', toRight: false } : { move: 'push', zoom: 0.08, cx: focus.x, cy: focus.y }), cut: 'dissolve' });
+    if (reveal) seq.push({ image: reveal, sec: onBeat(2.6), move: 'push', zoom: 0.3, cx: focus.x, cy: focus.y, cut: 'dissolve' }); // into the open part (live 17/11: room then the same framing open read as the same shot twice)
     views.forEach((v, k) => seq.push({ image: v, sec: onBeat(2.2), move: 'pan', toRight: k % 2 === 1 }));
     for (const [k, x] of rest.entries()) seq.push({ image: x.image, sec: onBeat(x.wood ? 3 : 2.2), ...(orbit ? { move: 'pan', toRight: k % 2 === 0 } : { move: 'push', zoom: x.wood ? 0.18 : 0.1 }), label: await label(x.code) });
     // the length: 20 s at most (the owner's review, 17/11: 41 s with the same doors twice), or what the owner asked (8 to 30 s)
@@ -1349,7 +1349,7 @@ export class SocialDesk {
         try {
           const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
             prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait. ${NO_TEXT}` });
-          const look = await this.changeSeen(room, v.image, `the same room from a clearly different camera position (${shot})`);
+          const look = await this.changeSeen(room, v.image, 'the same room seen from a clearly different camera position: another side, height or distance, so the framing is plainly not the same (it need not match any particular lens or corner)');
           const clean = await this.cleanCheck(v.image);
           // only a view that is really another camera place, and clean (the owner's review, 17/11: a view that came back as the same framing
           // was used anyway on the second try, so the Reel showed the same doors twice)
