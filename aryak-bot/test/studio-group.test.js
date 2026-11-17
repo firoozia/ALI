@@ -58,9 +58,10 @@ test('in the stock group only the account\'s own messages are taken, and «yes #
   assert.match(src, /if \(\(!group \|\| place\.stock\) && text && !audio && !image && \(ownerPerson \|\| place\.stock \|\|/);
 });
 
-test('the first message of an own group keeps its Persian (live 17/11: the studio\'s arrived in English)', () => {
+test('an own group is found by its id or its name before one is made, and its first message is marked sent only when delivered', () => {
   const own = src.slice(src.indexOf('async function ensureOwnGroup('), src.indexOf('const ensureStudioGroup'));
-  assert.match(own, /keepLang\.add\(content\)/);
+  assert.ok(own.indexOf('all.find(') < own.indexOf('sock.groupCreate('));
+  assert.match(own, /if \(r\?\.key\?\.id\) \{ sent\.add\(r\.key\.id\); socialStore\.d\[key\]\.welcomed = Date\.now\(\)/);
 });
 
 test('the stock group: its name and switch come from the environment, and the guard lets the assistant write there', async () => {
