@@ -862,3 +862,23 @@ test('«ریلز پست ۳۶ بساز», «آتوسا ریلز این رو بس�
   assert.equal(parseSocialCommand('آپلود کن'), null, 'a post is never published without its number');
   assert.equal(parseSocialCommand('آپلود کن پیام ۳'), null, 'only a post is uploaded');
 });
+
+test('the main picture of a design is the whole room with its full decor; a close crop is drawn again (the owner, 18/11, SP37)', async () => {
+  const { PILLARS, DARIUSH, DESIGNER_RULES, WIDE, CLEAN_RULES } = await import('../src/social.js');
+  assert.doesNotMatch(PILLARS.proof.brief, /a close vignette \(one cabinet front/, 'proof is no longer a close vignette');
+  assert.match(PILLARS.proof.brief, /A whole room/);
+  assert.match(DARIUSH, /The whole space: the main picture always shows a whole room/);
+  assert.match(DESIGNER_RULES, /24 to 28 mm lens/);
+  assert.match(CLEAN_RULES, /"cropped"/);
+  const { desk, made } = await studio();
+  // the first room comes back cropped: drawn again from further back
+  let n = 0;
+  desk.write = async (r) => r.kind === 'clean-check' ? (n++ === 0 ? '{"text":false,"collage":false,"mismatch":"","hidden":false,"cropped":true}' : '{"text":false,"collage":false,"mismatch":"","hidden":false,"cropped":false}') : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify({ title_fa: 'آشپزخانه', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors' }], scene: 'A kitchen.' }) : r.kind === 'focus' ? '{"x":0.5,"y":0.5}' : 'Design idea with Code HZ812.';
+  await desk.draftDesign({});
+  assert.ok(made[0].prompt.includes(WIDE), 'the first drawing asks for the whole room');
+  assert.match(made[1].prompt, /The last try was wrong: only a part of the room is seen/);
+  assert.ok(made[1].prompt.includes(WIDE));
+  // a close-up is never refused for being a part of the room
+  const c = await desk.cleanCheck(Buffer.from('x'), [], { close: true });
+  assert.equal(typeof c.ok, 'boolean');
+});
