@@ -1586,6 +1586,13 @@ test('owner reports: yesterday and one given day (typos and Persian too), the sa
   assert.ok(src.includes('else if (!group && ownerPerson) await reply(')); // never silent to the owner in his own chat
 });
 
+test('two near customers in the money received report: the exact or glued name wins over a close spelling (live 18/11, al afeefi)', async () => {
+  const { payerCheck } = await import('../src/simtext.js');
+  const names = ['AL AFEEF KITCHEN', 'ALAFEEFI KITCHEN', 'AL AHLIA KITCHEN'];
+  for (const t of ['al afeefi', 'AL AFEEFI', 'afeefi', 'al afeefi kitchen']) assert.equal(payerCheck(t, names).resolved, 'ALAFEEFI KITCHEN', t);
+  for (const t of ['al afeef', 'afeef', 'AL AFEEF KITCHEN']) assert.equal(payerCheck(t, names).resolved, 'AL AFEEF KITCHEN', t);
+});
+
 test('the payer check runs on a customer list: an unknown company is flagged, a partial name resolves to the one customer it fits, a known name stays; the simulation says whether the QuickBooks check was done', async () => {
   const { payerCheck } = await import('../src/simtext.js');
   const names = ['MASTER WOOD', 'TIGER INDUSTRIES COMPANY LLC', 'AL AHLIA KITCHEN', 'BLUE SKY TRADING LLC'];

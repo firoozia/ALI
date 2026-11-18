@@ -74,6 +74,14 @@ export function payerCheck(typed, customerNames) {
   const decisive = String(typed).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d+$/.test(w));
   if (!decisive.length) return { resolved: typed, known: false, how: 'no such customer' }; // only generic words («wood»): never guessed
   const fits = names.filter((q) => typedFitsName(typed, q)); // the word-by-word rule: «Al masar» never fits «MASTER WOOD»
+  // two near names (live 18/11: «al afeefi» was taken as AL AFEEF KITCHEN, a close spelling, while ALAFEEFI KITCHEN is the customer): the name
+  // that holds the typed words exactly, or the typed words glued as its start, comes before any close spelling
+  if (fits.length > 1) {
+    const t = tokens(typed);
+    const exactWords = fits.filter((q) => { const n = tokens(q); let at = 0; for (const w of t) { const k = n.findIndex((c, i) => i >= at && c === w); if (k < 0) return false; at = k + 1; } return t.length > 0; });
+    if (exactWords.length === 1) return { resolved: exactWords[0], known: true, how: 'typed words exactly' };
+    if (!exactWords.length) { const glued = fits.filter((q) => squeeze(q).includes(squeeze(typed))); if (glued.length === 1) return { resolved: glued[0], known: true, how: 'typed name glued' }; }
+  }
   const ordered = fits.filter((q) => orderedFit(typed, q));
   if (ordered.length === 1) return { resolved: ordered[0], known: true, how: 'typed words in order' };
   if (!ordered.length) { // not in the same order: all the typed words must still be there
