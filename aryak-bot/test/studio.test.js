@@ -27,7 +27,7 @@ function fakeGraph(routes) {
 }
 const client = (fetchImpl) => new MetaClient({ pageId: '222', pageToken: 'PG', systemToken: 'SYS', igUserId: '111', fetchImpl, wait: async () => {} });
 
-async function studio({ routes = {}, research = null, reel = null } = {}) {
+async function studio({ routes = {}, research = null, reel = null, reelAuto = true } = {}) {
   const cat = tmp('cat-');
   fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ812: { file: 'HZ812.jpg', catalogue: 'T', look: 'dark walnut' }, 1805: { file: '1805.jpg', catalogue: 'T', look: 'light oak' } }));
   fs.writeFileSync(path.join(cat, 'HZ812.jpg'), await pic('#3a2a1e'));
@@ -36,7 +36,7 @@ async function studio({ routes = {}, research = null, reel = null } = {}) {
   const made = [];
   const plan = { title_fa: 'آشپزخانه', why_fa: 'چرا', inspiration_fa: 'ایدهٔ شیار برنجی از ای‌دی', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors', where_fa: 'درهای قدی' }, { code: '1805', where: 'island' }], scene: 'A kitchen.' };
   const g = fakeGraph(routes);
-  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000' },
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000', reelAuto },
     imager: { enabled: true, make: async (r) => { made.push(r); return { image: await pic(made.length === 1 ? '#806040' : '#402010'), mime: 'image/jpeg' }; } },
     write: async (r) => { writes.push(r); return r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":"","hidden":false}' : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify(plan) : r.kind === 'focus' ? '{"x":0.7,"y":0.3}' : 'Design idea with Code HZ812.'; } });
   return { desk, writes, made, g };
@@ -821,4 +821,44 @@ test('SP35 review (17/11): a texture opening is a wood close-up only, the main f
   assert.match(src, /tries: i === 0 \? 3 : 2/);
   const reel = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
   assert.match(reel, /fade=t=in:st=\$\{a\.toFixed\(3\)\}:d=0\.3:alpha=1,fade=t=out/);
+});
+
+test('a design comes with its pictures only; its Reel is made when the owner asks (the owner, 18/11: a Reel costs a lot)', async () => {
+  let reels = 0;
+  const { desk } = await studio({ reelAuto: false, reel: async () => { reels += 1; return Buffer.from('MP4'); } });
+  const d = await desk.draftDesign({});
+  const id = /Post #(SP\d+)/.exec(d.text)[1];
+  const n = id.slice(2);
+  assert.equal(reels, 0, 'no Reel with the design');
+  assert.equal(d.video, null);
+  assert.ok(d.image && d.details.length >= 2, 'the room, the close-ups and the design board are sent');
+  assert.ok(d.text.includes(`«ریلز پست ${n} بساز»`), 'he is told how to ask for the Reel');
+  assert.ok(d.text.includes(`«آپلود کن پست ${n}»`), 'and how to post without it');
+  assert.equal(desk.store.d.posts[id].reel, undefined);
+  // a retouch of a post with no Reel makes no Reel
+  const r = await desk.retouch({ id, note: 'کیف را بردار' });
+  assert.equal(reels, 0);
+  assert.equal(r.video, null);
+  assert.match(r.text, /عکس تازه همین‌جاست/);
+  // he asks: the Reel is made from the stored pictures
+  const m = await desk.remakeReel({ id });
+  assert.equal(reels, 1);
+  assert.ok(m.video && desk.store.d.posts[id].reel);
+});
+
+test('«ریلز پست ۳۶ بساز», «آتوسا ریلز این رو بساز» (the post answered, else the newest design), «آپلود کن پست ۳۶» = «بله پست ۳۶»', () => {
+  assert.deepEqual(reelRequest('ریلز پست ۳۶ بساز'), { id: 'SP36', note: '' });
+  assert.deepEqual(reelRequest('آتوسا ریلز پست ۳۶ رو دوباره بساز'), { id: 'SP36', note: '' });
+  assert.deepEqual(reelRequest('ریلز ۳۶ دوباره بساز'), { id: 'SP36', note: '' });
+  assert.deepEqual(reelRequest('آتوسا ریلز این رو بساز', 'پیشنهاد طراحی … Post #SP36'), { id: 'SP36', note: '' });
+  assert.deepEqual(reelRequest('اتوسا، ریلز اینو بساز'), { id: '', note: '' }, 'no number, no answer: the newest design');
+  assert.deepEqual(reelRequest('ریلز بساز'), { id: '', note: '' });
+  assert.equal(reelRequest('ریلز خیلی کوتاه بود'), null, 'words about a Reel are not a command to make one');
+  assert.equal(reelRequest('آتوسا گزارش امروز'), null);
+  assert.deepEqual(parseSocialCommand('آپلود کن پست ۳۶'), { verb: 'yes', kind: 'SP', id: 'SP36' });
+  assert.deepEqual(parseSocialCommand('اتوسا اپلود کن پست 36'), { verb: 'yes', kind: 'SP', id: 'SP36' });
+  assert.deepEqual(parseSocialCommand('پست ۳۶ رو آپلود کن'), { verb: 'yes', kind: 'SP', id: 'SP36' });
+  assert.deepEqual(parseSocialCommand('آتوسا بله پست ۳۶'), { verb: 'yes', kind: 'SP', id: 'SP36' });
+  assert.equal(parseSocialCommand('آپلود کن'), null, 'a post is never published without its number');
+  assert.equal(parseSocialCommand('آپلود کن پیام ۳'), null, 'only a post is uploaded');
 });

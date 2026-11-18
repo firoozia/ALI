@@ -2538,7 +2538,7 @@ ${t.authorizeUrl()}`);
     const cc = !imageOf(content) ? conceptChoice(text) : null;
     if (cc && isOwner() && socialDesk.store.d.concepts?.items?.length) {
       trace(where, 'owner', `social: concept ${cc.n}${cc.note ? ' with an edit' : ''}`);
-      await socialSay(`Atossa is producing concept ${cc.n}${cc.note ? ' with your change' : ''}: close-ups, the Reel and the post… (a few minutes)`);
+      await socialSay(`Atossa is producing concept ${cc.n}${cc.note ? ' with your change' : ''}: close-ups${config.social.reelAuto ? ', the Reel' : ''} and the post… (a few minutes)`);
       await socialSayDesign(await socialDesk.chooseConcept(cc));
       return true;
     }
@@ -2569,15 +2569,19 @@ ${t.authorizeUrl()}`);
     const rt = !imageOf(content) ? retouchRequest(text) : null;
     if (rt && isOwner()) {
       trace(where, 'owner', `social: a retouch of #${rt.id}`);
-      await socialSay(`آتوسا عکس پست ${rt.id.slice(2)} را رتوش می‌کند و ریلزش را دوباره می‌سازد… (چند دقیقه)`);
+      await socialSay(`آتوسا عکس پست ${rt.id.slice(2)} را رتوش می‌کند${socialDesk.store.d.posts[rt.id]?.reel ? ' و ریلزش را دوباره می‌سازد' : ''}… (چند دقیقه)`);
       try { const r = await socialDesk.retouch(rt); await socialSay(r.text, r.image || null); if (r.video) await socialSay(`#${rt.id} the Reel`, null, r.video); } catch (e) { await socialSay(`رتوش نشد: ${e.message}`); }
       return true;
     }
     // «ریلز پست ۲۴ …»: only the Reel made again (the owner, 15/11)
-    const rr = !imageOf(content) ? reelRequest(text) : null;
+    const rrQuoted = sctx.quotedMessage ? String(textOf(normalizeMessageContent(sctx.quotedMessage)) || normalizeMessageContent(sctx.quotedMessage)?.imageMessage?.caption || normalizeMessageContent(sctx.quotedMessage)?.videoMessage?.caption || '') : '';
+    const rr = !imageOf(content) ? reelRequest(text, rrQuoted) : null;
     if (rr && isOwner()) {
-      trace(where, 'owner', `social: the Reel of #${rr.id} again`);
-      await socialSay(`آتوسا ریلز پست ${rr.id.slice(2)} را دوباره می‌سازد… (چند دقیقه)`);
+      // «ریلز این رو بساز» with no number (the owner, 18/11): the post answered, else the newest design draft of the last three days
+      if (!rr.id) rr.id = socialDesk.latestDesignDraft(3 * 24 * 60 * 60 * 1000);
+      if (!rr.id) { await socialSay('ریلز کدام پست؟ بنویسید «ریلز پست ۳۶ بساز» یا روی پیام همان طرح «پاسخ» بزنید و بنویسید «ریلز این رو بساز».'); return true; }
+      trace(where, 'owner', `social: the Reel of #${rr.id}`);
+      await socialSay(`آتوسا ریلز پست ${rr.id.slice(2)} را ${socialDesk.store.d.posts[rr.id]?.reel ? 'دوباره ' : ''}می‌سازد… (چند دقیقه)`);
       try { const r = await socialDesk.remakeReel(rr); await socialSay(r.text, null, r.video || null); } catch (e) { await socialSay(`ریلز ساخته نشد: ${e.message}`); }
       return true;
     }
@@ -2586,7 +2590,7 @@ ${t.authorizeUrl()}`);
     const de = !imageOf(content) && !sc ? designEditRequest(text, quotedText) : null;
     if (de && isOwner() && socialDesk.store.d.posts[de.id]?.design) {
       trace(where, 'owner', `social: a change to design #${de.id}`);
-      await socialSay(`آتوسا طرح پست ${de.id.slice(2)} را با خواستهٔ شما از نو می‌سازد: عکس، عکس‌های نزدیک و ریلز… (چند دقیقه)`);
+      await socialSay(`آتوسا طرح پست ${de.id.slice(2)} را با خواستهٔ شما از نو می‌سازد: عکس و عکس‌های نزدیک${config.social.reelAuto ? ' و ریلز' : ''}… (چند دقیقه)`);
       await socialSayDesign(await socialDesk.reviseDesign(de));
       return true;
     }

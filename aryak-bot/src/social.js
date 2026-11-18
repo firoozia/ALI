@@ -191,9 +191,11 @@ export class SocialStore {
 /** The owner's words in his own chat: «yes #SP3», «no #SR5», «edit #SP3 new text», «reply #SR5 text», «social», «leads». Null when not one. */
 export function parseSocialCommand(text) {
   // «بله پست ۱» / «نه پیام ۳» / «ویرایش پست ۱ …» / «جواب پیام ۳ …»: the Persian word for the kind, Persian or Latin digits
-  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+  const t = withoutName(text).replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
     .replace(/(^|\s)(?:پست|post)\s*#?\s*(\d+)/i, '$1#SP$2').replace(/(^|\s)(?:پیام|نظر|message|comment)\s*#?\s*(\d+)/i, '$1#SR$2');
   let m;
+  // «آپلود کن پست ۳۶» / «پست ۳۶ رو آپلود کن» (the owner, 18/11): the same as «بله پست ۳۶»; the post goes with its Reel when one was made
+  if ((m = /^(?:آپلود|اپلود|upload)\s*(?:ش\s*)?(?:کن|بکن)?\s*#?\s*SP\s*(\d+)\s*[.!]?$/i.exec(t)) || (m = /^#?\s*SP\s*(\d+)\s*(?:رو|را)?\s*(?:آپلود|اپلود|upload)\s*(?:کن|بکن)?\s*[.!]?$/i.exec(t))) return { verb: 'yes', kind: 'SP', id: `SP${m[1]}` };
   if ((m = /^(?:yes|ok|okay|بله|آره|اره|باشه)\s*#?\s*(SP|SR)\s*(\d+)\s*[.!]?(\s*(?:همین\s*)?(?:الان|حالا|فوری|now|right now)\s*[.!]?)?$/i.exec(t))) return { verb: 'yes', kind: m[1].toUpperCase(), id: `${m[1].toUpperCase()}${m[2]}`, ...(m[3] ? { now: true } : {}) };
   if ((m = /^(?:no|cancel|نه|خیر|لغو)\s*#?\s*(SP|SR)\s*(\d+)\s*[.!]?(?:\s*[:\-،,]?\s*([\s\S]+))?$/i.exec(t))) return { verb: 'no', kind: m[1].toUpperCase(), id: `${m[1].toUpperCase()}${m[2]}`, ...(m[3]?.trim() ? { text: m[3].trim() } : {}) };
   if ((m = /^(?:taste|سلیقه|سلیقه‌ی من|سلیقه من)\s*[:\-]?\s*([\s\S]+)$/i.exec(t))) return { verb: 'taste', text: m[1].trim() };
@@ -455,11 +457,23 @@ export function retouchRequest(text) {
   return m ? { id: `SP${m[1]}`, note: m[2].trim() } : null;
 }
 
-/** «ریلز پست ۲۴ …» / «ریلز ۲۴ …»: only the Reel of a drafted design made again. { id, note } or null. */
-export function reelRequest(text) {
-  const t = String(text || '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+/** «آتوسا، …» / «اتوسا …»: the words after her name (the owner writes her name in front of a command). */
+export function withoutName(text) {
+  return String(text || '').trim().replace(/^(?:آتوسا|اتوسا|atossa|atousa)(?:\s*جان)?\s*[،,:\-]?\s*/i, '').trim();
+}
+
+/**
+ * «ریلز پست ۲۴ …» / «ریلز ۲۴ …»: the Reel of a drafted design (made now, or again). «ریلز این رو بساز» with no number (the owner, 18/11):
+ * the post he answered ([quoted], its #SP), else id '' (the newest design). { id, note } or null.
+ */
+export function reelRequest(text, quoted = '') {
+  const t = withoutName(text).replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+  const make = /^(?:(?:رو|را)\s*)?(?:(?:دوباره|هم)\s*)?(?:بساز|بسازید|درست\s*کن|بزن)\s*[.!]?$/;
   const m = /^(?:ریلز|reel)\s*(?:پست|post)?\s*#?\s*(?:SP)?\s*(\d+)\s*[:\-،,]?\s*([\s\S]*)$/i.exec(t);
-  return m ? { id: `SP${m[1]}`, note: m[2].trim() } : null;
+  if (m) { const note = m[2].trim(); return { id: `SP${m[1]}`, note: make.test(note) ? '' : note }; }
+  if (!/^(?:ریلز|reel)\s*(?:این|اینو|این\s*(?:رو|را)|ش|اش|برای\s*این|این\s*پست|این\s*طرح)?\s*(?:رو|را)?\s*(?:هم\s*)?(?:دوباره\s*)?(?:بساز|بسازید|درست\s*کن|بزن)\s*[.!]?$/i.test(t)) return null;
+  const q = /#?\s*SP\s*(\d+)/i.exec(String(quoted || ''));
+  return { id: q ? `SP${q[1]}` : '', note: '' };
 }
 
 /** A message of the owner with web links (Instagram, TikTok, Pinterest, a magazine…): { urls, note } for Atossa to study; null when none. */
@@ -812,14 +826,15 @@ export class SocialDesk {
       p.extras = [...(p.extras || []), save(`${p.id}-board.jpg`, board)].filter(Boolean);
     } catch (err) { this.log(`social: the design board failed: ${err.message}`); }
     let video = null;
-    if (this.reel) {
+    if (this.reel && this.cfg.reelAuto) {
       try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan, before: beforeRaw, reveal: revealRaw }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
     }
     this.remember(plan);
     const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
     const ups = details.filter((x) => !x.board);
     const extra = [ups.length ? `${ups.length} close-up${ups.length > 1 ? 's' : ''} (${ups.map((x) => x.code).join(', ')})` : '', details.some((x) => x.board) ? 'the design board' : '', video ? 'a Reel' : ''].filter(Boolean).join(', ');
-    return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}`,
+    const reelAsk = !video && this.reel ? `\nریلز این طرح ساخته نشد تا هزینه نشود. اگر عکس‌ها را پسندیدید بنویسید «ریلز پست ${p.id.slice(2)} بساز»؛ برای انتشار بی‌ریلز «بله پست ${p.id.slice(2)}» یا «آپلود کن پست ${p.id.slice(2)}».` : '';
+    return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}${reelAsk}`,
       image: p.file ? fs.readFileSync(p.file) : image, details, detail: details[0]?.image || null, video };
   }
 
@@ -1026,8 +1041,9 @@ export class SocialDesk {
     this.store.save();
     this.addTaste(`The owner fixed design «${plan.title_fa || plan.room}»: ${note}`);
     let video = null;
-    try { video = (await this.remakeReel({ id })).video || null; } catch (err) { this.log(`social: the Reel after the retouch failed: ${err.message}`); }
-    return { text: `پست ${id.slice(2)} رتوش شد: «${note}». عکس و ریلز تازه همین‌جاست؛ طرح و متن پست همان است.`, image, video };
+    const hadReel = !!(p.reel && fs.existsSync(p.reel));
+    if (hadReel) { try { video = (await this.remakeReel({ id })).video || null; } catch (err) { this.log(`social: the Reel after the retouch failed: ${err.message}`); } }
+    return { text: `پست ${id.slice(2)} رتوش شد: «${note}». ${hadReel ? 'عکس و ریلز تازه همین‌جاست' : 'عکس تازه همین‌جاست'}؛ طرح و متن پست همان است.`, image, video };
   }
 
   /** A posted-style picture without the ARYAK marks (the logo in the corner and the band of codes), the picture behind them restored. */
