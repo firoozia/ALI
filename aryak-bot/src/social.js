@@ -760,10 +760,16 @@ export class SocialDesk {
     const how = wood
       ? `the camera is about 30 cm from the ${part.where} in film ${part.code}, looking along the wood grain, so the grain, its direction and the pores fill three quarters of the frame, crisp and exactly like the reference sample; low warm light grazing across the surface so every line of the grain shows`
       : `the camera is about 40 cm from the ${part.where} in film ${part.code}, at a slight angle, so the flat film surface itself fills at least three quarters of the frame, evenly and clearly lit (never a dark gradient or a shadow), its exact colour and fine matte texture crisp and exactly like the reference sample; a soft light raking across the surface`;
+    // the colour is the sample's, never the room's light (live 18/11, SP38: both close-ups failed three and two times; the ivory film came
+    // out warm light oak and the walnut too bold, drawn after the golden light of the room). The last try is made from the sample alone.
+    const trueColour = 'The film looks exactly like the reference sample in colour, brightness and pattern scale, under clean neutral daylight: never warmed, darkened or changed by the light or colours of the room picture';
     let miss = '';
     for (let k = 0; k < tries; k++) {
-      const d = await this.imager.make({ prompt: `A close-up detail photograph taken in this same room that proves the quality of the film: ${how}; its true texture, its matte or gloss surface and, at one side, the clean edge where the film wraps around the door edge, seamless and tight; every door and drawer closed; shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
-        images: [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
+      const alone = tries > 1 && k === tries - 1;
+      const d = await this.imager.make({ prompt: alone
+        ? `A close-up macro photograph that proves the quality of a decorative film: the corner of a closed cabinet door covered in film ${part.code}, ${wood ? 'the wood grain running along the door, its direction and fine pores crisp, light grazing across it' : 'its flat surface filling most of the frame, evenly lit, its fine texture crisp'}; the film's true texture, its matte or gloss surface and the clean edge where it wraps around the door edge, seamless and tight. ${trueColour}. Shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`
+        : `A close-up detail photograph taken in this same room that proves the quality of the film: ${how}; its true texture, its matte or gloss surface and, at one side, the clean edge where the film wraps around the door edge, seamless and tight; every door and drawer closed; shallow depth of field. ${trueColour}. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
+        images: alone ? [{ label: `Reference: film ${part.code}, the exact surface`, buffer: swatch, mime: 'image/jpeg' }] : [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
       const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true, strict: true });
       if (look.ok) return fitForInstagram(d.image);
       miss = look.problem;

@@ -696,6 +696,10 @@ test('an AI picture with text, a grid or a wrong film is drawn again with its fa
   await assert.rejects(desk.closeUp(room, { code: 'HZ812', where: 'tall doors' }, await pic('#3a2a1e')), /not like the film or not clean 2 times/);
   assert.equal(checks, 2);
   assert.match(made.at(-1).prompt, /The last try was wrong: there is text, a label, a card or a logo in the picture; a film does not look like its sample: the oak is shown as deep carved grain/);
+  // the last try is drawn from the sample alone, in neutral light (live 18/11, SP38: both close-ups came out in the room's golden light)
+  assert.deepEqual(made.at(-1).images.map((i) => i.label), ['Reference: film HZ812, the exact surface']);
+  assert.deepEqual(made.at(-2).images.map((i) => i.label), ['The room', 'Reference: film HZ812']);
+  for (const m of made.slice(-2)) assert.match(m.prompt, /exactly like the reference sample in colour, brightness and pattern scale, under clean neutral daylight/);
   for (const m of made) { assert.match(m.prompt, /No text, letters, numbers, labels/); assert.match(m.prompt, /never a collage, a grid/); assert.match(m.prompt, /never deep carved, brushed or embossed wood/); }
   desk.write = async (r) => (r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":""}' : base(r));
   assert.ok(await desk.closeUp(room, { code: 'HZ812', where: 'tall doors' }, await pic('#3a2a1e')), 'a clean close-up is kept');
