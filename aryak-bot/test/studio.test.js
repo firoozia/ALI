@@ -27,7 +27,7 @@ function fakeGraph(routes) {
 }
 const client = (fetchImpl) => new MetaClient({ pageId: '222', pageToken: 'PG', systemToken: 'SYS', igUserId: '111', fetchImpl, wait: async () => {} });
 
-async function studio({ routes = {}, research = null, reel = null, reelAuto = true } = {}) {
+async function studio({ routes = {}, research = null, reel = null, reelAuto = true, reveal = false } = {}) {
   const cat = tmp('cat-');
   fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ812: { file: 'HZ812.jpg', catalogue: 'T', look: 'dark walnut' }, 1805: { file: '1805.jpg', catalogue: 'T', look: 'light oak' } }));
   fs.writeFileSync(path.join(cat, 'HZ812.jpg'), await pic('#3a2a1e'));
@@ -36,7 +36,7 @@ async function studio({ routes = {}, research = null, reel = null, reelAuto = tr
   const made = [];
   const plan = { title_fa: 'آشپزخانه', why_fa: 'چرا', inspiration_fa: 'ایدهٔ شیار برنجی از ای‌دی', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors', where_fa: 'درهای قدی' }, { code: '1805', where: 'island' }], scene: 'A kitchen.' };
   const g = fakeGraph(routes);
-  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000', reelAuto },
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000', reelAuto, reveal },
     imager: { enabled: true, make: async (r) => { made.push(r); return { image: await pic(made.length === 1 ? '#806040' : '#402010'), mime: 'image/jpeg' }; } },
     write: async (r) => { writes.push(r); return r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":"","hidden":false}' : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify(plan) : r.kind === 'focus' ? '{"x":0.7,"y":0.3}' : 'Design idea with Code HZ812.'; } });
   return { desk, writes, made, g };
@@ -611,7 +611,7 @@ test('the pairing cards and the open picture: «reveal» draws the same room ope
   assert.deepEqual([m.width, m.height], [1080, 1920]);
   assert.deepEqual(await pairCards({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }] }), [], 'one film: no pairing');
   let reelArgs = null;
-  const { desk, made } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const { desk, made } = await studio({ reveal: true, reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
   const base = desk.write;
   desk.write = async (r) => (r.kind === 'design-plan' ? JSON.stringify({ title_fa: 'آشپزخانه', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors' }], reel_open: 'texture', reveal: 'the tall pantry doors open on lit shelves', scene: 'A kitchen.' }) : base(r));
   const d = await desk.draftDesign({});
@@ -728,7 +728,7 @@ test('a Reel made from a chosen sequence: the labels shown on their shots, the s
 
 test('a Reel made again checks its stored pictures first (live 17/11: SP33\'s open picture, drawn before the rules, carried spec cards; the black close-up was a dark blur)', async () => {
   let reelArgs = null;
-  const { desk } = await studio({ reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
+  const { desk } = await studio({ reveal: true, reel: async (a) => { reelArgs = a; return Buffer.from('MP4'); } });
   const id = /Post #(SP\d+)/.exec((await desk.draftDesign({})).text)[1];
   const p = desk.store.d.posts[id];
   const reveal = fs.readFileSync(p.raw.room); p.raw.reveal = p.raw.room + '.open.jpg'; fs.writeFileSync(p.raw.reveal, reveal);
@@ -881,4 +881,18 @@ test('the main picture of a design is the whole room with its full decor; a clos
   // a close-up is never refused for being a part of the room
   const c = await desk.cleanCheck(Buffer.from('x'), [], { close: true });
   assert.equal(typeof c.ok, 'boolean');
+});
+
+test('no open doors or drawers: the plan asks none, no open picture is drawn, the close-up proves the quality (the owner, 18/11)', async () => {
+  const { DESIGNER_RULES, WIDE } = await import('../src/social.js');
+  assert.match(DESIGNER_RULES, /"reveal":"always empty/);
+  assert.match(DESIGNER_RULES, /every door and drawer closed/);
+  assert.match(WIDE, /Every door and drawer is closed/);
+  const { desk, made } = await studio();
+  desk.write = async (r) => r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":"","hidden":false,"cropped":false}' : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify({ title_fa: 'کمد', room: 'bedroom', reveal: 'the wardrobe doors open on lit shelves', parts: [{ code: 'HZ812', where: 'wardrobe doors' }], scene: 'A bedroom.' }) : r.kind === 'focus' ? '{"x":0.5,"y":0.5}' : 'Design idea with Code HZ812.';
+  const d = await desk.draftDesign({});
+  assert.ok(!made.some((m) => /except: the wardrobe doors open/.test(m.prompt)), 'no open picture is drawn');
+  const id = /Post #(SP\d+)/.exec(d.text)[1];
+  assert.equal(desk.store.d.posts[id].raw.reveal, undefined);
+  assert.match(made[1].prompt, /proves the quality of the film[\s\S]*clean edge where the film wraps around the door edge[\s\S]*every door and drawer closed/);
 });
