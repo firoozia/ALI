@@ -3889,7 +3889,7 @@ const socialDesk = new SocialDesk({
     }
     return '';
   },
-  imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize }),
+  imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize, cheapModel: config.social.geminiCheapModel, prices: config.social.imagePrices, onCost: (c) => cost.image(c) }),
   write: async ({ system, text, image, images = [], mime, effort = 'low', maxTokens = 800 }) => {
     const pic = (b) => ({ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: b.toString('base64') } });
     const content = [...images.map(pic), ...(image ? [pic(image)] : []), { type: 'text', text }];

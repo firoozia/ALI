@@ -26,7 +26,7 @@ const REASON = { unreadable: 'ناخوانا', unclear: 'کد نامطمئن', '
 export const reasonLabel = (r) => REASON[r] || REASON.other;
 const FAMILY_FA = { opus: 'اوپوس', sonnet: 'سونِت', haiku: 'هایکو', other: 'دیگر' };
 
-const blank = () => ({ models: {}, photo: { haiku: 0, sonnet: 0, reasons: {} }, voice: { n: 0, sec: 0, usd: 0 }, pdf: { free: 0, vision: 0 } });
+const blank = () => ({ models: {}, photo: { haiku: 0, sonnet: 0, reasons: {} }, voice: { n: 0, sec: 0, usd: 0 }, pdf: { free: 0, vision: 0 }, image: { n: 0, cheap: 0, usd: 0 } });
 
 export class CostMeter {
   /** [prices]: { model: [in, out] } merged over PRICES; [speechPerMinute]; [log]: a function(line). */
@@ -92,6 +92,14 @@ export class CostMeter {
     this.log(`cost: voice seconds=${Math.round(s)} usd=${usd.toFixed(4)}`);
   }
 
+  /** A picture drawn by the design studio (Google's image model): its price by model and size (the owner, 18/11: the pictures are the bill). */
+  image({ model = '', size = '', usd = 0, cheap = false } = {}) {
+    const im = (this.today().image ||= { n: 0, cheap: 0, usd: 0 });
+    im.n += 1; if (cheap) im.cheap += 1; im.usd += Number(usd) || 0;
+    this.dirty = true;
+    this.log(`cost: image model=${model} size=${size} usd=${(Number(usd) || 0).toFixed(4)}`);
+  }
+
   /** A PDF taken in: read for free from its text layer, or sent to vision (its tokens are counted with the call). */
   pdf(free) {
     const p = this.today().pdf;
@@ -102,7 +110,7 @@ export class CostMeter {
 
   totals(day = this.day()) {
     const d = this.days[day] || blank();
-    const usd = Object.values(d.models || {}).reduce((s, m) => s + (m.usd || 0), 0) + (d.voice?.usd || 0);
+    const usd = Object.values(d.models || {}).reduce((s, m) => s + (m.usd || 0), 0) + (d.voice?.usd || 0) + (d.image?.usd || 0);
     return { ...d, usd };
   }
 
@@ -116,6 +124,7 @@ export class CostMeter {
       for (const [r, c] of Object.entries(t.photo?.reasons || {})) acc.photo.reasons[r] = (acc.photo.reasons[r] || 0) + c;
       acc.voice.n += t.voice?.n || 0; acc.voice.sec += t.voice?.sec || 0; acc.voice.usd += t.voice?.usd || 0;
       acc.pdf.free += t.pdf?.free || 0; acc.pdf.vision += t.pdf?.vision || 0;
+      acc.image.n += t.image?.n || 0; acc.image.cheap += t.image?.cheap || 0; acc.image.usd += t.image?.usd || 0;
       usd += t.usd;
     }
     return { ...acc, usd };
@@ -133,9 +142,11 @@ export class CostMeter {
     const photos = t.photo?.haiku || 0; // every photo is read once by the first model; the strong model's second reads are counted apart
     const pdfs = (t.pdf?.free || 0) + (t.pdf?.vision || 0);
     const calls = Object.values(t.models || {}).reduce((s, m) => s + m.n, 0);
-    if (!photos && !t.voice?.n && !pdfs && !calls) return '';
+    const pics = t.image?.n || 0;
+    if (!photos && !t.voice?.n && !pdfs && !calls && !pics) return '';
     const minutes = Math.round(((t.voice?.sec || 0) / 60) * 10) / 10;
-    return `عکس: ${fa(photos)} (خواندن دوباره با سونِت ${fa(t.photo?.sonnet || 0)})، ویس: ${fa(t.voice?.n || 0)} (${fa(minutes)} دقیقه)، پی‌دی‌اف: ${fa(pdfs)} (${fa(t.pdf?.free || 0)} رایگان)، هزینه: ${fmtUsd(t.usd)} دلار`;
+    const studio = pics ? `، عکس‌های استودیو: ${fa(pics)} (${fa(t.image?.cheap || 0)} ارزان) ${fmtUsd(t.image?.usd || 0)} دلار` : '';
+    return `عکس: ${fa(photos)} (خواندن دوباره با سونِت ${fa(t.photo?.sonnet || 0)})، ویس: ${fa(t.voice?.n || 0)} (${fa(minutes)} دقیقه)، پی‌دی‌اف: ${fa(pdfs)} (${fa(t.pdf?.free || 0)} رایگان)${studio}، هزینه: ${fmtUsd(t.usd)} دلار`;
   }
 
   /** The one line for the daily digest. */
@@ -158,6 +169,7 @@ export class CostMeter {
     if (reasons.length) lines.push(`خواندن دوباره با سونِت: ${reasons.map(([r, c]) => `${reasonLabel(r)} ${fa(c)}`).join('، ')}`);
     if (t.voice.n) lines.push(`ویس: ${fa(t.voice.n)} پیام، ${fa(Math.round((t.voice.sec / 60) * 10) / 10)} دقیقه، ${fmtUsd(t.voice.usd)} دلار`);
     lines.push(`پی‌دی‌اف رایگان (لایهٔ متن): ${fa(t.pdf.free)}؛ با خواندن تصویری: ${fa(t.pdf.vision)}`);
+    if (t.image?.n) lines.push(`عکس‌های استودیوی آتوسا: ${fa(t.image.n)} عکس (${fa(t.image.cheap)} با مدل ارزان)، ${fmtUsd(t.image.usd)} دلار`);
     lines.push('قیمت‌ها برآورد است و از تنظیم قیمت مدل‌ها می‌آید.');
     return lines.join('\n');
   }

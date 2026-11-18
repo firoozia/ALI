@@ -831,9 +831,30 @@ test('SP35 review (17/11): a texture opening is a wood close-up only, the main f
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /if \(open === 'texture' && !details\.some\(\(x\) => x\.wood\)\) open = 'room';/);
   assert.match(src, /const first = rest\.splice\(rest\.findIndex\(\(x\) => x\.wood\), 1\)\[0\];/);
-  assert.match(src, /tries: i === 0 \? 3 : 2/);
+  assert.match(src, /closeUp\(room, x, codes\[i\]\.swatch, \{ size, tries: 2 \}\)/); // the owner, 18/11: two tries for every close-up (the cost)
   const reel = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
   assert.match(reel, /fade=t=in:st=\$\{a\.toFixed\(3\)\}:d=0\.3:alpha=1,fade=t=out/);
+});
+
+test('the cost of the pictures (the owner, 18/11): a second try and a Reel view use the cheap model at 1K, every picture is priced and counted', async () => {
+  const { GeminiImage } = await import('../src/social.js');
+  const { CostMeter } = await import('../src/cost.js');
+  const asked = [];
+  const ok = { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: Buffer.from('x').toString('base64') } }] } }] }) };
+  const meter = new CostMeter('', { now: () => Date.UTC(2026, 10, 18, 8) });
+  const g = new GeminiImage({ apiKey: 'k', fetchImpl: async (u, o) => (asked.push({ u, size: JSON.parse(o.body).generationConfig.imageConfig.imageSize }), ok), onCost: (c) => meter.image(c) });
+  await g.make({ prompt: 'a room' });
+  await g.make({ prompt: 'again', cheap: true });
+  assert.match(asked[0].u, /gemini-3-pro-image:generateContent/); assert.equal(asked[0].size, '2K');
+  assert.match(asked[1].u, /gemini-3\.1-flash-image:generateContent/); assert.equal(asked[1].size, '1K');
+  const t = meter.totals();
+  assert.equal(t.image.n, 2); assert.equal(t.image.cheap, 1);
+  assert.ok(Math.abs(t.image.usd - (0.134 + 0.067)) < 1e-9 && Math.abs(t.usd - t.image.usd) < 1e-9);
+  assert.match(meter.line(), /عکس‌های استودیو: ۲ \(۱ ارزان\) ۰٫۲۰ دلار/);
+  assert.match(meter.report(), /عکس‌های استودیوی آتوسا: ۲ عکس \(۱ با مدل ارزان\)/);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /make\(\{ cheap: k > 0, prompt: alone/); // a second close-up try
+  assert.match(src, /for \(let i = 0; i < 1; i\+\+\) \{[^\n]*\n\s*try \{\n\s*const v = await this\.imager\.make\(\{ cheap: true,/); // one cheap try per Reel view
 });
 
 test('a design comes with its pictures only; its Reel is made when the owner asks (the owner, 18/11: a Reel costs a lot)', async () => {

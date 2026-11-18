@@ -165,6 +165,8 @@ export function loadConfig(env = process.env) {
       geminiKey: (env.GEMINI_API_KEY || '').trim(),
       geminiImageModel: (env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image').trim(), // the owner, 15/11: the pictures sell the films, so the best model
       geminiImageSize: (env.GEMINI_IMAGE_SIZE || '2K').trim(),
+      geminiCheapModel: (env.GEMINI_CHEAP_IMAGE_MODEL ?? 'gemini-3.1-flash-image').trim(), // a second try and a Reel view (the owner, 18/11); empty = always the main model
+      imagePrices: (() => { try { return JSON.parse(env.IMAGE_PRICES || '{}'); } catch { return {}; } })(),
       // TikTok (the owner, 15/11): the Reels go there too; the app's keys come from TikTok for Developers, the account is connected in chat
       tiktokKey: (env.TIKTOK_CLIENT_KEY || '').trim(), tiktokSecret: (env.TIKTOK_CLIENT_SECRET || '').trim(),
       publicBucket: (env.SOCIAL_PUBLIC_BUCKET ?? 'aryak-social-media').trim(), // the public folder TikTok takes post pictures from (verified in TikTok's portal)

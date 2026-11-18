@@ -235,21 +235,31 @@ export function designRequest(text) {
  * Google's image model (Gemini, «Nano Banana») through its official API: a prompt and reference pictures in, one picture out.
  * [apiKey] from Google AI Studio, [model] e.g. gemini-nano-banana-2.1. make() throws with Google's own words when no picture comes back.
  */
+/** US dollars per picture by model and size (Google's list price, an estimate; IMAGE_PRICES in the environment overrides). */
+export const IMAGE_PRICES = {
+  'gemini-3-pro-image': { '1K': 0.134, '2K': 0.134, '4K': 0.24 },
+  'gemini-3.1-flash-image': { '1K': 0.067, '2K': 0.101, '4K': 0.151 },
+};
 export class GeminiImage {
-  constructor({ apiKey, model = 'gemini-3-pro-image', size = '2K', fetchImpl = globalThis.fetch }) { Object.assign(this, { apiKey, model, size, fetchImpl }); }
+  /** [cheapModel]: the model of a second try or a Reel view (the owner, 18/11: «the money goes on pictures thrown away»); [onCost]({ model, size, usd, cheap }). */
+  constructor({ apiKey, model = 'gemini-3-pro-image', size = '2K', cheapModel = 'gemini-3.1-flash-image', cheapSize = '1K', prices = {}, onCost = null, fetchImpl = globalThis.fetch }) { Object.assign(this, { apiKey, model, size, cheapModel, cheapSize, onCost, fetchImpl }); this.prices = { ...IMAGE_PRICES, ...prices }; }
   get enabled() { return !!this.apiKey; }
-  async make({ prompt, images = [], aspect = '4:5', size = '' }) {
+  priceOf(model, size) { const p = this.prices[model] || this.prices[String(model).replace(/-preview$/, '')] || {}; return p[size] ?? p['2K'] ?? 0.134; }
+  async make({ prompt, images = [], aspect = '4:5', size = '', cheap = false }) {
+    const model = cheap && this.cheapModel ? this.cheapModel : this.model;
+    const sz = cheap && this.cheapModel ? (this.cheapSize || size || this.size) : (size || this.size);
     const body = {
       contents: [{ role: 'user', parts: [...images.flatMap((i) => [...(i.label ? [{ text: i.label }] : []), { inline_data: { mime_type: i.mime || 'image/jpeg', data: i.buffer.toString('base64') } }]), { text: prompt }] }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect, ...((size || this.size) ? { imageSize: size || this.size } : {}) } },
+      generationConfig: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: aspect, ...(sz ? { imageSize: sz } : {}) } },
     };
-    const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body) });
+    const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) throw new Error(`Gemini: ${data.error?.message || `HTTP ${res.status}`}`);
     const c = data.candidates?.[0];
     const parts = (c?.content?.parts || []).filter((p) => !p.thought);
     const pic = parts.map((p) => p.inlineData || p.inline_data).filter((d) => d?.data && /^image\//.test(d.mimeType || d.mime_type || '')).pop(); // the last picture is the final one
     if (!pic) throw new Error(`Gemini gave no picture (${c?.finishReason || data.promptFeedback?.blockReason || 'no reason given'}): ${parts.map((p) => p.text).filter(Boolean).join(' ').slice(0, 200)}`);
+    try { this.onCost?.({ model, size: sz || '2K', usd: this.priceOf(model, sz || '2K'), cheap: model !== this.model }); } catch { /* counting never stops a picture */ }
     return { image: Buffer.from(pic.data, 'base64'), mime: pic.mimeType || pic.mime_type };
   }
   /** A 30-second instrumental clip from Google's music model (Lyria, the Interactions API): an MP3. Throws with Google's words. */
@@ -766,7 +776,7 @@ export class SocialDesk {
     let miss = '';
     for (let k = 0; k < tries; k++) {
       const alone = tries > 1 && k === tries - 1;
-      const d = await this.imager.make({ prompt: alone
+      const d = await this.imager.make({ cheap: k > 0, prompt: alone
         ? `A close-up macro photograph that proves the quality of a decorative film: the corner of a closed cabinet door covered in film ${part.code}, ${wood ? 'the wood grain running along the door, its direction and fine pores crisp, light grazing across it' : 'its flat surface filling most of the frame, evenly lit, its fine texture crisp'}; the film's true texture, its matte or gloss surface and the clean edge where it wraps around the door edge, seamless and tight. ${trueColour}. Shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`
         : `A close-up detail photograph taken in this same room that proves the quality of the film: ${how}; its true texture, its matte or gloss surface and, at one side, the clean edge where the film wraps around the door edge, seamless and tight; every door and drawer closed; shallow depth of field. ${trueColour}. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
         images: alone ? [{ label: `Reference: film ${part.code}, the exact surface`, buffer: swatch, mime: 'image/jpeg' }] : [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
@@ -792,7 +802,7 @@ export class SocialDesk {
     const order = plan.parts.slice(0, 3).map((x, i) => ({ x, i })).sort((a, b) => Number(this.isWood(b.x.code)) - Number(this.isWood(a.x.code)) || a.i - b.i);
     const shots = [];
     for (const { x, i } of order) {
-      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size, tries: i === 0 ? 3 : 2 }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
+      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size, tries: 2 }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
     }
     // a before/after (the owner, 15/11): the same room before, with tired plain cabinets, made from the finished room
     let beforeRaw = null;
@@ -1401,9 +1411,9 @@ export class SocialDesk {
     const out = [];
     for (const shot of shotsWanted) {
       let miss = '';
-      for (let i = 0; i < 2; i++) {
+      for (let i = 0; i < 1; i++) { // one cheap try (the owner, 18/11: four views of SP39 were drawn and thrown away); a view that fails is left out
         try {
-          const v = await this.imager.make({ images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
+          const v = await this.imager.make({ cheap: true, images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
             prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait. ${NO_TEXT}` });
           const look = await this.changeSeen(room, v.image, 'the same room seen from a clearly different camera position: another side, height or distance, so the framing is plainly not the same (it need not match any particular lens or corner). A slightly closer, slightly wider or slightly shifted version of the same view is NOT done (live 17/11, SP35): the main furniture must be seen from a clearly different side, or a large part of the new picture must show what the old one does not; and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects (live 17/11, SP34: a view with a black worktop instead of the white marble was used), any of them changed is not done', { strict: true });
           const clean = await this.cleanCheck(v.image, (plan?.parts || []).filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })), { strict: true });
