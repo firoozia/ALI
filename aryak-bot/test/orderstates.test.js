@@ -98,6 +98,18 @@ test('an order in a customer group belongs to the customer of its approved row, 
   assert.equal(customerRowFor('Cedar Works', { list, aliases }), null);
 });
 
+test('two near customers: the typed name picks the exact one, never the first row (live 18/11, al afeefi)', () => {
+  const list = new CustomerGroups('');
+  const aliases = new Aliases('');
+  list.approveGroups('AL AFEEF KITCHEN', [{ jid: 'a1@g.us', subject: 'Al afeef kitchen aryak' }]);
+  list.approveGroups('ALAFEEFI KITCHEN', [{ jid: 'a2@g.us', subject: 'Al afeefi Aryak' }]);
+  assert.equal(customerRowFor('al afeefi', { list, aliases })?.customer, 'ALAFEEFI KITCHEN');
+  assert.equal(customerRowFor('AL AFEEFI', { list, aliases })?.customer, 'ALAFEEFI KITCHEN');
+  assert.equal(customerRowFor('al afeef', { list, aliases })?.customer, 'AL AFEEF KITCHEN');
+  // a slip that fits both, exactly neither: no row (the invoice asks)
+  assert.equal(customerRowFor('al afeefy', { list, aliases }), null);
+});
+
 test('a PDF order from a customer group is found for an invoice with another spelling of the name', () => {
   const desk = new InvoiceDesk({ dir: '' });
   desk.addRequest({ hash: 'h1', base64: '', fileName: 'po.pdf' }, { customer: 'Orion Team', po: '', mapped: 'Orion' }, 'ORION TEAM - ARYAK');

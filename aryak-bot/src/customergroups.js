@@ -331,7 +331,21 @@ export function settleDuplicates(names, seen = []) {
 /** The approved row of a customer by any of his names: the name itself, his other names (aliases), or a near duplicate of a stored name. */
 export function customerRowFor(name, { list, aliases }) {
   if (!name || !nameKey(name)) return null;
-  return list.find(name, altNames(aliases.map, name)) || list.rows().find((r) => nearDuplicate(r.customer, name) && typedFitsName(name, r.customer)) || null;
+  const found = list.find(name, altNames(aliases.map, name));
+  if (found) return found;
+  const near = list.rows().filter((r) => nearDuplicate(r.customer, name) && typedFitsName(name, r.customer));
+  if (near.length <= 1) return near[0] || null;
+  // two rows near the typed name (live 18/11: «al afeefi» fits AL AFEEF KITCHEN and ALAFEEFI KITCHEN, and the first row was taken silently, the wrong
+  // customer): only the one whose words hold the typed words exactly is taken; otherwise none, and the invoice asks which customer is meant
+  const exact = near.filter((r) => typedWordsExact(name, r.customer));
+  return exact.length === 1 ? exact[0] : null;
+}
+
+/** Every typed word is a whole word of [candidate], or the typed words glued are one of its words («al afeefi» -> ALAFEEFI); case and marks do not matter. */
+function typedWordsExact(typed, candidate) {
+  const words = (s) => String(s || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const t = words(typed); const c = new Set(words(candidate));
+  return t.length > 0 && (t.every((w) => c.has(w)) || c.has(t.join('')));
 }
 
 /** The approved row that holds this group (by its id): an order in that group belongs to that row's customer. */
