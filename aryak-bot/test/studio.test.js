@@ -427,7 +427,16 @@ test('the owner\'s links: TikTok by its oEmbed, Instagram by its link preview; A
   assert.match(text, /• درهای شیاردار بلوط/);
   assert.match(text, /1 پیوند باز نشد/);
   assert.doesNotMatch(desk.store.d.inspo[0].text, /فارسی/);
+  // the link's own picture is kept for a design made from it at once (the owner, 18/11)
+  assert.ok(Buffer.isBuffer(desk.linkIdea.image) && /fluted oak doors/.test(desk.linkIdea.text));
   desk.write = base;
+  const seen = [];
+  const draft = desk.draftDesign;
+  desk.draftDesign = async (r) => (seen.push(r), { text: 'ok' });
+  assert.deepEqual(await desk.designFromLink(), { text: 'ok' });
+  assert.ok(seen[0].inspiration.image && /این‌ها رو دوست دارم[\s\S]*Design from the post the owner sent[\s\S]*fluted oak doors/.test(seen[0].note));
+  assert.equal(await desk.designFromLink(), null, 'once only');
+  desk.draftDesign = draft;
   await desk.draftDesign({});
   assert.match(writes.find((x) => x.kind === 'design-plan').text, /Posts the owner sent you[\s\S]*fluted oak doors/);
   desk.fetchImpl = async () => ({ ok: true, headers: { get: () => 'text/html' }, text: async () => '' });

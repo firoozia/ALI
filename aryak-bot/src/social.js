@@ -1250,10 +1250,21 @@ export class SocialDesk {
     const persian = text.split('\n').filter((l) => /^\s*فارسی\s*:/.test(l)).map((l) => `• ${l.replace(/^\s*فارسی\s*:\s*/, '')}`);
     (this.store.d.inspo ||= []).push({ at: this.now(), urls: read.map((s) => s.url), text: english.slice(0, 3000), note });
     this.store.d.inspo = this.store.d.inspo.slice(-20);
+    // the idea of the first post that could be seen, for a design made from it at once (the owner, 18/11: «nothing was modelled from my ideas»)
+    this.linkIdea = { image: read[0].pic, text: english.slice(0, 800), note };
     this.store.save();
     this.addTaste(`The owner sent posts he likes${note ? ` (${note})` : ''}: ${english.slice(0, 300)}`);
     return [`آتوسا ${read.length} پیوند را دید و برای طرح‌های بعدی نگه داشت:`, ...persian, blind.length ? `\n${blind.length} پیوند باز نشد (خصوصی یا نیازمند ورود): عکسش را با «الهام» بفرستید.` : ''].filter(Boolean).join('\n');
   }
+  /** A design made at once from the link just studied, like a picture sent with «الهام» (the owner, 18/11). Null when no link was seen. */
+  async designFromLink() {
+    const idea = this.linkIdea;
+    this.linkIdea = null;
+    if (!idea?.image) return null;
+    const note = [idea.note, `Design from the post the owner sent; what you took from it: ${idea.text}`].filter(Boolean).join('\n');
+    return this.draftDesign({ note, inspiration: { image: idea.image, mime: 'image/jpeg' } });
+  }
+
   /** The owner's saved ideas (his links), newest last: what Atossa reads before she designs. */
   ownerInspirations(max = 5) {
     return (this.store.d.inspo || []).slice(-max).map((x) => `- ${x.text.replace(/\s+/g, ' ').slice(0, 600)}`).join('\n');

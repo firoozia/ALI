@@ -2607,7 +2607,12 @@ ${t.authorizeUrl()}`);
     if (lr && isOwner()) {
       trace(where, 'owner', `social: ${lr.urls.length} link(s) to study`);
       await socialSay(`آتوسا ${lr.urls.length === 1 ? 'پیوند' : `${lr.urls.length} پیوند`} را بررسی می‌کند…`);
-      try { await socialSay(await socialDesk.studyLinks(lr)); } catch (e) { await socialSay(`بررسی پیوندها نشد: ${e.message}`); }
+      try { await socialSay(await socialDesk.studyLinks(lr)); } catch (e) { await socialSay(`بررسی پیوندها نشد: ${e.message}`); return true; }
+      // and a design from it at once, pictures first and no Reel until asked (the owner, 18/11: «nothing was modelled from the ideas I sent»)
+      if (socialDesk.linkIdea?.image) {
+        await socialSay('آتوسا از همین ایده با فیلم‌های آریاک طرح می‌سازد… (چند دقیقه)');
+        try { const d = await socialDesk.designFromLink(); if (d) await socialSayDesign(d); } catch (e) { await socialSay(`طرح از این ایده ساخته نشد: ${e.message}`); }
+      }
       return true;
     }
     const pr = postRequest(text);
