@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MetaClient, SocialDesk, SocialStore, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, looksLikeDesignNote, parseSocialCommand, reelOnlyNote, reelRequest, retouchRequest } from '../src/social.js';
+import { MetaClient, SocialDesk, SocialStore, approveDesignRequest, conceptChoice, conceptsRequest, designEditRequest, goodHour, inspirationRequest, linkRequest, nextGoodTime, looksLikeDesignNote, parseSocialCommand, reelOnlyNote, reelRequest, retouchRequest } from '../src/social.js';
 import { endCard, ffmpegPath, makeReel } from '../src/reel.js';
 
 const sharp = (await import('sharp')).default;
@@ -27,7 +27,7 @@ function fakeGraph(routes) {
 }
 const client = (fetchImpl) => new MetaClient({ pageId: '222', pageToken: 'PG', systemToken: 'SYS', igUserId: '111', fetchImpl, wait: async () => {} });
 
-async function studio({ routes = {}, research = null, reel = null, reelAuto = true, reveal = false } = {}) {
+async function studio({ routes = {}, research = null, reel = null, reelAuto = true, reveal = false, roomFirst = false } = {}) {
   const cat = tmp('cat-');
   fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ812: { file: 'HZ812.jpg', catalogue: 'T', look: 'dark walnut' }, 1805: { file: '1805.jpg', catalogue: 'T', look: 'light oak' } }));
   fs.writeFileSync(path.join(cat, 'HZ812.jpg'), await pic('#3a2a1e'));
@@ -36,7 +36,7 @@ async function studio({ routes = {}, research = null, reel = null, reelAuto = tr
   const made = [];
   const plan = { title_fa: 'آشپزخانه', why_fa: 'چرا', inspiration_fa: 'ایدهٔ شیار برنجی از ای‌دی', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors', where_fa: 'درهای قدی' }, { code: '1805', where: 'island' }], scene: 'A kitchen.' };
   const g = fakeGraph(routes);
-  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000', reelAuto, reveal },
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000', reelAuto, reveal, roomFirst },
     imager: { enabled: true, make: async (r) => { made.push(r); return { image: await pic(made.length === 1 ? '#806040' : '#402010'), mime: 'image/jpeg' }; } },
     write: async (r) => { writes.push(r); return r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":"","hidden":false}' : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify(plan) : r.kind === 'focus' ? '{"x":0.7,"y":0.3}' : 'Design idea with Code HZ812.'; } });
   return { desk, writes, made, g };
@@ -831,7 +831,7 @@ test('SP35 review (17/11): a texture opening is a wood close-up only, the main f
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /if \(open === 'texture' && !details\.some\(\(x\) => x\.wood\)\) open = 'room';/);
   assert.match(src, /const first = rest\.splice\(rest\.findIndex\(\(x\) => x\.wood\), 1\)\[0\];/);
-  assert.match(src, /closeUp\(room, x, codes\[i\]\.swatch, \{ size, tries: 2 \}\)/); // the owner, 18/11: two tries for every close-up (the cost)
+  assert.match(src, /closeUp\(room, x, sw, \{ size, tries: 2 \}\)/); // the owner, 18/11: two tries for every close-up (the cost)
   const reel = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
   assert.match(reel, /fade=t=in:st=\$\{a\.toFixed\(3\)\}:d=0\.3:alpha=1,fade=t=out/);
 });
@@ -855,6 +855,35 @@ test('the cost of the pictures (the owner, 18/11): a second try and a Reel view 
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /make\(\{ cheap: k > 0, prompt: alone/); // a second close-up try
   assert.match(src, /for \(let i = 0; i < 1; i\+\+\) \{[^\n]*\n\s*try \{\n\s*const v = await this\.imager\.make\(\{ cheap: true,/); // one cheap try per Reel view
+});
+
+test('a design is first one picture of the whole space; «تایید پست N» makes the close-ups and the board; no design of the day by itself (the owner, 18/11)', async () => {
+  let reels = 0;
+  const { desk, made } = await studio({ reelAuto: false, roomFirst: true, reel: async () => { reels += 1; return Buffer.from('MP4'); } });
+  const d = await desk.draftDesign({});
+  const id = /Post #(SP\d+)/.exec(d.text)[1];
+  const n = id.slice(2);
+  assert.equal(made.length, 1, 'only the room is drawn');
+  assert.ok(d.image && d.details.length === 0 && !d.video, 'one picture, nothing else');
+  assert.ok(d.text.includes(`«تایید پست ${n}»`) && d.text.includes(`«ریلز پست ${n} بساز»`));
+  assert.equal(desk.store.d.posts[id].design.stage, 'room');
+  assert.equal(desk.latestRoomOnly(), id);
+  const e = await desk.expandDesign(id);
+  assert.equal(made.length, 3, 'a close-up of each of the two films');
+  assert.ok(e.details.some((x) => x.board) && e.details.filter((x) => !x.board).length === 2);
+  assert.match(e.text, new RegExp(`Post #${id}: 2 عکس نزدیک`));
+  assert.equal(desk.store.d.posts[id].design.stage, 'full');
+  assert.equal(desk.store.d.posts[id].raw.shots.length, 2);
+  assert.equal(desk.store.d.posts[id].extras.length, 3);
+  assert.equal(desk.latestRoomOnly(), '');
+  assert.match((await desk.expandDesign(id)).text, /پیش‌تر ساخته شده‌اند/);
+  assert.equal(reels, 0);
+  for (const [t, want] of [['تایید پست ۴۰', 'SP40'], ['آتوسا تایید ۴۰', 'SP40'], ['تأیید', ''], ['تایید عکس های دیگه رو بده', ''], ['تایید پست 40 عکس‌های دیگر بساز', 'SP40']]) assert.equal(approveDesignRequest(t)?.id, want, t);
+  assert.equal(approveDesignRequest('تایید', '#SP41 ...').id, 'SP41');
+  assert.equal(approveDesignRequest('تایید فاکتور'), null);
+  assert.equal(approveDesignRequest('بله پست ۴۰'), null);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
+  assert.match(src, /env\.SOCIAL_DESIGN_HOUR \|\| 'off'/, 'no design of the day unless set');
 });
 
 test('a design comes with its pictures only; its Reel is made when the owner asks (the owner, 18/11: a Reel costs a lot)', async () => {

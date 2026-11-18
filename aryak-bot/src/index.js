@@ -116,7 +116,7 @@ import { TRANSLATE_SYSTEM, englishOut, isEnglishOut, setOutLang } from './outlan
 import { applyTags } from './tags.js';
 import { makeReel } from './reel.js';
 import { PublicBucket, TikTokClient, tiktokCommand } from './tiktok.js';
-import { GeminiImage, MetaClient, SocialDesk, SocialStore, catalogRequest, conceptChoice, conceptsRequest, designEditRequest, designRequest, inspirationRequest, linkRequest, looksLikeDesignNote, parseSocialCommand, postRequest, reelRequest, retouchRequest } from './social.js';
+import { GeminiImage, MetaClient, SocialDesk, SocialStore, approveDesignRequest, catalogRequest, conceptChoice, conceptsRequest, designEditRequest, designRequest, inspirationRequest, linkRequest, looksLikeDesignNote, parseSocialCommand, postRequest, reelRequest, retouchRequest } from './social.js';
 
 const { config, missing } = loadConfig();
 setOutLang(config.replyLanguage);
@@ -2573,6 +2573,17 @@ ${t.authorizeUrl()}`);
       try { const r = await socialDesk.retouch(rt); await socialSay(r.text, r.image || null); if (r.video) await socialSay(`#${rt.id} the Reel`, null, r.video); } catch (e) { await socialSay(`رتوش نشد: ${e.message}`); }
       return true;
     }
+    // «تایید پست ۴۰»: the other pictures of a design shown as one picture of the whole space (the owner, 18/11)
+    const adQuoted = sctx.quotedMessage ? String(textOf(normalizeMessageContent(sctx.quotedMessage)) || normalizeMessageContent(sctx.quotedMessage)?.imageMessage?.caption || '') : '';
+    const ad = !imageOf(content) ? approveDesignRequest(text, adQuoted) : null;
+    if (ad && isOwner()) {
+      if (!ad.id) ad.id = socialDesk.latestRoomOnly();
+      if (!ad.id) { await socialSay('کدام طرح؟ بنویسید «تایید پست ۴۰» یا روی پیام همان طرح «پاسخ» بزنید و بنویسید «تایید».'); return true; }
+      trace(where, 'owner', `social: the other pictures of #${ad.id}`);
+      await socialSay(`آتوسا عکس‌های نزدیک و تختهٔ طرح پست ${ad.id.slice(2)} را می‌سازد… (چند دقیقه)`);
+      try { await socialSayDesign(await socialDesk.expandDesign(ad.id)); } catch (e) { await socialSay(`عکس‌های دیگر ساخته نشد: ${e.message}`); }
+      return true;
+    }
     // «ریلز پست ۲۴ …»: only the Reel made again (the owner, 15/11)
     const rrQuoted = sctx.quotedMessage ? String(textOf(normalizeMessageContent(sctx.quotedMessage)) || normalizeMessageContent(sctx.quotedMessage)?.imageMessage?.caption || normalizeMessageContent(sctx.quotedMessage)?.videoMessage?.caption || '') : '';
     const rr = !imageOf(content) ? reelRequest(text, rrQuoted) : null;
@@ -2582,6 +2593,8 @@ ${t.authorizeUrl()}`);
       if (!rr.id) { await socialSay('ریلز کدام پست؟ بنویسید «ریلز پست ۳۶ بساز» یا روی پیام همان طرح «پاسخ» بزنید و بنویسید «ریلز این رو بساز».'); return true; }
       trace(where, 'owner', `social: the Reel of #${rr.id}`);
       await socialSay(`آتوسا ریلز پست ${rr.id.slice(2)} را ${socialDesk.store.d.posts[rr.id]?.reel ? 'دوباره ' : ''}می‌سازد… (چند دقیقه)`);
+      // a Reel of a design that has only its whole-space picture: its close-ups first, the Reel comes close on the films (the owner, 18/11)
+      if (socialDesk.store.d.posts[rr.id]?.design?.stage === 'room') { try { await socialSayDesign(await socialDesk.expandDesign(rr.id)); } catch (e) { await socialSay(`عکس‌های نزدیک ساخته نشد: ${e.message}`); } }
       try { const r = await socialDesk.remakeReel(rr); await socialSay(r.text, null, r.video || null); } catch (e) { await socialSay(`ریلز ساخته نشد: ${e.message}`); }
       return true;
     }

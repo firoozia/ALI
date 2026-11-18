@@ -490,6 +490,19 @@ export function reelRequest(text, quoted = '') {
   return { id: q ? `SP${q[1]}` : '', note: '' };
 }
 
+/**
+ * «تایید پست ۴۰» / «تایید ۴۰» / «تایید» (the owner, 18/11: a design is first one picture of the whole space; on his approval the other
+ * pictures are made): { id } ('' when no number: the post answered, else the newest design waiting for it). Null when not one.
+ */
+export function approveDesignRequest(text, quoted = '') {
+  const t = withoutName(text).replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/[.!]+$/, '').trim();
+  const m = /^(?:تایید|تأیید|تائید)\s*(?:شد|می\s*کنم|میکنم|کردم)?\s*(?:(?:پست|طرح|post)\s*)?#?\s*(?:SP)?\s*(\d+)?\s*(?:(?:رو|را)\s*)?(?:عکس\s*(?:های|‌های|ها)\s*(?:دیگه|دیگر)(?:\s*(?:رو|را))?\s*(?:بده|بساز|بفرست)?)?$/i.exec(t);
+  if (!m) return null;
+  if (m[1]) return { id: `SP${m[1]}` };
+  const q = /#?\s*SP\s*(\d+)/i.exec(String(quoted || ''));
+  return { id: q ? `SP${q[1]}` : '' };
+}
+
 /** A message of the owner with web links (Instagram, TikTok, Pinterest, a magazine…): { urls, note } for Atossa to study; null when none. */
 export function linkRequest(text) {
   const urls = [...new Set((String(text || '').match(/https?:\/\/[^\s<>«»"']+/g) || []).map((u) => u.replace(/[),.;!؟،]+$/, '')))];
@@ -791,31 +804,16 @@ export class SocialDesk {
    * The production of a design (the owner, 15/11: «focus on up to three colours; on wood grain more»): the room with the logo and the
    * codes, one close-up per film (up to three), a Reel that visits each film (wood longer and closer), then a draft #SP like any other.
    */
-  async produceDesign({ plan, roomRaw, note = '', size = '' }) {
+  async produceDesign({ plan, roomRaw, note = '', size = '', roomOnly = this.cfg.roomFirst !== false }) {
     const all = this.catalog();
     const facts = `This picture is an AI design idea (not a photo of a finished job): ${plan.room}, made with ${plan.parts.map((p) => `«Code ${p.code}» (${p.where})`).join(', ')}. Say in the caption that it is a design idea and name the codes.${plan.hook ? ` Open the caption with this hook, the line that stops the scroll: «${plan.hook}».` : ''}${PILLARS[plan.pillar]?.caption ? ` ${PILLARS[plan.pillar].caption}` : ''}`;
     // the owner's mark (15/11): the ARYAK logo in the top corner, each film's swatch and code along the bottom
     const codes = plan.parts.map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
     const room = await fitForInstagram(roomRaw);
     const image = await brandDesign(room, { ...this.brandAssets(), codes });
-    // the close-ups: one per film, wood first (it sells by its grain), at most three
-    const order = plan.parts.slice(0, 3).map((x, i) => ({ x, i })).sort((a, b) => Number(this.isWood(b.x.code)) - Number(this.isWood(a.x.code)) || a.i - b.i);
-    const shots = [];
-    for (const { x, i } of order) {
-      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, codes[i].swatch, { size, tries: 2 }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
-    }
-    // a before/after (the owner, 15/11): the same room before, with tired plain cabinets, made from the finished room
-    let beforeRaw = null;
-    if (plan.pillar === 'transform') {
-      try {
-        beforeRaw = await fitForInstagram((await this.imager.make({ images: [{ label: 'The finished room', buffer: room, mime: 'image/jpeg' }],
-          prompt: 'The same room photographed from exactly the same camera position BEFORE the renovation: the same walls, windows, layout and cabinet sizes, but the cabinet and wall fronts are tired, dated plain fronts (yellowed white gloss or worn beige laminate with chipped edges and old handles), flat cool daylight, a little clutter. Realistic, not dirty or ruined. Photorealistic interior photograph, 4:5 portrait. ' + NO_TEXT })).image);
-        if (!(await this.cleanCheck(beforeRaw)).ok) { this.log('social: the before picture carried text or a grid: left out'); beforeRaw = null; }
-      } catch (err) { this.log(`social: the before picture failed: ${err.message}`); }
-    }
     // the function reveal (the owner, 16/11): the same room, the same camera, with what Atossa named opened
     let revealRaw = null;
-    if (this.cfg.reveal && plan.reveal && String(plan.reveal).trim()) { // off since the owner, 18/11: no open doors or drawers
+    if (!roomOnly && this.cfg.reveal && plan.reveal && String(plan.reveal).trim()) { // off since the owner, 18/11: no open doors or drawers
       try {
         const all2 = this.catalog();
         revealRaw = await fitForInstagram((await this.imager.make({ images: [{ label: 'The room: keep this exact design and camera', buffer: room, mime: 'image/jpeg' }, ...plan.parts.filter((x) => all2[x.code]).map((x) => ({ label: `Reference: film ${x.code}, for ${x.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all2[x.code].file)), mime: 'image/jpeg' }))],
@@ -829,9 +827,53 @@ export class SocialDesk {
     if (!p) return { text };
     p.design = { room: plan.room, codes: plan.parts.map((x) => x.code), title: plan.title_fa, scene: plan.scene, plan: { ...plan, dialogue_fa: undefined, change_fa: undefined } };
     const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
-    if (beforeRaw) p.lead = save(`${p.id}-before.jpg`, await brandDesign(beforeRaw, { ...this.brandAssets(), codes: [] }));
     if (revealRaw) p.extras = [save(`${p.id}-open.jpg`, await brandDesign(revealRaw, { ...this.brandAssets(), codes })), ...(p.extras || [])].filter(Boolean);
-    p.raw = { ...(revealRaw ? { reveal: save(`${p.id}-open-raw.jpg`, revealRaw) } : {}), room: save(`${p.id}-room.jpg`, room), shots: shots.map((sh, k) => ({ file: save(`${p.id}-shot${k + 1}.jpg`, sh.raw), code: sh.part.code, where: sh.part.where, wood: sh.wood })) };
+    p.raw = { ...(revealRaw ? { reveal: save(`${p.id}-open-raw.jpg`, revealRaw) } : {}), room: save(`${p.id}-room.jpg`, room), shots: [] };
+    // one picture of the whole space first (the owner, 18/11); the close-ups, the before picture and the board on his «تایید»
+    p.design.stage = roomOnly ? 'room' : 'full';
+    let details = []; let shots = []; let beforeRaw = null;
+    if (!roomOnly) ({ details, shots, beforeRaw } = await this.addDetails(p, plan, room, { size }));
+    let video = null;
+    if (!roomOnly && this.reel && this.cfg.reelAuto) {
+      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan, before: beforeRaw, reveal: revealRaw }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
+    }
+    this.remember(plan);
+    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
+    const ups = details.filter((x) => !x.board);
+    const extra = [ups.length ? `${ups.length} close-up${ups.length > 1 ? 's' : ''} (${ups.map((x) => x.code).join(', ')})` : '', details.some((x) => x.board) ? 'the design board' : '', video ? 'a Reel' : ''].filter(Boolean).join(', ');
+    const n = p.id.slice(2);
+    const reelAsk = roomOnly
+      ? `\nاین فقط عکس کل فضاست تا هزینه کم بماند. اگر پسندیدید بنویسید «تایید پست ${n}» تا عکس‌های نزدیک و تختهٔ طرح ساخته شوند؛ ریلز با «ریلز پست ${n} بساز»؛ رد با «نه پست ${n} …».`
+      : !video && this.reel ? `\nریلز این طرح ساخته نشد تا هزینه نشود. اگر عکس‌ها را پسندیدید بنویسید «ریلز پست ${n} بساز»؛ برای انتشار بی‌ریلز «بله پست ${n}» یا «آپلود کن پست ${n}».` : '';
+    return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}${reelAsk}`,
+      image: p.file ? fs.readFileSync(p.file) : image, details, detail: details[0]?.image || null, video };
+  }
+
+  /**
+   * The other pictures of a design (the owner, 18/11: made on his approval of the whole-space picture): one close-up per film, wood first,
+   * at most three; the before picture of a before/after; the design board, the last page. Saved on the post. Returns { details, shots, beforeRaw }.
+   */
+  async addDetails(p, plan, room, { size = '' } = {}) {
+    const all = this.catalog();
+    const save = (name, buf) => { if (!this.mediaDir) return ''; const f = path.join(this.mediaDir, name); fs.writeFileSync(f, buf); return f; };
+    const codes = plan.parts.filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) }));
+    const order = plan.parts.slice(0, 3).map((x, i) => ({ x, i })).filter(({ x }) => all[x.code]).sort((a, b) => Number(this.isWood(b.x.code)) - Number(this.isWood(a.x.code)) || a.i - b.i);
+    const shots = [];
+    for (const { x } of order) {
+      const sw = codes.find((c) => c.code === x.code).swatch;
+      try { shots.push({ part: x, wood: this.isWood(x.code), raw: await this.closeUp(room, x, sw, { size, tries: 2 }) }); } catch (err) { this.log(`social: the close-up of ${x.code} failed: ${err.message}`); }
+    }
+    // a before/after (the owner, 15/11): the same room before, with tired plain cabinets, made from the finished room
+    let beforeRaw = null;
+    if (plan.pillar === 'transform') {
+      try {
+        beforeRaw = await fitForInstagram((await this.imager.make({ images: [{ label: 'The finished room', buffer: room, mime: 'image/jpeg' }],
+          prompt: 'The same room photographed from exactly the same camera position BEFORE the renovation: the same walls, windows, layout and cabinet sizes, but the cabinet and wall fronts are tired, dated plain fronts (yellowed white gloss or worn beige laminate with chipped edges and old handles), flat cool daylight, a little clutter. Realistic, not dirty or ruined. Photorealistic interior photograph, 4:5 portrait. ' + NO_TEXT })).image);
+        if (!(await this.cleanCheck(beforeRaw)).ok) { this.log('social: the before picture carried text or a grid: left out'); beforeRaw = null; }
+      } catch (err) { this.log(`social: the before picture failed: ${err.message}`); }
+    }
+    if (beforeRaw) p.lead = save(`${p.id}-before.jpg`, await brandDesign(beforeRaw, { ...this.brandAssets(), codes: [] }));
+    p.raw = { ...(p.raw || {}), shots: shots.map((sh, k) => ({ file: save(`${p.id}-shot${k + 1}.jpg`, sh.raw), code: sh.part.code, where: sh.part.where, wood: sh.wood })) };
     const details = [];
     for (const [k, sh] of shots.entries()) {
       const branded = await brandDesign(sh.raw, { ...this.brandAssets(), codes: codes.filter((c) => c.code === sh.part.code) });
@@ -845,17 +887,29 @@ export class SocialDesk {
       details.push({ code: '', board: true, image: board });
       p.extras = [...(p.extras || []), save(`${p.id}-board.jpg`, board)].filter(Boolean);
     } catch (err) { this.log(`social: the design board failed: ${err.message}`); }
-    let video = null;
-    if (this.reel && this.cfg.reelAuto) {
-      try { video = await this.makeReelFor({ room, shots, codes, main: plan.parts[0], music: plan.music, opts: plan.reel || null, plan, before: beforeRaw, reveal: revealRaw }); p.reel = save(`${p.id}.mp4`, video); } catch (err) { this.log(`social: the Reel failed: ${err.message}`); }
-    }
-    this.remember(plan);
-    const head = [`پیشنهاد طراحی: ${plan.title_fa || plan.room}`, PILLARS[plan.pillar]?.fa ? `نوع پست: ${PILLARS[plan.pillar].fa}` : '', plan.why_fa || '', plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '', plan.dialogue_fa ? `گفت‌وگوی آتوسا و داریوش: ${plan.dialogue_fa}` : '', plan.change_fa ? `تغییر به خواست شما: ${plan.change_fa}` : '', ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`), `(رد با دلیل: «نه پست ${p.id.slice(2)} …»؛ دلیل شما در طرح‌های بعدی به کار می‌رود)`].filter(Boolean).join('\n');
+    if (p.design) p.design.stage = 'full';
+    this.store.save();
+    return { details, shots, beforeRaw };
+  }
+
+  /** «تایید پست ۴۰»: the other pictures of a design that has only its whole-space picture. Returns { text, details } for the owner. */
+  async expandDesign(id) {
+    const p = this.store.d.posts[id];
+    const n = String(id).slice(2);
+    if (!p?.design?.plan) return { text: `پست ${n} طرحِ آتوسا نیست.` };
+    if (p.state !== 'draft' && p.state !== 'scheduled') return { text: `پست ${n} دیگر پیش‌نویس نیست.` };
+    if (p.design.stage !== 'room' || (p.raw?.shots || []).length) return { text: `عکس‌های دیگر پست ${n} پیش‌تر ساخته شده‌اند.` };
+    const room = p.raw?.room && fs.existsSync(p.raw.room) ? fs.readFileSync(p.raw.room) : null;
+    if (!room) return { text: `عکس اتاق پست ${n} روی سرور نیست؛ با «تغییر پست ${n} …» دوباره بسازید.` };
+    const { details } = await this.addDetails(p, p.design.plan, room);
     const ups = details.filter((x) => !x.board);
-    const extra = [ups.length ? `${ups.length} close-up${ups.length > 1 ? 's' : ''} (${ups.map((x) => x.code).join(', ')})` : '', details.some((x) => x.board) ? 'the design board' : '', video ? 'a Reel' : ''].filter(Boolean).join(', ');
-    const reelAsk = !video && this.reel ? `\nریلز این طرح ساخته نشد تا هزینه نشود. اگر عکس‌ها را پسندیدید بنویسید «ریلز پست ${p.id.slice(2)} بساز»؛ برای انتشار بی‌ریلز «بله پست ${p.id.slice(2)}» یا «آپلود کن پست ${p.id.slice(2)}».` : '';
-    return { text: `${head}\n\n${text}${extra ? `\nWith the post: ${extra}; one yes posts them all.` : ''}${reelAsk}`,
-      image: p.file ? fs.readFileSync(p.file) : image, details, detail: details[0]?.image || null, video };
+    const missed = p.design.plan.parts.slice(0, 3).map((x) => x.code).filter((c) => !ups.some((u) => u.code === c));
+    return { text: `Post #${id}: ${ups.length ? `${ups.length} عکس نزدیک (${ups.map((x) => x.code).join('، ')})` : 'هیچ عکس نزدیکی پذیرفته نشد'}${details.some((x) => x.board) ? ' و تختهٔ طرح' : ''} ساخته شد.${missed.length ? ` عکس نزدیک ${missed.join('، ')} در بازبینی رد شد.` : ''}\nریلز با «ریلز پست ${n} بساز»؛ انتشار با «بله پست ${n}».`, details };
+  }
+
+  /** The newest design that has only its whole-space picture, in the last [ms]. */
+  latestRoomOnly(ms = 3 * 24 * 60 * 60 * 1000) {
+    return Object.values(this.store.d.posts).filter((p) => p.design?.stage === 'room' && (p.state === 'draft' || p.state === 'scheduled') && this.now() - p.at < ms).sort((a, b) => b.at - a.at)[0]?.id || '';
   }
 
   // ---- concepts (the owner, 15/11): several numbered proposals of a catalogue, he picks one («شماره ۱ …»), it is then produced
