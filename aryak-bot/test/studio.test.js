@@ -979,7 +979,7 @@ test('the cost and the camera (the owner, 19/11): one press search a week shared
   assert.match(src, /never a close crop of one cabinet or corner; the camera always stands inside the room, never outside it/);
   assert.match(src, /never ask for a camera outside the room, in a doorway or through glass/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.match(index, /const STUDIO_PLAN_KINDS = new Set\(\['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch'\]\)/);
+  assert.match(index, /const STUDIO_PLAN_KINDS = new Set\(\['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change'\]\)/); // the picture checks too (the owner, 19/11)
   assert.match(index, /STUDIO_PLAN_KINDS\.has\(kind\) && config\.social\.planModel \? config\.social\.planModel : config\.model/);
   const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
   assert.match(cfg, /planModel: \(env\.SOCIAL_PLAN_MODEL \?\? 'claude-sonnet-5-5'\)/);

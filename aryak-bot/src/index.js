@@ -3896,7 +3896,7 @@ async function monthlyFullReport() {
 // The Instagram token is renewed weekly and kept on the server; a new token put in the metadata replaces the kept one.
 const socialStore = new SocialStore(path.join(config.authDir, 'social'));
 const socialTokenFrom = config.social.igToken ? createHash('sha256').update(config.social.igToken).digest('hex').slice(0, 12) : '';
-const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch']);
+const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change']); // the picture checks too (the owner, 19/11: Sonnet was right 7 of 8 at half the cost, Opus 6 of 8)
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom, timezone: config.timezone }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
@@ -3921,7 +3921,7 @@ const socialDesk = new SocialDesk({
     // the fixed part (the rules and the film list) is cached: a second call within five minutes pays a tenth for it (the owner, 19/11: the cost)
     const content = [...(prefix ? [{ type: 'text', text: prefix, cache_control: { type: 'ephemeral' } }] : []), ...images.map(pic), ...(image ? [pic(image)] : []), { type: 'text', text }];
     system = system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system;
-    // the long writing of the studio (plans, Dariush, links, the press pictures) on the cheaper model; the checks of the pictures stay (the owner, 19/11)
+    // the studio's writing and its picture checks on the cheaper model (the owner, 19/11)
     const model = STUDIO_PLAN_KINDS.has(kind) && config.social.planModel ? config.social.planModel : config.model;
     const res = await client.beta.messages.create({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }], output_config: { effort }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
