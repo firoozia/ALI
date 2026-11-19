@@ -1113,7 +1113,7 @@ test('owner review: «invoice NAME 221 20m» is read; the preview pairs by the n
   const far = { codes: ['300'], qty: 10, number: 'far', at: NOW - 20 * DAY }; const close = { codes: ['300'], qty: 10, number: 'close', at: NOW - 3 * DAY };
   const n = crossCheck(near, 'GOLDEN DOOR', [{ code: '300', qty: 10 }], { now: NOW, invoiced: [far, close], trackedSince: 0 });
   assert.match(n.problems.join('|'), /already invoiced \(close\)/);
-  const gate = (s) => s.includes('async function sheetOutRows(days, cached = false)') && s.includes('unbilledReport(tracker.events, { cached: true })');
+  const gate = (s) => s.includes('async function sheetOutRows(days, cached = false, freshMs') && s.includes('unbilledReport(tracker.events, { cached: true })');
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(gate(index)); // only the automatic evening run may use the copy read minutes ago
   assert.ok(index.includes("rv.type === 'MESSAGE_EDIT'") && index.includes('handled.delete(rv.key.id)')); // an edit takes back what the old text made and re-reads the new one

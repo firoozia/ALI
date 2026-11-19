@@ -726,8 +726,8 @@ export class QboInvoiceDesk {
    * list (PriceBook) or null; [config]; [today]: () => yyyy-mm-dd; [now]; [post]: async (jid, buffer, fileName, caption); [ownerJid]: () => jid;
    * [groups]: async () => [{ id, subject }]; [testGroup]: (groups) => group|null.
    */
-  constructor({ cutsOf = null, markCuts = null, crossOf = null, cutLabel = 'گروه سفارش آریاک', stockOf = null, qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
-    Object.assign(this, { targets: null, crossOf, cutsOf, markCuts, cutLabel, stockOf, qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
+  constructor({ cutsOf = null, markCuts = null, crossOf = null, prefetch = null, cutLabel = 'گروه سفارش آریاک', stockOf = null, qbo, desk, store, audit, book = null, taxChoices = new TaxChoices(''), itemCodes = new ItemCodes(''), extract = null, config, today, now = () => Date.now(), post, ownerJid, groups, testGroup, log = () => {} }) {
+    Object.assign(this, { targets: null, crossOf, prefetch, cutsOf, markCuts, cutLabel, stockOf, qbo, desk, store, audit, book, taxChoices, itemCodes, extract, config, today, now, post, ownerJid, groups, testGroup, log });
     this.cache = { at: 0, items: [], codes: new Map(), currency: '', customTxn: false };
     this.inflight = new Set(); // previews being created right now: a yes that arrives meanwhile does not start a second attempt
   }
@@ -993,6 +993,7 @@ export class QboInvoiceDesk {
   }
 
   async makePreview({ customerText, entries, requester, stop, overrides = {}, reuseId = '', batch = '', po = '', origin = null, test = false }) {
+    if (!test) try { this.prefetch?.(); } catch { /* the cross-check reads it later anyway */ } // the warehouse sheet is read while QuickBooks is asked (the owner, 19/11: the preview was slow)
     let cust = overrides.customer ? { ours: customerText, id: overrides.customer.id, name: overrides.customer.name, loose: true, typed: customerText, chosen: true } : await this.desk.resolveLoose(customerText);
     const problems = { customer: '', items: [], tax: '' };
     const guesses = { customer: null, lines: [], tax: null }; // what was GUESSED (shown with alternatives; applied only by the owner's yes)
@@ -1028,6 +1029,9 @@ export class QboInvoiceDesk {
     }
     problems.items.push(...stops);
     const warnings = []; const out = [];
+    // the free stock of every line asked at once, not line by line (the owner, 19/11: each line waited 3 to 4 s for the sheet)
+    const stockAhead = new Map();
+    if (this.stockOf) await Promise.all(lines.filter((l) => l.typed && /^[\w\-./ ]{1,30}$/.test(l.typed)).map(async (l) => { try { stockAhead.set(l, await this.stockOf(l.typed)); } catch { stockAhead.set(l, null); } }));
     for (const l of lines) {
       const listed = Number(l.item.UnitPrice) > 0 ? Number(l.item.UnitPrice) : null; // no price in QuickBooks (or zero) = no price to default to
       const price = l.price ?? listed;
@@ -1038,7 +1042,7 @@ export class QboInvoiceDesk {
       if (listed !== null && l.price !== null && l.price > listed + 0.005) w.push(`قیمت شما ${l.price} است و قیمت کوییک‌بوکس ${listed}؛ قیمت شما می‌ماند`); // a note, not a stop
       if (this.stockOf && l.typed && /^[\w\-./ ]{1,30}$/.test(l.typed)) { // the free stock beside the line: a warning, never a stop, and nothing is reported to anyone
         try {
-          const st = await this.stockOf(l.typed);
+          const st = stockAhead.has(l) ? stockAhead.get(l) : await this.stockOf(l.typed);
           if (st && Number.isFinite(st.free) && st.free < l.qty) { w.push(`موجودی از شیت زیناکس — کد ${fa(l.typed)}: آزاد ${fa(st.free).replace(".", "٫")} ${st.unit === 'm' || !st.unit ? 'متر' : st.unit}، کمتر از ${fa(l.qty)}`); fl.push(`stock ${st.free} ${st.unit === 'm' || !st.unit ? 'm' : st.unit} < ${l.qty}`); }
         } catch { /* the stock sheet did not answer: no warning */ }
       }

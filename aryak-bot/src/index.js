@@ -1024,14 +1024,24 @@ const postFile = async (jid, buf, fileName, caption, mimetype) => { const r = aw
 /** The text of the report «cut or delivered, not invoiced»: the posts against ALL of the customers' QuickBooks invoices of the last 40 days. Read only. */
 /** The OUT rows of the stock sheet for the last [days] days (read only): [{ customer, code, qty, unit, at }], or null when the sheet could not give them all (then nothing is claimed about what left). */
 const sheetPages = { at: 0, key: '', rows: null }; // the OUT rows read for the last report: a second «unbilled» or the evening report within ten minutes does not read them again
-async function sheetOutRows(days, cached = false) { // [cached]: only the automatic evening run may use the copy read minutes ago; a report somebody asks for reads the sheet now
+let sheetReading = null; // { key, p }: a read in progress, shared by whoever asks meanwhile
+async function sheetOutRows(days, cached = false, freshMs = 10 * 60 * 1000) { // [cached]: a copy read within [freshMs] is used (the evening run: ten minutes; invoice previews: three)
   const key = `${todayDubai()}|${days}`;
-  if (cached && sheetPages.rows && sheetPages.key === key && Date.now() - sheetPages.at < 10 * 60 * 1000) return sheetPages.rows;
+  if (cached && sheetPages.rows && sheetPages.key === key && Date.now() - sheetPages.at < freshMs) return sheetPages.rows;
+  if (sheetReading?.key === key) return sheetReading.p;
+  const p = readSheetOutRows(days, key).finally(() => { if (sheetReading?.p === p) sheetReading = null; });
+  sheetReading = { key, p };
+  return p;
+}
+async function readSheetOutRows(days, key) {
   try {
     const to = todayDubai(); const rows = []; const returned = []; let returnsKnown = true;
-    for (let back = days; back > 0; back -= 10) { // ten days at a time: a page is at most 500 rows
-      const from = dayPlus(to, -back); const upTo = dayPlus(to, -Math.max(0, back - 10) - (back > 10 ? 1 : 0));
-      const rep = await fetchReport(config, { from, to: back <= 10 ? to : upTo, detail: true, limit: 500, returns: true });
+    // ten days at a time (a page is at most 500 rows), all pages asked at once (the owner, 19/11: four pages one after another made every invoice preview wait about 18 s)
+    const pages = [];
+    for (let back = days; back > 0; back -= 10) { const from = dayPlus(to, -back); const upTo = dayPlus(to, -Math.max(0, back - 10) - (back > 10 ? 1 : 0)); pages.push({ from, to: back <= 10 ? to : upTo }); }
+    const reps = await Promise.all(pages.map((pg) => fetchReport(config, { from: pg.from, to: pg.to, detail: true, limit: 500, returns: true })));
+    for (const [k, rep] of reps.entries()) {
+      const from = pages[k].from;
       if ((rep.rowsTotal || 0) > (rep.rows || []).length) { logger.warn('three-way: only ' + (rep.rows || []).length + ' of ' + rep.rowsTotal + ' sheet rows came back for ' + from + ': what left the warehouse is not claimed'); return null; }
       if (Array.isArray(rep.returns)) returned.push(...rep.returns.map((r) => ({ customer: r.customer, code: r.code, qty: r.qty, unit: r.unit, at: Number(r.at) || Date.parse(r.day + 'T12:00:00Z') }))); else returnsKnown = false; // an older script sends none
       rows.push(...(rep.rows || []).filter((r) => r.type === 'OUT' || r.type === 'CUT')); // edge banding is recorded under the colour code of the film: all rows count
@@ -1175,9 +1185,10 @@ const qboInvoices = new QboInvoiceDesk({
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
   // the final cut of the customer and code, from the tracker (what the cutting group posted); marked with the invoice number once it is made
   cutsOf: (customer, codes) => cutRecords(tracker, customer, codes, { log: (s) => logger.info(s) }), markCuts: (refs, number) => markCutsInvoiced(tracker, refs, number),
-  crossOf: async (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x), aliasOf: (n) => cutAliases.resolve(n), trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') : 0, outs: opts.test ? null : await sheetOutRows(35).catch(() => null) }), // a preview made in the test group is checked against the TEST data only
+  crossOf: async (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x), aliasOf: (n) => cutAliases.resolve(n), trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') : 0, outs: opts.test ? null : await sheetOutRows(35, true, 3 * 60 * 1000).catch(() => null) }), // a preview made in the test group is checked against the TEST data only
+  prefetch: () => { sheetOutRows(35, true, 3 * 60 * 1000).catch(() => null); }, // started when a request comes, so the sheet is read while QuickBooks is asked
   // the free stock of a code, for a warning line in an invoice preview (the sheet is read, nobody is told)
-  stockOf: async (code) => { try { const r = await fetchStock(config, { code }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } },
+  stockOf: async (code) => { try { const r = await fetchStock(config, { code }, fetch, { tries: 2, timeoutMs: [12000, 12000] }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } }, // a warning only: never 45 s of waiting (live 19/11)
   today: () => localParts(Date.now(), config.timezone).day, post: postDocument, ownerJid: () => ownIds()[0], groups: allGroups, testGroup: (g) => pickTestGroup(g, config), log: (s) => logger.info(s),
 });
 // Where the QuickBooks PDF of a created invoice goes: the chat the request came from, the chat of the yes, and the owner's own chat when somebody else asked

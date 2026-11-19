@@ -984,3 +984,10 @@ test('the cost and the camera (the owner, 19/11): one press search a week shared
   const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
   assert.match(cfg, /planModel: \(env\.SOCIAL_PLAN_MODEL \?\? 'claude-sonnet-5-5'\)/);
 });
+
+test('a top designer with a marketer\'s eye; every room styled to the last detail, never an empty room behind the glass (the owner, 19/11: SP42)', async () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /You think like the best designers of the world and like a marketer at the same time/);
+  assert.match(src, /names at least eight concrete styled objects and textures/);
+  assert.match(src, /Every space seen beyond a glass partition, an opening or a door is designed and styled too: never an empty room behind/);
+});

@@ -76,7 +76,7 @@ export function payerCheck(typed, customerNames) {
   const fits = names.filter((q) => typedFitsName(typed, q)); // the word-by-word rule: «Al masar» never fits «MASTER WOOD»
   // two near names (live 18/11: «al afeefi» was taken as AL AFEEF KITCHEN, a close spelling, while ALAFEEFI KITCHEN is the customer): the name
   // that holds the typed words exactly, or the typed words glued as its start, comes before any close spelling
-  if (fits.length > 1) {
+  if (fits.length > 1 && fits.length <= 6) { // a few near names only: a generic word fitting many names is left to the rules below (and stays fast)
     const t = tokens(typed);
     const exactWords = fits.filter((q) => { const n = tokens(q); let at = 0; for (const w of t) { const k = n.findIndex((c, i) => i >= at && c === w); if (k < 0) return false; at = k + 1; } return t.length > 0; });
     if (exactWords.length === 1) return { resolved: exactWords[0], known: true, how: 'typed words exactly' };
