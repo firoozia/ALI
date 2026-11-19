@@ -991,3 +991,32 @@ test('a top designer with a marketer\'s eye; every room styled to the last detai
   assert.match(src, /names at least eight concrete styled objects and textures/);
   assert.match(src, /Every space seen beyond a glass partition, an opening or a door is designed and styled too: never an empty room behind/);
 });
+
+test('the cost (the owner, 19/11): the week\'s notes dropped on the server are used and no search is paid; the music comes from the kept clips once there are enough; the fixed rules are cached', async () => {
+  let asked = 0;
+  const { desk } = await studio({ research: async () => { asked++; return '- paid search'; } });
+  const inbox = path.join(tmp('inbox-'), 'research-inbox.md');
+  desk.cfg.researchInbox = inbox; desk.cfg.researchSource = 'inbox';
+  assert.equal(await desk.researchTrends(), '', 'no notes yet: no paid search either');
+  assert.equal(asked, 0);
+  fs.writeFileSync(inbox, '- Fluted walnut and brass [AD]\nIMAGES: https://x.example/a.jpg');
+  assert.equal(await desk.researchTrends(), '- Fluted walnut and brass [AD]');
+  assert.match(desk.todayTrends(), /Fluted walnut/);
+  assert.equal(asked, 0);
+  desk.cfg.researchSource = 'bot'; desk.cfg.researchInbox = '';
+  desk.store.d.trends = [];
+  await desk.researchTrends();
+  assert.equal(asked, 1, 'the bot searches only when set to');
+  // the music library
+  const brand = tmp('brand-'); desk.brandDir = brand; fs.mkdirSync(path.join(brand, 'music'));
+  let made = 0; desk.imager.music = async () => { made++; return Buffer.from(`clip${made}`); };
+  desk.cfg.musicLibrary = 2;
+  await desk.reelMusic('calm'); await desk.reelMusic('calm');
+  assert.equal(made, 2);
+  const a = await desk.reelMusic('calm'); const b = await desk.reelMusic('calm');
+  assert.equal(made, 2, 'the library is full: no new clip');
+  assert.notDeepEqual(a, b, 'never the same clip twice in a row');
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /\{ type: 'text', text: prefix, cache_control: \{ type: 'ephemeral' \} \}/);
+  assert.match(index, /system = system \? \[\{ type: 'text', text: system, cache_control: \{ type: 'ephemeral' \} \}\] : system;/);
+});

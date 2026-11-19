@@ -176,6 +176,9 @@ export function loadConfig(env = process.env) {
       designHour: /^off$/i.test(env.SOCIAL_DESIGN_HOUR || 'off') ? -1 : Math.min(23, Math.max(0, Number(env.SOCIAL_DESIGN_HOUR))), // the designer's proposal of the day, Dubai time; off unless set (the owner, 18/11: «remove the automatic design»)
       planModel: (env.SOCIAL_PLAN_MODEL ?? 'claude-sonnet-5-5').trim(), // the studio's plans, Dariush and its reading (the owner, 19/11: the cost); empty = the main model
       researchDays: Number(env.SOCIAL_RESEARCH_DAYS || 7), // the design-press search once a week (the owner, 19/11)
+      researchSource: (env.SOCIAL_RESEARCH_SOURCE || 'inbox').toLowerCase(), // 'inbox': the notes Claude in the owner's app drops on the server; 'bot': the bot's own paid search
+      researchInbox: env.SOCIAL_RESEARCH_INBOX || `${env.AUTH_DIR || './auth'}/social/research-inbox.md`,
+      musicLibrary: Number(env.SOCIAL_MUSIC_LIBRARY || 8), // kept Reel clips before no new one is made (the owner, 19/11)
       roomFirst: (env.SOCIAL_ROOM_FIRST || 'on').toLowerCase() !== 'off', // a design is one picture of the whole space; the rest on «تایید پست N» (the owner, 18/11)
     },
     kbDir: env.KB_DIR || './kb',

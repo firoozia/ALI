@@ -3907,6 +3907,7 @@ const socialDesk = new SocialDesk({
   research: async ({ system, text }) => {
     const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 2 }]; // fewer pages read (the owner, 19/11: the cost)
     const messages = [{ role: 'user', content: text }];
+    system = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
     for (let i = 0; i < 4; i++) {
       const res = await client.beta.messages.create({ model: config.social.planModel || config.model, max_tokens: 6000, system, messages, tools, output_config: { effort: 'medium' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
       if (res.stop_reason !== 'pause_turn') return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
@@ -3915,9 +3916,11 @@ const socialDesk = new SocialDesk({
     return '';
   },
   imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize, cheapModel: config.social.geminiCheapModel, prices: config.social.imagePrices, onCost: (c) => cost.image(c) }),
-  write: async ({ kind = '', system, text, image, images = [], mime, effort = 'low', maxTokens = 800 }) => {
+  write: async ({ kind = '', system, prefix = '', text, image, images = [], mime, effort = 'low', maxTokens = 800 }) => {
     const pic = (b) => ({ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: b.toString('base64') } });
-    const content = [...images.map(pic), ...(image ? [pic(image)] : []), { type: 'text', text }];
+    // the fixed part (the rules and the film list) is cached: a second call within five minutes pays a tenth for it (the owner, 19/11: the cost)
+    const content = [...(prefix ? [{ type: 'text', text: prefix, cache_control: { type: 'ephemeral' } }] : []), ...images.map(pic), ...(image ? [pic(image)] : []), { type: 'text', text }];
+    system = system ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system;
     // the long writing of the studio (plans, Dariush, links, the press pictures) on the cheaper model; the checks of the pictures stay (the owner, 19/11)
     const model = STUDIO_PLAN_KINDS.has(kind) && config.social.planModel ? config.social.planModel : config.model;
     const res = await client.beta.messages.create({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }], output_config: { effort }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });

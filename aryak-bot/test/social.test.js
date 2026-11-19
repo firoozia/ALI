@@ -246,7 +246,7 @@ test('the designer: looks once, a plan of films from the list, each film\'s pict
   assert.equal(JSON.parse(fs.readFileSync(path.join(cat, 'catalog.json'), 'utf8')).HZ818.look, 'look of HZ818');
   // the plan: the designer reads every film's look and the owner's words
   const asked = writes.find((w) => w.kind === 'design-plan');
-  assert.match(asked.text, /HZ832: look of HZ832 \[TEST signature\]/);
+  assert.match(asked.prefix, /^The films \(code: look \[catalogue\]\):[\s\S]*HZ832: look of HZ832 \[TEST signature\]/); // the film list is the cached first block (the owner, 19/11: the cost)
   assert.match(asked.text, /The owner's words: کمد دیواری/);
   assert.equal(asked.effort, 'medium');
   // Gemini: each film's own picture, labelled with its place; an unknown code is dropped

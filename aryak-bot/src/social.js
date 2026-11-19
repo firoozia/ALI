@@ -701,9 +701,8 @@ export class SocialDesk {
   async designPlan({ code = '', note = '', inspiration = null, pillar = '' } = {}) {
     const all = this.catalog();
     const d = this.store.d;
+    const films = ['The films (code: look [catalogue]):', ...Object.entries(all).map(([k, e]) => `${k}: ${e.look || e.kind || 'decorative film'} [${e.catalogue || ''}]`)].join('\n');
     const text = [
-      'The films (code: look [catalogue]):',
-      ...Object.entries(all).map(([k, e]) => `${k}: ${e.look || e.kind || 'decorative film'} [${e.catalogue || ''}]`),
       !inspiration && this.recentCompositions() ? `\nYour recent compositions (never repeat them):\n${this.recentCompositions()}` : '', // a design from his picture follows it, never «novelty» (the owner, 19/11)
       (d.taste || []).length ? `\nThe owner's notes on your earlier proposals (follow them):\n${d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
       this.todayTrends() ? `\nToday's notes from the world's design press (your own research this morning):\n${this.todayTrends()}` : '',
@@ -718,7 +717,7 @@ export class SocialDesk {
     // room to think: the morning's notes made the brief longer, and a cut answer has no JSON (live test 15/11); one more try when it is cut
     let plan;
     for (let i = 0; i < 2 && !plan; i++) {
-      const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text, effort: 'medium', maxTokens: 12000, ...(inspiration ? { image: inspiration.image, mime: inspiration.mime || 'image/jpeg' } : {}) }) || '');
+      const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), prefix: films, text, effort: 'medium', maxTokens: 12000, ...(inspiration ? { image: inspiration.image, mime: inspiration.mime || 'image/jpeg' } : {}) }) || '');
       try { plan = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { this.log(`social: the plan was not JSON (${raw.length} characters)`); }
     }
     if (!plan) return { error: 'The designer gave no plan; try again.' };
@@ -1222,7 +1221,25 @@ export class SocialDesk {
     return last && this.now() - (last.at || 0) < days * 86400000 ? last : null;
   }
   todayTrends() { return this.freshTrend()?.text || ''; }
+  /** The week's notes written outside the bot (the owner, 19/11: Claude in his app searches the press on his subscription and drops them here). */
+  readInbox() {
+    const f = this.cfg.researchInbox || '';
+    if (!f) return null;
+    try {
+      const st = fs.statSync(f);
+      if (this.now() - st.mtimeMs > 14 * 86400000) return null; // older than two weeks: not today's press
+      const text = fs.readFileSync(f, 'utf8').replace(/^\s*IMAGES?\s*:.*$/gim, '').trim().slice(0, 4000);
+      return text ? { at: st.mtimeMs, text } : null;
+    } catch { return null; }
+  }
   async researchTrends() {
+    const inbox = this.readInbox();
+    if (inbox) { // the dropped notes win; nothing is paid for them
+      const last = (this.store.d.trends || []).at(-1);
+      if (!last || last.text !== inbox.text) { (this.store.d.trends ||= []).push({ day: new Date(inbox.at).toISOString().slice(0, 10), at: this.now(), text: inbox.text, source: 'inbox' }); this.store.d.trends = this.store.d.trends.slice(-14); this.store.save(); }
+      return inbox.text;
+    }
+    if (this.cfg.researchSource === 'inbox') return this.todayTrends(); // the bot never pays for a search of its own
     if (!this.research || this.todayTrends()) return this.todayTrends();
     if (this.researching) return this.researching; // three pictures sent at once ran three searches (live 19/11): one search, shared
     this.researching = this.researchOnce().finally(() => { this.researching = null; });
@@ -1372,6 +1389,15 @@ export class SocialDesk {
   async reelMusic(mood = '') {
     const dir = this.brandDir ? path.join(this.brandDir, 'music') : '';
     const kept = () => { try { return fs.readdirSync(dir).filter((f) => f.endsWith('.mp3')); } catch { return []; } };
+    // a library of kept clips (the owner, 19/11: the cost): once it holds [musicLibrary] clips, a kept one is used (never the last one twice in a row)
+    const enough = Number(this.cfg.musicLibrary) > 0 ? Number(this.cfg.musicLibrary) : 8;
+    const have = kept();
+    if (dir && have.length >= enough) {
+      const pick = have.filter((f) => f !== this.lastClip);
+      const f = pick[Math.floor(Math.random() * pick.length)] || have[0];
+      this.lastClip = f;
+      return fs.readFileSync(path.join(dir, f));
+    }
     try {
       if (!this.imager?.music) throw new Error('no music model');
       // the sound design (the owner, 15/11, from a Gemini prompt): quiet sounds of the materials under the music keep people watching
