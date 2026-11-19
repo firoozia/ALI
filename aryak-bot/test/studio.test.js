@@ -158,7 +158,7 @@ test('the owner\'s change is checked: a redraw that does not show it is drawn on
   assert.match(d.text, /تغییر به خواست شما: دوربین بازتر شد/);
 });
 
-test('Atossa and Dariush: he reads every plan before it is drawn, she revises what he sends back; the talk is shown; no composition twice', async () => {
+test('Atossa and Dariush: he reads every plan before it is drawn and writes the hook; no second plan (the owner, 19/11: the cost); no composition twice', async () => {
   const { desk, writes } = await studio();
   const base = desk.write;
   const first = { title_fa: 'اول', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors' }], signature: 'modern kitchen, island with drum pendants, frontal', scene: 'A kitchen.' };
@@ -170,9 +170,9 @@ test('Atossa and Dariush: he reads every plan before it is drawn, she revises wh
     return base(r);
   };
   const plan = await desk.designPlan({ code: 'HZ812' });
-  assert.equal(plan.room, 'majlis', 'the revised plan is the one drawn');
+  assert.equal(plan.room, 'kitchen', 'no second plan is written (the owner, 19/11)');
   assert.equal(plan.hook, 'Walnut that hosts the evening');
-  assert.match(plan.dialogue_fa, /داریوش/);
+  assert.equal(plan.dialogue_fa, '', 'a talk about changes that were not made is not shown');
   const asks = [];
   desk.write = async (r) => { asks.push(r); return r.kind === 'critique' ? JSON.stringify([{ verdict: 'ok', notes: [], hook: 'h', dialogue_fa: 'خوب است' }]) : JSON.stringify(second); };
   await desk.designPlan({ code: 'HZ812' });
@@ -293,9 +293,11 @@ test('«الهام»: the picture of the owner guides the plan (Atossa sees it) 
   await desk.draftDesign({ note: 'آشپزخانه', inspiration: { image: insp, mime: 'image/jpeg' } });
   const plan = writes.find((w) => w.kind === 'design-plan');
   assert.ok(plan.image.equals(insp), 'the designer sees the picture');
-  assert.match(plan.text, /The owner liked the attached picture/);
+  assert.match(plan.text, /The owner sent the attached picture as the design to make[\s\S]*Draw THE SAME ROOM[\s\S]*the same camera place/);
+  assert.doesNotMatch(plan.text, /never repeat them/, 'his picture is followed, not novelty (the owner, 19/11)');
+  assert.ok(!writes.some((w) => w.kind === 'critique'), 'Dariush does not send his picture back');
   const ref = made[0].images.at(-1);
-  assert.match(ref.label, /Mood and layout reference/);
+  assert.match(ref.label, /The design to follow \(the owner's picture\): the same room, layout, main pieces and camera place/);
   assert.ok(ref.buffer.equals(insp));
   assert.match(desk.store.d.taste.at(-1).text, /The owner's inspiration picture: kitchen \(آشپزخانه\)/);
 });
@@ -958,4 +960,27 @@ test('no open doors or drawers: the plan asks none, no open picture is drawn, th
   const id = /Post #(SP\d+)/.exec(d.text)[1];
   assert.equal(desk.store.d.posts[id].raw.reveal, undefined);
   assert.match(made[1].prompt, /proves the quality of the film[\s\S]*clean edge where the film wraps around the door edge[\s\S]*every door and drawer closed/);
+});
+
+test('the cost and the camera (the owner, 19/11): one press search a week shared by designs made at once; the camera inside the room; the studio writes on the cheaper model', async () => {
+  let asked = 0;
+  const { desk } = await studio({ research: async () => { asked++; await new Promise((r) => setTimeout(r, 20)); return '- Walnut [AD]'; } });
+  await Promise.all([desk.researchTrends(), desk.researchTrends(), desk.researchTrends()]);
+  assert.equal(asked, 1, 'three designs at once: one search');
+  const t0 = desk.now();
+  desk.now = () => t0 + 6 * 86400000;
+  await desk.researchTrends();
+  assert.equal(asked, 1, 'still fresh after six days');
+  assert.match(desk.todayTrends(), /Walnut/);
+  desk.now = () => t0 + 8 * 86400000;
+  await desk.researchTrends();
+  assert.equal(asked, 2, 'a new search after a week');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /never a close crop of one cabinet or corner; the camera always stands inside the room, never outside it/);
+  assert.match(src, /never ask for a camera outside the room, in a doorway or through glass/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /const STUDIO_PLAN_KINDS = new Set\(\['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch'\]\)/);
+  assert.match(index, /STUDIO_PLAN_KINDS\.has\(kind\) && config\.social\.planModel \? config\.social\.planModel : config\.model/);
+  const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
+  assert.match(cfg, /planModel: \(env\.SOCIAL_PLAN_MODEL \?\? 'claude-sonnet-5-5'\)/);
 });

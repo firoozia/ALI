@@ -251,7 +251,7 @@ test('the designer: looks once, a plan of films from the list, each film\'s pict
   assert.equal(asked.effort, 'medium');
   // Gemini: each film's own picture, labelled with its place; an unknown code is dropped
   assert.deepEqual(made[0].images.map((i) => [i.label, i.buffer.toString()]), [['Reference: film HZ832, for wardrobe doors', 'SAMPLE-832'], ['Reference: film HZ818, for side panels', 'SAMPLE-818']]);
-  assert.match(made[0].prompt, /^A calm bedroom; .*\nThe camera stands far enough back that the WHOLE room[^\n]*\nEach labelled reference picture is the exact surface film/);
+  assert.match(made[0].prompt, /^A calm bedroom; .*\nThe camera stands inside the room, at eye level, far enough back that the WHOLE room[^\n]*\nEach labelled reference picture is the exact surface film/);
   // the draft: the picture, the designer's Persian reasons above the caption
   assert.equal(out.image.toString(), 'ROOM');
   assert.match(out.text, /^پیشنهاد طراحی: کمد سنگی با قاب کرم\nسنگ تیره با کرم روشن تعادل می‌سازد\.\n• کد HZ832: درهای کمد\n• کد HZ818: بدنه‌ها/);

@@ -3885,6 +3885,7 @@ async function monthlyFullReport() {
 // The Instagram token is renewed weekly and kept on the server; a new token put in the metadata replaces the kept one.
 const socialStore = new SocialStore(path.join(config.authDir, 'social'));
 const socialTokenFrom = config.social.igToken ? createHash('sha256').update(config.social.igToken).digest('hex').slice(0, 12) : '';
+const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch']);
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom, timezone: config.timezone }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
@@ -3893,20 +3894,22 @@ const socialDesk = new SocialDesk({
   tiktok: new TikTokClient({ clientKey: config.social.tiktokKey, clientSecret: config.social.tiktokSecret, redirectUri: config.social.tiktokRedirect, mode: config.social.tiktokMode, store: socialStore }),
   // Atossa's morning reading of the world's design press: Claude's own web search and web fetch (server tools)
   research: async ({ system, text }) => {
-    const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4 }];
+    const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 2 }]; // fewer pages read (the owner, 19/11: the cost)
     const messages = [{ role: 'user', content: text }];
     for (let i = 0; i < 4; i++) {
-      const res = await client.beta.messages.create({ model: config.model, max_tokens: 6000, system, messages, tools, output_config: { effort: 'medium' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+      const res = await client.beta.messages.create({ model: config.social.planModel || config.model, max_tokens: 6000, system, messages, tools, output_config: { effort: 'medium' }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
       if (res.stop_reason !== 'pause_turn') return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
       messages.push({ role: 'assistant', content: res.content }); // a long search pauses the turn: send it back to continue
     }
     return '';
   },
   imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize, cheapModel: config.social.geminiCheapModel, prices: config.social.imagePrices, onCost: (c) => cost.image(c) }),
-  write: async ({ system, text, image, images = [], mime, effort = 'low', maxTokens = 800 }) => {
+  write: async ({ kind = '', system, text, image, images = [], mime, effort = 'low', maxTokens = 800 }) => {
     const pic = (b) => ({ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: b.toString('base64') } });
     const content = [...images.map(pic), ...(image ? [pic(image)] : []), { type: 'text', text }];
-    const res = await client.beta.messages.create({ model: config.model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }], output_config: { effort }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+    // the long writing of the studio (plans, Dariush, links, the press pictures) on the cheaper model; the checks of the pictures stay (the owner, 19/11)
+    const model = STUDIO_PLAN_KINDS.has(kind) && config.social.planModel ? config.social.planModel : config.model;
+    const res = await client.beta.messages.create({ model, max_tokens: maxTokens, system, messages: [{ role: 'user', content }], output_config: { effort }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
     return (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
   },
 });

@@ -19,7 +19,7 @@ export const TRUE_FILM = "Each film's surface looks exactly like its reference s
 export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)","hidden":true or false (the surface of the film can hardly be seen: too dark, too blurred, in deep shadow, or covering less than half of the picture, so its colour and pattern cannot be read),"cropped":true or false (only a part of a room is seen: a close view of one cabinet, a drawer, a corner or a single piece of furniture, so the room around it, its walls, floor and full decor, cannot be seen)}';
 // the main picture of a design is the whole space (the owner, 18/11, SP37: «the full decor is not seen; we sell film colours, the designs are of the
 // whole space and the Reel then comes close on the colours»): the close look is the close-ups' and the Reel's job
-export const WIDE = 'The camera stands far enough back that the WHOLE room and its full decor are in the frame: the walls, the floor, the edge of the ceiling, the furniture whole and the room around it, with the film fronts large and sharp in it; never a close crop of one cabinet, a drawer or a corner. Every door and drawer is closed, so the films are seen whole.';
+export const WIDE = 'The camera stands inside the room, at eye level, far enough back that the WHOLE room and its full decor are in the frame (never outside the room, never through a window, a glass door or a doorway): the walls, the floor, the edge of the ceiling, the furniture whole and the room around it, with the film fronts large and sharp in it; never a close crop of one cabinet, a drawer or a corner. Every door and drawer is closed, so the films are seen whole.';
 export const NAME_RULES = 'Give a short English trade name of two or three words for this decorative film, from its description, the way a showroom labels a sample: «Honey oak», «Charcoal black», «Grey gold marble», «Olive khaki». Two films that differ only by pattern must get different names («Black-green ash», «Black-green solid»). Output only the name.';
 // Reels (the owner's review, 17/11): quick cuts, at most 20 s, the strongest picture first, every shot once
 export const REEL_FADE = 0.35;
@@ -317,7 +317,9 @@ export const FOCUS_RULES = `Look at this interior picture. Give the point at the
 x and y go from 0 to 1, from the left and from the top. Answer with JSON only, for example {"x":0.62,"y":0.41}.`;
 
 export const DARIUSH = `You are Dariush, ARYAK's marketing strategist and Atossa's sparring partner. Atossa designs; you make sure every design sells the films on Instagram, TikTok and Facebook and never looks like the last one. The audience: UAE carpentry workshops, kitchen and wardrobe makers, contractors, designers and villa owners. Your one question: would a joiner send this to a client? (Instagram's top signals are watch time, likes and sends; sends reach new people.)
-- Novelty first: if a plan repeats a recent composition (same room type with the same layout and key elements), or shares the room type and the camera angle with any of the last three, send it back with a concrete different idea (another room, layout, camera and focal length, style, time of day and light, palette). Lived-in details and real props beat the sterile AI look.
+- Novelty first: if a plan repeats a recent composition (same room type with the same layout and key elements), or shares the room type and the camera angle with any of the last three, send it back with a concrete different idea (another room, layout, another place of the camera inside the room, style, time of day and light, palette). Lived-in details and real props beat the sterile AI look.
+- The camera stays inside the room at eye level (the owner, 19/11: a kitchen seen from the courtyard and a laundry seen from the garage door were poor): never ask for a camera outside the room, in a doorway or through glass.
+- A design made from the owner's own picture or link follows that picture (its room type, layout and camera): never send it back for novelty.
 - The design rules: at most three finishes, 60-30-10, matched undertones, one loud pattern, pattern scale fits the surface, grain in one direction. Two films that look almost the same at a glance (two near-black solids, two near-white solids) are never paired: the viewer cannot tell them apart.
 - The whole space: the main picture always shows a whole room with its full decor (walls, floor, the furniture whole); a plan whose main picture is a close vignette of one cabinet, a drawer or a corner is sent back (the owner, 18/11: we sell film colours; the client must see the whole decor, and the close-ups and the Reel come close on the colours).
 - The hook: in the first two seconds the viewer sees motion or the payoff (the finished whole room, then the camera closing on the film in raking light), never a logo; a 5 to 7 word keyword headline. The film is the hero, not the furniture.
@@ -344,7 +346,7 @@ You design the rooms that sell our decorative films: a client must look at the p
 - The picture must be rich and alive, never plain or empty: layered warm lighting (golden late-afternoon sun through the windows, hidden LED strips grazing the panels so the grain and texture show), fine details (handleless grooves, slim brass or black metal profiles, fluted glass, a marble or quartz worktop, open shelves with styled objects, plants, books, ceramics), depth (a second room or a view beyond), real reflections and soft shadows.
 - Luxury, current and livable, for villas and apartments in the UAE. Follow the owner's notes.
 - Never repeat a composition (the owner, 15/11: «we must be different»): your recent compositions are listed; change the room type, or at least the layout, the camera angle, the light and the key elements (no second island with drum pendants in front of a wall of tall doors). Rotate styles: Arabic contemporary, Japandi, organic modern, classic shaker, mid-century, minimal monolith, warm industrial, coastal Gulf villa; and rooms: kitchen, walk-in closet, wardrobe wall, TV wall, majlis, home office, library, vanity and bathroom, entrance and console, bedroom headboard wall, kids room, hotel suite, reception desk, dining sideboard.
-- The scene: ONE English paragraph of 120 to 180 words for an image model, written as the brief of an editorial photograph for a luxury interior magazine: the camera (a 24 to 28 mm lens, eye level, a three-quarter view from far enough back that the whole room and its full decor are in the frame: walls, floor, the edge of the ceiling, the furniture whole; never a close crop of one cabinet or corner), every door and drawer closed (never one half open), the light, the materials, each film named by the fronts it covers ("the tall wardrobe doors in film HZ812, its walnut grain running vertically, lit by a warm LED strip"). No people, no text, no logos.
+- The scene: ONE English paragraph of 120 to 180 words for an image model, written as the brief of an editorial photograph for a luxury interior magazine: the camera (a 24 to 28 mm lens, eye level, a three-quarter view from far enough back that the whole room and its full decor are in the frame: walls, floor, the edge of the ceiling, the furniture whole; never a close crop of one cabinet or corner; the camera always stands inside the room, never outside it (not in a courtyard, a garden, a garage or a doorway, never through a window or a glass door)), every door and drawer closed (never one half open), the light, the materials, each film named by the fronts it covers ("the tall wardrobe doors in film HZ812, its walnut grain running vertically, lit by a warm LED strip"). No people, no text, no logos.
 Answer with JSON only:
 {"title_fa":"a short Persian title","why_fa":"two or three Persian sentences for the owner: why these films work together and for whom","music":"one English line for the background music of this room's Reel: the mood, the instruments and the tempo, calm and elegant (no artist or song names)","inspiration_fa":"one Persian sentence: the idea of the day you used and its source, or empty","room":"the room in English","parts":[{"code":"HZ818","where":"upper kitchen cabinet doors","where_fa":"درهای کابینت بالا"}],"signature":"one English line: style, room, layout and its three key elements, camera angle","reel_open":"pair (the Reel opens on the films as cards side by side: for a pairing of two or three films) or texture (very close on the main film)","reveal":"always empty (the owner, 18/11: no open doors or drawers; every front is shown closed)","scene":"the English paragraph"}`;
 
@@ -700,13 +702,13 @@ export class SocialDesk {
     const text = [
       'The films (code: look [catalogue]):',
       ...Object.entries(all).map(([k, e]) => `${k}: ${e.look || e.kind || 'decorative film'} [${e.catalogue || ''}]`),
-      this.recentCompositions() ? `\nYour recent compositions (never repeat them):\n${this.recentCompositions()}` : '',
+      !inspiration && this.recentCompositions() ? `\nYour recent compositions (never repeat them):\n${this.recentCompositions()}` : '', // a design from his picture follows it, never «novelty» (the owner, 19/11)
       (d.taste || []).length ? `\nThe owner's notes on your earlier proposals (follow them):\n${d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
       this.todayTrends() ? `\nToday's notes from the world's design press (your own research this morning):\n${this.todayTrends()}` : '',
       PILLARS[pillar]?.brief ? `\nThis post's job: ${PILLARS[pillar].brief}` : '',
       code ? `\nThe owner asks for a design built around film ${code}: it is the main film.` : '',
       note ? `\nThe owner's words: ${note}` : '',
-      inspiration ? '\nThe owner liked the attached picture (his inspiration). Design the same kind of room with the same mood, layout, light and style, but with ARYAK films from the list on the fronts, chosen to match its colours and feeling. Never copy a brand, a logo or text from it. Say in inspiration_fa that the idea is the owner\'s picture.' : '',
+      inspiration ? '\nThe owner sent the attached picture as the design to make (the owner, 19/11: the reference was ignored, its kitchen became a laundry room seen from the garage). Draw THE SAME ROOM: the same room type, the same layout and main pieces (island, tall bank, shelves, ceiling), the same camera place and angle (inside the room), the same light and mood. Only the fronts and surfaces become ARYAK films from the list, chosen to match the picture\'s colours and materials. Never move it to another room, never change the camera, never copy a brand, a logo or text from it. Say in inspiration_fa that the design follows the owner\'s picture.' : '',
       this.todayLooks() ? `\nWhat today's pictures from the design press show (your own eye this morning):\n${this.todayLooks()}` : '',
       this.todayInstagram() ? `\nWhat is working on Instagram now (the most liked recent posts of leading design accounts, your own look this morning):\n${this.todayInstagram()}` : '',
       this.ownerInspirations() ? `\nPosts the owner sent you because he likes them (his taste; take from them, never copy):\n${this.ownerInspirations()}` : '',
@@ -719,14 +721,11 @@ export class SocialDesk {
     }
     if (!plan) return { error: 'The designer gave no plan; try again.' };
     if (pillar) plan.pillar = pillar;
-    // Dariush challenges the plan before anything is drawn; Atossa revises once when he asks (the owner, 15/11: two characters, a talk, the best)
-    const [review] = await this.challenge([plan]);
-    if (review?.verdict === 'revise' && review.notes?.length) {
-      const raw = String(await this.write({ kind: 'design-plan', system: fill(DESIGNER_RULES, this.cfg), text: `${text}\n\nYour first plan:\n${JSON.stringify(plan)}\n\nDariush, your marketing partner, asks for these changes:\n${review.notes.map((x) => `- ${x}`).join('\n')}\nRevise the plan; answer with the full JSON.`, effort: 'medium', maxTokens: 12000, ...(inspiration ? { image: inspiration.image, mime: inspiration.mime || 'image/jpeg' } : {}) }) || '');
-      try { const revised = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); if (revised?.scene) plan = revised; } catch { this.log('social: the revised plan was not JSON; the first one stays'); }
-    }
+    // Dariush reads the plan and writes the hook; the second plan he could ask for is gone (the owner, 19/11: it doubled the cost and moved
+    // the camera out of the room); a design from the owner's own picture is not sent to him for novelty
+    const [review] = inspiration ? [null] : await this.challenge([plan]);
     plan.hook = review?.hook || plan.hook || '';
-    plan.dialogue_fa = review?.dialogue_fa || '';
+    plan.dialogue_fa = review?.verdict === 'revise' ? '' : review?.dialogue_fa || '';
     if (pillar) plan.pillar = pillar;
     plan.parts = (Array.isArray(plan.parts) ? plan.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => all[p.code]).slice(0, 4);
     if (code && !plan.parts.some((p) => p.code === code)) plan.parts.unshift({ code, where: 'the main fronts', where_fa: 'سطح اصلی' });
@@ -761,7 +760,7 @@ export class SocialDesk {
     const all = this.catalog();
     const images = plan.parts.map((p) => ({ label: `Reference: film ${p.code}, for ${p.where}`, buffer: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)), mime: 'image/jpeg' }));
     // the owner's picture guides the room (mood, layout, light) only; the films on the fronts come from the labelled samples
-    if (inspiration) images.push({ label: 'Mood and layout reference (the owner\'s inspiration; do not copy its materials, brands or text)', buffer: inspiration.image, mime: inspiration.mime || 'image/jpeg' });
+    if (inspiration) images.push({ label: 'The design to follow (the owner\'s picture): the same room, layout, main pieces and camera place; its fronts become the labelled ARYAK films. Mood and layout reference (the owner\'s inspiration; do not copy its materials, brands or text)', buffer: inspiration.image, mime: inspiration.mime || 'image/jpeg' });
     const made = await this.imager.make({ prompt: `${plan.scene}\n${WIDE}\nEach labelled reference picture is the exact surface film for the fronts named in its label: reproduce each film's colour, pattern and scale faithfully, each only on its own fronts. An editorial photograph for a luxury interior design magazine: photorealistic, highly detailed, crisp film textures, rich warm light and depth, real reflections and soft shadows. ${TRUE_FILM} ${NO_TEXT} 4:5 portrait.`, images });
     // checked by eye before anything is made from it: drawn once more with the fault named when it carries text, a grid or a wrong film
     const refs = plan.parts.filter((p) => all[p.code]).map((p) => ({ code: p.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[p.code].file)) }));
@@ -1214,12 +1213,20 @@ export class SocialDesk {
   }
 
     /** Today's research notes (Atossa reads the world's design press once a day); '' when none. */
-  todayTrends() {
-    const day = new Date(this.now()).toISOString().slice(0, 10);
-    return (this.store.d.trends || []).find((t) => t.day === day)?.text || '';
+  /** The latest research notes when they are fresh: once a week, not daily (the owner, 19/11: the web search was the biggest cost). */
+  freshTrend() {
+    const days = Number(this.cfg.researchDays) > 0 ? Number(this.cfg.researchDays) : 7;
+    const last = (this.store.d.trends || []).at(-1);
+    return last && this.now() - (last.at || 0) < days * 86400000 ? last : null;
   }
+  todayTrends() { return this.freshTrend()?.text || ''; }
   async researchTrends() {
     if (!this.research || this.todayTrends()) return this.todayTrends();
+    if (this.researching) return this.researching; // three pictures sent at once ran three searches (live 19/11): one search, shared
+    this.researching = this.researchOnce().finally(() => { this.researching = null; });
+    return this.researching;
+  }
+  async researchOnce() {
     const raw = String(await this.research({ system: fill(TREND_RULES, this.cfg), text: `Today is ${new Date(this.now()).toISOString().slice(0, 10)}. Your notes for today.` }) || '').trim();
     if (!raw) return '';
     // the last line «IMAGES: url url …»: the pictures she wants to look at (the owner, 15/11: ideas from the pictures too, not only the words)
@@ -1237,10 +1244,7 @@ export class SocialDesk {
     return text;
   }
   /** Today's notes on the press pictures ('' when none). */
-  todayLooks() {
-    const day = new Date(this.now()).toISOString().slice(0, 10);
-    return (this.store.d.trends || []).find((t) => t.day === day)?.looks || '';
-  }
+  todayLooks() { return this.freshTrend()?.looks || ''; }
   /** The pictures of the day's articles: fetched (pictures only, at most 8 MB each), made small, looked at together once. */
   async lookAtPictures(urls) {
     const pics = (await this.fetchPictures(urls)).filter(Boolean);
@@ -1356,10 +1360,7 @@ export class SocialDesk {
       text: seen.map((m, i) => `Picture ${i + 1}: @${m.account}, ${m.like_count ?? '?'} likes, ${m.media_type === 'VIDEO' ? 'a Reel' : m.media_type === 'CAROUSEL_ALBUM' ? 'a carousel' : 'a photo'} ${m.permalink || ''}`).join('\n') }) || '').trim().slice(0, 2000);
   }
   /** Today's look at Instagram ('' when none). */
-  todayInstagram() {
-    const day = new Date(this.now()).toISOString().slice(0, 10);
-    return (this.store.d.trends || []).find((t) => t.day === day)?.instagram || '';
-  }
+  todayInstagram() { return this.freshTrend()?.instagram || ''; }
 
   /** The Reel of a design: the camera pushes in on the main film (Atossa finds where it shows best), then the close-up, then the codes. */
   /**
