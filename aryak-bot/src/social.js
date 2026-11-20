@@ -791,12 +791,12 @@ export class SocialDesk {
     const trueColour = 'The film looks exactly like the reference sample in colour, brightness and pattern scale, under clean neutral daylight: never warmed, darkened or changed by the light or colours of the room picture';
     let miss = '';
     for (let k = 0; k < tries; k++) {
-      const alone = tries > 1 && k === tries - 1;
+      const alone = false; // never from the sample alone: a close-up is always a part of this room (the owner, 20/11: SP43's were from another room)
       const d = await this.imager.make({ cheap: k > 0, prompt: alone
         ? `A close-up macro photograph that proves the quality of a decorative film: the corner of a closed cabinet door covered in film ${part.code}, ${wood ? 'the wood grain running along the door, its direction and fine pores crisp, light grazing across it' : 'its corner meeting a stone worktop with a ceramic vase and a small plant beside it, the film covering half to two thirds of the frame, evenly lit'}; the film's true texture, its matte or gloss surface and the clean edge where it wraps around the door edge, seamless and tight. ${trueColour}.${smooth} Shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`
-        : `A close-up detail photograph taken in this same room that proves the quality of the film: ${how}; its true texture, its matte or gloss surface and, at one side, the clean edge where the film wraps around the door edge, seamless and tight; every door and drawer closed; shallow depth of field. ${trueColour}.${smooth} Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
+        : `A close-up detail photograph taken in this same room, a part of the room picture seen closer: the same worktop, floor, materials, light and styled objects that are in the room picture, nothing from elsewhere; it proves the quality of the film: ${how}; its true texture, its matte or gloss surface and, at one side, the clean edge where the film wraps around the door edge, seamless and tight; every door and drawer closed; shallow depth of field. ${trueColour}.${smooth} Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
         images: alone ? [{ label: `Reference: film ${part.code}, the exact surface`, buffer: swatch, mime: 'image/jpeg' }] : [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
-      const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true, strict: true });
+      const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true, strict: true, scene: room });
       if (look.ok) return fitForInstagram(d.image);
       miss = look.problem;
     }
@@ -1168,16 +1168,16 @@ export class SocialDesk {
 
   /** One look at the old and the new picture: is the owner's change visible? { done, missing }; done when the look cannot be read. */
   /** An AI picture checked before use: no text or cards in it, one photograph (no grid), each film like its sample. { ok, problem }; ok when the check cannot be read. */
-  async cleanCheck(image, refs = [], { close = false, strict = false, room = false } = {}) {
+  async cleanCheck(image, refs = [], { close = false, strict = false, room = false, scene = null } = {}) {
     // live 17/11: the checks think before they answer and 400 tokens were used up by the thinking, so the answer came back empty and was
     // taken as «fine» (SP34's view with a black worktop went out that way). Room for the thinking, one more try, and a picture that is only
     // nice to have (a view, a close-up, a stored picture in a Reel made again) is left out when the check still cannot be read.
     for (let k = 0; k < 2; k++) {
     try {
       const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
-      const raw = String(await this.write({ kind: 'clean-check', system: CLEAN_RULES, text: `The picture, then the samples: ${refs.map((r) => `film ${r.code}`).join(', ') || 'none'}.`, images: [await small(image), ...(await Promise.all(refs.map((r) => small(r.swatch))))], mime: 'image/jpeg', effort: 'low', maxTokens: 3000 }) || '');
+      const raw = String(await this.write({ kind: 'clean-check', system: CLEAN_RULES, text: `The picture, ${scene ? 'then the room it is a detail of, ' : ''}then the samples: ${refs.map((r) => `film ${r.code}`).join(', ') || 'none'}.${scene ? ' Also answer "elsewhere": true when the detail is clearly not a part of that room (another worktop, other materials, other objects or another style).' : ''}`, images: [await small(image), ...(scene ? [await small(scene)] : []), ...(await Promise.all(refs.map((r) => small(r.swatch))))], mime: 'image/jpeg', effort: 'low', maxTokens: 3000 }) || '');
       const v = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-      const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`, close && v.hidden === true && 'the film can hardly be seen (too dark or too blurred)', close && v.rough === true && 'a plain film looks sandy or rough; it is perfectly smooth', room && v.cropped === true && 'only a part of the room is seen (a close view of one piece); the whole room and its full decor must be in the picture, from further back'].filter(Boolean);
+      const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`, close && v.hidden === true && 'the film can hardly be seen (too dark or too blurred)', close && v.rough === true && 'a plain film looks sandy or rough; it is perfectly smooth', scene && v.elsewhere === true && 'the detail is not from this room (another worktop, materials or objects); it must be a closer part of the room picture', room && v.cropped === true && 'only a part of the room is seen (a close view of one piece); the whole room and its full decor must be in the picture, from further back'].filter(Boolean);
       return { ok: !problems.length, problem: problems.join('; ') };
     } catch { /* unreadable: once more */ }
     }

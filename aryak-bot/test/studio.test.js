@@ -707,8 +707,9 @@ test('an AI picture with text, a grid or a wrong film is drawn again with its fa
   await assert.rejects(desk.closeUp(room, { code: 'HZ812', where: 'tall doors' }, await pic('#3a2a1e')), /not like the film or not clean 2 times/);
   assert.equal(checks, 2);
   assert.match(made.at(-1).prompt, /The last try was wrong: there is text, a label, a card or a logo in the picture; a film does not look like its sample: the oak is shown as deep carved grain/);
-  // the last try is drawn from the sample alone, in neutral light (live 18/11, SP38: both close-ups came out in the room's golden light)
-  assert.deepEqual(made.at(-1).images.map((i) => i.label), ['Reference: film HZ812, the exact surface']);
+  // every try is drawn from the room, never from the sample alone (the owner, 20/11: SP43's close-ups came from another room); the check sees the room
+  assert.deepEqual(made.at(-1).images.map((i) => i.label), ['The room', 'Reference: film HZ812']);
+  assert.match(made.at(-1).prompt, /a part of the room picture seen closer: the same worktop, floor, materials, light and styled objects/);
   assert.deepEqual(made.at(-2).images.map((i) => i.label), ['The room', 'Reference: film HZ812']);
   for (const m of made.slice(-2)) assert.match(m.prompt, /exactly like the reference sample in colour, brightness and pattern scale, under clean neutral daylight/);
   for (const m of made) { assert.match(m.prompt, /No text, letters, numbers, labels/); assert.match(m.prompt, /never a collage, a grid/); assert.match(m.prompt, /never deep carved, brushed or embossed wood/); }
@@ -805,7 +806,8 @@ test('an empty answer of a picture check is never a pass for a view, a close-up 
   assert.equal((await desk.changeSeen(pic, pic, 'x', { strict: true })).done, false);
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /any of them changed is not done', \{ strict: true \}\);\n\s*const clean = await this\.cleanCheck\(v\.image, \(plan\?\.parts[\s\S]{0,200}\{ strict: true \}\);/);
-  assert.match(src, /\{ close: true, strict: true \}\);\n\s*if \(look\.ok\) return fitForInstagram/);
+  assert.match(src, /\{ close: true, strict: true, scene: room \}\);\n\s*if \(look\.ok\) return fitForInstagram/);
+  assert.match(src, /scene && v\.elsewhere === true && 'the detail is not from this room/); // a detail from another room is drawn again (the owner, 20/11)
 });
 
 test('the design board (the owner, 17/11): the room above, the real samples with code, name and part below; the last page of the album, sent to the owner', async () => {
