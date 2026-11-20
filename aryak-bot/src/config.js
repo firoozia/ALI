@@ -178,6 +178,7 @@ export function loadConfig(env = process.env) {
       researchDays: Number(env.SOCIAL_RESEARCH_DAYS || 7), // the design-press search once a week (the owner, 19/11)
       researchSource: (env.SOCIAL_RESEARCH_SOURCE || 'inbox').toLowerCase(), // 'inbox': the notes Claude in the owner's app drops on the server; 'bot': the bot's own paid search
       researchInbox: env.SOCIAL_RESEARCH_INBOX || `${env.AUTH_DIR || './auth'}/social/research-inbox.md`,
+      reelMotion: (env.SOCIAL_REEL_MOTION || 'orbit').toLowerCase(), // the Reel turns around the room (the owner, 20/11); 'zoom' for the old push-in
       musicLibrary: Number(env.SOCIAL_MUSIC_LIBRARY || 8), // kept Reel clips before no new one is made (the owner, 19/11)
       roomFirst: (env.SOCIAL_ROOM_FIRST || 'on').toLowerCase() !== 'off', // a design is one picture of the whole space; the rest on «تایید پست N» (the owner, 18/11)
     },

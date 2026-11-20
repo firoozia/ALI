@@ -15,8 +15,9 @@ const DAY = 24 * 3600 * 1000;
 // The owner's review of the Reels (17/11): the image model drew spec cards, codes, a nine-picture grid and a line of words INTO the
 // pictures (cut at the frame's edge), and close-ups showed deep carved grain and bright gold veins where the real film is a smooth print.
 export const NO_TEXT = 'One single photograph: never a collage, a grid, a split screen or several panels. No text, letters, numbers, labels, cards, captions, logos or watermarks anywhere in the picture.';
+export const SMOOTH = 'A plain colour film is perfectly smooth and even, like a fine matte paint: never sandy, grainy, speckled, stone-like or rough.';
 export const TRUE_FILM = "Each film's surface looks exactly like its reference sample: the same colour, pattern, vein colour and surface relief (a printed decorative film is smooth or as finely textured as its sample, never deep carved, brushed or embossed wood).";
-export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)","hidden":true or false (the surface of the film can hardly be seen: too dark, too blurred, in deep shadow, or covering less than half of the picture, so its colour and pattern cannot be read),"cropped":true or false (only a part of a room is seen: a close view of one cabinet, a drawer, a corner or a single piece of furniture, so the room around it, its walls, floor and full decor, cannot be seen)}';
+export const CLEAN_RULES = 'You check one AI interior picture for a decorative film brand before it is posted; the reference film samples follow it. Answer only JSON: {"text":true or false (any letters, numbers, labels, cards, captions, logos or watermarks drawn in the picture),"collage":true or false (several pictures, panels, a grid or a split screen instead of one photograph),"mismatch":"" or a short English note when a film in the picture clearly differs from its sample in colour, pattern, vein colour or surface relief (a smooth printed film shown as deep carved or embossed wood)","rough":true or false (a plain colour film, smooth in its sample, shown sandy, grainy, speckled, stone-like or rough),"hidden":true or false (the surface of the film can hardly be seen: too dark, too blurred, in deep shadow, or covering less than half of the picture, so its colour and pattern cannot be read),"cropped":true or false (only a part of a room is seen: a close view of one cabinet, a drawer, a corner or a single piece of furniture, so the room around it, its walls, floor and full decor, cannot be seen)}';
 // the main picture of a design is the whole space (the owner, 18/11, SP37: «the full decor is not seen; we sell film colours, the designs are of the
 // whole space and the Reel then comes close on the colours»): the close look is the close-ups' and the Reel's job
 export const WIDE = 'The camera stands inside the room, at eye level, far enough back that the WHOLE room and its full decor are in the frame (never outside the room, never through a window, a glass door or a doorway): the walls, the floor, the edge of the ceiling, the furniture whole and the room around it, with the film fronts large and sharp in it; never a close crop of one cabinet, a drawer or a corner. Every door and drawer is closed, so the films are seen whole.';
@@ -782,7 +783,9 @@ export class SocialDesk {
     const wood = this.isWood(part.code);
     const how = wood
       ? `the camera is about 30 cm from the ${part.where} in film ${part.code}, looking along the wood grain, so the grain, its direction and the pores fill three quarters of the frame, crisp and exactly like the reference sample; low warm light grazing across the surface so every line of the grain shows`
-      : `the camera is about 40 cm from the ${part.where} in film ${part.code}, at a slight angle, so the flat film surface itself fills at least three quarters of the frame, evenly and clearly lit (never a dark gradient or a shadow), its exact colour and fine matte texture crisp and exactly like the reference sample; a soft light raking across the surface`;
+      : `a styled detail view about one metre from where the ${part.where} in film ${part.code} meets another surface of the room (a corner, the edge of the worktop, a waterfall end, a niche or the next film), with two or three styled objects beside it (a ceramic vase, a book, a bowl of fruit, a small plant); the film covers half to two thirds of the frame, evenly and clearly lit (never a dark gradient or a shadow), its exact colour and its smooth matte surface crisp and exactly like the reference sample under a soft raking light; never one lone flat door filling the frame`;
+    // a plain colour is perfectly smooth (the owner, 20/11: SP43's taupe came out sandy like stone)
+    const smooth = wood ? '' : ` ${SMOOTH}`;
     // the colour is the sample's, never the room's light (live 18/11, SP38: both close-ups failed three and two times; the ivory film came
     // out warm light oak and the walnut too bold, drawn after the golden light of the room). The last try is made from the sample alone.
     const trueColour = 'The film looks exactly like the reference sample in colour, brightness and pattern scale, under clean neutral daylight: never warmed, darkened or changed by the light or colours of the room picture';
@@ -790,8 +793,8 @@ export class SocialDesk {
     for (let k = 0; k < tries; k++) {
       const alone = tries > 1 && k === tries - 1;
       const d = await this.imager.make({ cheap: k > 0, prompt: alone
-        ? `A close-up macro photograph that proves the quality of a decorative film: the corner of a closed cabinet door covered in film ${part.code}, ${wood ? 'the wood grain running along the door, its direction and fine pores crisp, light grazing across it' : 'its flat surface filling most of the frame, evenly lit, its fine texture crisp'}; the film's true texture, its matte or gloss surface and the clean edge where it wraps around the door edge, seamless and tight. ${trueColour}. Shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`
-        : `A close-up detail photograph taken in this same room that proves the quality of the film: ${how}; its true texture, its matte or gloss surface and, at one side, the clean edge where the film wraps around the door edge, seamless and tight; every door and drawer closed; shallow depth of field. ${trueColour}. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
+        ? `A close-up macro photograph that proves the quality of a decorative film: the corner of a closed cabinet door covered in film ${part.code}, ${wood ? 'the wood grain running along the door, its direction and fine pores crisp, light grazing across it' : 'its corner meeting a stone worktop with a ceramic vase and a small plant beside it, the film covering half to two thirds of the frame, evenly lit'}; the film's true texture, its matte or gloss surface and the clean edge where it wraps around the door edge, seamless and tight. ${trueColour}.${smooth} Shallow depth of field. Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`
+        : `A close-up detail photograph taken in this same room that proves the quality of the film: ${how}; its true texture, its matte or gloss surface and, at one side, the clean edge where the film wraps around the door edge, seamless and tight; every door and drawer closed; shallow depth of field. ${trueColour}.${smooth} Photorealistic editorial macro interior photograph, 4:5 portrait. No people. ${TRUE_FILM} ${NO_TEXT}${miss ? ` The last try was wrong: ${miss}.` : ''}`,
         images: alone ? [{ label: `Reference: film ${part.code}, the exact surface`, buffer: swatch, mime: 'image/jpeg' }] : [{ label: 'The room', buffer: room, mime: 'image/jpeg' }, { label: `Reference: film ${part.code}`, buffer: swatch, mime: 'image/jpeg' }], size });
       const look = await this.cleanCheck(d.image, [{ code: part.code, swatch }], { close: true, strict: true });
       if (look.ok) return fitForInstagram(d.image);
@@ -1174,7 +1177,7 @@ export class SocialDesk {
       const small = async (b) => (await import('sharp')).default(b).resize({ width: 768, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
       const raw = String(await this.write({ kind: 'clean-check', system: CLEAN_RULES, text: `The picture, then the samples: ${refs.map((r) => `film ${r.code}`).join(', ') || 'none'}.`, images: [await small(image), ...(await Promise.all(refs.map((r) => small(r.swatch))))], mime: 'image/jpeg', effort: 'low', maxTokens: 3000 }) || '');
       const v = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-      const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`, close && v.hidden === true && 'the film can hardly be seen (too dark or too blurred)', room && v.cropped === true && 'only a part of the room is seen (a close view of one piece); the whole room and its full decor must be in the picture, from further back'].filter(Boolean);
+      const problems = [v.text === true && 'there is text, a label, a card or a logo in the picture', v.collage === true && 'it is a collage or a grid of several pictures, not one photograph', v.mismatch && String(v.mismatch).trim() && `a film does not look like its sample: ${String(v.mismatch).trim()}`, close && v.hidden === true && 'the film can hardly be seen (too dark or too blurred)', close && v.rough === true && 'a plain film looks sandy or rough; it is perfectly smooth', room && v.cropped === true && 'only a part of the room is seen (a close view of one piece); the whole room and its full decor must be in the picture, from further back'].filter(Boolean);
       return { ok: !problems.length, problem: problems.join('; ') };
     } catch { /* unreadable: once more */ }
     }
@@ -1402,7 +1405,7 @@ export class SocialDesk {
       if (!this.imager?.music) throw new Error('no music model');
       // the sound design (the owner, 15/11, from a Gemini prompt): quiet sounds of the materials under the music keep people watching
       const mp3 = await this.imager.music(`${mood || 'Warm minimal luxury lounge: soft piano, gentle strings, a slow deep pulse, 78 BPM'}. Instrumental only, no vocals. Calm and elegant, for a short luxury interior design video. Under the music, quiet close-miked sounds of the room: a soft-close cabinet door settling shut, a hand gliding over a matte surface, a drawer sliding, the soft air of a quiet villa; low in the mix, never louder than the music.`);
-      if (dir) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${this.now()}.mp3`), mp3); }
+      if (dir) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `${this.now()}-${Math.random().toString(36).slice(2, 7)}.mp3`), mp3); }
       return mp3;
     } catch (err) {
       this.log(`social: new music failed (${err.message}); a kept clip is used`);
@@ -1430,7 +1433,7 @@ export class SocialDesk {
     const label = async (code) => { const c = named.find((x) => x.code === code); return c ? shotLabel({ code: c.code, name: c.name, font: brand.font }).catch(() => null) : null; };
     const details = shots ? shots.map((sh) => ({ image: sh.raw, code: sh.part?.code || sh.code || '', wood: !!sh.wood })) : detail ? [{ image: detail, code: main?.code || '', wood: false }] : [];
     // the owner's wishes for the Reel (15/11): its length, new music, the camera turning around the room instead of a zoom
-    const motion = opts?.motion === 'orbit' ? 'orbit' : 'zoom';
+    const motion = (opts?.motion || this.cfg.reelMotion || 'orbit') === 'zoom' ? 'zoom' : 'orbit'; // the camera turns around the room unless he asks for a zoom (the owner, 20/11: SP43's turning room was the best part)
     const orbit = motion === 'orbit';
     const views = orbit ? await this.otherAngles(room, plan) : [];
     // cuts on the beat (the owner, 15/11): the music is asked at a known tempo and every shot lasts whole beats
@@ -1459,7 +1462,7 @@ export class SocialDesk {
     if (open === 'texture') seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18) });
     if (reveal) seq.push({ image: reveal, sec: onBeat(2.6), move: 'push', zoom: 0.3, cx: focus.x, cy: focus.y, cut: 'dissolve' }); // into the open part (live 17/11: room then the same framing open read as the same shot twice)
     views.forEach((v, k) => seq.push({ image: v, sec: onBeat(2.2), move: 'pan', toRight: k % 2 === 1 }));
-    for (const [k, x] of rest.entries()) seq.push({ image: x.image, sec: onBeat(x.wood ? 3 : 2.2), ...(orbit ? { move: 'pan', toRight: k % 2 === 0 } : { move: 'push', zoom: x.wood ? 0.18 : 0.1 }), label: await label(x.code) });
+    for (const [k, x] of rest.entries()) seq.push({ image: x.image, sec: onBeat(x.wood ? 3 : 2.6), ...(orbit ? { move: 'pan', toRight: k % 2 === 0 } : { move: 'push', zoom: x.wood ? 0.18 : 0.1 }), label: await label(x.code) });
     // the length: 20 s at most (the owner's review, 17/11: 41 s with the same doors twice), or what the owner asked (8 to 30 s)
     const cardSec = 2.5;
     const want = Number(opts?.seconds);
@@ -1490,6 +1493,7 @@ export class SocialDesk {
     const shotsWanted = [
       'a wide establishing shot from the far opposite corner of the room, the camera low at the height of a seated person, a 20 mm lens: the whole room, more floor and ceiling, the joinery seen at a strong diagonal from the left',
       'a three-quarter view standing close beside the main furniture on the right, looking along the joinery wall at a sharp angle, a 35 mm lens, the nearest fronts large in the foreground and the rest of the room receding',
+      'a medium view at standing height from the other side of the room, a 28 mm lens, where two of the films meet in the foreground (a corner, a worktop edge, an island end) with the styled objects, the rest of the room behind',
     ];
     const out = [];
     for (const shot of shotsWanted) {

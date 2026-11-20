@@ -27,7 +27,7 @@ function fakeGraph(routes) {
 }
 const client = (fetchImpl) => new MetaClient({ pageId: '222', pageToken: 'PG', systemToken: 'SYS', igUserId: '111', fetchImpl, wait: async () => {} });
 
-async function studio({ routes = {}, research = null, reel = null, reelAuto = true, reveal = false, roomFirst = false } = {}) {
+async function studio({ routes = {}, research = null, reel = null, reelAuto = true, reveal = false, roomFirst = false, reelMotion = 'zoom' } = {}) {
   const cat = tmp('cat-');
   fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify({ HZ812: { file: 'HZ812.jpg', catalogue: 'T', look: 'dark walnut' }, 1805: { file: '1805.jpg', catalogue: 'T', look: 'light oak' } }));
   fs.writeFileSync(path.join(cat, 'HZ812.jpg'), await pic('#3a2a1e'));
@@ -36,7 +36,7 @@ async function studio({ routes = {}, research = null, reel = null, reelAuto = tr
   const made = [];
   const plan = { title_fa: 'آشپزخانه', why_fa: 'چرا', inspiration_fa: 'ایدهٔ شیار برنجی از ای‌دی', room: 'kitchen', parts: [{ code: 'HZ812', where: 'tall doors', where_fa: 'درهای قدی' }, { code: '1805', where: 'island' }], scene: 'A kitchen.' };
   const g = fakeGraph(routes);
-  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000', reelAuto, reveal, roomFirst },
+  const desk = new SocialDesk({ client: client(g.fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), research, reel, cfg: { contact: '+971000', reelAuto, reveal, roomFirst, reelMotion },
     imager: { enabled: true, make: async (r) => { made.push(r); return { image: await pic(made.length === 1 ? '#806040' : '#402010'), mime: 'image/jpeg' }; } },
     write: async (r) => { writes.push(r); return r.kind === 'clean-check' ? '{"text":false,"collage":false,"mismatch":"","hidden":false}' : r.kind === 'check-change' ? '{"done":true,"missing":""}' : r.kind === 'design-plan' ? JSON.stringify(plan) : r.kind === 'focus' ? '{"x":0.7,"y":0.3}' : 'Design idea with Code HZ812.'; } });
   return { desk, writes, made, g };
@@ -97,7 +97,7 @@ test('a stone or solid film gets a gentler, shorter look; wood comes first even 
   desk.reel = async (a) => { args = a; return Buffer.from('MP4'); };
   await desk.draftDesign({});
   assert.deepEqual(shots, ['1805', 'HZ812'], 'the wood first');
-  assert.deepEqual(args.sequence.filter((x) => x.label).map((x) => [x.sec, x.zoom]), [[3.35, 0.18], [1.85, 0.1]]);
+  assert.deepEqual(args.sequence.filter((x) => x.label).map((x) => [x.sec, x.zoom]), [[3.35, 0.18], [2.6, 0.1]]); // a plain colour stays a little longer in its context view (the owner, 20/11)
 });
 
 test('concepts: «پیشنهادهای اچ‌زد», numbered rooms of that catalogue only; «شماره ۲ …» edits that one and produces it in full', async () => {
@@ -494,7 +494,7 @@ test('the owner\'s change to a drafted design: by quoting it or «تغییر پ�
   assert.match(d.text, /کنار گذاشته شد/);
   assert.match(made[before].prompt, /redrawn for the owner who asked/);
   assert.equal(reelArgs.motion, 'orbit');
-  assert.equal(reelArgs.views.length, 2, 'two more camera places');
+  assert.equal(reelArgs.views.length, 3, 'three more camera places (the owner, 20/11)');
   assert.ok(made.some((m) => /wide establishing shot from the far opposite corner/.test(m.prompt)), 'a really different camera place');
   const total = reelArgs.sequence.reduce((a, x) => a + x.sec, 0) - 0.35 * (reelArgs.sequence.length - 1) + reelArgs.seconds.card - 0.35;
   assert.ok(Math.abs(total - 22) < 2.5, `about the 22 s he asked (${total.toFixed(1)})`);
@@ -516,7 +516,7 @@ test('«ریلز پست N»: only the Reel made again from the post\'s own unmar
   const oldReel = p.reel;
   const r = await desk.remakeReel({ id });
   assert.equal(reelArgs.motion, 'orbit');
-  assert.equal(reelArgs.views.length, 2);
+  assert.equal(reelArgs.views.length, 3);
   assert.ok(made.slice(before).every((m) => !/Remove the logo/.test(m.prompt)), 'its own pictures need no unmarking');
   assert.notEqual(p.reel, oldReel);
   assert.match(r.text, /ریلز تازهٔ پست/);
@@ -780,7 +780,7 @@ test('the pairing card is on the end card\'s dark ground (live 17/11: a cream ca
 test('SP34 review (17/11): a view is judged as another camera place (not the named lens), a solid close-up shows the lit surface itself, the open picture pushes into the open part', () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /changeSeen\(room, v\.image, 'the same room seen from a clearly different camera position: another side, height or distance[^']*it need not match any particular lens or corner\)\. A slightly closer, slightly wider or slightly shifted version of the same view is NOT done[^']*and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects/);
-  assert.match(src, /the flat film surface itself fills at least three quarters of the frame, evenly and clearly lit \(never a dark gradient or a shadow\)/);
+  assert.match(src, /the film covers half to two thirds of the frame, evenly and clearly lit \(never a dark gradient or a shadow\)[^`]*never one lone flat door filling the frame/);
   assert.match(src, /in deep shadow, or covering less than half of the picture/);
   assert.match(src, /if \(reveal\) seq\.push\(\{ image: reveal, sec: onBeat\(2\.6\), move: 'push', zoom: 0\.3, cx: focus\.x, cy: focus\.y, cut: 'dissolve' \}\)/);
 });
@@ -1019,4 +1019,22 @@ test('the cost (the owner, 19/11): the week\'s notes dropped on the server are u
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(index, /\{ type: 'text', text: prefix, cache_control: \{ type: 'ephemeral' \} \}/);
   assert.match(index, /system = system \? \[\{ type: 'text', text: system, cache_control: \{ type: 'ephemeral' \} \}\] : system;/);
+});
+
+test('a plain colour is shown where it meets the room, smooth, and the Reel turns around the room by default (the owner, 20/11: SP43)', async () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /a styled detail view about one metre from where the \$\{part\.where\} in film \$\{part\.code\} meets another surface of the room/);
+  assert.match(src, /export const SMOOTH = 'A plain colour film is perfectly smooth and even/);
+  assert.match(src, /"rough":true or false/);
+  assert.match(src, /close && v\.rough === true && 'a plain film looks sandy or rough; it is perfectly smooth'/);
+  assert.match(src, /a medium view at standing height from the other side of the room, a 28 mm lens, where two of the films meet/);
+  const { desk } = await studio({ reelMotion: 'orbit' });
+  let args = null;
+  desk.reel = async (a) => { args = a; return Buffer.from('MP4'); };
+  const d = await desk.draftDesign({});
+  await desk.remakeReel({ id: /Post #(SP\d+)/.exec(d.text)[1] });
+  assert.equal(args.motion, 'orbit');
+  assert.equal(args.views.length, 3);
+  const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
+  assert.match(cfg, /reelMotion: \(env\.SOCIAL_REEL_MOTION \|\| 'orbit'\)/);
 });
