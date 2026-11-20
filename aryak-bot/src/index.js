@@ -2725,13 +2725,17 @@ ${t.authorizeUrl()}`);
   const cmd = admin && (!group || group.command) ? parseCommand(text, { bare: true }) : null;
   if (cmd) { trace(where, role, `command ${cmd}`); await reply(runCommand(cmd, { name: config.displayName, state: botState, corrections: () => readCorrections(config.authDir), desk, staffNumbers: config.staffNumbers, startedAt })); return true; }
   const ctx = (content.extendedTextMessage || audio || image)?.contextInfo || {};
-  const addressed = !group || isAddressed({
+  // a colleague's message reaches her only when it names her, mentions her or answers her, in a group AND in a private chat to the owner's
+  // number (the owner, 20/11: «whoever of the team writes, in a group or to my number, without the name Atossa: no reaction»); his own chat,
+  // the studio and the stock group are hers
+  const ownPlace = !group && isSelf;
+  const addressed = ownPlace || isAddressed({
     text, mentioned: (ctx.mentionedJid || []).map(jidNormalizedUser), quotedFrom: ctx.participant ? jidNormalizedUser(ctx.participant) : '',
     ownIds: own, names: config.botNames, strict: !!group && !group.test, // an internal company group answers only a message that STARTS with her name (owner 2026-11-11); the test group and her own chat keep the old rule
   });
   // Cost control: in the cut, delivery, confirmation, information and invoices groups a photo or a voice note is never read by itself
   // (no download, no vision, no speech); only a message that addresses her by name, or answers her, may be.
-  if ((audio || image) && !mayReadMedia({ group, addressed, voiceFromPermitted: !!audio && !image && (ownerPerson || authorizedPerson || invoicePerson) })) { trace(where, role, 'media left alone (cost control): not addressed to the assistant'); return true; }
+  if ((audio || image) && !mayReadMedia({ group: group || (ownPlace ? null : { quiet: true }), addressed, voiceFromPermitted: !!audio && !image && (ownerPerson || authorizedPerson || invoicePerson) })) { trace(where, role, 'media left alone (cost control): not addressed to the assistant'); return true; }
   // «where is the driver» (owner's chat, any internal staff group, the delivery group, the test group): answered from today's dispatch and delivery posts, never «I cannot see».
   if (text && !audio && !image && addressed && isDriverQuestion(text)) {
     trace(where, role, 'the driver question, answered from the delivery posts');
@@ -2980,7 +2984,7 @@ ${t.authorizeUrl()}`);
     const u = await understandAudio(() => downloadMediaMessage(audioRaw, 'buffer', {}), audio.seconds || 0, staffLang, !!group?.quiet && !explicit);
     const named = !u.ok && !!u.transcript && nameHeard(u.transcript, config.botNames);
     const noticeDue = u.reason === 'speech error' && Date.now() - (sttNotice.get(chatId) || 0) > 3600 * 1000;
-    const action = voiceAction({ u, explicit, namedInTranscript: named, noticeDue });
+    const action = explicit || named ? voiceAction({ u, explicit, namedInTranscript: named, noticeDue }) : 'silent'; // never an answer to a note that did not name her (the owner, 20/11)
     const spoken = u.lang || (u.transcript ? detectLang(u.transcript) : 'fa');
     // the transcript is echoed first; a plain question then runs at once, what would change something waits for the yes
     const pendingG = voiceGate.get(gateKey);
@@ -2988,7 +2992,7 @@ ${t.authorizeUrl()}`);
       const merged = await mergeTranscripts({ client, config, original: pendingG.text, correction: u.transcript.trim() });
       if (merged) { voiceGate.clear(gateKey); trace(where, role, 'voice note: a short voice reply was merged into the waiting request'); return actOnTranscript(merged, spoken); }
     }
-    const pv = planVoice({ transcript: u.transcript, lang: spoken, explicit, named, priv: !group, unclear: u.reason === 'unclear' });
+    const pv = planVoice({ transcript: u.transcript, lang: spoken, explicit, named, priv: ownPlace, unclear: u.reason === 'unclear' });
     if (pv.mode !== 'old') {
       const echoText = `${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}`;
       await sock.sendMessage(chatId, group ? persianText(echoText) : { text: `${isSelf ? '🤖 ' : ''}${echoText}` }, { quoted: raw });
@@ -3020,7 +3024,7 @@ ${t.authorizeUrl()}`);
     trace(where, role, `photo received${image.mimetype ? ` (${String(image.mimetype).split(';')[0]})` : ''}: reading it`);
     let photo;
     const loadPhoto = async () => { photo = photo || { base64: (await downloadMediaMessage(imageRaw, 'buffer', {})).toString('base64'), mimeType: image.mimetype?.split(';')[0] || 'image/jpeg' }; return photo; };
-    const mayCheck = explicit || !group || !!group?.test;
+    const mayCheck = explicit || ownPlace || !!group?.test;
     // A caption that says invoice (or asks to compare or check): the invoice checker, not the order flow.
     if (looksLikeInvoice(text) && mayCheck) {
       try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test, hint: customerFromMessages([{ text, hasImage: true }], orderLinesOf) }); } catch (e) { logger.error(`invoice check failed: ${e.message}`); await reply(INVOICE_FAILED); }
@@ -3031,7 +3035,7 @@ ${t.authorizeUrl()}`);
       try { await onDemandInvoice({ doc: { ...(await loadPhoto()), fileName: '' }, reply, where, role, test: !!group?.test }); } catch (e) { logger.error(`invoice check failed: ${e.message}`); await reply(INVOICE_FAILED); }
       return true;
     }
-    const action = imageAction({ u, explicit });
+    const action = explicit ? imageAction({ u, explicit }) : 'silent'; // a photo with no name in its caption gets no reaction (the owner, 20/11)
     if (action === 'confirm') {
       // a caption that is a customer's name ("Nuqoosh") is the customer of this order
       const capCustomer = await captionCustomer(text);

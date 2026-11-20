@@ -36,7 +36,7 @@ test('the free caption reader still records the captions of every tracked group'
 
 test('the source: media is left alone before any download, the model fallback is gated, no reply is posted, the earlier picture is found for "the picture above"', () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  const quiet = src.indexOf('mayReadMedia({ group, addressed, voiceFromPermitted');
+  const quiet = src.indexOf('mayReadMedia({ group: group || (ownPlace ? null : { quiet: true }), addressed, voiceFromPermitted'); // a private chat to the owner's number is quiet too (the owner, 20/11)
   assert.ok(quiet > 0);
   assert.match(src.slice(quiet, quiet + 420), /media left alone[^\n]*\n\s*return true;|media left alone[^\n]*return true;/); // consumed, no reply
   // the gate comes before every place the picture or the voice note is downloaded in the staff flow
@@ -75,4 +75,13 @@ test('a quiet group: the voice of the owner or of a permitted person is heard (c
   const fs2 = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(fs2, /voiceFromPermitted: !!audio && !image && \(ownerPerson \|\| authorizedPerson \|\| invoicePerson\)/); // a photo is never let in by this
   assert.match(fs2, /staffLang, !!group\?\.quiet && !explicit\)/); // only the name is looked for first
+});
+
+test('a colleague gets no reaction without her name, in a group or in a private chat to the owner\'s number (the owner, 20/11)', () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(src, /const ownPlace = !group && isSelf;\n\s+const addressed = ownPlace \|\| isAddressed\(/, 'a private chat is no longer addressed by itself');
+  assert.match(src, /const action = explicit \|\| named \? voiceAction\(/);
+  assert.match(src, /const action = explicit \? imageAction\(\{ u, explicit \}\) : 'silent';/);
+  assert.match(src, /planVoice\(\{ transcript: u\.transcript, lang: spoken, explicit, named, priv: ownPlace,/);
+  assert.match(src, /const mayCheck = explicit \|\| ownPlace \|\| !!group\?\.test;/);
 });
