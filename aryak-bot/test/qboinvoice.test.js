@@ -453,35 +453,24 @@ test('the model only EXTRACTS: a strict shape, nothing invented, an unclear requ
   assert.equal(strict.extractCalls.length, 0);
 });
 
-test('the owner\'s exact message: "Ar-rad" is found as the one customer that holds those words; 108 and 105 are shown as what they are; 1810 is settled by what he bought before', async () => {
+test('the owner\'s exact message: "Ar-rad" is found as the one customer that holds those words; 108 and 105 are shown as what they are; 1810 is its PVC film (the owner, 21/11: a bare code is the film)', async () => {
   const t = realMk({ invoices: hist('31', '35') }); // he bought PVC 1810 before
   const r = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
   assert.equal(t.extractCalls.length, 1);
   assert.ok(r.owner, r.requester);
-  for (const s of ['مشتری: AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC (از «Ar-rad»)', '108 × 32.5 @ 12 = 390.00', '105 × 14.5 @ 12 = 174.00', 'PVC 1810 [P1810] × 5 @ 8 = 40.00 (از خریدهای قبلی مشتری)', 'جمع قبل از مالیات: 604.00', 'مالیات: 5% S 5٪ (از ۲ سطر از ۲ سطر فاکتورهای قبلی): 30.20', 'جمع کل: 634.20']) assert.ok(r.owner.includes(s), s);
+  for (const s of ['مشتری: AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC (از «Ar-rad»)', '108 × 32.5 @ 12 = 390.00', '105 × 14.5 @ 12 = 174.00', 'PVC 1810 [P1810] × 5 @ 8 = 40.00', 'جمع قبل از مالیات: 604.00', 'مالیات: 5% S 5٪ (از ۲ سطر از ۲ سطر فاکتورهای قبلی): 30.20', 'جمع کل: 634.20']) assert.ok(r.owner.includes(s), s);
   assert.deepEqual(t.store.get('Q1').customer, { ours: 'Ar-rad', id: '70', name: 'AR-RAD INTERNATIONAL FOR TRADE AND INVESTMENT LLC', from: 'Ar-rad' });
   assert.equal(t.m.posts.length, 0); // the preview creates nothing
   await t.inv.decide({ verb: 'yes', id: 'Q1' });
   assert.deepEqual(t.m.posts[0].body.Line.map((l) => [l.SalesItemLineDetail.ItemRef.value, l.SalesItemLineDetail.Qty, l.SalesItemLineDetail.UnitPrice]), [['31', 32.5, 12], ['32', 14.5, 12], ['35', 5, 8]]);
 });
 
-test('a code that fits several items and was never bought: the best candidate is GUESSED, the others are numbered alternatives; the owner picks one or teaches the code once', async () => {
+test('a code that fits several items: its PVC film is taken (the owner, 21/11), no guess; the owner can still teach the code once', async () => {
   const t = realMk({ invoices: hist('31') });
-  const guess = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
-  assert.ok(guess.owner); // a preview, not a stop
-  for (const s of ['حدس', '۱) ', '۲) ', 'قیمت ', '«سطر ۳ = ۱»']) assert.ok(guess.owner.includes(s), s);
-  const pv = t.store.get('Q1');
-  assert.equal(pv.guesses.lines.length, 1); assert.equal(pv.guesses.lines[0].alts.length, 2); // three candidates: one guessed, two alternatives
+  const first = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });
+  assert.ok(first.owner.includes('PVC 1810 [P1810] × 5 @ 8 = 40.00') && !first.owner.includes('حدس'), first.owner);
   assert.equal(itemsContaining(REAL_ITEMS, '1810').length, 3);
   assert.equal(itemsContaining(REAL_ITEMS, '181').length, 0); // whole words only
-  // «سطر ۳ = ۲» takes the second alternative and rebuilds the same preview
-  const alt2 = pv.guesses.lines[0].alts[1];
-  const rebuilt = (await t.inv.adjust({ what: 'line', n: 3, pick: 2 })).join('');
-  assert.ok(rebuilt.includes('پیش‌نمایش فاکتور #Q1') && rebuilt.includes('(انتخاب شما)') && rebuilt.includes(alt2.name));
-  assert.equal(t.store.d.n, 1);
-  // the yes remembers the chosen item for the typed code: next time it is exact
-  await t.inv.decide({ verb: 'yes', id: 'Q1' });
-  assert.equal(new ItemCodes(path.join(t.dir, 'qbo')).get('', '1810').itemId, alt2.itemId);
   // he can also teach it for everybody by a command
   assert.ok((await t.inv.setItemCode({ code: '1810', item: 'PVC 1810', customer: '' })).join('').includes('برای همهٔ مشتری‌ها'));
   const again = await t.inv.request({ text: OWNER_MESSAGE, requester: 'owner' });

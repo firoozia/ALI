@@ -463,6 +463,16 @@ const canon = (name) => { // the approved list and the approved aliases first; a
   return res === name ? qboFit(name) || name : res;
 };
 /** A partial name («tiger») that fits ONE QuickBooks customer word by word (and has a word that is not generic): that customer; else ''. Needs the customer list read (warmCustomers). */
+/** The customer a cut's typed name is today (canon, kept a minute): a Persian name keeps the filed customer (it was matched by sound). */
+const cutNames = new Map();
+const cutNameNow = (typed, filed) => {
+  if (!typed || hasPersianLetters(typed)) return filed;
+  const hit = cutNames.get(typed);
+  if (hit && Date.now() - hit.at < 60000) return hit.name;
+  let name = filed; try { name = canon(typed); } catch { /* the filed name */ }
+  cutNames.set(typed, { name, at: Date.now() });
+  return name;
+};
 const qboCustomerNames = () => (qboDesk.cache?.customers || []).map((x) => x.DisplayName).filter(Boolean);
 const qboFit = (name) => { const c = payerCheck(name, qboCustomerNames()); return c.known && c.resolved !== name ? c.resolved : ''; };
 /** The QuickBooks customer list, read now when it is old (a payer is judged against it); a failed read keeps what there is. */
@@ -1185,8 +1195,8 @@ const qboInvoices = new QboInvoiceDesk({
   qbo, desk: qboDesk, store: new InvoiceStore(path.join(config.authDir, 'qbo')), audit: new Audit(path.join(config.authDir, 'qbo')), book, taxChoices: new TaxChoices(path.join(config.authDir, 'qbo')), itemCodes: new ItemCodes(path.join(config.authDir, 'qbo')),
   extract: (text) => extractInvoiceRequest({ client, config, text }), config,
   // the final cut of the customer and code, from the tracker (what the cutting group posted); marked with the invoice number once it is made
-  cutsOf: (customer, codes) => cutRecords(tracker, customer, codes, { log: (s) => logger.info(s) }), markCuts: (refs, number) => markCutsInvoiced(tracker, refs, number),
-  crossOf: async (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, log: (x) => logger.info(x), aliasOf: (n) => cutAliases.resolve(n), trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') : 0, outs: opts.test ? null : await sheetOutRows(35, true, 3 * 60 * 1000).catch(() => null) }), // a preview made in the test group is checked against the TEST data only
+  cutsOf: (customer, codes) => cutRecords(tracker, customer, codes, { log: (s) => logger.info(s), nameOf: cutNameNow }), markCuts: (refs, number) => markCutsInvoiced(tracker, refs, number),
+  crossOf: async (customer, lines, invoiced, opts = {}) => crossCheck(trackerOf(!!opts.test), customer, lines, { invoiced, nameOf: cutNameNow, log: (x) => logger.info(x), aliasOf: (n) => cutAliases.resolve(n), trackedSince: config.outTrackedSince ? Date.parse(config.outTrackedSince + 'T00:00:00+04:00') : 0, outs: opts.test ? null : await sheetOutRows(35, true, 3 * 60 * 1000).catch(() => null) }), // a preview made in the test group is checked against the TEST data only
   prefetch: () => { sheetOutRows(35, true, 3 * 60 * 1000).catch(() => null); }, // started when a request comes, so the sheet is read while QuickBooks is asked
   // the free stock of a code, for a warning line in an invoice preview (the sheet is read, nobody is told)
   stockOf: async (code) => { try { const r = await fetchStock(config, { code }, fetch, { tries: 2, timeoutMs: [12000, 12000] }); return r.found && !r.ambiguous ? { free: Number(r.free) || 0, unit: r.unit || '' } : null; } catch { return null; } }, // a warning only: never 45 s of waiting (live 19/11)

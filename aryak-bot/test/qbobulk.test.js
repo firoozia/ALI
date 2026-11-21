@@ -966,7 +966,7 @@ test('D run: with no sub-categories they are created under EDGE BANDING', async 
   assert.equal(t.m.db.Item.find((i) => i.Name === 'B 1802').ParentRef.value, e50.Id);
 });
 
-test('after the job: the bare colour number asks which (22, 50 and the PVC one), the exact SKU and the size words find one', async () => {
+test('after the job: the bare colour number is the PVC film, the exact SKU and the size words find one', async () => {
   const { pickItem } = await import('../src/qboinvoice.js');
   const world = edgeWorld({ extra: [I(9801, 'B 1801', { Sku: 'EDGE50-1801' })] }); // a second edge 1801 so that both widths exist
   const t = mk({ items: world });
@@ -975,10 +975,7 @@ test('after the job: the bare colour number asks which (22, 50 and the PVC one),
   await t.bulk.decide({ verb: 'yes', id: 'D1' });
   await done;
   const items = t.m.db.Item;
-  const bare = pickItem('1801', { items });
-  assert.equal(bare.item, undefined);
-  const text = bare.stop(1);
-  assert.match(text, /EDGE22-1801/); assert.match(text, /EDGE50-1801/); assert.match(text, /PVC 1801/);
+  assert.match(pickItem('1801', { items }).item.Name, /PVC 1801/); // a bare code is its PVC film (the owner, 21/11)
   assert.equal(pickItem('EDGE22-1801', { items }).item.Name, '1801 edge banding');
   assert.equal(pickItem('EDGE50-1801', { items }).item.Id, '9801');
   assert.equal(pickItem('نوار لبه 1801 سایز 22', { items }).item.Name, '1801 edge banding');

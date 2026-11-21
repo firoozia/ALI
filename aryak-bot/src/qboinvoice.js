@@ -450,8 +450,13 @@ export function pickItem(name, ctx = {}) {
   const e1 = /^(\d{3,5})\s*E\s?(22|50)$/i.exec(raw); // «212 E22»
   const e2 = /^E\s?(22|50)\s*(\d{3,5})$/i.exec(raw); // «E22 212»
   if (e1) name = `edge ${e1[1]} ${e1[2]}`; else if (e2) name = `edge ${e2[2]} ${e2[1]}`;
-  const taught = ctx.taught?.(name);
+  const taught = ctx.taught?.(name); // what the owner taught by a command («کد 1810 = B 1810») wins
   if (taught) return { item: taught, via: 'taught' };
+  // otherwise a bare code is the PVC film that carries it (the owner, 21/11: «1806 4m» was invoiced as EDGE BAND 0.8x22 - 1806): edge
+  // banding is named by E22 / E50 or its words, never guessed from the customer's history for a bare code
+  const bare = /^\d{3,4}$/.test(raw) ? Number(raw) : null;
+  const filmOfCode = bare !== null ? items.filter((i) => i.Type !== 'Category' && i.Active !== false && pvcCode(i) === bare) : [];
+  if (filmOfCode.length === 1) return { item: filmOfCode[0], via: 'code' };
   // "نوار لبه 1801 سایز 22": the colour number and the width name the one edge banding item whose SKU is EDGE22-1801
   const sz = /^(?:نوار\s*لبه\s+|edge\s+)?(\d{3,5})\s+(?:سایز\s+|size\s+|عرض\s+)?(22|50)$/iu.exec(nameKey(name).replace(/(\d)\s*mm\b/g, '$1'));
   if (sz) {
@@ -1304,7 +1309,11 @@ export class QboInvoiceDesk {
     try {
       const a = p.aliases || {};
       if (a.customer?.id) this.desk.map.set(a.customer.text, a.customer.id, a.customer.name, 'owner');
-      for (const it of a.items || []) this.itemCodes.set('', it.typed, { Id: it.itemId, Name: it.name }, this.now());
+      for (const it of a.items || []) {
+        // a yes never teaches a bare code as edge banding (live 21/11: one yes made every «1806» an edge banding line)
+        if (/^\d{3,5}$/.test(String(it.typed || '').trim()) && /edge|band/i.test(String(it.name || ''))) { this.log(`not taught: the bare code ${it.typed} as ${it.name}`); continue; }
+        this.itemCodes.set('', it.typed, { Id: it.itemId, Name: it.name }, this.now());
+      }
       if ((a.customer || (a.items || []).length)) this.audit.add({ event: 'alias', approver: 'owner', previewId: p.id });
     } catch (e) { this.log(`aliases could not be saved: ${e.message}`); }
   }

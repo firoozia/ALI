@@ -53,10 +53,18 @@ function sameCutOnce(a, b) {
   const [short, long] = da.length <= db.length ? [da, db] : [db, da];
   return short.length >= 2 && short.every((w) => long.includes(w));
 }
+// the names a cut is matched by: the customer it was filed under and the name in the post; [nameOf](typed, filed) gives the customer the typed name is
+// TODAY (the approved list and aliases), and when that is another known customer the filed one is dropped (live 21/11: «AL MASAR» filed under MASTER WOOD,
+// «AL EBDA» under NUQOOSH, so their cuts showed in those customers' cross-checks)
+const namesOf = (e, nameOf) => {
+  if (!nameOf || !e.customerTyped) return [e.customer, e.customerTyped];
+  const now = nameOf(e.customerTyped, e.customer);
+  return now && now !== e.customerTyped && now !== e.customer ? [now, e.customerTyped] : [e.customer, e.customerTyped];
+};
 const unitOf = (u) => ({ m: 'm', mtr: 'm', meter: 'm', متر: 'm', roll: 'roll', رول: 'roll', pcs: 'pcs', pc: 'pcs', piece: 'pcs', pieces: 'pcs' }[String(u || '').trim().toLowerCase()] || String(u || '').trim().toLowerCase());
 
 /** The cut lines of [customer] for [codes] that no invoice has taken yet, newest first: [{ ref, index, qty, unit, at }]. */
-export function cutRecords(tracker, customer, codes, { now = Date.now(), windowDays = 30, log = null } = {}) {
+export function cutRecords(tracker, customer, codes, { now = Date.now(), windowDays = 30, log = null, nameOf = null } = {}) {
   const list = [].concat(codes).filter(Boolean);
   const wanted = new Set(list.map(code));
   const wantedDigits = new Set(list.map(digitsOf).filter((d) => d.length >= 2));
@@ -65,7 +73,7 @@ export function cutRecords(tracker, customer, codes, { now = Date.now(), windowD
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
     cuts += 1;
-    if (!(sameCutCustomer(e.customer, customer) || sameCutCustomer(e.customerTyped, customer))) continue;
+    if (!namesOf(e, nameOf).some((n) => sameCutCustomer(n, customer))) continue;
     ofCustomer += 1;
     (e.lines || []).forEach((l, index) => {
       if (l.invoiced || !(Number(l.quantity) > 0)) return;
@@ -136,12 +144,12 @@ const amount = (qty, unit) => `${Math.round(qty * 1000) / 1000}${unit === 'm' ? 
  * invoice line of the same customer and the same code is dated on or after the cut day, whatever its quantity. Warned: no cut at all, an invoice line for a cut already
  * invoiced, an invoice LARGER than the cut, a cut no invoice carries. Returns { problems, more }: at most [max] lines, then the count of the rest. [log](text) says what matched.
  */
-export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai', invoiced = null, max = 5, log = null, aliasOf = () => '', trackedSince = 0, outs = null } = {}) {
+export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai', invoiced = null, max = 5, log = null, aliasOf = () => '', trackedSince = 0, outs = null, nameOf = null } = {}) {
   const rows = [];
   const forCustomer = (name) => sameCutCustomer(name, customer) || (!!aliasOf(name) && sameCutCustomer(aliasOf(name), customer)); // an alias the owner approved stands for the QuickBooks name
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
-    if (!(forCustomer(e.customer) || forCustomer(e.customerTyped))) continue;
+    if (!namesOf(e, nameOf).some((n) => forCustomer(n))) continue;
     // a catalog is always free (the owner, 14/11): never «not invoiced»
     (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0 && code(l.code) !== 'CATALOG') rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, note: l.note || '', text: e.text || '', left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
   }
