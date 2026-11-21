@@ -858,7 +858,7 @@ test('the cost of the pictures (the owner, 18/11): a second try and a Reel view 
   assert.match(meter.report(), /عکس‌های استودیوی آتوسا: ۲ عکس \(۱ با مدل ارزان\)/);
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /make\(\{ cheap: k > 0, prompt: alone/); // a second close-up try
-  assert.match(src, /for \(let i = 0; i < 1; i\+\+\) \{[^\n]*\n\s*try \{\n\s*const v = await this\.imager\.make\(\{ cheap: true,/); // one cheap try per Reel view
+  assert.match(src, /for \(let i = 0; i < 1; i\+\+\) \{[^\n]*\n\s*try \{\n\s*const v = await this\.imager\.make\(\{ cheap: false,/); // one try per Reel view, on the main model (the owner, 21/11: the cheap one kept the same framing)
 });
 
 test('a design is first one picture of the whole space; «تایید پست N» makes the close-ups and the board; no design of the day by itself (the owner, 18/11)', async () => {

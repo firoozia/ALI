@@ -1498,9 +1498,9 @@ export class SocialDesk {
     const out = [];
     for (const shot of shotsWanted) {
       let miss = '';
-      for (let i = 0; i < 1; i++) { // one cheap try (the owner, 18/11: four views of SP39 were drawn and thrown away); a view that fails is left out
+      for (let i = 0; i < 1; i++) { // one try (the owner, 18/11: four views of SP39 were drawn and thrown away); a view that fails is left out
         try {
-          const v = await this.imager.make({ cheap: true, images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
+          const v = await this.imager.make({ cheap: false, images: [{ label: 'The room: keep this exact design, change only the camera', buffer: room, mime: 'image/jpeg' }, ...films],
             prompt: `The same room with the same design, furniture, films, light and styling, photographed as ${shot}. The camera position and angle must be clearly different from the reference picture: never the same framing.${miss ? ` The last try was still too close to the reference: ${miss}.` : ''} Nothing new is added. Photorealistic editorial interior photograph, 4:5 portrait. ${NO_TEXT}` });
           const look = await this.changeSeen(room, v.image, 'the same room seen from a clearly different camera position: another side, height or distance, so the framing is plainly not the same (it need not match any particular lens or corner). A slightly closer, slightly wider or slightly shifted version of the same view is NOT done (live 17/11, SP35): the main furniture must be seen from a clearly different side, or a large part of the new picture must show what the old one does not; and it is clearly the same room: the same worktop, floor, walls, furniture, fronts and objects (live 17/11, SP34: a view with a black worktop instead of the white marble was used), any of them changed is not done', { strict: true });
           const clean = await this.cleanCheck(v.image, (plan?.parts || []).filter((x) => all[x.code]).map((x) => ({ code: x.code, swatch: fs.readFileSync(path.join(this.catalogDir, all[x.code].file)) })), { strict: true });
