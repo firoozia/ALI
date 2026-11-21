@@ -36,10 +36,17 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : 
  * The end card: the dark ARYAK ground, the logo (white), each film's swatch and code, the WhatsApp number. A PNG 1080 x 1920.
  * [codes] [{ code, swatch }], [logo] the black logo PNG, [font] a font file, [line] the words under the codes.
  */
-export async function endCard({ codes = [], logo = null, font = '', line = '', cta = '' }) {
+export async function endCard({ codes = [], logo = null, font = '', line = '', cta = '', background = null }) {
   const sharp = (await import('sharp')).default;
   const W = 1080; const H = 1920;
   const comps = [];
+  // the room itself, darkened, under the logo and the codes (the owner, 21/11: the end of a reference Reel was the logo over the room)
+  if (background) {
+    try {
+      const bg = await sharp(background).resize(W, H, { fit: 'cover' }).blur(2).modulate({ brightness: 0.42 }).jpeg({ quality: 90 }).toBuffer();
+      comps.push({ input: bg, top: 0, left: 0 });
+    } catch { /* the dark ground */ }
+  }
   const text = async (t, size, colour = '#ffffff') => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${size}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
   if (logo) {
     const lg = await sharp(logo).resize({ width: 420 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -162,19 +169,63 @@ export async function pairCards({ codes = [], font = '' }) {
 export const SAFE = { top: 250, bottom: 1500, left: 64, right: 930 };
 
 /** The Reel's own mark: the white logo with a soft shadow (it reads on light and dark), inside the safe area. A transparent PNG 1080 x 1920. */
-export async function reelOverlay({ logo = null } = {}) {
+export async function reelOverlay({ logo = null, tagline = '', font = '' } = {}) {
   const sharp = (await import('sharp')).default;
   const W = 1080; const H = 1920;
   const comps = [];
   if (logo) {
-    const lg = await sharp(logo).resize({ width: 170 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const lg = await sharp(logo).resize({ width: tagline ? 190 : 170 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const white = Buffer.from(lg.data); const dark = Buffer.from(lg.data);
     for (let i = 0; i < white.length; i += 4) { white[i] = 255; white[i + 1] = 255; white[i + 2] = 255; dark[i] = 0; dark[i + 1] = 0; dark[i + 2] = 0; dark[i + 3] = Math.round(dark[i + 3] * 0.55); }
     const raw = (b) => sharp(b, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } });
     const shadow = await raw(dark).extend({ top: 20, bottom: 20, left: 20, right: 20, background: { r: 0, g: 0, b: 0, alpha: 0 } }).blur(8).png().toBuffer();
-    comps.push({ input: shadow, top: SAFE.top - 20 + 3, left: SAFE.left - 20 + 3 }, { input: await raw(white).png().toBuffer(), top: SAFE.top, left: SAFE.left });
+    // a header in the middle (the owner, 21/11, from a reference Reel): the logo centred at the top and a short line under it
+    const left = tagline ? Math.round((W - lg.info.width) / 2) : SAFE.left;
+    comps.push({ input: shadow, top: SAFE.top - 20 + 3, left: left - 20 + 3 }, { input: await raw(white).png().toBuffer(), top: SAFE.top, left });
+    if (tagline) {
+      const words = String(tagline).toUpperCase().replace(/[<&>]/g, '').split('').join('\u200A');
+      const t = await sharp({ text: { text: `<span foreground="#ffffff">${words}</span>`, font: `IBM Plex Sans 26`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+      const tm = await sharp(t).metadata();
+      const ts = await sharp(t).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      const tsh = Buffer.from(ts.data); for (let i = 0; i < tsh.length; i += 4) { tsh[i] = 0; tsh[i + 1] = 0; tsh[i + 2] = 0; tsh[i + 3] = Math.round(tsh[i + 3] * 0.6); }
+      const top = SAFE.top + lg.info.height + 14;
+      comps.push({ input: await sharp(tsh, { raw: { width: ts.info.width, height: ts.info.height, channels: 4 } }).extend({ top: 10, bottom: 10, left: 10, right: 10, background: { r: 0, g: 0, b: 0, alpha: 0 } }).blur(5).png().toBuffer(), top: top - 10 + 2, left: Math.round((W - tm.width) / 2) - 10 + 2 });
+      comps.push({ input: t, top, left: Math.round((W - tm.width) / 2) });
+    }
   }
   return sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer();
+}
+
+/**
+ * The room with a pointer to each film (the owner, 21/11, from a reference Reel: «HZ825 DEEP SLATE BLUE MATTE» beside the doors): a dot on
+ * the film, a short line and the code with its name, drawn here (never by the image model, so the words are spelled right). [spots]
+ * [{ x, y, code, name }] in 0..1 of the picture; kept in the middle of the width, the part a vertical Reel shows. A JPEG of the same size.
+ */
+export async function calloutRoom({ image, spots = [], font = '' }) {
+  const sharp = (await import('sharp')).default;
+  const meta = await sharp(image).metadata();
+  const W = meta.width; const H = meta.height;
+  const k = W / 1080;
+  const text = async (t, px, weight) => sharp({ text: { text: `<span foreground="#ffffff">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans ${weight} ${Math.round(px * k)}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+  const shade = async (png) => { const r = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true }); const d = Buffer.from(r.data); for (let i = 0; i < d.length; i += 4) { d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; d[i + 3] = Math.round(d[i + 3] * 0.75); } return sharp(d, { raw: { width: r.info.width, height: r.info.height, channels: 4 } }).extend({ top: 8, bottom: 8, left: 8, right: 8, background: { r: 0, g: 0, b: 0, alpha: 0 } }).blur(4).png().toBuffer(); };
+  const comps = [];
+  for (const s of spots.slice(0, 3)) {
+    const x = Math.round(clamp(Number(s.x), 0.24, 0.76) * W); const y = Math.round(clamp(Number(s.y), 0.16, 0.84) * H);
+    const right = x < W / 2; // the words go toward the middle
+    const len = Math.round(70 * k); const r = Math.round(8 * k);
+    const x2 = right ? x + len : x - len;
+    const svg = `<svg width="${W}" height="${H}"><line x1="${x}" y1="${y}" x2="${x2}" y2="${y}" stroke="rgba(0,0,0,0.45)" stroke-width="${Math.round(4 * k)}"/><line x1="${x}" y1="${y}" x2="${x2}" y2="${y}" stroke="#ffffff" stroke-width="${Math.max(2, Math.round(2 * k))}"/><circle cx="${x}" cy="${y}" r="${r + 3}" fill="rgba(0,0,0,0.4)"/><circle cx="${x}" cy="${y}" r="${r}" fill="#ffffff"/></svg>`;
+    comps.push({ input: Buffer.from(svg), top: 0, left: 0 });
+    const code = await text(s.code, 34, 'SemiBold'); const cm = await sharp(code).metadata();
+    const name = s.name ? await text(String(s.name).toUpperCase(), 19, 'Medium') : null; const nm = name ? await sharp(name).metadata() : { width: 0, height: 0 };
+    const bw = Math.max(cm.width, nm.width);
+    const left = right ? x2 + Math.round(10 * k) : x2 - Math.round(10 * k) - bw;
+    const top = y - Math.round(cm.height * 0.85);
+    const L = Math.max(0, Math.min(W - bw, left));
+    comps.push({ input: await shade(code), top: Math.max(0, top - 8 + 2), left: Math.max(0, L - 8 + 2) }, { input: code, top: Math.max(0, top), left: L });
+    if (name) { const nt = top + cm.height + Math.round(8 * k); comps.push({ input: await shade(name), top: Math.max(0, nt - 8 + 2), left: Math.max(0, L - 8 + 2) }, { input: name, top: Math.max(0, nt), left: L }); }
+  }
+  return sharp(image).composite(comps).jpeg({ quality: 92 }).toBuffer();
 }
 
 /** A shot's label (the film on screen, its code and short name), a dark rounded plate low in the safe area. A transparent PNG 1080 x 1920. */
@@ -197,7 +248,7 @@ export async function shotLabel({ code = '', name = '', font = '' } = {}) {
  * The Reel: [room] and [detail] pictures (4:5), [focus] { x, y } (0..1) where the camera pushes in on the room, [overlay] a transparent
  * PNG 1080 x 1920 laid over the two moving parts (the logo and the band of codes), [card] the end card. Returns the MP4.
  */
-export async function makeReel({ room, detail = null, details = null, views = [], motion = 'zoom', hook = null, before = null, intro = [], reveal = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 }, sequence = null, fade: cross = 0.6 }) {
+export async function makeReel({ room, detail = null, details = null, views = [], motion = 'zoom', hook = null, before = null, intro = [], reveal = null, focus = { x: 0.5, y: 0.5 }, overlay = null, card, music = null, seconds = { room: 5, detail: 4, card: 3 }, sequence = null, fade: cross = 0.6, cardVoice = null, whoosh = false }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   // the close-ups, one per film (the owner, 15/11: up to three films, wood grain longer and closer): [{ image, seconds, zoom }]
   const shots = (details || (detail ? [{ image: detail, seconds: seconds.detail, zoom: 0.12 }] : [])).filter((d) => d?.image).slice(0, 3);
@@ -226,7 +277,7 @@ export async function makeReel({ room, detail = null, details = null, views = []
     // [sequence]: the shots already chosen and timed by the studio (the owner's review, 17/11: the strongest picture first, quick cuts,
     // every shot once): [{ image, sec, move: 'push' | 'pan', zoom, cx, cy, toRight, cut, label }]
     if (Array.isArray(sequence) && sequence.length) {
-      sequence.filter((s) => s?.image).forEach((s, k) => seq.push({ file: put(`shot${k}.jpg`, s.image), sec: s.sec, cut: s.cut, label: s.label || null,
+      sequence.filter((s) => s?.image).forEach((s, k) => seq.push({ file: put(`shot${k}.jpg`, s.image), sec: s.sec, cut: s.cut, label: s.label || null, voice: s.voice || null,
         make: (i, f) => (s.move === 'pan' ? pan(i, f, !!s.toRight) : move(i, f, s.zoom ?? 0.12, clamp(s.cx, 0.15, 0.85), clamp(s.cy, 0.15, 0.85))) }));
     }
     if (!seq.length) intro.filter(Boolean).slice(0, 2).forEach((c, k) => seq.push({ file: put(`intro${k}.jpg`, c), sec: seconds.intro || 1.35, make: (i, f) => move(i, f, 0.04, 0.5, 0.45) }));
@@ -247,6 +298,12 @@ export async function makeReel({ room, detail = null, details = null, views = []
     // the sound: the design's own music (an MP3, faded in and out), or silence (Instagram wants a sound track)
     const audio = next;
     if (music) args.push('-i', put('music.mp3', music)); else args.push('-f', 'lavfi', '-t', '60', '-i', 'anullsrc=r=44100:cl=stereo');
+    next = audio + 1;
+    // the voice (the owner, 21/11, from a reference Reel): one short line per shot, laid at its start; the card's line at the end
+    const voiceIn = seq.map((x, k) => (x.voice ? (args.push('-i', put(`voice${k}.wav`, x.voice)), next++) : -1));
+    const cardVoiceIn = cardVoice ? (args.push('-i', put('voicecard.wav', cardVoice)), next++) : -1;
+    // a soft whoosh at every cut (filtered pink noise, made here)
+    const whooshIn = whoosh ? seq.slice(1).concat([null]).map(() => (args.push('-f', 'lavfi', '-t', '0.7', '-i', 'anoisesrc=c=pink:r=44100:a=0.5'), next++)) : [];
     // every length in whole frames (live 17/11: a shot of 1.85 s is 55.5 frames and a fade of 0.35 s is 10.5, so one frame stood still at a cut)
     const fade = Math.round(cross * fps) / fps;
     for (const x of seq) x.sec = n(x.sec) / fps;
@@ -273,7 +330,24 @@ export async function makeReel({ room, detail = null, details = null, views = []
     parts.push(`[${last}][c]xfade=transition=fade:duration=${(fade - 0.002).toFixed(4)}:offset=${(t - fade).toFixed(4)}[v]`);
     const total = t + seconds.card - fade;
     // the peaks held under full scale (the owner's review, 17/11: every Reel touched 0 dB, which can crack on a phone's speaker)
-    parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5,alimiter=limit=0.89:level=0[s]`);
+    const st = (x) => 'aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo';
+    const voices = [];
+    seq.forEach((x, k) => { if (voiceIn[k] >= 0) voices.push({ i: voiceIn[k], at: starts[k] + 0.25 }); });
+    if (cardVoiceIn >= 0) voices.push({ i: cardVoiceIn, at: t - fade + 0.35 });
+    const cuts = [...starts.slice(1), t - fade].map((s) => Math.max(0, s - 0.2));
+    if (!voices.length && !whooshIn.length) parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5,alimiter=limit=0.89:level=0[s]`);
+    else {
+      parts.push(`[${audio}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.4,afade=t=out:st=${Math.max(0, total - 1.5).toFixed(2)}:d=1.5,${st()}[mus]`);
+      let bed = 'mus'; const mixes = [];
+      if (voices.length) {
+        voices.forEach((v, k) => parts.push(`[${v.i}:a]${st()},volume=1.7,adelay=delays=${Math.round(v.at * 1000)}:all=1[vv${k}]`));
+        parts.push(`${voices.map((_, k) => `[vv${k}]`).join('')}amix=inputs=${voices.length}:normalize=0:duration=longest,asplit=2[vo1][vo2]`);
+        parts.push(`[mus][vo1]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=400[duck]`); // the music steps back under the voice
+        bed = 'duck'; mixes.push('[vo2]');
+      }
+      whooshIn.forEach((w, k) => { parts.push(`[${w}:a]highpass=f=350,lowpass=f=5200,afade=t=in:st=0:d=0.32,afade=t=out:st=0.32:d=0.36,volume=0.16,${st()},adelay=delays=${Math.round(cuts[k] * 1000)}:all=1[wh${k}]`); mixes.push(`[wh${k}]`); });
+      parts.push(`[${bed}]${mixes.join('')}amix=inputs=${1 + mixes.length}:normalize=0:duration=first,atrim=0:${total.toFixed(2)},alimiter=limit=0.89:level=0[s]`);
+    }
     args.push('-filter_threads', '1', '-filter_complex_threads', '1', '-filter_complex', parts.join(';'), '-map', '[v]', '-map', '[s]', '-t', total.toFixed(2),
       '-c:v', 'libx264', '-preset', 'veryfast', '-threads', '1', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(fps), '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', path.join(dir, 'reel.mp4'));
     await run(await ffmpegPath(), args, 360000);

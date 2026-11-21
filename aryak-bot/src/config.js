@@ -178,6 +178,9 @@ export function loadConfig(env = process.env) {
       researchDays: Number(env.SOCIAL_RESEARCH_DAYS || 7), // the design-press search once a week (the owner, 19/11)
       researchSource: (env.SOCIAL_RESEARCH_SOURCE || 'inbox').toLowerCase(), // 'inbox': the notes Claude in the owner's app drops on the server; 'bot': the bot's own paid search
       researchInbox: env.SOCIAL_RESEARCH_INBOX || `${env.AUTH_DIR || './auth'}/social/research-inbox.md`,
+      reelPro: (env.SOCIAL_REEL_PRO || 'on').toLowerCase() !== 'off', // pointers, header, voice, whooshes, the end on the room (the owner, 21/11)
+      voiceOver: (env.SOCIAL_VOICE || 'on').toLowerCase() !== 'off',
+      tagline: (env.SOCIAL_TAGLINE || 'Premium Surface Films').trim(),
       reelMotion: (env.SOCIAL_REEL_MOTION || 'orbit').toLowerCase(), // the Reel turns around the room (the owner, 20/11); 'zoom' for the old push-in
       musicLibrary: Number(env.SOCIAL_MUSIC_LIBRARY || 8),
       stories: (env.SOCIAL_STORIES || 'on').toLowerCase() !== 'off', // a story on Instagram, Facebook and WhatsApp with every yes (the owner, 21/11)

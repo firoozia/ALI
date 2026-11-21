@@ -3922,7 +3922,7 @@ async function postWaStatus({ image = null, video = null, caption = '' }) {
   await sock.sendMessage('status@broadcast', video ? { video, caption, mimetype: 'video/mp4' } : { image, caption }, { statusJidList: list, broadcast: true });
   return viewers.size;
 }
-const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change']); // the picture checks too (the owner, 19/11: Sonnet was right 7 of 8 at half the cost, Opus 6 of 8)
+const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change', 'spots']); // the picture checks too (the owner, 19/11: Sonnet was right 7 of 8 at half the cost, Opus 6 of 8)
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom, timezone: config.timezone }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),

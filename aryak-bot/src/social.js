@@ -287,6 +287,21 @@ export class GeminiImage {
     try { this.onCost?.({ model, size: sz || '2K', usd: this.priceOf(model, sz || '2K'), cheap: model !== this.model }); } catch { /* counting never stops a picture */ }
     return { image: Buffer.from(pic.data, 'base64'), mime: pic.mimeType || pic.mime_type };
   }
+  /** A short line spoken by Google's speech model (the owner, 21/11: a voice-over like a reference Reel): a WAV. Throws with Google's words. */
+  async speak(text, { voice = 'Sulafat', model = 'gemini-3.1-flash-tts-preview', style = 'Say in a warm, elegant British voice, calm and unhurried' } = {}) {
+    const body = { contents: [{ role: 'user', parts: [{ text: `${style}: ${text}` }] }], generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } };
+    const res = await this.fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(`Gemini speech: ${data.error?.message || `HTTP ${res.status}`}`);
+    const d = (data.candidates?.[0]?.content?.parts || []).map((p) => p.inlineData || p.inline_data).find((x) => x?.data);
+    if (!d) throw new Error('Gemini gave no speech');
+    const pcm = Buffer.from(d.data, 'base64');
+    const mime = String(d.mimeType || d.mime_type || '');
+    if (/wav/i.test(mime)) return pcm;
+    const rate = Number(/rate=(\d+)/i.exec(mime)?.[1]) || 24000; // raw 16-bit mono: a WAV header is put on it
+    const h = Buffer.alloc(44); h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8); h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+    return Buffer.concat([h, pcm]);
+  }
   /** A 30-second instrumental clip from Google's music model (Lyria, the Interactions API): an MP3. Throws with Google's words. */
   async music(prompt, model = 'lyria-3-clip-preview') {
     const res = await this.fetchImpl('https://generativelanguage.googleapis.com/v1beta/interactions', { method: 'POST', headers: { 'content-type': 'application/json', 'Api-Revision': '2026-05-20', 'x-goog-api-key': this.apiKey }, body: JSON.stringify({ model, input: prompt }) });
@@ -339,6 +354,7 @@ These are the most liked recent posts of leading interior design accounts on Ins
 export const LOOKS_RULES = `${ATOSSA}
 These are interior pictures from today's design press. For each one, write one short English line of what a designer can take from it for decorative films on cabinets, wardrobes and wall panels: the colours and how they are paired, the wood or stone look, the finish, the light, one detail. Then one line «Together:» with the strongest common idea. Output only the lines.`;
 
+export const SPOT_RULES = 'Look at this interior picture and the films named. For each film give one point on a large, clearly visible surface of that film (its doors, panels or worktop), inside the middle of the picture: x between 0.26 and 0.74, y between 0.18 and 0.82 (0 is the left or top edge, 1 the right or bottom), never on another film or an object; the points well apart from each other. Answer only JSON: {"spots":[{"code":"the code","x":0.5,"y":0.5}]}';
 export const FOCUS_RULES = `Look at this interior picture. Give the point at the centre of the largest, best-lit area of the named film, where its colour and texture show best.
 x and y go from 0 to 1, from the left and from the top. Answer with JSON only, for example {"x":0.62,"y":0.41}.`;
 
@@ -1449,11 +1465,22 @@ export class SocialDesk {
     const brand = this.brandAssets();
     const all = this.catalog();
     const named = codes.map((c) => ({ ...c, name: c.name || all[c.code]?.name || '' }));
-    const { endCard, pairCards, reelOverlay, shotLabel } = await import('./reel.js');
+    const { endCard, pairCards, reelOverlay, shotLabel, calloutRoom } = await import('./reel.js');
     // the marks inside Instagram's safe area: the logo only (the band of codes at the bottom was under Instagram's own words); each
     // close-up says its own film; the end card names the films and says what to do (the owner's review, 17/11)
-    const overlay = await reelOverlay({ logo: brand.logo });
-    const card = await endCard({ codes: named, logo: brand.logo, font: brand.font, cta: codes.length > 1 ? 'Send the code you like on WhatsApp' : 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK' });
+    const pro = this.cfg.reelPro !== false; // the owner, 21/11: pointers, header, voice, whooshes and the end on the room, from a reference Reel
+    const overlay = await reelOverlay({ logo: brand.logo, tagline: pro ? (this.cfg.tagline || 'Premium Surface Films') : '', font: brand.font });
+    const card = await endCard({ codes: named, logo: brand.logo, font: brand.font, cta: codes.length > 1 ? 'Send the code you like on WhatsApp' : 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK', background: pro ? room : null });
+    // a pointer to each film on the room: where it shows best, found by the cheaper model (drawn by us, so every word is spelled right)
+    let tagged = null;
+    if (pro) {
+      try {
+        const raw = String(await this.write({ kind: 'spots', system: SPOT_RULES, text: `The films: ${named.map((c) => `${c.code} (${c.name || 'decorative film'})`).join('; ')}.`, image: room, mime: 'image/jpeg', maxTokens: 1500 }) || '');
+        const j = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+        const spots = (j.spots || []).filter((s) => named.some((c) => c.code === String(s.code).toUpperCase()) && Number.isFinite(Number(s.x)) && Number.isFinite(Number(s.y))).map((s) => ({ ...s, code: String(s.code).toUpperCase(), name: named.find((c) => c.code === String(s.code).toUpperCase())?.name || '' }));
+        if (spots.length) tagged = await calloutRoom({ image: room, spots, font: brand.font });
+      } catch (err) { this.log(`social: the pointers on the room were not drawn: ${err.message}`); }
+    }
     const label = async (code) => { const c = named.find((x) => x.code === code); return c ? shotLabel({ code: c.code, name: c.name, font: brand.font }).catch(() => null) : null; };
     const details = shots ? shots.map((sh) => ({ image: sh.raw, code: sh.part?.code || sh.code || '', wood: !!sh.wood })) : detail ? [{ image: detail, code: main?.code || '', wood: false }] : [];
     // the owner's wishes for the Reel (15/11): its length, new music, the camera turning around the room instead of a zoom
@@ -1486,7 +1513,7 @@ export class SocialDesk {
     if (open === 'texture') seq.push({ image: room, sec: onBeat(2.6), ...roomMove(0.18) });
     if (reveal) seq.push({ image: reveal, sec: onBeat(2.6), move: 'push', zoom: 0.3, cx: focus.x, cy: focus.y, cut: 'dissolve' }); // into the open part (live 17/11: room then the same framing open read as the same shot twice)
     views.forEach((v, k) => seq.push({ image: v, sec: onBeat(2.2), move: 'pan', toRight: k % 2 === 1 }));
-    for (const [k, x] of rest.entries()) seq.push({ image: x.image, sec: onBeat(x.wood ? 3 : 2.6), ...(orbit ? { move: 'pan', toRight: k % 2 === 0 } : { move: 'push', zoom: x.wood ? 0.18 : 0.1 }), label: await label(x.code) });
+    for (const [k, x] of rest.entries()) seq.push({ code: x.code, image: x.image, sec: onBeat(x.wood ? 3 : 2.6), ...(orbit ? { move: 'pan', toRight: k % 2 === 0 } : { move: 'push', zoom: x.wood ? 0.18 : 0.1 }), label: await label(x.code) });
     // the length: 20 s at most (the owner's review, 17/11: 41 s with the same doors twice), or what the owner asked (8 to 30 s)
     const cardSec = 2.5;
     const want = Number(opts?.seconds);
@@ -1503,10 +1530,23 @@ export class SocialDesk {
       if (!grow) break;
       grow.sec += beat;
     }
+    // the room shot carries the pointers; each shot's film is said by the voice, the brand at the start, a closing line on the card
+    if (tagged) for (const x of seq) if (x.image === room) { x.image = tagged; break; }
+    let cardVoice = null;
+    if (pro && this.imager?.speak && this.cfg.voiceOver !== false) {
+      const say = async (t) => { try { return await this.imager.speak(t); } catch (err) { this.log(`social: a voice line failed: ${err.message}`); return null; } };
+      const n = (d.reelOpens || []).length;
+      const opens = ['Experience luxury with Aree-yak.', 'Aree-yak. Premium surface films.', 'Discover the Aree-yak collection.'];
+      const closes = ['Premium surfaces, designed for you.', 'Send us the code you love.', 'Find your colour with Aree-yak.'];
+      const first = seq.findIndex((x) => x.image === tagged || x.image === room);
+      if (first >= 0) seq[first].voice = await say(opens[n % opens.length]);
+      for (const x of seq) if (!x.voice && x.label && x.code) { const c = named.find((y) => y.code === x.code); if (c?.name) x.voice = await say(`${c.name}.`); }
+      cardVoice = await say(closes[n % closes.length]);
+    }
     d.reelOpens = [...(d.reelOpens || []), open].slice(-6);
     d.reelPairs = [...(d.reelPairs || []), cards.length > 0].slice(-6);
     this.store.save();
-    return this.reel({ room, sequence: seq, fade, open, intro: cards, hook: open === 'texture' ? seq[0].image : null, before, reveal, views, motion, details: rest, seconds: { card: cardSec }, focus, overlay, card, music: await this.reelMusic(tune) });
+    return this.reel({ room, sequence: seq, fade, open, intro: cards, hook: open === 'texture' ? seq[0].image : null, before, reveal, views, motion, details: rest, seconds: { card: cardSec }, focus, overlay, card, music: await this.reelMusic(tune), cardVoice, whoosh: pro });
   }
 
   /** The same room from two other camera places (left and right around it), for a Reel that walks around the design. */

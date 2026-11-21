@@ -981,7 +981,7 @@ test('the cost and the camera (the owner, 19/11): one press search a week shared
   assert.match(src, /never a close crop of one cabinet or corner; the camera always stands inside the room, never outside it/);
   assert.match(src, /never ask for a camera outside the room, in a doorway or through glass/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.match(index, /const STUDIO_PLAN_KINDS = new Set\(\['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change'\]\)/); // the picture checks too (the owner, 19/11)
+  assert.match(index, /const STUDIO_PLAN_KINDS = new Set\(\['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change', 'spots'\]\)/); // the picture checks and the Reel's pointers too (the owner, 19/11 and 21/11)
   assert.match(index, /STUDIO_PLAN_KINDS\.has\(kind\) && config\.social\.planModel \? config\.social\.planModel : config\.model/);
   const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
   assert.match(cfg, /planModel: \(env\.SOCIAL_PLAN_MODEL \?\? 'claude-sonnet-5-5'\)/);
@@ -1073,4 +1073,28 @@ test('a yes posts the stories too: Instagram, Facebook and a WhatsApp status, th
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(index, /sock\.sendMessage\('status@broadcast', video \? \{ video, caption, mimetype: 'video\/mp4' \} : \{ image, caption \}, \{ statusJidList: list, broadcast: true \}\)/);
   assert.match(index, /if \(!j\.endsWith\('@s\.whatsapp\.net'\) \|\| staff\.has\(jidDigits\(j\)\)/, 'never the staff');
+});
+
+test('a Reel like the reference (the owner, 21/11): pointers on the room, a centred header, a voice line per shot with the music stepping back, whooshes at the cuts, the end on the room', async () => {
+  const { makeReel, endCard, reelOverlay, calloutRoom } = await import('../src/reel.js');
+  const room = await pic('#806040', 1080, 1350);
+  const tagged = await calloutRoom({ image: room, spots: [{ x: 0.3, y: 0.4, code: 'HZ806', name: 'Dark walnut' }, { x: 0.9, y: 0.05, code: 'HZ818', name: 'Ivory' }] });
+  const m = await sharp(tagged).metadata();
+  assert.equal(m.width, 1080); assert.equal(m.height, 1350);
+  assert.notDeepEqual(await sharp(tagged).raw().toBuffer(), await sharp(room).raw().toBuffer(), 'the pointers are drawn');
+  const logo = await sharp({ create: { width: 400, height: 300, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
+  const o = await alphaBox(await reelOverlay({ logo, tagline: 'Premium Surface Films' }));
+  assert.ok(Math.abs((o.left + o.right) / 2 - 540) < 40, `the header is centred ${JSON.stringify(o)}`);
+  const card = await endCard({ codes: [{ code: 'HZ812', swatch: await pic('#3a2a1e') }], line: 'WhatsApp +971000', background: await pic('#d0c0a0', 1080, 1350) });
+  const { data } = await sharp(card).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.ok(data[0] > 30, 'the end card stands on the darkened room, not on the plain dark ground');
+  const wav = (sec) => { const rate = 24000; const pcm = Buffer.alloc(rate * 2 * sec); for (let i = 0; i < rate * sec; i++) pcm.writeInt16LE(Math.round(8000 * Math.sin(i / 8)), i * 2); const h = Buffer.alloc(44); h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8); h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40); return Buffer.concat([h, pcm]); };
+  const mp4 = await makeReel({ room, card, fade: 0.35, seconds: { card: 1 }, sequence: [{ image: tagged, sec: 1.4, move: 'pan', toRight: true, voice: wav(1) }, { image: room, sec: 1.4, move: 'push', zoom: 0.1, voice: wav(1) }], cardVoice: wav(1), whoosh: true });
+  assert.ok(mp4.length > 1000);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
+  assert.match(src, /sidechaincompress=threshold=0\.02:ratio=8/, 'the music steps back under the voice');
+  assert.match(src, /anoisesrc=c=pink/, 'the whooshes');
+  const social = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(social, /const opens = \['Experience luxury with Aree-yak\.'/, 'the brand said the way the owner says it');
+  assert.match(social, /model = 'gemini-3\.1-flash-tts-preview'/);
 });
