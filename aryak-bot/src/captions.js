@@ -120,7 +120,7 @@ export function parseCutCaption(text) {
 
 // ---- delivery group --------------------------------------------------------------------------------------------------------
 const GOODS_WORD = /^(?:HINGES?|GLUE|JOWAT|JUWAT|GILU|SCREWS?|HANDLES?|CHANNELS?|SILICON\w*|TAPE|CATALOG\w*)\b/i;
-const GOODS_UNIT_RE = /\d+(?:\.\d+)?\s*(?:BOX(?:ES)?|GALL?[EO]NS?|BAGS?|CARTONS?)/i; // «2 PCS» may be a customer's count; a box or a gallon is goods
+const GOODS_UNIT_RE = /\d+(?:\.\d+)?\s*(?:BOX(?:ES)?|GALL?[EO]NS?|BAGS?|CARTONS?)\b/i; // «2 PCS» may be a customer's count; a box or a gallon is goods
 const GOODS_TAIL = /\s+(?:HINGES?|GLUE|JOWAT|SCREWS?|HANDLES?)(?:\s+.*)?$/i; // «MICE INTERIORS GLUE»: the customer is MICE INTERIORS
 const STATUS = [[/\bPICKED\s*UP\b/i, 'picked-up'], [/\bDISPATCHED\b/i, 'dispatched'], [/\bDELIVERED\b/i, 'delivered']];
 

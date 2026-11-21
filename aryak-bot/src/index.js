@@ -90,6 +90,7 @@ import { stockDiff, stockDiffFile } from './stockdiff.js';
 import { CutAliases, proposeAliases, sameBrand } from './cutaliases.js';
 import { SheetNameStore, applyCells, backupName, cellsOf, findQboName, overrideFor, planSheetNames, sheetCall, sheetPreviewText, sheetProblem } from './sheetnames.js';
 import { unbilled, unbilledText } from './unbilled.js';
+import { readMoneyShape, hasAmount, whatForText } from './moneyshape.js';
 import { PaymentDups, cleanPaymentEvents, groupPaymentNotices, migrateOldPayments, paymentsText, sharedPaymentList } from './payments.js';
 import { AvailabilityDrafts, draftText, managerText, parseAvailabilityAsk, stateOf } from './availdraft.js';
 import { AllStatementPreviews, parseAllReply, previewAllText, selectOpen } from './allstatements.js';
@@ -896,12 +897,20 @@ async function trackGroup(raw, groupId, role) {
     }
     if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    if (det.askWhat) { // the owner's rule (21/11): an amount not in the fixed shapes records nothing; the group is asked at once what it is for
+      trace(whereDet, 'tracker', 'an amount not written in the money shapes: nothing recorded, the group is asked what it is for');
+      if (!replayCtx.getStore()?.quiet && !officeAsked.has('what|' + raw.key.id)) {
+        officeAsked.add('what|' + raw.key.id);
+        await deliver({ send: (...args) => sock.sendMessage(...args), chatId: groupId, content: whatForText(det.askWhat), quoted: raw, where: whereDet, log: (s) => logger.info(s) }).catch((e) => logger.warn('money question failed: ' + e.message));
+      }
+      return;
+    }
     if (det.askAed) { // the owner's rule (21/11): no AED beside the amount, nothing is recorded and the group is asked once to write it again
       trace(whereDet, 'tracker', `an amount (${det.askAed.amount}) with no AED beside it: nothing recorded, the group is asked`);
       if (!replayCtx.getStore()?.quiet && !officeAsked.has('aed|' + raw.key.id)) {
         officeAsked.add('aed|' + raw.key.id);
         const who = det.askAed.customers[0] || 'customer name';
-        await deliver({ send: (...args) => sock.sendMessage(...args), chatId: groupId, content: `Please write the amount with AED beside it, for example: ${det.askAed.amount} AED ${who}. Nothing was recorded.`, quoted: raw, where: whereDet, log: (s) => logger.info(s) }).catch((e) => logger.warn('AED question failed: ' + e.message));
+        await deliver({ send: (...args) => sock.sendMessage(...args), chatId: groupId, content: `Please write the amount with AED beside it, for example: ${({ transfer: 'TRANSFER BANK FROM', cheque: 'CHEQUE RECEIVED FROM', cash_to_boss: 'TRANSFER TO BOSS', salary_advance: 'ADVANCE TO' })[det.askAed.shape] || 'CASH RECEIVED FROM'} ${det.askAed.shape === 'cash_to_boss' ? '' : `${who} `}${det.askAed.amount} AED. Nothing was recorded.`, quoted: raw, where: whereDet, log: (s) => logger.info(s) }).catch((e) => logger.warn('AED question failed: ' + e.message));
       }
       return;
     }
@@ -1797,6 +1806,15 @@ async function simulatedPost({ raw, text, where, role, reply }) {
     await reply(done ? `SIMULATION: the question was read; the draft and the sheet figures went to ${stockJid() ? 'the stock group' : 'your own chat'} (nothing is posted anywhere).` : 'SIMULATION: that text was not read as an availability question (a code with "available?").');
     return true;
   }
+  // «[expenses] CASH PAID FOR water 200 AED»: what the expenses group would do with that text (the owner's money shapes, 21/11)
+  const xm = /^\s*\[expenses?\]\s*([\s\S]+)$/i.exec(text);
+  if (xm) {
+    const sh = readMoneyShape(xm[1].trim(), 'expenses');
+    await reply(sh?.noAed ? `SIMULATION: an expense with no AED beside the amount: nothing recorded. In the real expenses group Atossa asks at once: «Please write the amount with AED beside it …».`
+      : sh && sh.amount > 0 ? `SIMULATION: read as ${sh.kind === 'cash_expense' ? 'a company cash expense' : sh.kind === 'salary_advance' ? 'a salary advance' : 'cash to the boss'}, ${sh.amount} AED${sh.name ? `, ${sh.kind === 'cash_expense' ? 'for' : 'to'} ${sh.name}` : ''} (nothing is recorded in a simulation).`
+      : hasAmount(xm[1]) ? `SIMULATION: not one of the money shapes: nothing recorded. In the real expenses group Atossa asks at once: «${whatForText('expenses')}»` : 'SIMULATION: no amount in that text: nothing to record.');
+    return true;
+  }
   const m = /^\s*\[(orders|delivery|confirm)\]\s*([\s\S]+)$/i.exec(text);
   if (!m) return false;
   const kind = m[1].toLowerCase();
@@ -1804,6 +1822,8 @@ async function simulatedPost({ raw, text, where, role, reply }) {
   const det = eventsFromCaption(asRole, m[2].trim());
   if (det?.noCustomer) { await reply(`SIMULATION: a cut with nobody named (code ${det.noCustomer.code}, ${det.noCustomer.quantity} m): not recorded. In the real orders group the owner is told once: «cut without customer».`); return true; }
   if (asRole === 'payment' && det?.ignore) { await reply('SIMULATION: read as NOT money (a promise, a request, a price, an order line, a reply or our own message): nothing recorded, nothing counted.'); return true; }
+  if (asRole === 'payment' && det?.askWhat) { await reply(`SIMULATION: not one of the money shapes: nothing recorded. In the real Confirmation group Atossa asks at once: «${whatForText('confirmation')}»`); return true; }
+  if (asRole === 'payment' && det?.askAed) { await reply(`SIMULATION: the amount ${det.askAed.amount} has no AED beside it: nothing recorded. In the real group Atossa asks at once to write it again with AED.`); return true; }
   if (asRole === 'payment' && det?.name) { await reply(`SIMULATION: a name alone («${det.name}»): it names the nameless payment posted just before or after it; nothing counted by itself.`); return true; }
   if (!det?.events?.length) { await reply(`SIMULATION: that text was not read as a post of the ${kind} group (nothing recorded).`); return true; }
   const lines = [];
@@ -3684,8 +3704,17 @@ async function expensesTurn(raw, groupId, info) {
     return true;
   }
   if (mayEdit && isBareAnswer(text)) { await say('Nothing is waiting for an answer.'); return true; } // only the owner and the allowed staff; nothing else in the group is answered
+  // THE OWNER'S RULE (21/11): a text expense is written CASH PAID FOR <what> <amount> AED (or ADVANCE TO / TRANSFER TO BOSS); with AED missing or in any
+  // other words, nothing is recorded and the group is asked at once
+  const shapeX = readMoneyShape(text, 'expenses');
+  if (shapeX?.noAed) { await say(`Please write the amount with AED beside it, for example: CASH PAID FOR ${String(text).replace(/^\s*\S+\s+\S+\s+(?:\S+\s+)?/, '').replace(/\d[\d,.]*/g, '').trim() || '<what>'} ${shapeX.amount} AED. Nothing was recorded.`); return true; }
+  if (shapeX && shapeX.amount > 0) {
+    await afterExpenseEntry(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData })), say);
+    return true;
+  }
+  if (hasAmount(text)) { await say(whatForText('expenses')); return true; }
   const cap = parseExpenseCaption(text);
-  if (cap.amount && isExpenseText(text)) { // only an amount and a few words of its type or how it was paid: an expense with no receipt
+  if (false && cap.amount && isExpenseText(text)) { // replaced by the fixed shapes above (the owner, 21/11)
     await afterExpenseEntry(expenseStore.add(makeEntry({ caption: text, reading: null, hasReceipt: false, by, byName, ref: raw.key.id, timeZone: config.timezone, test: testData })), say);
     return true;
   }

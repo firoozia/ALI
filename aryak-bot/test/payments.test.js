@@ -60,12 +60,14 @@ test('the shapes the group uses: a bank credit keeps the amount and no account n
 });
 
 test('junk words are not a customer; a nameless cash payment waits for the name posted next to it; 1 AED rounding; a payment the office already recorded', () => {
-  for (const [text, customers] of [['cash from receipt + clear 115 aed', []], ['115 aed cash from Pay', []], ['cash from clear ZED CARPENTRY inv 250 aed', ['Zed Carpentry']]]) {
+  for (const [text, customers] of [['cash from clear ZED CARPENTRY inv 250 aed', ['Zed Carpentry']]]) {
     const r = eventsFromCaption('payment', text);
     const got = (r.events || []).map((e) => e.customer).filter(Boolean);
     assert.deepEqual(got.map((x) => x.toUpperCase()), customers.map((x) => x.toUpperCase()), text);
   }
-  const nameless = eventsFromCaption('payment', 'receipt 115 aed and clear').events[0];
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  for (const text of ['cash from receipt + clear 115 aed', '115 aed cash from Pay', 'receipt 115 aed and clear']) assert.equal(eventsFromCaption('payment', text).askWhat, 'confirmation', text);
+  const nameless = eventsFromCaption('payment', 'CASH RECEIVED FROM 115 AED').events[0];
   assert.equal(nameless.amount, 115); assert.equal(nameless.pendingName, true); assert.equal(nameless.customer, '');
   assert.deepEqual(eventsFromCaption('payment', 'Alwan sham'), { name: 'Alwan sham' });
   const near = proposePayment({ event: pay({ customer: 'ZED CARPENTRY', amount: 250.5 }), invoices: open });
@@ -79,10 +81,9 @@ test('junk words are not a customer; a nameless cash payment waits for the name 
 test('payment names: «cash from receipt + clear», «cash from Pay» and «clear … inv» are read clean; a payment stored with junk is a payment without a name; a message of payment words only is no name', async () => {
   const { stripPaymentWords } = await import('../src/captions.js');
   const names = (t) => eventsFromCaption('payment', t).events?.map((e) => e.customer);
-  assert.deepEqual(names('cash from receipt + clear 115.00 AED'), ['']); assert.equal(eventsFromCaption('payment', 'cash from receipt + clear 115.00 AED').events[0].pendingName, true);
-  assert.deepEqual(names('cash from Pay 157.00 AED'), ['']);
-  assert.deepEqual(names('cash from clear MUNICH DOOR KITCHEN inv 9,940.00 AED'), ['MUNICH DOOR KITCHEN']);
-  assert.deepEqual(names('Cash received from clear Munich Door Kitchen inv AED 9940'), ['Munich Door Kitchen']);
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked (the names in the shape: the test after this one)
+  for (const text of ['cash from receipt + clear 115.00 AED', 'cash from Pay 157.00 AED', 'cash from clear MUNICH DOOR KITCHEN inv 9,940.00 AED']) assert.equal(eventsFromCaption('payment', text).askWhat, 'confirmation', text);
+  assert.equal(names('CASH RECEIVED FROM 115.00 AED')[0], ''); assert.equal(eventsFromCaption('payment', 'CASH RECEIVED FROM 115.00 AED').events[0].pendingName, true);
   assert.equal(eventsFromCaption('payment', 'cash from receipt + clear'), null); // payment words only and no amount: nothing, never a name for the neighbour payment
   assert.deepEqual(eventsFromCaption('payment', 'Alwan sham'), { name: 'Alwan sham' });
   assert.equal(stripPaymentWords('receipt + clear'), ''); assert.equal(stripPaymentWords('clear MUNICH DOOR KITCHEN inv'), 'MUNICH DOOR KITCHEN');
@@ -93,6 +94,15 @@ test('payment names: «cash from receipt + clear», «cash from Pay» and «clea
   assert.match(proposePayment({ event: pay({ customer: 'Clear MUNICH DOOR KITCHEN Inv', amount: 9940 }), invoices: munich })[1], /^→ pays inv-9645 9,940\.00$/);
   const recorded = proposePayment({ event: pay({ customer: 'MUNICH DOOR KITCHEN', amount: 9940 }), invoices: munich, payments: [{ TotalAmt: 9940, TxnDate: '2026-11-08', CustomerRef: { name: 'MUNICH DOOR KITCHEN TRADING L.L.C- S.P.C' } }] });
   assert.match(recorded[1], /already recorded in QuickBooks \(payment of 08\/11/);
+});
+
+test('payment names in the money shape: «receipt + clear» and «Pay» are no name (the payment waits for its name), «clear … inv» leaves the customer', () => {
+  const one = (t) => eventsFromCaption('payment', t).events[0];
+  for (const t of ['CASH RECEIVED FROM receipt + clear 115.00 AED', 'CASH RECEIVED FROM Pay 157.00 AED']) {
+    assert.equal(one(t).customer, '', t); assert.equal(one(t).pendingName, true, t);
+  }
+  assert.equal(one('CASH RECEIVED FROM clear MUNICH DOOR KITCHEN inv 9,940.00 AED').customer, 'MUNICH DOOR KITCHEN');
+  assert.equal(one('Cash received from clear Munich Door Kitchen inv AED 9940').customer, 'Munich Door Kitchen');
 });
 
 test('a repeated payment: the first is listed, the second is marked and the owner is asked; his answer is kept; a different or missing customer is never a duplicate', async () => {

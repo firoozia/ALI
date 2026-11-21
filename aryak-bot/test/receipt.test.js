@@ -20,10 +20,19 @@ test('a number after «inv», «invoice», «inv-», «inv no» or «فاکتو�
     assert.equal(e.amount, 0, text); assert.deepEqual(e.invoices, ['inv-9940'], text); assert.equal(e.customer, customer, text); assert.equal(e.noAmount, true);
   }
   assert.deepEqual(eventsFromCaption('payment', 'inv-9940').events[0].invoices, ['inv-9940']);
-  const both = eventsFromCaption('payment', 'cash 500 AED from ZED inv 9808 / 9809').events[0]; // an amount AND invoice numbers: each is what it is
-  assert.equal(both.amount, 500); assert.deepEqual(both.invoices, ['inv-9808', 'inv-9809']); assert.equal(both.customer, 'ZED');
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  assert.equal(eventsFromCaption('payment', 'cash 500 AED from ZED inv 9808 / 9809').askWhat, 'confirmation');
   assert.equal(parsePaymentCaption('clear inv 9808 / 9809').kind, 'clear-invoices'); // the older form still works
-  assert.equal(eventsFromCaption('payment', '500 AED ZED').events[0].invoices, undefined);
+  assert.equal(eventsFromCaption('payment', 'CASH RECEIVED FROM ZED 500 AED').events[0].invoices, undefined);
+});
+
+test('in the money shape a number after «inv» is an invoice number too: kept apart from the amount and from the name, never asked about as an amount', () => {
+  for (const text of ['CASH RECEIVED FROM ZED 500 AED inv 9808 / 9809', 'CASH RECEIVED FROM ZED inv 9808 / 9809 500 AED']) {
+    const both = eventsFromCaption('payment', text).events?.[0]; // an amount AND invoice numbers: each is what it is
+    assert.equal(both?.amount, 500, text); assert.deepEqual(both.invoices, ['inv-9808', 'inv-9809'], text); assert.equal(both.customer, 'ZED', text);
+  }
+  const noAmount = eventsFromCaption('payment', 'CASH RECEIVED FROM ZED inv 9940'); // an invoice number and no amount: never «9940 AED?»
+  assert.notEqual(noAmount?.askAed?.amount, 9940, JSON.stringify(noAmount));
 });
 
 test('a PDF receipt: the text layer gives the amount, the date, the payer, the kind and the invoice it names; no text or no amount is not guessed', () => {

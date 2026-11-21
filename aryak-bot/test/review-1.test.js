@@ -834,8 +834,12 @@ test('the cash box: cash to the boss and salary advances are their own kinds (ne
   assert.deepEqual(cashOutKind('cash to boss 10000'), { kind: 'cash_to_boss', amount: 10000, employee: '' });
   assert.deepEqual(cashOutKind('advance 500 RAJU'), { kind: 'salary_advance', amount: 500, employee: 'RAJU' });
   assert.equal(cashOutKind('cash from ZETA CO 750'), null); assert.equal(cashOutKind('handed 300 to somebody').kind, 'cash_unclear');
-  const ev = eventsFromCaption('payment', 'advance 500 RAJU').events[0];
+  const ev = eventsFromCaption('payment', 'ADVANCE TO RAJU 500 AED').events[0];
   assert.deepEqual([ev.kind, ev.amount, ev.employee, ev.customer], ['salary_advance', 500, 'RAJU', '']);
+  const boss = eventsFromCaption('payment', 'TRANSFER TO BOSS 18000 AED').events[0];
+  assert.deepEqual([boss.kind, boss.amount, boss.customer], ['cash_to_boss', 18000, '']);
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  assert.equal(eventsFromCaption('payment', 'advance 500 RAJU').askWhat, 'confirmation');
   const at = Date.parse('2026-11-05T09:00:00Z');
   assert.equal(sharedPaymentList({ events: [{ ...ev, at, ref: 'a' }, { type: 'payment', kind: 'cash', customer: 'ZETA CO', amount: 750, at, ref: 'b', currency: 'AED' }] }).length, 1); // the advance is out of every customer list
   const day = (d) => Date.parse('2026-11-' + d + 'T09:00:00Z');
@@ -1162,7 +1166,7 @@ test('a post ending with a star needs no invoice: the star is taken off, it is n
   const { cashBoxReportQbo } = await import('../src/cashbox.js');
   for (const t of ['Cash from ZETA CO 3000 *', 'Cash from ZETA CO 3000 ★', 'Cash from ZETA CO 3000 ⭐', 'Cash from ZETA CO 3000 **']) assert.ok(isStarred(t), t);
   assert.ok(!isStarred('Cash from ZETA CO 3000') && !isStarred('*'));
-  const ev = eventsFromCaption('payment', 'Cash from ZETA CO 3000 AED *').events[0];
+  const ev = eventsFromCaption('payment', 'CASH RECEIVED FROM ZETA CO 3000 AED *').events[0];
   assert.deepEqual([ev.customer, ev.amount, ev.noInvoice], ['ZETA CO', 3000, true]); // the star is not in the name or the amount
   const at = Date.parse('2026-11-12T08:00:00Z');
   const oldRow = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'o', at, customer: 'NOVA CO *', amount: 750, text: 'Cash from NOVA CO 750 *' };
@@ -1492,17 +1496,20 @@ test('live test fixes: money out is shown as money out, a cheque date leaves the
   const { eventsFromCaption } = await import('../src/captionevents.js');
   const { describeEvent } = await import('../src/simtext.js');
   const pay = (t) => eventsFromCaption('payment', t).events[0];
-  assert.match(describeEvent(pay('paid 300 aed for lunch of workers')), /^payment: company cash expense \(not customer money\), 300\.00 AED, for LUNCH OF WORKERS/);
-  assert.match(describeEvent(pay('salary advance 500 aed to Ahmed driver')), /^payment: salary advance \(not customer money\), 500\.00 AED, to AHMED DRIVER/);
-  const chq = pay('cheque from tiger 2000 aed dated 20/11');
+  const { readMoneyShape } = await import('../src/moneyshape.js');
+  const exp = readMoneyShape('CASH PAID FOR lunch of workers 300 AED', 'expenses'); // the expenses group's shape
+  assert.match(describeEvent({ type: 'payment', kind: exp.kind, amount: exp.amount, employee: exp.name, currency: 'AED' }), /^payment: company cash expense \(not customer money\), 300\.00 AED, for lunch of workers/);
+  assert.match(describeEvent(pay('ADVANCE TO Ahmed driver 500 AED')), /^payment: salary advance \(not customer money\), 500\.00 AED, to Ahmed driver/);
+  const chq = pay('CHEQUE RECEIVED FROM tiger 2000 AED dated 20/11');
   assert.equal(chq.customer, 'tiger'); assert.equal(chq.kind, 'cheque'); assert.match(chq.chequeDate, /^\d{4}-11-20$/);
   assert.match(describeEvent(chq), /cheque, 2,000\.00 AED, from tiger, cheque date 20\/11\/\d{4}/);
-  assert.equal(pay('cheque 2000 aed tiger due on 20-11-2026').chequeDate, '2026-11-20');
-  assert.equal(pay('نقد از مستر وود ۵۰۰ درهم دریافت شد').customer, 'مستر وود'); // the payment words leave the name
-  assert.equal(pay('چک ۱۲۰۰ درهم از ببر چوب').kind, 'cheque');
-  assert.match(describeEvent(pay('cash received 450 aed')), /from nobody named \(the owner is asked: from whom\?\)/);
-  assert.match(describeEvent({ ...pay('Received 500 aed from Blue Ocean Trading'), unknownCustomer: true }), /not our customer\? — check/);
-  const star = eventsFromCaption('payment', 'master wood 500 aed cash *').events[0]; assert.match(describeEvent(star), /⭐ no invoice needed/);
+  assert.equal(pay('CHEQUE RECEIVED FROM tiger 2000 AED dated 20/11/2026').chequeDate, '2026-11-20');
+  assert.equal(pay('CHEQUE RECEIVED FROM tiger 2000 AED due on 20-11-2026').chequeDate, '2026-11-20');
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  for (const t of ['paid 300 aed for lunch of workers', 'salary advance 500 aed to Ahmed driver', 'cheque from tiger 2000 aed dated 20/11', 'نقد از مستر وود ۵۰۰ درهم دریافت شد', 'چک ۱۲۰۰ درهم از ببر چوب']) assert.equal(eventsFromCaption('payment', t).askWhat, 'confirmation', t);
+  assert.match(describeEvent(pay('CASH RECEIVED 450 AED')), /from nobody named \(the owner is asked: from whom\?\)/);
+  assert.match(describeEvent({ ...pay('CASH RECEIVED FROM Blue Ocean Trading 500 AED'), unknownCustomer: true }), /not our customer\? — check/);
+  const star = eventsFromCaption('payment', 'CASH RECEIVED FROM master wood 500 AED *').events[0]; assert.match(describeEvent(star), /⭐ no invoice needed/);
   const del = eventsFromCaption('delivery', 'Master wood delivered, collected 1500 cash').events[0];
   assert.equal(del.collected, 1500); assert.match(describeEvent(del), /delivery: Master wood, delivered, driver collected 1,500\.00 AED cash \(kept as driver cash\)/);
   const cut = eventsFromCaption('cut', 'Golden door 1810 3m + 215 edge 50m').events[0];
@@ -1619,14 +1626,16 @@ test('the kind of a payment comes from its method words: transfer / bank / TT / 
   const { eventsFromCaption } = await import('../src/captionevents.js');
   const { describeEvent } = await import('../src/simtext.js');
   const one = (t) => eventsFromCaption('payment', t).events[0];
-  const tr = one('Al masar transfer 918.75 aed'); assert.equal(tr.kind, 'transfer'); assert.equal(tr.customer, 'Al masar'); assert.equal(tr.amount, 918.75);
-  const bk = one('bank transfer from atlas 1575 aed'); assert.equal(bk.kind, 'transfer'); assert.equal(bk.customer, 'atlas'); assert.match(describeEvent(bk), /^payment: bank transfer, 1,575\.00 AED, from atlas/);
-  for (const t of ['Master wood 500 aed TT', 'master wood 500 aed IPP', 'master wood 500 aed Aani', 'master wood 500 aed deposited', 'online payment master wood 500 aed', 'master wood 500 aed wire', 'حواله از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'transfer', t);
-  for (const t of ['cheque from tiger 2000 aed PDC', 'tiger 2000 aed pdc', 'چک ۲۰۰۰ درهم از ببر']) assert.equal(one(t).kind, 'cheque', t);
-  for (const t of ['cash received from alia wood 250 aed', 'master wood 300 aed', 'نقد از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'cash', t);
-  assert.ok(eventsFromCaption('payment', 'master wood 300').askAed, 'no AED: never counted, the group is asked (the owner, 21/11)');
-  assert.equal(one('cash received from alia wood 250 aed').customer, 'alia wood');
-  assert.equal(one('18000 deposit to boss').kind, 'cash_to_boss'); // a deposit to the boss is still cash leaving the box
+  // the owner, 21/11: the kind comes from the opening words of the money shape
+  const tr = one('TRANSFER BANK FROM Al masar 918.75 AED'); assert.equal(tr.kind, 'transfer'); assert.equal(tr.customer, 'Al masar'); assert.equal(tr.amount, 918.75);
+  const bk = one('BANK TRANSFER FROM atlas 1575 AED'); assert.equal(bk.kind, 'transfer'); assert.equal(bk.customer, 'atlas'); assert.match(describeEvent(bk), /^payment: bank transfer, 1,575\.00 AED, from atlas/);
+  for (const t of ['CHEQUE RECEIVED FROM tiger 2000 AED', 'CHQ RECEIVED FROM tiger 2000 AED', 'cheq recieved from tiger 2000 aed']) { assert.equal(one(t).kind, 'cheque', t); assert.equal(one(t).customer, 'tiger', t); }
+  for (const t of ['CASH RECEIVED FROM alia wood 250 AED', 'cash received from alia wood 250 aed']) { assert.equal(one(t).kind, 'cash', t); assert.equal(one(t).customer, 'alia wood', t); }
+  assert.ok(eventsFromCaption('payment', 'CASH RECEIVED FROM master wood 300').askAed, 'no AED: never counted, the group is asked (the owner, 21/11)');
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  for (const t of ['master wood 500 aed IPP', 'master wood 500 aed Aani']) assert.ok(eventsFromCaption('payment', t).askWhat, t); // the owner, 21/11: only the bank's own SMS is exempt; a staff line with IPP or Aani is asked like any other
+  for (const t of ['Al masar transfer 918.75 aed', 'Master wood 500 aed TT', 'master wood 500 aed deposited', 'online payment master wood 500 aed', 'master wood 500 aed wire', 'حواله از مستر وود ۵۰۰ درهم', 'cheque from tiger 2000 aed PDC', 'tiger 2000 aed pdc', 'چک ۲۰۰۰ درهم از ببر', 'master wood 300 aed', 'نقد از مستر وود ۵۰۰ درهم', 'master wood 300', '18000 deposit to boss']) assert.equal(eventsFromCaption('payment', t).askWhat, 'confirmation', t);
+  assert.equal(one('TRANSFER TO BOSS 18000 AED').kind, 'cash_to_boss'); // cash handed to the boss is cash leaving the box
 });
 
 test('clearAuth removes only the WhatsApp login files of the top level; every data file and sub-folder stays', async () => {

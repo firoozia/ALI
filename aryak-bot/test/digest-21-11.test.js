@@ -68,17 +68,58 @@ test('a month number and a stock question are never money (the owner, 21/11: «A
 
 test('an amount is money only with AED beside it; otherwise nothing is recorded and the group is asked (the owner, 21/11)', async () => {
   const { eventsFromCaption, aedBeside } = await import('../src/captionevents.js');
-  const ask = eventsFromCaption('payment', 'Cash received from Alia wood 176.40');
-  assert.deepEqual(ask.askAed, { amount: 176.4, customers: ['Alia wood'] });
+  // the owner, 21/11: the money shape without AED is asked again with AED (the shape reader gives no customer list with it)
+  const ask = eventsFromCaption('payment', 'CASH RECEIVED FROM Alia wood 176.40');
+  assert.equal(ask.askAed?.amount, 176.4);
   assert.equal(ask.events, undefined, 'nothing recorded');
-  for (const t of ['Cash received from Alia wood 176.40 AED', 'Cash received from Alia wood AED 176.40', 'Cash received from Alia wood 176.40aed', 'نقد از الیا وود ۱۷۶٫۴۰ درهم']) {
-    const r = eventsFromCaption('payment', t.replace('٫', '.'));
+  for (const t of ['CASH RECEIVED FROM Alia wood 176.40 AED', 'CASH RECEIVED FROM Alia wood AED 176.40', 'CASH RECEIVED FROM Alia wood 176.40aed', 'Cash received from Alia wood 176.40 AED', 'CASH RECEIVED FROM Alia wood ۱۷۶٫۴۰ درهم']) {
+    const r = eventsFromCaption('payment', t);
     assert.equal(r.events?.[0]?.amount, 176.4, t);
+    assert.equal(r.events[0].customer, 'Alia wood', t);
   }
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  assert.equal(eventsFromCaption('payment', 'نقد از الیا وود ۱۷۶٫۴۰ درهم').askWhat, 'confirmation');
   assert.equal(aedBeside('AED 3,500 from Zeta', 3500), true);
   assert.equal(aedBeside('3500 Zeta 10 AED', 3500), false, 'AED beside another number does not count');
   assert.ok(eventsFromCaption('payment', 'AL AFEEFI KITCHEN OMR = 567').events, 'a foreign currency keeps its own rule');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(src, /Please write the amount with AED beside it, for example/);
   assert.match(src, /officeAsked\.has\('aed\|' \+ raw\.key\.id\)/, 'asked once per message');
+});
+
+test('money is written in the fixed shapes with AED; a small slip in the opening words is read as meant; anything else with an amount is asked (the owner, 21/11)', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  const { readMoneyShape } = await import('../src/moneyshape.js');
+  const one = (t) => eventsFromCaption('payment', t)?.events?.[0];
+  for (const [text, kind, amount, who] of [
+    ['CASH RECEIVED FROM master wood 500 AED', 'cash', 500, 'master wood'],
+    ['cash recived form master wood 500 aed', 'cash', 500, 'master wood'], // two slips: RECIVED, FORM
+    ['TRANSFER BANK FROM master wood 2500 AED', 'transfer', 2500, 'master wood'],
+    ['BANK TRANSFER FROM master wood 2500 AED', 'transfer', 2500, 'master wood'],
+    ['CHEQUE RECEIVED FROM master wood 3000 AED', 'cheque', 3000, 'master wood'],
+    ['TRANSFER TO BOSS 18000 AED', 'cash_to_boss', 18000, ''],
+    ['TRANSFAR TO BOS 18000 AED', 'cash_to_boss', 18000, ''], // two slips: TRANSFAR, BOS
+  ]) {
+    const e = one(text);
+    assert.equal(e?.kind, kind, text); assert.equal(e.amount, amount, text); assert.equal(e.customer, who, text); assert.equal(e.currency, 'AED', text);
+  }
+  const chq = one('CHEQUE RECEIVED FROM master wood 3000 AED dated 20/12');
+  assert.equal(chq.kind, 'cheque'); assert.equal(chq.customer, 'master wood'); assert.match(chq.chequeDate, /-12-20$/);
+  const adv = one('ADVANCE TO Raju 500 AED');
+  assert.equal(adv.kind, 'salary_advance'); assert.equal(adv.amount, 500); assert.equal(adv.employee, 'Raju'); assert.equal(adv.customer, '');
+  // not a shape: nothing recorded, the group is asked what it is for
+  for (const t of ['Zeta 1500', 'Al ebda month 10']) {
+    const r = eventsFromCaption('payment', t);
+    assert.equal(r?.askWhat, 'confirmation', t); assert.equal(r.events, undefined, t);
+  }
+  // the shape without AED: asked to write it again with AED
+  const noAed = eventsFromCaption('payment', 'CASH RECEIVED FROM Alia wood 176.40');
+  assert.equal(noAed.askAed?.amount, 176.4); assert.equal(noAed.events, undefined);
+  // a clearing and the bank's own message keep their own reading
+  assert.equal(eventsFromCaption('payment', 'CLEARED').cleared, true);
+  const sms = one('Your AC No: XXXXXXXX1234 is credited with AED 708.75 for Aani Instant Payments. Login to Online Banking for details.');
+  assert.equal(sms.kind, 'transfer'); assert.equal(sms.amount, 708.75); assert.equal(sms.customer, '');
+  // the expenses group's own shape
+  const exp = readMoneyShape('CASH PAID FOR water 200 AED', 'expenses');
+  assert.equal(exp.kind, 'cash_expense'); assert.equal(exp.amount, 200);
 });

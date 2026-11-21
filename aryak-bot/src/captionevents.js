@@ -6,11 +6,13 @@
 //   { ignore: true }               something to leave out (an expense)
 
 import { cashOutKind, fromBoss } from './cashbox.js';
-import { bankSmsAmount, collectedAmount, driverCashAmount, isGenericBankSms, isStockQuestion } from './paymentfix.js';
+import { bankSmsAmount, collectedAmount, driverCashAmount, isBankSms, isGenericBankSms, isStockQuestion } from './paymentfix.js';
+import { readMoneyShape, hasAmount } from './moneyshape.js';
+import { stripPaymentWords } from './captions.js';
 import { STAR_END, isStarred, parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
 
 /** The assistant's own replies (live 16/11: a statement it sent was read as 1.00 AED cash). */
-export const OWN_REPLY = /^\s*(?:🤖\s*)?(?:Please write the amount with AED\b|Statement of account for\b|Statement\s+-\s|Invoice request for\b|Invoice #Q\d|Post #SP\d|Customer group\b|From whom\?|Done:\s)/i;
+export const OWN_REPLY = /^\s*(?:🤖\s*)?(?:What is this amount for\?|Please write the amount with AED\b|Statement of account for\b|Statement\s+-\s|Invoice request for\b|Invoice #Q\d|Post #SP\d|Customer group\b|From whom\?|Done:\s)/i;
 
 // ---- the accountant's rules for the Confirmation group (the owner, 16/11: «money is no place for mistakes: count only what is clearly a
 // payment or a receipt, ask about anything that is not clear»). A message counts as money received only when it says so.
@@ -68,6 +70,23 @@ export function eventsFromCaption(role, text) {
   if (role === 'payment' && !/received?|receive|cash|paid|\bpay\b|payment|cleared?|credited|cheque|chq|check|transfer|deposit|bank|inv(?:oice)?[-\s]?\d|statement/i.test(String(text)) && /deliver\w*|confirm|\broll\b|\bsend\b|\border\b|\bpcs\b|pieces|meters?|\bmtr\b/i.test(String(text))) return { ignore: true }; // an amount beside order words, with no word of money coming in, is no payment
   if (role === 'payment' && isStockQuestion(text)) return { ignore: true }; // «307 available one roll in China stock?» is a question, not money
   if (role === 'payment') {
+    // THE OWNER'S RULE (21/11): money is written in the fixed shapes (src/moneyshape.js) with AED beside the amount; any other message with an
+    // amount records nothing and the group is asked at once what it is for. A clearing («CLEARED», «clear inv 9808») and a bare name are read as before.
+    // a bank's own message (an SMS or its forward) and a foreign currency keep their own reading
+    if (!/^\s*clear/i.test(String(text || '')) && !isGenericBankSms(text) && !/credited\s+with|has\s+been\s+credited/i.test(String(text || '')) && !/\b(?:OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i.test(String(text || ''))) {
+      const shape = readMoneyShape(text, 'confirmation');
+      if (shape?.noAed) return { askAed: { amount: shape.amount, customers: shape.name ? [shape.name] : [], shape: shape.kind } };
+      if (shape && shape.amount > 0) {
+        if (shape.kind === 'cash_to_boss' || shape.kind === 'salary_advance') return { events: [{ type: 'payment', kind: shape.kind, customer: '', amount: shape.amount, currency: 'AED', lines: [], ...(shape.kind === 'salary_advance' && shape.name ? { employee: shape.name } : {}) }] };
+        const who = stripPaymentWords(shape.name || ''); // «CASH RECEIVED FROM receipt + clear 115 AED»: no name
+        return { events: [{ type: 'payment', kind: shape.kind, customer: who, amount: shape.amount, ...(shape.invoices?.length ? { invoices: shape.invoices } : {}), currency: 'AED', lines: [], ...(who ? {} : { pendingName: true }), ...(shape.chequeDate ? { chequeDate: shape.chequeDate } : {}), ...(shape.noInvoice ? { noInvoice: true } : {}) }] };
+      }
+      const withoutInvoiceNumbers = String(text || '').replace(/(?:\binv(?:oice)?s?\b|فاکتور)\.?\s*(?:no\.?|number|#|شماره)?\s*[-:#]?\s*\d{3,6}(?:\s*[/,&]\s*\d{3,6})*/gi, ' ');
+      // an order line, a product code to check, a date with a name and a stock question have no amount of money: ignored as before
+      const tq = String(text || '').replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+      const quiet = !MONEY_WORDS.test(tq) && !CURRENCY.test(tq) && (ORDER_LINE.test(tq) || ((tq.match(DATE) || []).length && !/\d/.test(tq.replace(DATE, ' '))));
+      if (!shape && !quiet && hasAmount(withoutInvoiceNumbers)) return { askWhat: 'confirmation' };
+    }
     if (fromBoss(text)) { // money from the boss into the cash box: no customer's money and no cash out; kept apart, never counted, the owner is asked
       const a = /(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/.exec(String(text || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
       if (a && Number(a[1].replace(/,/g, '')) > 0) return { events: [{ type: 'payment', kind: 'unclear', customer: '', amount: Number(a[1].replace(/,/g, '')), currency: 'AED', lines: [], unclear: true, fromBoss: true }] };

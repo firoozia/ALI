@@ -110,7 +110,8 @@ test('captions become events: an opened roll is internal, several customers in o
   assert.equal(eventsFromCaption('cut', 'ART NO 410 DANDY DOOR 6M').events[0].customer, 'DANDY DOOR');
   const d = eventsFromCaption('delivery', 'DANDY DOOR 1 ROLL & PVC WORKS 1 ROLL PICKED UP BY X');
   assert.deepEqual(d.events.map((e) => e.customer), ['DANDY DOOR', 'PVC WORKS']);
-  assert.equal(eventsFromCaption('payment', '300 sell car').ignore, true);
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  assert.equal(eventsFromCaption('payment', '300 sell car').askWhat, 'confirmation');
   assert.equal(eventsFromCaption('payment', 'CLEARED').cleared, true);
   assert.ok(!JSON.stringify(eventsFromCaption('payment', 'Your AC No: XXXX9999 is credited with AED 10.00')).includes('9999'));
   assert.equal(eventsFromCaption('goods', 'JUWAT 10 GALLEN RECEIVED'), null); // goods arriving are kept by received.js

@@ -1410,7 +1410,7 @@ test('simulation: wiring — a preview made in the test group is flagged, its cr
   assert.match(index, /quotedText: quoted, origin: \{ jid: chatId \}, test \}\)/);
   assert.match(index, /crossCheck\(trackerOf\(!!opts\.test\), customer, lines/); // the test data, not the real tracker
   const at = index.indexOf('async function simulatedPost');
-  const block = index.slice(at, at + 3200);
+  const block = index.slice(at, index.indexOf('\nasync function', at + 10)); // the whole function (it grew with the [expenses] prefix, 21/11)
   assert.match(block, /\[\(orders\|delivery\|confirm\)\\\]/);
   assert.match(block, /testTracker\.add\(event\)/); assert.doesNotMatch(block, /[^t]tracker\.add\(/); // only the test tracker
   assert.match(index, /if \(group\?\.test && ownerPerson && text && !audio && !image && \(await simulatedPost\(/); // the test group and the owner only
@@ -1422,6 +1422,8 @@ test('simulation: a prefix post is read like the post of that group (cut posts w
   assert.equal(cut.customer, 'MUNICH DOOR KITCHEN'); assert.equal(cut.lines[0].quantity, 6.4);
   const delivery = eventsFromCaption('delivery', 'NUQOOSH 2 ROLLS DISPATCHED').events[0];
   assert.equal(delivery.type, 'delivery'); assert.match(JSON.stringify(delivery), /NUQOOSH/);
-  const pay = eventsFromCaption('payment', 'HAMED TRADING 500 received');
-  assert.ok(pay === null || pay.askAed || pay.events?.length >= 0); // a payment line is read by its own shapes; an unread one is simply said so
+  const pay = eventsFromCaption('payment', 'CASH RECEIVED FROM HAMED TRADING 500 AED').events[0]; // a payment line is read by its own shapes
+  assert.deepEqual([pay.kind, pay.customer, pay.amount], ['cash', 'HAMED TRADING', 500]);
+  // the owner, 21/11: only the fixed money shapes are money; anything else is asked
+  assert.equal(eventsFromCaption('payment', 'HAMED TRADING 500 received').askWhat, 'confirmation');
 });
