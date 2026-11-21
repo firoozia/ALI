@@ -1126,14 +1126,38 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
   assert.match(cfg, /designMode: \(env\.SOCIAL_DESIGN_MODE \|\| 'gemini'\)/);
 });
 
-test('the Gemini prompt (the owner, 21/11): 15 seconds, a top designer and marketer, every film exactly its sample, no PVC film on a worktop', async () => {
+test('the Gemini prompt (the owner, 21/11): a top designer and marketer, every film exactly its sample, no PVC film on a worktop', async () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /A 15-second vertical 9:16 photorealistic Instagram Reel for ARYAK/);
+  assert.match(src, /Portrait 9:16 vertical video \(taller than wide\), 10 seconds, photorealistic Instagram Reel for ARYAK/);
   assert.match(src, /a world-class interior designer who also thinks like a top performance marketer/);
   assert.match(src, /each film is rendered exactly like its attached sample: the same colour, brightness, pattern, grain direction, scale and surface/);
   assert.match(src, /No film on a worktop, countertop, island top or shelf top/);
   assert.match(src, /NEVER on a worktop, a countertop, an island top, a shelf top/, 'the designer too');
   assert.match(src, /plan\.parts\.slice\(0, 4\)/);
-  assert.match(src, /قاب عمودی و پانزده ثانیه/);
+  assert.match(src, /جمینای ویدیوی ده‌ثانیه‌ای می‌سازد/);
   assert.match(src, /دستیار «استودیوی آریاک» را باز کنید/, 'the Gem with the three catalogues (21/11)');
+});
+
+test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, portrait first, the measured colour of each sample, one place per film', async () => {
+  const sharp = (await import('sharp')).default;
+  const { swatchTone } = await import('../src/social.js');
+  const olive = await sharp({ create: { width: 200, height: 250, channels: 3, background: '#3F4030' } }).jpeg().toBuffer();
+  const t1 = await swatchTone(olive);
+  assert.match(t1.words, /^very dark olive, keep it this dark, never lighter$/);
+  assert.match(t1.hex, /^#(3[E-F]|40)(3[F]|4[0-1])(2F|3[0-1])$/);
+  const sage = await swatchTone(await sharp({ create: { width: 200, height: 250, channels: 3, background: '#BCBDB0' } }).jpeg().toBuffer());
+  assert.match(sage.words, /^(light|very light) grey-green$/, 'a grey-green sample is never called warm');
+  const oak = await swatchTone(await sharp({ create: { width: 200, height: 250, channels: 3, background: '#CDBFA6' } }).jpeg().toBuffer());
+  assert.match(oak.words, /warm/);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /The catalogue name is only a label: the colour is the sample's/);
+  assert.match(src, /ONE PLACE PER FILM/);
+  assert.match(src, /measured colour: \$\{f\.tone\.words\}, hex \$\{f\.tone\.hex\}/);
+  const { desk, writes } = await studio();
+  desk.cfg.designMode = 'gemini';
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? (writes.push(r), 'A prompt.') : base(r));
+  await desk.draftDesign({ note: 'آشپزخانه' });
+  const w = writes.find((x) => x.kind === 'gemini-prompt');
+  assert.match(w.text, /measured colour: [a-z -]+, hex #[0-9A-F]{6}/, 'the writer gets each sample\'s colour');
 });
