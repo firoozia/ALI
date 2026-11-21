@@ -86,6 +86,8 @@ export function eventsFromCaption(role, text) {
       const tq = String(text || '').replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
       const quiet = !MONEY_WORDS.test(tq) && !CURRENCY.test(tq) && (ORDER_LINE.test(tq) || ((tq.match(DATE) || []).length && !/\d/.test(tq.replace(DATE, ' '))));
       if (!shape && !quiet && hasAmount(withoutInvoiceNumbers)) return { askWhat: 'confirmation' };
+      // money words with no amount at all («AL Ebda check collected», live 21/11): never a bare name for a neighbour payment; the group is asked
+      if (!shape && !hasAmount(withoutInvoiceNumbers) && /\b(?:che+a?ques?|cheq|chq|check|collected|recei?ved?|recived|transfer(?:red)?|deposit(?:ed)?)\b/i.test(String(text || '')) && !/^\s*check\s+\d/i.test(String(text || ''))) return { askWhat: 'confirmation' };
     }
     if (fromBoss(text)) { // money from the boss into the cash box: no customer's money and no cash out; kept apart, never counted, the owner is asked
       const a = /(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/.exec(String(text || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));

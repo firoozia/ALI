@@ -123,3 +123,10 @@ test('money is written in the fixed shapes with AED; a small slip in the opening
   const exp = readMoneyShape('CASH PAID FOR water 200 AED', 'expenses');
   assert.equal(exp.kind, 'cash_expense'); assert.equal(exp.amount, 200);
 });
+
+test('money words with no amount are asked, never a bare name (live 21/11: «AL Ebda check collected»)', async () => {
+  const { eventsFromCaption } = await import('../src/captionevents.js');
+  assert.deepEqual(eventsFromCaption('payment', 'AL Ebda check collected'), { askWhat: 'confirmation' });
+  assert.deepEqual(eventsFromCaption('payment', 'Alwan sham'), { name: 'Alwan sham' }, 'a bare name still names the payment beside it');
+  assert.equal(eventsFromCaption('payment', 'CLEARED').cleared, true);
+});
