@@ -136,8 +136,8 @@ async function dressTall({ src, dir, info, seconds, logo = null, font = '', labe
   const sharp = (await import('sharp')).default;
   const W = 1080; const H = 1920;
   const text = async (t, px, colour) => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${px}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
-  const white = async (buf, width) => {
-    const lg = await sharp(buf).resize({ width }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const white = async (buf, width, height) => {
+    const lg = await sharp(buf).resize({ width, height, fit: 'inside' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     for (let i = 0; i < lg.data.length; i += 4) { lg.data[i] = 255; lg.data[i + 1] = 255; lg.data[i + 2] = 255; }
     return { input: await sharp(lg.data, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } }).png().toBuffer(), width: lg.info.width, height: lg.info.height };
   };
@@ -146,7 +146,7 @@ async function dressTall({ src, dir, info, seconds, logo = null, font = '', labe
   const comps = [];
   const fade = Buffer.from(`<svg width="${W}" height="${H}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0.58" stop-color="#000" stop-opacity="0"/><stop offset="0.86" stop-color="#000" stop-opacity="0.55"/></linearGradient></defs><rect width="${W}" height="${H}" fill="url(#g)"/></svg>`);
   comps.push({ input: fade, top: 0, left: 0 });
-  if (logo) { const l = await white(logo, 230); comps.push({ input: l.input, top: 250, left: Math.round((W - l.width) / 2) }); }
+  if (logo) { const l = await white(logo, 230, 120); comps.push({ input: l.input, top: 250, left: Math.round((W - l.width) / 2) }); }
   const rows = labels.slice(0, 3);
   const rowH = 62;
   let y = 1500 - (rows.length * rowH + (line ? 70 : 0)); // the block ends at the safe bottom
@@ -159,8 +159,9 @@ async function dressTall({ src, dir, info, seconds, logo = null, font = '', labe
   fs.writeFileSync(words, await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer());
   // the end: a darker room, the large logo and the tagline
   const endComps = [{ input: Buffer.from(`<svg width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#000" fill-opacity="0.38"/></svg>`), top: 0, left: 0 }];
-  if (logo) { const l = await white(logo, 520); endComps.push({ input: l.input, top: 760, left: Math.round((W - l.width) / 2) }); }
-  if (tagline) endComps.push(await centre(await text(tagline, 44, '#ffffff'), logo ? 1000 : 900));
+  let under = 900;
+  if (logo) { const l = await white(logo, 520, 280); endComps.push({ input: l.input, top: 640, left: Math.round((W - l.width) / 2) }); under = 640 + l.height + 40; }
+  if (tagline) endComps.push(await centre(await text(tagline, 44, '#ffffff'), under));
   const end = path.join(dir, 'tall-end.png');
   fs.writeFileSync(end, await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(endComps).png().toBuffer());
   const endAt = Math.max(0, seconds - 3);

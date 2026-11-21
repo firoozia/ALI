@@ -1237,3 +1237,27 @@ test('the vertical 15-second Gemini Reel (the owner, 22/11: Gemini\'s own prompt
   const reelSrc = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
   assert.match(reelSrc, /let y = 1500 - \(rows\.length \* rowH \+ \(line \? 70 : 0\)\); \/\/ the block ends at the safe bottom/);
 });
+
+test('live fixes 22/11: a prompt outside Gemini\'s formula is rewritten once; the owner sees the Reel itself after «پست»; a tall logo never covers the tagline', async () => {
+  const { geminiPromptFaults } = await import('../src/social.js');
+  assert.deepEqual(geminiPromptFaults('SCENE: a known, notable room.\nFORMAT: 9:16.'), []);
+  assert.match(geminiPromptFaults('Image 2 (solid matte film, no pattern) ONLY on doors.').join(' '), /positive words \(now: "no pattern/);
+  assert.match(geminiPromptFaults(Array(200).fill('oak').join(' ')).join(' '), /at most 150 words \(it has 200\)/);
+  const { desk } = await studio();
+  desk.cfg.designMode = 'gemini';
+  const base = desk.write;
+  let asked = 0;
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? (asked++ ? 'SCENE: The room.\nCAMERA: one slow take.' : 'SCENE: The room, no people.\nCAMERA: one take with no cuts.') : base(r));
+  const d = await desk.draftDesign({ note: 'آشپزخانه' });
+  assert.equal(asked, 2, 'one rewrite');
+  assert.equal(d.prompt, 'SCENE: The room.\nCAMERA: one slow take.');
+  const id = desk.store.next('SP');
+  const f = path.join(tmp('reel-'), 'r.mp4'); fs.writeFileSync(f, 'MP4');
+  desk.store.d.posts[id] = { id, reel: f, state: 'draft' };
+  assert.equal(String(desk.draftReel(`Post #${id} for Instagram`)), 'MP4');
+  assert.equal(desk.draftReel('Post #SP999'), null);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /const reel = socialDesk\.draftReel\(t\);/);
+  const reelSrc = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
+  assert.match(reelSrc, /under = 640 \+ l\.height \+ 40;/);
+});

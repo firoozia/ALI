@@ -359,13 +359,23 @@ Write it the way Gemini's video model works best (Gemini's own guide, asked by t
 - 80 to 150 words in short labelled sections, each section on its own line, in this order:
 SCENE: the design's room in one or two sentences: photorealistic architectural video of the room, its style and layout, the styled objects and one signature detail people remember.
 REFERENCE MAPPING: one line per film: "Image 1 (a short look, e.g. dark walnut woodgrain film) ONLY on the [exact surfaces]." Describe each film with its MEASURED colour words as given to you (how light it is and its tone) and its pattern and finish; name the surfaces exactly every time, never "it". Tops are real stone or quartz in a quiet tone, because a PVC film covers only vertical faces (doors, drawer fronts, panels, wall cladding); a marble-look film goes on wall panels, tall doors or island side panels.
-CAMERA & MOTION: one slow, smooth continuous move at eye level (a dolly-in, a sideways glide or a slow pull back), 24mm lens, a single unbroken 15-second take with no cuts, the camera always inside the room, every door and drawer closed, ending on a steady view of the whole room.
+CAMERA & MOTION: one slow, smooth continuous move at eye level (a dolly-in, a sideways glide or a slow pull back), 24mm lens, a single unbroken 15-second take, the camera always inside the room, every door and drawer closed, ending on a steady view of the whole room.
 LIGHTING & COLOUR: Neutral 5500K overcast daylight from the windows, flat even product lighting, true-to-life matte colours, zero colour grading.
 AUDIO: calm modern ambient music and subtle room acoustics; a calm, elegant British female voice-over starting at 0:01: a short hook naming "Aryak" (write: said AH-ree-ak) and ending with "Premium surfaces, designed for you." At most 30 words spoken.
 FORMAT: Aspect ratio: 9:16 vertical portrait. Single continuous take, 15 seconds.
 - Say only what you want, in plain positive words: sentences like "never orange" or "not lighter" make the model lock on the very word. Leave out the words warm, golden, cozy, cinematic, moody and luxury lighting (they tint the films), hex codes (the sample pictures carry the colour), and any on-screen text, caption, logo or title.
 - At most three films.
 Output only the prompt, its sections on separate lines.`;
+/** What breaks Gemini's formula in a prompt (22/11): over 160 words, or negative words the model locks on. Each fault as an instruction. */
+export function geminiPromptFaults(prompt) {
+  const t = String(prompt || '');
+  const out = [];
+  const words = t.split(/\s+/).filter(Boolean).length;
+  if (words > 160) out.push(`is at most 150 words (it has ${words})`);
+  const neg = t.match(/\b(no|not|never|don't|without|avoid)\b[^.\n]{0,30}/gi) || [];
+  if (neg.length) out.push(`says only what is wanted, in positive words (now: ${neg.slice(0, 4).map((x) => `"${x.trim()}"`).join(', ')})`);
+  return out;
+}
 /** The Gemini prompt (22/11): its sections stay on their own lines (pasted, a line break does not send); an old «PROMPT: … EXTEND: …» answer still splits. */
 export function geminiParts(raw) {
   const lines = (t) => String(t || '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
@@ -861,7 +871,13 @@ export class SocialDesk {
       note ? `The owner's words: ${note}` : '',
     ].filter(Boolean).join('\n') }) || '');
     // one vertical 15-second take in plain Gemini (22/11: its video tool has 15 s and portrait; the Gem's has neither), the text added by Atossa
-    const { prompt: raw, extend } = geminiParts(out);
+    let { prompt: raw, extend } = geminiParts(out);
+    const faults = geminiPromptFaults(raw);
+    if (raw && faults.length) {
+      const again = geminiParts(String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 3000,
+        text: `Rewrite this prompt so it keeps every section, film and surface but ${faults.join(' and ')}. Output only the prompt.\n\n${raw}` }) || '')).prompt;
+      if (again && geminiPromptFaults(again).length < faults.length) raw = again;
+    }
     if (!raw) return { text: 'The prompt for Gemini could not be written; try again.' };
     this.remember(plan);
     this.store.d.geminiLast = { codes: films.map((f) => f.code), at: this.now() }; // the video he sends back ends with these codes
@@ -1732,6 +1748,13 @@ export class SocialDesk {
   designsWaiting(ms = DAY) { return Object.values(this.store.d.posts).filter((p) => p.design && p.state === 'draft' && this.now() - p.at < ms).length; }
 
   /** The picture of the draft a preview names («Post #SP7 …»), so the owner sees what will be posted; null when none. */
+  /** The Reel of a draft, to show the owner what goes out (22/11: after «پست» he saw only the cover, not the codes on the video). */
+  draftReel(text) {
+    const m = /Post #(SP\d+)/.exec(String(text || ''));
+    const p = m && this.store.d.posts[m[1]];
+    try { return p?.reel && fs.existsSync(p.reel) ? fs.readFileSync(p.reel) : null; } catch { return null; }
+  }
+
   draftPicture(text) {
     const m = /Post #(SP\d+)/.exec(String(text || ''));
     const p = m && this.store.d.posts[m[1]];

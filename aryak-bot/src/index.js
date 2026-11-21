@@ -2716,6 +2716,8 @@ ${t.authorizeUrl()}`);
       try { vbuf = await downloadMedia(videoRaw); } catch (e) { logger.warn(`social: video download failed: ${e.message}`); }
       const t = vbuf ? await socialDesk.draftVideoPost({ video: vbuf, note: pr.note }) : 'The video could not be read; send it again.';
       await socialSay(t, socialDesk.draftPicture(t));
+      const reel = socialDesk.draftReel(t);
+      if (reel) await socialSay(`${/Post #(SP\d+)/.exec(t)?.[1] ? `#${/Post #(SP\d+)/.exec(t)[1]} ` : ''}the Reel as it goes out`, null, reel);
       return true;
     }
     if ((sc || pr) && isOwner()) {
