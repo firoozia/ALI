@@ -30,6 +30,17 @@ function run(bin, args, limitMs = 240000) {
 }
 export const REEL_MIN_FREE_MB = 300;
 
+/** The cover of a video the owner sends (21/11): its frame at one second, a 4:5 JPEG for the draft's picture. */
+export async function coverFrame(video) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cover-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'in.mp4'), video);
+    await run(await ffmpegPath(), ['-y', '-loglevel', 'error', '-ss', '1', '-i', path.join(dir, 'in.mp4'), '-frames:v', '1', '-vf', 'scale=1080:-2', path.join(dir, 'c.jpg')], 60000);
+    const sharp = (await import('sharp')).default;
+    return await sharp(fs.readFileSync(path.join(dir, 'c.jpg'))).resize(1080, 1350, { fit: 'cover' }).jpeg({ quality: 90 }).toBuffer();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : (lo + hi) / 2));
 
 /**

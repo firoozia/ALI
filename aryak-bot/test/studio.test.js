@@ -981,7 +981,7 @@ test('the cost and the camera (the owner, 19/11): one press search a week shared
   assert.match(src, /never a close crop of one cabinet or corner; the camera always stands inside the room, never outside it/);
   assert.match(src, /never ask for a camera outside the room, in a doorway or through glass/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.match(index, /const STUDIO_PLAN_KINDS = new Set\(\['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change', 'spots'\]\)/); // the picture checks and the Reel's pointers too (the owner, 19/11 and 21/11)
+  assert.match(index, /const STUDIO_PLAN_KINDS = new Set\(\['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change', 'spots', 'gemini-prompt'\]\)/); // the picture checks and the Reel's pointers too (the owner, 19/11 and 21/11)
   assert.match(index, /STUDIO_PLAN_KINDS\.has\(kind\) && config\.social\.planModel \? config\.social\.planModel : config\.model/);
   const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
   assert.match(cfg, /planModel: \(env\.SOCIAL_PLAN_MODEL \?\? 'claude-sonnet-5-5'\)/);
@@ -1098,4 +1098,30 @@ test('a Reel like the reference (the owner, 21/11): pointers on the room, a cent
   assert.match(social, /const opens = \['Experience luxury with Ah-ree-yack\.'/, 'the brand said the way the owner says it');
   assert.match(social, /if \(cardVoice\) cardSec = Math\.max\(cardSec, \(cardVoice\.length - 44\) \/ 48000 \+ 1\.1\);/, 'the card waits for its line');
   assert.match(social, /model = 'gemini-3\.1-flash-tts-preview'/);
+});
+
+test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatches, nothing is drawn; a video sent back with «پست» goes out as a Reel only, with its stories', async () => {
+  const { desk, made, writes } = await studio();
+  desk.cfg.designMode = 'gemini';
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? (writes.push(r), 'A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK.\nSecond line.') : base(r));
+  const d = await desk.draftDesign({ note: 'آشپزخانه' });
+  assert.equal(made.length, 0, 'nothing is drawn on the paid key');
+  assert.equal(d.prompt, 'A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK. Second line.', 'one paragraph: a line break would send it early');
+  assert.ok(d.swatches.length >= 1 && Buffer.isBuffer(d.swatches[0].image));
+  assert.match(d.text, /^طرح برای جمینای:/);
+  assert.match(d.text, /«پست»/);
+  const w = writes.find((x) => x.kind === 'gemini-prompt');
+  assert.match(w.system, /Gemini video maker/); assert.match(w.text, /the first sample/);
+  const t = await desk.draftVideoPost({ video: Buffer.from('not a video'), note: 'HZ812' });
+  assert.match(t, /could not be read/, 'a broken video is said, never posted');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /const extras = p\.videoOnly \? \[\] :/);
+  assert.match(src, /if \(!extras\.length && !p\.videoOnly\) try \{/);
+  assert.match(src, /if \(!p\.videoOnly\) await this\.postTikTokPhotos/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /if \(pr && videoRaw && isOwner\(\)\)/);
+  assert.match(index, /if \(d\.prompt\) \{/);
+  const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
+  assert.match(cfg, /designMode: \(env\.SOCIAL_DESIGN_MODE \|\| 'gemini'\)/);
 });

@@ -354,6 +354,15 @@ These are the most liked recent posts of leading interior design accounts on Ins
 export const LOOKS_RULES = `${ATOSSA}
 These are interior pictures from today's design press. For each one, write one short English line of what a designer can take from it for decorative films on cabinets, wardrobes and wall panels: the colours and how they are paired, the wood or stone look, the finish, the light, one detail. Then one line «Together:» with the strongest common idea. Output only the lines.`;
 
+export const GEMINI_PROMPT_RULES = `You write ONE prompt in English for Google's Gemini video maker, for an Instagram Reel of {BRAND}, a supplier of decorative PVC films for kitchen, wardrobe and wall fronts. The owner attaches each film's sample picture in the order given and pastes your prompt. Follow the shape of a Reel he liked:
+- Start: "A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK, a supplier of decorative PVC films for kitchen fronts in the UAE. The attached pictures are the exact film samples: keep their colour and texture exactly in every frame."
+- THE ROOM: the design's room in rich detail from the scene (layout, every film named with its code, its look and which sample it is, styled objects, light, a fully styled space behind any glass), the camera always inside the room, every door closed.
+- SHOTS, one smooth slow cinematic camera move each: 0-3 s wide view at eye level with small white callouts (a dot and a thin line) naming each film as CODE NAME in capitals; then one close-up per film (wood along its grain in raking light, stone or plain colour with shallow depth of field) with the text CODE NAME; the last 3 s a slow pull back to the whole room, the white word ARYAK fades in at the centre with a soft sparkle, under it PREMIUM SURFACE FILMS and the WhatsApp number. Fit everything in 10 seconds (at most three films).
+- Small header on every shot, top centre: ARYAK, in a plain sans-serif.
+- "All on-screen text exactly as written here, letter by letter, clean white sans-serif, English only, nothing else written."
+- SOUND: a warm elegant British female voice-over, calm: "Experience luxury with Aryak" (write: said AH-ree-ak), then each film's name as its close-up appears, then "Premium surfaces, designed for you." Soft modern ambient music under the voice, a soft whoosh at each cut.
+{CONTACT}
+Write it as one single paragraph with no line breaks (it is typed into a box where a line break sends it), at most 330 words. Output only the prompt.`;
 export const SPOT_RULES = 'Look at this interior picture and the films named. For each film give one point on a large, clearly visible surface of that film (its doors, panels or worktop), inside the middle of the picture: x between 0.26 and 0.74, y between 0.18 and 0.82 (0 is the left or top edge, 1 the right or bottom), never on another film or an object; the points well apart from each other. Answer only JSON: {"spots":[{"code":"the code","x":0.5,"y":0.5}]}';
 export const FOCUS_RULES = `Look at this interior picture. Give the point at the centre of the largest, best-lit area of the named film, where its colour and texture show best.
 x and y go from 0 to 1, from the left and from the top. Answer with JSON only, for example {"x":0.62,"y":0.41}.`;
@@ -781,6 +790,7 @@ export class SocialDesk {
    * picture with the designer's Persian reasons above the caption.
    */
   async draftDesign({ code: asked = '', note = '', inspiration = null, pillar = '' } = {}) {
+    if (this.cfg.designMode === 'gemini') return this.geminiPackage({ code: asked, note, inspiration, pillar });
     if (!this.imager?.enabled) return { text: 'The design maker (Google Gemini) is not connected yet: its key is missing on the server.' };
     let code = '';
     if (asked) { const c = this.catalogColour(asked); if (c.error) return { text: c.error }; code = c.code; }
@@ -795,6 +805,64 @@ export class SocialDesk {
       return { text: `The design could not be made: ${err.message}` };
     }
     return this.produceDesign({ plan, roomRaw, note });
+  }
+
+  /**
+   * A design for the Gemini app (the owner, 21/11: «Gemini models far better»; the video is made on his monthly plan, nothing on the paid key):
+   * Atossa's plan, then one English prompt in the shape of the reference Reel he liked (a 10-second vertical video, callouts with each code and
+   * name, close-ups, the logo and the WhatsApp number at the end, a British female voice), and each film's swatch to attach. He makes the
+   * video in Gemini and sends it back here with «پست». Returns { text, prompt, swatches: [{ code, name, image }] }.
+   */
+  async geminiPackage({ code: asked = '', note = '', inspiration = null, pillar = '' } = {}) {
+    let code = '';
+    if (asked) { const c = this.catalogColour(asked); if (c.error) return { text: c.error }; code = c.code; }
+    await this.researchTrends().catch((err) => this.log(`social: today's research failed: ${err.message}`));
+    await this.ensureNames().catch(() => 0);
+    const plan = await this.designPlan({ code, note, inspiration, pillar });
+    if (plan.error) return { text: plan.error };
+    if (inspiration) this.addTaste(`The owner's inspiration picture: ${plan.room}${note ? ` (${note})` : ''}`);
+    const all = this.catalog();
+    const films = plan.parts.slice(0, 3).filter((x) => all[x.code]).map((x, i) => ({ code: x.code, name: all[x.code].name || all[x.code].look || 'decorative film', where: x.where, n: ['first', 'second', 'third'][i] }));
+    const raw = String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 3000, text: [
+      `The design: ${plan.room}.`, `The scene: ${plan.scene}`,
+      `The films, in the order their samples are attached: ${films.map((f) => `${f.code} «${f.name}» on ${f.where} (the ${f.n} sample)`).join('; ')}.`,
+      inspiration ? 'The owner also attaches his inspiration picture after the samples: the same room, layout and camera.' : '',
+      note ? `The owner's words: ${note}` : '',
+    ].filter(Boolean).join('\n') }) || '').trim().replace(/\s*\n+\s*/g, ' ');
+    if (!raw) return { text: 'The prompt for Gemini could not be written; try again.' };
+    this.remember(plan);
+    const sw = films.map((f) => ({ code: f.code, name: f.name, image: fs.readFileSync(path.join(this.catalogDir, all[f.code].file)) }));
+    const head = [
+      `طرح برای جمینای: ${plan.title_fa || plan.room}`,
+      plan.why_fa || '',
+      plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '',
+      ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`),
+      '',
+      'روش ساختن ویدیو:',
+      '۱. در جمینای «ساختن ویدیو» را بزنید، قاب عمودی و ده ثانیه.',
+      `۲. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید${inspiration ? ' و عکس الهام خودتان را هم بعد از آن‌ها' : ''}.`,
+      '۳. متن پیام بعدی را کامل بچسبانید و بفرستید.',
+      '۴. ویدیو را همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا شرح می‌نویسد و با «بله پست» منتشر می‌شود.',
+    ].filter((l, i, a) => l || a[i - 1]).join('\n');
+    return { text: head, prompt: raw, swatches: sw };
+  }
+
+  /** A post from a video the owner made (in Gemini, 21/11): its first second is the cover, the video goes out as a Reel only, with the stories. */
+  async draftVideoPost({ video, note = '' }) {
+    const { coverFrame } = await import('./reel.js');
+    let cover;
+    try { cover = await coverFrame(video); } catch (err) { return `The video could not be read (${err.message}); send it again.`; }
+    const codes = this.codesIn(note).map((c) => c.code);
+    const facts = `This is a short AI-made video Reel of an interior for ARYAK films${codes.length ? `, made with ${codes.map((c) => `«Code ${c}»`).join(', ')}` : ''}. Say that it is a design idea and name the codes.`;
+    const mine = {};
+    const text = await this.draftPost({ image: cover, mime: 'image/jpeg', note, facts, made: mine });
+    const p = this.store.d.posts[mine.id];
+    if (!p) return text;
+    if (this.mediaDir) { const f = path.join(this.mediaDir, `${p.id}-video.mp4`); fs.writeFileSync(f, video); p.reel = f; }
+    p.videoOnly = true;
+    if (codes.length) p.design = { room: 'video', codes, title: '', scene: '' };
+    this.store.save();
+    return `${text}\n(ویدیو به‌صورت ریلز منتشر می‌شود، همراه استوری‌ها؛ عکس جدا منتشر نمی‌شود.)`;
   }
 
   /** The room of a plan, drawn by Gemini with each film's own picture (and the owner's inspiration as a mood reference). The raw picture. */
@@ -1660,11 +1728,11 @@ export class SocialDesk {
     p.state = 'posting'; this.store.save(); // a second yes while it runs does nothing
     const done = [];
     const failed = [];
-    const extras = (p.extras || []).filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f));
-    if (p.lead && fs.existsSync(p.lead)) { extras.unshift(image); image = fs.readFileSync(p.lead); } // a before/after: «before» is the first picture
+    const extras = p.videoOnly ? [] : (p.extras || []).filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f));
+    if (!p.videoOnly && p.lead && fs.existsSync(p.lead)) { extras.unshift(image); image = fs.readFileSync(p.lead); } // a before/after: «before» is the first picture
     if (extras.length) await this.postAlbum(p, [image, ...extras], done, failed);
     let photoUrl = '';
-    if (!extras.length) try {
+    if (!extras.length && !p.videoOnly) try {
       if (this.client.hasFb) {
         // the Facebook photo is published (with the caption) and its address is the one Instagram fetches the picture from
         const fb = await this.client.fbPhoto(image, p.caption, { published: true, mime: p.mime });
@@ -1674,7 +1742,7 @@ export class SocialDesk {
         if (this.client.hasIg) photoUrl = await this.client.fbPhotoUrl(fb.id);
       }
     } catch (e) { failed.push(`Facebook: ${e.message}`); }
-    if (this.client.hasIg && !extras.length) {
+    if (this.client.hasIg && !extras.length && !p.videoOnly) {
       try {
         if (!photoUrl && this.client.hasFb) { const hidden = await this.client.fbPhoto(image, '', { published: false, mime: p.mime }); photoUrl = await this.client.fbPhotoUrl(hidden.id); }
         if (!photoUrl) throw new Error('Instagram takes a photo only from a web address; connect the Facebook Page so the photo can be held there');
@@ -1684,7 +1752,7 @@ export class SocialDesk {
       } catch (e) { failed.push(`Instagram: ${e.message}`); }
     }
     if (p.reel && fs.existsSync(p.reel)) await this.postReel(p, fs.readFileSync(p.reel), done, failed);
-    await this.postTikTokPhotos(p, [image, ...extras], done, failed);
+    if (!p.videoOnly) await this.postTikTokPhotos(p, [image, ...extras], done, failed);
     if (done.length) await this.postStories(p, { image, video: p.reel && fs.existsSync(p.reel) ? fs.readFileSync(p.reel) : null }, done, failed);
     p.state = done.length ? 'posted' : 'draft'; // nothing went out: the draft stays, a later yes tries again
     p.postedAt = this.now();

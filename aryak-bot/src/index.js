@@ -196,6 +196,7 @@ const startedAt = Date.now();
 const sent = new Set(); // ids of messages the bot sent, so they are not read again
 const staffChats = new Set(); // private chats a staff member started: the assistant may answer there
 const lastPhotos = new Map(); // chat and sender -> their latest picture message (kept in memory, read only when she is asked about it)
+const lastVideos = new Map(); // the owner's latest video in his own chat or the studio (21/11: a Reel he made in Gemini, posted with «پست»)
 const keepLang = new WeakSet(); // replies that keep their own language (the test-only played customer or owner)
 const asWritten = new WeakSet(); // texts sent exactly as written in every language setting (an English + Arabic caption shown to the owner for his yes)
 const quietContents = new WeakSet(); // messages that are not an answer to anyone (the good-morning message): never counted for learning
@@ -2422,7 +2423,10 @@ async function handleStaffChat(raw, chatId, group, place = {}) {
   let imageRaw = raw; // the message the picture is downloaded from (the quoted or the earlier one when she is asked about "the picture above")
   if (imageOf(content)) { lastPhotos.set(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`, { raw, image: imageOf(content), at: Date.now() }); if (lastPhotos.size > 80) lastPhotos.delete(lastPhotos.keys().next().value); }
   const pdf = content?.documentMessage && /pdf/i.test(String(content.documentMessage.mimetype || '')) ? content.documentMessage : null;
-  let text = textOf(content) || image?.caption || pdf?.caption || '';
+  // a video in his own chat or the studio (a Reel he made in Gemini, 21/11): kept for «پست»; its caption is read like a photo's
+  const ownVideo = content?.videoMessage && (!!place.studio || ownIds().some((o) => jidDigits(o) === jidDigits(chatId))) ? content.videoMessage : null;
+  if (ownVideo) { lastVideos.set(chatId, { raw, at: Date.now() }); if (lastVideos.size > 20) lastVideos.delete(lastVideos.keys().next().value); }
+  let text = textOf(content) || image?.caption || pdf?.caption || ownVideo?.caption || '';
   if (!text && !audio && !image && !pdf) {
     // Never silent: say which kind of message was left alone (its kind only, never its content).
     const kind = ignoredKind(content);
@@ -2643,6 +2647,17 @@ ${t.authorizeUrl()}`);
     // the photo: this message's own, or (a typed «post …» alone) the photo sent in this chat in the last 15 minutes, forwarded or not
     const recent = !imageOf(content) && pr ? lastPhotos.get(`${chatId}:${jidDigits(raw.key.participant || raw.key.remoteJid)}`) : null;
     const photoRaw = imageOf(content) ? raw : recent && Date.now() - recent.at < 15 * 60 * 1000 ? recent.raw : null;
+    // «پست» with a video (this message's own, or the one sent here in the last 15 minutes): a Reel-only draft (the owner, 21/11)
+    const recentVideo = pr && !imageOf(content) ? lastVideos.get(chatId) : null;
+    const videoRaw = content?.videoMessage ? raw : recentVideo && Date.now() - recentVideo.at < 15 * 60 * 1000 && (!recent || recentVideo.at > recent.at) ? recentVideo.raw : null;
+    if (pr && videoRaw && isOwner()) {
+      trace(where, 'owner', 'social: a video to post');
+      let vbuf = null;
+      try { vbuf = await downloadMedia(videoRaw); } catch (e) { logger.warn(`social: video download failed: ${e.message}`); }
+      const t = vbuf ? await socialDesk.draftVideoPost({ video: vbuf, note: pr.note }) : 'The video could not be read; send it again.';
+      await socialSay(t, socialDesk.draftPicture(t));
+      return true;
+    }
     if ((sc || pr) && isOwner()) {
       if (sc) { trace(where, 'owner', `social: ${sc.verb}${sc.id ? ` #${sc.id}` : ''}`); const t = await socialDesk.handle(sc); await socialSay(t, sc.verb === 'edit' ? socialDesk.draftPicture(t) : null); return true; }
       if (!photoRaw) { trace(where, 'owner', 'social: «post» with no photo'); await socialSay('Which photo? Send the photo first, then write «post» and a few words about it (or as the caption of the photo).'); return true; }
@@ -3922,7 +3937,7 @@ async function postWaStatus({ image = null, video = null, caption = '' }) {
   await sock.sendMessage('status@broadcast', video ? { video, caption, mimetype: 'video/mp4' } : { image, caption }, { statusJidList: list, broadcast: true });
   return viewers.size;
 }
-const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change', 'spots']); // the picture checks too (the owner, 19/11: Sonnet was right 7 of 8 at half the cost, Opus 6 of 8)
+const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change', 'spots', 'gemini-prompt']); // the picture checks too (the owner, 19/11: Sonnet was right 7 of 8 at half the cost, Opus 6 of 8)
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
   store: socialStore, cfg: { ...config.social, tokenFrom: socialTokenFrom, timezone: config.timezone }, mediaDir: path.join(config.authDir, 'social', 'media'), catalogDir: path.join(config.authDir, 'social', 'catalog'), brandDir: path.join(config.authDir, 'social', 'brand'), log: (s) => logger.info(s),
@@ -3970,6 +3985,11 @@ async function socialSay(text, image = null, video = null) {
 /** A design to the owner: the room with Atossa's reasons and the caption, then the close-up, then the Reel. */
 async function socialSayDesign(d) {
   await socialSay(d.text, d.image || null);
+  if (d.prompt) { // a design for the Gemini app (21/11): the swatches to attach, then the prompt alone in one message, easy to copy
+    for (const s of d.swatches || []) await socialSay(`${s.code} ${s.name}`, s.image);
+    await socialSay(d.prompt);
+    return;
+  }
   const id = /Post #(SP\d+)/.exec(d.text)?.[1] || '';
   const details = d.details?.length ? d.details : d.detail ? [{ image: d.detail, code: '' }] : [];
   for (const x of details) await socialSay(`${id ? `#${id} ` : ''}${x.board ? 'the design board (the last page of the post)' : `close-up${x.code ? ` of ${x.code}` : ''}`}`, x.image);
