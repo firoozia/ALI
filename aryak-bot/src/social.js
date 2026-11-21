@@ -354,20 +354,27 @@ These are the most liked recent posts of leading interior design accounts on Ins
 export const LOOKS_RULES = `${ATOSSA}
 These are interior pictures from today's design press. For each one, write one short English line of what a designer can take from it for decorative films on cabinets, wardrobes and wall panels: the colours and how they are paired, the wood or stone look, the finish, the light, one detail. Then one line «Together:» with the strongest common idea. Output only the lines.`;
 
-export const GEMINI_PROMPT_RULES = `You are Atossa, the creative director of {BRAND}: a world-class interior designer who also thinks like a top performance marketer. You write ONE prompt in English for Google's Gemini video maker, for a 10-second Instagram Reel that sells ARYAK decorative PVC films (for kitchen, wardrobe and wall fronts). The Gemini app makes 10-second videos, so the whole story fits in 10 seconds. The owner attaches every film's sample picture in the order given and pastes your prompt. The Reel must stop the scroll in the first second, make a designer save it and a client ask for the code.
-Shape (the owner liked it; his review of the first video, 21/11: it came out 10 s and landscape, the dark olive came out lighter, a grey-green came out warm beige, and one film moved to another place in a close-up):
-- Start: "Portrait 9:16 vertical video (taller than wide), 10 seconds, photorealistic Instagram Reel for ARYAK, a supplier of decorative PVC films for kitchen and wardrobe fronts in the UAE. The attached pictures are the exact film samples." Keep the subject and every text inside the centre of the frame, so a vertical crop never cuts them.
+export const GEMINI_PROMPT_RULES = `You are Atossa, the creative director of {BRAND}: a world-class interior designer who also thinks like a top performance marketer. You write a PROMPT and an EXTEND message in English for Google's Gemini video maker; together they make ONE continuous 15-second Instagram Reel that sells ARYAK decorative PVC films (for kitchen, wardrobe and wall fronts). The Gemini app makes a 10-second video, and in the same chat it extends that very video seamlessly (the owner's test, 21/11: 10 s became one continuous 20 s video); the owner wants all 15 seconds to be the room (21/11: «15 seconds for all the scenes», no end card), so Atossa cuts the extended video to its first 15 seconds. The owner attaches every film's sample picture in the order given and pastes the PROMPT; when the video is made he pastes the EXTEND message in the same chat. The Reel must stop the scroll in the first second, make a designer save it and a client ask for the code.
+Shape (the owner liked it; his reviews of the first videos, 21/11: they came out 10 s and landscape, a dark olive came out lighter, a grey-green warm beige, a pale oak golden orange, and one film moved to another place in a close-up; with the rules below the third came out right):
+- PROMPT starts: "Portrait 9:16 vertical video (taller than wide), 10 seconds, the first part of a 15-second photorealistic Instagram Reel for ARYAK, a supplier of decorative PVC films for kitchen and wardrobe fronts in the UAE. The attached pictures are the exact film samples." Keep the subject and every text inside the centre of the frame, so a vertical crop never cuts them.
 - EXACT FILMS, said plainly and strongly: each film is rendered exactly like its attached sample: the same colour, brightness, pattern, grain direction, scale and surface; never changed, never warmed, cooled, lightened, darkened or reinterpreted by the light, never a different wood or stone. The catalogue name is only a label: the colour is the sample's. For every film give its code, its sample (first, second...), where it goes, and its MEASURED colour exactly as given to you (the hex and the words, for example "very dark olive, hex #3F4030; keep it this dark, never lighter"); never describe a colour by its name when the measured colour says otherwise.
 - TRUE LIGHT ON THE FILMS (the owner, 21/11: a pale greige oak came out golden orange under warm light): the light falling on the films is soft neutral daylight, so each film shows its true sample colour; warm accents (lamps, LED strips, sunset) stay small and away from the film fronts; a wood film keeps its sample's grain, as fine and as pale. Never use the word warm for a film's colour.
 - ONE PLACE PER FILM: each film stays on the same surfaces in every shot, and a close-up shows the very place it has in the wide view (never another film's place).
 - THESE ARE PVC FILMS: they cover only vertical faces (doors, drawer fronts, panels, wall cladding). No film on a worktop, countertop, island top or shelf top: tops are real stone or quartz in a quiet matching tone; a marble-look film only on wall panels, tall doors or island side panels. Say this in the prompt.
 - THE ROOM: the design's room in rich, editorial detail (layout, light, styled objects, a fully styled space behind any glass), the camera always inside the room at eye level, every door closed, a signature detail that makes it memorable.
-- SHOTS in 10 seconds, one smooth slow cinematic camera move each: 0-2.5 s a strong opening (a wide view dollying in, small white callouts with a dot and a thin line naming each film as CODE NAME in capitals); then one close-up per film, together about 5.5 s (wood along its grain in raking light, stone-look or plain colour with shallow depth of field, the clean edge where the film wraps a door), each with the text CODE NAME; the last 2 s a slow pull back to the whole room, the white word ARYAK fades in at the centre with a soft sparkle, under it PREMIUM SURFACE FILMS and the WhatsApp number.
+- PROMPT SHOTS in 10 seconds, one smooth slow cinematic camera move each: 0-3 s a strong opening (a wide view dollying in, small white callouts with a dot and a thin line naming each film as CODE NAME in capitals); then one close-up per film sharing the other 7 seconds (wood along its grain in soft side daylight, stone-look or plain colour with shallow depth of field, the clean edge where the film wraps a door), each in the same place as in the wide view and with the text CODE NAME; it ends on the last close-up: no logo, no end title.
 - Small header on every shot, top centre: ARYAK, in a plain sans-serif.
 - "All on-screen text exactly as written here, letter by letter, clean white sans-serif, English only, nothing else written."
-- SOUND: a warm, elegant British female voice-over, calm and short enough for 10 seconds: an opening hook of at most seven words naming the brand "Aryak" (write: said AH-ree-ak), then each film's name as its close-up appears, then "Premium surfaces, designed for you." Soft modern ambient music under the voice, a soft whoosh at each cut.
+- SOUND: a calm, elegant British female voice-over: an opening hook of at most seven words naming the brand "Aryak" (write: said AH-ree-ak), then each film's name as its close-up appears; soft modern ambient music under the voice, a soft whoosh at each cut.
+- EXTEND, short (the same chat already holds the samples and the room): "Extend this same video, continuing seamlessly from its very last frame: the same room, films, light and camera, every film exactly as before." Then, from the first second of the extension: a slow pull back to the whole room, the white word ARYAK fades in at the centre with a soft sparkle, under it PREMIUM SURFACE FILMS and the WhatsApp number, the small ARYAK header on top, all text exactly as written; the same calm British female voice says "Premium surfaces, designed for you." within its first 4 seconds; the same soft music.
 {CONTACT}
-Write it as one single paragraph with no line breaks (it is typed into a box where a line break sends it), at most 400 words. Output only the prompt.`;
+Write each as one single paragraph with no line breaks (it is typed into a box where a line break sends it), the PROMPT at most 450 words. Output exactly two lines and nothing else: the first starts with "PROMPT: " and holds the prompt, the second starts with "EXTEND: " and holds the extend message.`;
+/** The Gemini way's two messages (21/11): «PROMPT: …» and «EXTEND: …», each one paragraph; an answer without the marks is the prompt alone. */
+export function geminiParts(raw) {
+  const one = (t) => String(t || '').trim().replace(/\s*\n+\s*/g, ' ');
+  const m = /PROMPT:\s*([\s\S]*?)\s*EXTEND:\s*([\s\S]*)$/i.exec(String(raw || ''));
+  return m ? { prompt: one(m[1]), extend: one(m[2]) } : { prompt: one(raw).replace(/^PROMPT:\s*/i, ''), extend: '' };
+}
 /** The colour of a film sample (the owner, 21/11): the mean of its middle (the code is printed in a corner), as a hex and plain words:
  * how light it is and its undertone, so the prompt says «very dark olive, keep it this dark» instead of the catalogue's name. */
 export async function swatchTone(buf) {
@@ -850,12 +857,14 @@ export class SocialDesk {
     const all = this.catalog();
     const films = plan.parts.slice(0, 4).filter((x) => all[x.code]).map((x, i) => ({ code: x.code, name: all[x.code].name || all[x.code].look || 'decorative film', look: all[x.code].look || '', where: x.where, n: ['first', 'second', 'third', 'fourth'][i] })); // every film of the design (the owner, 21/11)
     for (const f of films) f.tone = await swatchTone(fs.readFileSync(path.join(this.catalogDir, all[f.code].file))).catch(() => null); // the sample's own colour (the owner, 21/11: a dark olive came out lighter, a grey-green warm)
-    const raw = String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 3000, text: [
+    const out = String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 5000, text: [
       `The design: ${plan.room}.`, `The scene: ${plan.scene}`,
       `The films, in the order their samples are attached: ${films.map((f) => `${f.code} «${f.name}»${f.look ? ` (${f.look})` : ''} on ${f.where} (the ${f.n} sample${f.tone ? `; measured colour: ${f.tone.words}, hex ${f.tone.hex}` : ''})`).join('; ')}.`,
       inspiration ? 'The owner also attaches his inspiration picture after the samples: the same room, layout and camera.' : '',
       note ? `The owner's words: ${note}` : '',
-    ].filter(Boolean).join('\n') }) || '').trim().replace(/\s*\n+\s*/g, ' ');
+    ].filter(Boolean).join('\n') }) || '');
+    // one continuous 15-second Reel of video (the owner, 21/11: «15 seconds for all the scenes»): the prompt, then its extension in the same chat
+    const { prompt: raw, extend } = geminiParts(out);
     if (!raw) return { text: 'The prompt for Gemini could not be written; try again.' };
     this.remember(plan);
     this.store.d.geminiLast = { codes: films.map((f) => f.code), at: this.now() }; // the video he sends back ends with these codes
@@ -867,15 +876,19 @@ export class SocialDesk {
       ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`),
       '',
       'روش ساختن ویدیو:',
-      '۱. در جمینای دستیار «استودیوی آریاک» را باز کنید (هر سه کاتالوگ را می‌شناسد) و «ساختن ویدیو» را بزنید؛ جمینای ویدیوی ده‌ثانیه‌ای می‌سازد و آتوسا آن را عمودی و پانزده‌ثانیه‌ای می‌کند.',
+      extend
+        ? 'ریلز پانزده ثانیه و همه‌اش ویدیوی اتاق است: جمینای ده ثانیه می‌سازد، در همان گفتگو ادامه‌اش می‌دهد و آتوسا پانزده ثانیهٔ اول را عمودی می‌کند.'
+        : 'جمینای ویدیوی ده‌ثانیه‌ای می‌سازد و آتوسا آن را عمودی و پانزده‌ثانیه‌ای می‌کند.',
+      '۱. در جمینای دستیار «استودیوی آریاک» را باز کنید (هر سه کاتالوگ را می‌شناسد) و «ساختن ویدیو» را بزنید.',
       `۲. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید${inspiration ? ' و عکس الهام خودتان را هم بعد از آن‌ها' : ''}.`,
-      '۳. متن پیام بعدی را کامل بچسبانید و بفرستید.',
-      '۴. ویدیو را همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا شرح می‌نویسد و با «بله پست» منتشر می‌شود.',
+      `۳. ${extend ? 'متن اول (پیام بعدی)' : 'متن پیام بعدی'} را کامل بچسبانید و بفرستید.`,
+      ...(extend ? ['۴. ویدیو که ساخته شد، در همان گفتگو متن دوم (پیام آخر) را بچسبانید و بفرستید؛ جمینای همان ویدیو را ادامه می‌دهد.'] : []),
+      `${extend ? '۵' : '۴'}. ویدیوی ${extend ? 'نهایی (بلندتر) ' : ''}را بارگیری کنید، همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا شرح می‌نویسد و با «بله پست» منتشر می‌شود.`,
     ].filter((l, i, a) => l || a[i - 1]).join('\n');
-    return { text: head, prompt: raw, swatches: sw };
+    return { text: head, prompt: raw, extend, swatches: sw };
   }
 
-  /** A post from a video the owner made (in Gemini, 21/11): its first second is the cover, the video goes out as a Reel only, with the stories. */
+  /** A post from a video the owner made (in Gemini, 21/11): its first second is the cover, the video goes out as a Reel only, with the stories. An extended video (20 s) is cut to 15. */
   async draftVideoPost({ video, note = '' }) {
     const { coverFrame, verticalReel, endCard } = await import('./reel.js');
     let cover;

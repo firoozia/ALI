@@ -58,7 +58,8 @@ export async function verticalReel({ video, seconds = 15, logo = null, font = ''
     const info = await probeVideo(src);
     const tall = info.height > info.width;
     const cardSec = Math.max(0, Math.min(6, seconds - info.seconds));
-    if (tall && cardSec < 1) return video;
+    const vidSec = Math.min(info.seconds, seconds); // a Gemini video extended to 20 s is cut to the Reel's 15 (the owner, 21/11)
+    if (tall && cardSec < 1 && info.seconds <= seconds + 0.2) return video;
     const sharp = (await import('sharp')).default;
     const W = 1080; const H = 1920;
     const vh = tall ? H : Math.round(W * info.height / info.width / 2) * 2; // the video's height in the frame
@@ -102,7 +103,7 @@ export async function verticalReel({ video, seconds = 15, logo = null, font = ''
       fc.push(`[${n}:v]scale=${W}:${H},fps=30,format=yuv420p,setsar=1,fade=t=in:st=0:d=0.5[v1]`, `[v0][v1]concat=n=2:v=1:a=0[vv]`);
       vout = '[vv]'; n += 1;
     }
-    const total = info.seconds + (cardSec >= 1 && card ? cardSec : 0);
+    const total = vidSec + (cardSec >= 1 && card ? cardSec : 0);
     // the sound: the video's own, then kept music faded in under the end card; a silent track when there is none (Instagram wants one)
     const own = info.sound ? `[0:a]aresample=48000,apad=whole_dur=${total.toFixed(2)}[own]` : `anullsrc=r=48000:cl=stereo,atrim=0:${total.toFixed(2)}[own]`;
     fc.push(own);

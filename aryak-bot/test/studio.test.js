@@ -1128,7 +1128,7 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
 
 test('the Gemini prompt (the owner, 21/11): a top designer and marketer, every film exactly its sample, no PVC film on a worktop', async () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /Portrait 9:16 vertical video \(taller than wide\), 10 seconds, photorealistic Instagram Reel for ARYAK/);
+  assert.match(src, /Portrait 9:16 vertical video \(taller than wide\), 10 seconds, the first part of a 15-second photorealistic Instagram Reel for ARYAK/);
   assert.match(src, /a world-class interior designer who also thinks like a top performance marketer/);
   assert.match(src, /each film is rendered exactly like its attached sample: the same colour, brightness, pattern, grain direction, scale and surface/);
   assert.match(src, /No film on a worktop, countertop, island top or shelf top/);
@@ -1192,4 +1192,41 @@ test('a Gemini video sent back (the owner, 21/11: «make the Reel 15 seconds»):
   assert.match(src, /TRUE LIGHT ON THE FILMS/);
   assert.match(src, /video = await verticalReel\(\{ video, seconds: 15,/);
   assert.match(src, /this\.store\.d\.geminiLast = \{ codes:/);
+});
+
+test('one continuous 15-second Gemini Reel (the owner, 21/11: «15 seconds for all the scenes»): the prompt and its extension in the same chat; a longer video is cut to 15 s, never an end card', { skip: !fs.existsSync(await ffmpegPath()) && 'no ffmpeg here' }, async () => {
+  const { geminiParts } = await import('../src/social.js');
+  const { verticalReel } = await import('../src/reel.js');
+  assert.deepEqual(geminiParts('PROMPT: one\nline\nEXTEND: two\nmore'), { prompt: 'one line', extend: 'two more' });
+  assert.deepEqual(geminiParts('just one\nprompt'), { prompt: 'just one prompt', extend: '' }, 'an answer without the marks is the prompt alone');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /You write a PROMPT and an EXTEND message in English for Google's Gemini video maker; together they make ONE continuous 15-second Instagram Reel/);
+  assert.match(src, /10 seconds, the first part of a 15-second photorealistic Instagram Reel for ARYAK/);
+  assert.match(src, /Extend this same video, continuing seamlessly from its very last frame/);
+  assert.match(src, /it ends on the last close-up: no logo, no end title/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /if \(d\.extend\) await socialSay\(d\.extend\);/, 'the extension is its own message, easy to copy');
+  // «طرح»: the prompt, then the extension and the steps that say where it goes
+  const { desk } = await studio();
+  desk.cfg.designMode = 'gemini';
+  const base = desk.write;
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? 'PROMPT: The room in 10 s.\nEXTEND: Extend this same video.' : base(r));
+  const d = await desk.draftDesign({ note: 'آشپزخانه' });
+  assert.equal(d.prompt, 'The room in 10 s.');
+  assert.equal(d.extend, 'Extend this same video.');
+  assert.match(d.text, /در همان گفتگو متن دوم \(پیام آخر\) را بچسبانید/);
+  assert.match(d.text, /۵\. ویدیوی نهایی \(بلندتر\) را بارگیری کنید/);
+  // a video longer than the Reel is cut to it, with no end card (short here to keep the test quick)
+  const dir = tmp('ext-');
+  const { spawnSync } = await import('node:child_process');
+  const f = path.join(dir, 'long.mp4');
+  spawnSync(await ffmpegPath(), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=gray:s=320x180:d=6:r=24', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=6', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', f]);
+  let carded = 0;
+  const out = await verticalReel({ video: fs.readFileSync(f), seconds: 4, codes: ['126'], line: 'WhatsApp +971000', card: async () => { carded++; return Buffer.alloc(0); } });
+  fs.writeFileSync(path.join(dir, 'out.mp4'), out);
+  const err = spawnSync(await ffmpegPath(), ['-hide_banner', '-i', path.join(dir, 'out.mp4')], { encoding: 'utf8' }).stderr;
+  const [, h, m, sec] = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(err);
+  assert.ok(Math.abs(+h * 3600 + +m * 60 + +sec - 4) < 0.2, `cut to the Reel's length (${sec})`);
+  assert.match(err, /1080x1920/);
+  assert.equal(carded, 0, 'no end card: all of it is the room');
 });
