@@ -3900,6 +3900,28 @@ async function monthlyFullReport() {
 // The Instagram token is renewed weekly and kept on the server; a new token put in the metadata replaces the kept one.
 const socialStore = new SocialStore(path.join(config.authDir, 'social'));
 const socialTokenFrom = config.social.igToken ? createHash('sha256').update(config.social.igToken).digest('hex').slice(0, 12) : '';
+/**
+ * A WhatsApp status of the bot's number (the owner, 21/11): seen by the members of the watched customer groups and the owner, never the
+ * staff. Returns how many can see it.
+ */
+async function postWaStatus({ image = null, video = null, caption = '' }) {
+  if (!sock?.user) throw new Error('WhatsApp is not connected');
+  const staff = new Set((config.staffNumbers || []).map(jidDigits));
+  const mine = new Set(ownIds().map(jidDigits));
+  const viewers = new Set();
+  for (const g of Object.values(await sock.groupFetchAllParticipating())) {
+    if (!observedGroup(g.subject || '', config)) continue;
+    for (const m of g.participants || []) {
+      const j = jidNormalizedUser(m.phoneNumber || m.jid || m.id || '');
+      if (!j.endsWith('@s.whatsapp.net') || staff.has(jidDigits(j)) || mine.has(jidDigits(j))) continue;
+      viewers.add(j);
+    }
+  }
+  if (!viewers.size) throw new Error('no customer to show it to');
+  const list = [...viewers, ...ownIds().map(jidNormalizedUser).filter((j) => j.endsWith('@s.whatsapp.net'))];
+  await sock.sendMessage('status@broadcast', video ? { video, caption, mimetype: 'video/mp4' } : { image, caption }, { statusJidList: list, broadcast: true });
+  return viewers.size;
+}
 const STUDIO_PLAN_KINDS = new Set(['design-plan', 'critique', 'concepts', 'owner-links', 'press-pictures', 'instagram-watch', 'clean-check', 'check-change']); // the picture checks too (the owner, 19/11: Sonnet was right 7 of 8 at half the cost, Opus 6 of 8)
 const socialDesk = new SocialDesk({
   client: new MetaClient({ igToken: socialStore.d.token?.from === socialTokenFrom && socialStore.d.token?.ig ? socialStore.d.token.ig : config.social.igToken, igUserId: config.social.igUserId, pageId: config.social.pageId, pageToken: config.social.pageToken, systemToken: config.social.systemToken, version: config.social.version }),
@@ -3919,6 +3941,7 @@ const socialDesk = new SocialDesk({
     }
     return '';
   },
+  waStatus: postWaStatus,
   imager: new GeminiImage({ apiKey: config.social.geminiKey, model: config.social.geminiImageModel, size: config.social.geminiImageSize, cheapModel: config.social.geminiCheapModel, prices: config.social.imagePrices, onCost: (c) => cost.image(c) }),
   write: async ({ kind = '', system, prefix = '', text, image, images = [], mime, effort = 'low', maxTokens = 800 }) => {
     const pic = (b) => ({ type: 'image', source: { type: 'base64', media_type: mime || 'image/jpeg', data: b.toString('base64') } });

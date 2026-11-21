@@ -179,7 +179,9 @@ export function loadConfig(env = process.env) {
       researchSource: (env.SOCIAL_RESEARCH_SOURCE || 'inbox').toLowerCase(), // 'inbox': the notes Claude in the owner's app drops on the server; 'bot': the bot's own paid search
       researchInbox: env.SOCIAL_RESEARCH_INBOX || `${env.AUTH_DIR || './auth'}/social/research-inbox.md`,
       reelMotion: (env.SOCIAL_REEL_MOTION || 'orbit').toLowerCase(), // the Reel turns around the room (the owner, 20/11); 'zoom' for the old push-in
-      musicLibrary: Number(env.SOCIAL_MUSIC_LIBRARY || 8), // kept Reel clips before no new one is made (the owner, 19/11)
+      musicLibrary: Number(env.SOCIAL_MUSIC_LIBRARY || 8),
+      stories: (env.SOCIAL_STORIES || 'on').toLowerCase() !== 'off', // a story on Instagram, Facebook and WhatsApp with every yes (the owner, 21/11)
+      waStatusPerDay: Number(env.SOCIAL_WA_STATUS_PER_DAY || 2), // WhatsApp statuses a day at most (no official way: too many could limit the number) // kept Reel clips before no new one is made (the owner, 19/11)
       roomFirst: (env.SOCIAL_ROOM_FIRST || 'on').toLowerCase() !== 'off', // a design is one picture of the whole space; the rest on «تایید پست N» (the owner, 18/11)
     },
     kbDir: env.KB_DIR || './kb',

@@ -1040,3 +1040,37 @@ test('a plain colour is shown where it meets the room, smooth, and the Reel turn
   const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
   assert.match(cfg, /reelMotion: \(env\.SOCIAL_REEL_MOTION \|\| 'orbit'\)/);
 });
+
+test('a yes posts the stories too: Instagram, Facebook and a WhatsApp status, the Reel when there is one, at most two statuses a day (the owner, 21/11)', async () => {
+  const { desk } = await studio({ reelAuto: false });
+  const calls = [];
+  desk.client.igStory = async (a) => (calls.push(['ig', a.video ? 'video' : a.imageUrl ? 'image' : '?']), { id: 'IGS' });
+  desk.client.fbStory = async (a) => (calls.push(['fb', a.video ? 'video' : a.photoId ? 'image' : '?']), { id: 'FBS' });
+  desk.client.fbPhoto = async () => ({ id: 'PH' });
+  desk.client.fbPhotoUrl = async () => 'https://x/p.jpg';
+  Object.defineProperty(desk.client, 'hasIg', { get: () => true });
+  Object.defineProperty(desk.client, 'hasFb', { get: () => true });
+  const wa = [];
+  desk.waStatus = async (a) => (wa.push(a), 37);
+  desk.cfg.contact = '+971000';
+  const post = { id: 'SP90', design: { codes: ['HZ812', '1805'] }, caption: 'c' };
+  const done = []; const failed = [];
+  await desk.postStories(post, { image: Buffer.from('i'), video: Buffer.from('v') }, done, failed);
+  assert.deepEqual(calls, [['ig', 'video'], ['fb', 'video']]);
+  assert.equal(wa[0].video.toString(), 'v');
+  assert.match(wa[0].caption, /HZ812 {2}1805 {2}Send the code you like on WhatsApp \+971000/);
+  assert.deepEqual(done, ['Instagram story: posted', 'Facebook story: posted', 'WhatsApp status: posted (seen by 37 customers)']);
+  await desk.postStories({ id: 'SP91' }, { image: Buffer.from('i') }, [], []);
+  assert.deepEqual(calls.slice(2), [['ig', 'image'], ['fb', 'image']], 'no Reel: the main picture');
+  const f3 = [];
+  await desk.postStories({ id: 'SP92' }, { image: Buffer.from('i') }, [], f3);
+  assert.match(f3.join('|'), /WhatsApp status: not posted, 2 statuses today already/);
+  assert.equal(wa.length, 2);
+  desk.cfg.stories = false;
+  const d4 = [];
+  await desk.postStories({ id: 'SP93' }, { image: Buffer.from('i') }, d4, []);
+  assert.equal(d4.length, 0, 'SOCIAL_STORIES=off');
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /sock\.sendMessage\('status@broadcast', video \? \{ video, caption, mimetype: 'video\/mp4' \} : \{ image, caption \}, \{ statusJidList: list, broadcast: true \}\)/);
+  assert.match(index, /if \(!j\.endsWith\('@s\.whatsapp\.net'\) \|\| staff\.has\(jidDigits\(j\)\)/, 'never the staff');
+});

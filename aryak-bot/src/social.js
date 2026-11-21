@@ -137,6 +137,30 @@ export class MetaClient {
     await this.igReady(c.id, 40, 5000);
     return this.igFinish(c.id);
   }
+  /** An Instagram story (the owner, 21/11): a picture from its web address, or a video by the resumable upload like a Reel. */
+  async igStory({ imageUrl = '', video = null } = {}) {
+    if (video) {
+      const c = await this.ig(`${this.igUserId}/media`, { method: 'POST', params: { media_type: 'STORIES', upload_type: 'resumable' } });
+      const uri = c.uri || `https://rupload.facebook.com/ig-api-upload/${this.version}/${c.id}`;
+      const res = await this.fetchImpl(uri, { method: 'POST', headers: { Authorization: `OAuth ${this.viaFb ? this.pageToken : this.igToken}`, offset: '0', file_size: String(video.length) }, body: video });
+      let body = null; try { body = await res.json(); } catch { /* none */ }
+      if (!res.ok || body?.error || body?.success === false) throw new Error(`the story upload failed: ${body?.error?.message || body?.debug_info?.message || `HTTP ${res.status}`}`);
+      await this.igReady(c.id, 40, 5000);
+      return this.igFinish(c.id);
+    }
+    const c = await this.ig(`${this.igUserId}/media`, { method: 'POST', params: { media_type: 'STORIES', image_url: imageUrl } });
+    await this.igReady(c.id);
+    return this.igFinish(c.id);
+  }
+  /** A Facebook Page story (the owner, 21/11): a photo already uploaded unpublished, or a video (start, upload, finish). */
+  async fbStory({ photoId = '', video = null } = {}) {
+    if (!video) return this.fb(`${this.pageId}/photo_stories`, { method: 'POST', params: { photo_id: photoId } });
+    const start = await this.fb(`${this.pageId}/video_stories`, { method: 'POST', params: { upload_phase: 'start' } });
+    const res = await this.fetchImpl(start.upload_url, { method: 'POST', headers: { Authorization: `OAuth ${this.pageToken}`, file_size: String(video.length) }, body: video });
+    let body = null; try { body = await res.json(); } catch { /* none */ }
+    if (!res.ok || body?.error || body?.success === false) throw new Error(`the story upload failed: ${body?.error?.message || `HTTP ${res.status}`}`);
+    return this.fb(`${this.pageId}/video_stories`, { method: 'POST', params: { upload_phase: 'finish', video_id: start.video_id } });
+  }
   /** Several pictures in one Facebook post: each is uploaded unpublished, then one post carries them all. */
   async fbAlbumPost(buffers, caption) {
     const ids = [];
@@ -609,8 +633,8 @@ export const PILLARS = {
 };
 
 export class SocialDesk {
-  constructor({ client, store, write, research = null, reel = null, tiktok = null, bucket = null, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, log = () => {}, now = () => Date.now() }) {
-    Object.assign(this, { client, store, write, research, reel, tiktok, bucket, cfg, mediaDir, catalogDir, brandDir, imager, log, now });
+  constructor({ client, store, write, research = null, reel = null, tiktok = null, bucket = null, cfg = {}, mediaDir = '', catalogDir = '', brandDir = '', imager = null, waStatus = null, log = () => {}, now = () => Date.now() }) {
+    Object.assign(this, { client, store, write, research, reel, tiktok, bucket, cfg, mediaDir, catalogDir, brandDir, imager, waStatus, log, now });
   }
   get enabled() { return this.client.hasIg || this.client.hasFb; }
   /** The system-user way: the Page token and the Instagram account are read once; a failure is said in «social». */
@@ -1619,6 +1643,7 @@ export class SocialDesk {
     }
     if (p.reel && fs.existsSync(p.reel)) await this.postReel(p, fs.readFileSync(p.reel), done, failed);
     await this.postTikTokPhotos(p, [image, ...extras], done, failed);
+    if (done.length) await this.postStories(p, { image, video: p.reel && fs.existsSync(p.reel) ? fs.readFileSync(p.reel) : null }, done, failed);
     p.state = done.length ? 'posted' : 'draft'; // nothing went out: the draft stays, a later yes tries again
     p.postedAt = this.now();
     this.store.save();
@@ -1702,6 +1727,43 @@ export class SocialDesk {
       p.tiktokPhotos = t.publishId;
       done.push(t.status === 'SEND_TO_USER_INBOX' ? `TikTok photos: sent to your TikTok inbox as a draft (${images.length} pictures; open TikTok and tap Post)` : `TikTok photos: posted (${images.length} pictures)`);
     } catch (e) { failed.push(`TikTok photos: ${e.message}`); }
+  }
+
+  /**
+   * The stories of a post (the owner, 21/11: «at the same time a story in every app»): the Reel, or the main picture when there is none, as an
+   * Instagram story, a Facebook Page story and a WhatsApp status of the bot's number (seen by the customers of the watched groups; at most
+   * [waStatusPerDay] a day, WhatsApp has no official way for a status and too many could limit the number).
+   */
+  async postStories(p, { image, video = null }, done, failed) {
+    if (this.cfg.stories === false) return;
+    const codes = p.design?.codes || this.codesIn(`${p.note || ''} ${p.caption || ''}`).map((c) => c.code);
+    const line = codes.length ? `${codes.join('  ')}  Send the code you like on WhatsApp${this.cfg.contact ? ` ${this.cfg.contact}` : ''}` : (this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : '');
+    if (this.client.hasIg) {
+      try {
+        let r;
+        if (video) r = await this.client.igStory({ video });
+        else {
+          if (!this.client.hasFb) throw new Error('Instagram takes a picture only from a web address; connect the Facebook Page so it can be held there');
+          r = await this.client.igStory({ imageUrl: await this.client.fbPhotoUrl((await this.client.fbPhoto(image, '', { published: false })).id) });
+        }
+        p.igStory = r.id; done.push('Instagram story: posted');
+      } catch (e) { failed.push(`Instagram story: ${e.message}`); }
+    }
+    if (this.client.hasFb) {
+      try {
+        const r = video ? await this.client.fbStory({ video }) : await this.client.fbStory({ photoId: (await this.client.fbPhoto(image, '', { published: false })).id });
+        p.fbStory = r.post_id || r.id || true; done.push('Facebook story: posted');
+      } catch (e) { failed.push(`Facebook story: ${e.message}`); }
+    }
+    if (this.waStatus) {
+      const day = new Date(this.now()).toISOString().slice(0, 10);
+      const d = this.store.d; d.waStatus = (d.waStatus || []).filter((x) => x.startsWith(day));
+      const cap = Number(this.cfg.waStatusPerDay) > 0 ? Number(this.cfg.waStatusPerDay) : 2;
+      if (d.waStatus.length >= cap) failed.push(`WhatsApp status: not posted, ${cap} statuses today already (a limit that keeps the number safe)`);
+      else {
+        try { const n = await this.waStatus({ image: video ? null : image, video, caption: line }); d.waStatus.push(`${day} ${p.id}`); p.waStatus = true; done.push(`WhatsApp status: posted (seen by ${n} customers)`); } catch (e) { failed.push(`WhatsApp status: ${e.message}`); }
+      }
+    }
   }
 
   /** The Reel of a design: a Facebook video and an Instagram Reel, with the same caption. */
