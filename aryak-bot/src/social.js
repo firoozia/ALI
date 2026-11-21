@@ -354,15 +354,18 @@ These are the most liked recent posts of leading interior design accounts on Ins
 export const LOOKS_RULES = `${ATOSSA}
 These are interior pictures from today's design press. For each one, write one short English line of what a designer can take from it for decorative films on cabinets, wardrobes and wall panels: the colours and how they are paired, the wood or stone look, the finish, the light, one detail. Then one line «Together:» with the strongest common idea. Output only the lines.`;
 
-export const GEMINI_PROMPT_RULES = `You write ONE prompt in English for Google's Gemini video maker, for an Instagram Reel of {BRAND}, a supplier of decorative PVC films for kitchen, wardrobe and wall fronts. The owner attaches each film's sample picture in the order given and pastes your prompt. Follow the shape of a Reel he liked:
-- Start: "A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK, a supplier of decorative PVC films for kitchen fronts in the UAE. The attached pictures are the exact film samples: keep their colour and texture exactly in every frame."
-- THE ROOM: the design's room in rich detail from the scene (layout, every film named with its code, its look and which sample it is, styled objects, light, a fully styled space behind any glass), the camera always inside the room, every door closed.
-- SHOTS, one smooth slow cinematic camera move each: 0-3 s wide view at eye level with small white callouts (a dot and a thin line) naming each film as CODE NAME in capitals; then one close-up per film (wood along its grain in raking light, stone or plain colour with shallow depth of field) with the text CODE NAME; the last 3 s a slow pull back to the whole room, the white word ARYAK fades in at the centre with a soft sparkle, under it PREMIUM SURFACE FILMS and the WhatsApp number. Fit everything in 10 seconds (at most three films).
+export const GEMINI_PROMPT_RULES = `You are Atossa, the creative director of {BRAND}: a world-class interior designer who also thinks like a top performance marketer. You write ONE prompt in English for Google's Gemini video maker, for a 15-second Instagram Reel that sells ARYAK decorative PVC films (for kitchen, wardrobe and wall fronts). The owner attaches every film's sample picture in the order given and pastes your prompt. The Reel must stop the scroll in the first second, make a designer save it and a client ask for the code.
+Shape (the owner liked it):
+- Start: "A 15-second vertical 9:16 photorealistic Instagram Reel for ARYAK, a supplier of decorative PVC films for kitchen and wardrobe fronts in the UAE. The attached pictures are the exact film samples."
+- EXACT FILMS, said plainly and strongly: each film is rendered exactly like its attached sample: the same colour, brightness, pattern, grain direction, scale and surface; never changed, never warmed, darkened or reinterpreted by the light, never a different wood or stone. Name every film with its code, its look and which sample it is (first, second...), and where it goes.
+- THESE ARE PVC FILMS: they cover only vertical faces (doors, drawer fronts, panels, wall cladding). No film on a worktop, countertop, island top or shelf top: tops are real stone or quartz in a quiet matching tone; a marble-look film only on wall panels, tall doors or island side panels. Say this in the prompt.
+- THE ROOM: the design's room in rich, editorial detail (layout, light, styled objects, a fully styled space behind any glass), the camera always inside the room at eye level, every door closed, a signature detail that makes it memorable.
+- SHOTS in 15 seconds, one smooth slow cinematic camera move each: 0-3 s a strong opening (a wide view dollying in, small white callouts with a dot and a thin line naming each film as CODE NAME in capitals); then one close-up per film, about 2.5 s each (wood along its grain in raking light, stone-look or plain colour with shallow depth of field, the clean edge where the film wraps a door), each with the text CODE NAME; the last 3 s a slow pull back to the whole room, the white word ARYAK fades in at the centre with a soft sparkle, under it PREMIUM SURFACE FILMS and the WhatsApp number.
 - Small header on every shot, top centre: ARYAK, in a plain sans-serif.
 - "All on-screen text exactly as written here, letter by letter, clean white sans-serif, English only, nothing else written."
-- SOUND: a warm elegant British female voice-over, calm: "Experience luxury with Aryak" (write: said AH-ree-ak), then each film's name as its close-up appears, then "Premium surfaces, designed for you." Soft modern ambient music under the voice, a soft whoosh at each cut.
+- SOUND: a warm, elegant British female voice-over, calm: an opening hook line naming the brand "Aryak" (write: said AH-ree-ak), then each film's name as its close-up appears, then "Premium surfaces, designed for you." Soft modern ambient music under the voice, a soft whoosh at each cut.
 {CONTACT}
-Write it as one single paragraph with no line breaks (it is typed into a box where a line break sends it), at most 330 words. Output only the prompt.`;
+Write it as one single paragraph with no line breaks (it is typed into a box where a line break sends it), at most 420 words. Output only the prompt.`;
 export const SPOT_RULES = 'Look at this interior picture and the films named. For each film give one point on a large, clearly visible surface of that film (its doors, panels or worktop), inside the middle of the picture: x between 0.26 and 0.74, y between 0.18 and 0.82 (0 is the left or top edge, 1 the right or bottom), never on another film or an object; the points well apart from each other. Answer only JSON: {"spots":[{"code":"the code","x":0.5,"y":0.5}]}';
 export const FOCUS_RULES = `Look at this interior picture. Give the point at the centre of the largest, best-lit area of the named film, where its colour and texture show best.
 x and y go from 0 to 1, from the left and from the top. Answer with JSON only, for example {"x":0.62,"y":0.41}.`;
@@ -392,6 +395,7 @@ Output only the description.`;
 export const DESIGNER_RULES = `${ATOSSA}
 You design the rooms that sell our decorative films: a client must look at the picture and want THAT film on his doors. The owner is not a designer: you choose everything, he only approves or rejects. Each time propose ONE design.
 - The films are the heroes. Choose rooms where they cover large, well-lit surfaces seen up close: a full kitchen, a wall of wardrobe doors, a full-height TV feature wall, a walk-in closet, a vanity, a reception desk. The films must fill at least half of the picture.
+- Where a film goes (the owner, 21/11: «these are PVC films, not real stone»): only on vertical faces: cabinet and wardrobe doors, drawer fronts, side and end panels, wall cladding, TV and feature walls. NEVER on a worktop, a countertop, an island top, a shelf top, a floor or a splashback behind a hob: those are real stone, quartz or wood in a quiet tone that matches, never an ARYAK code. A marble or stone-look film goes on wall panels, tall doors or an island's side panels, never on top.
 - Combine one to three films from the list (only codes from the list), the way the best designers do: a main film with character (a rich wood grain or a stone with movement), a second that contrasts (a solid colour, light against dark, warm against cool), at most a small accent; the 60-30-10 balance.
 - Use today's notes from the world's design press when they fit: say in inspiration_fa which idea you took and from where.
 - The picture must be rich and alive, never plain or empty: layered warm lighting (golden late-afternoon sun through the windows, hidden LED strips grazing the panels so the grain and texture show), fine details (handleless grooves, slim brass or black metal profiles, fluted glass, a marble or quartz worktop, open shelves with styled objects, plants, books, ceramics), depth (a second room or a view beyond), real reflections and soft shadows.
@@ -822,10 +826,10 @@ export class SocialDesk {
     if (plan.error) return { text: plan.error };
     if (inspiration) this.addTaste(`The owner's inspiration picture: ${plan.room}${note ? ` (${note})` : ''}`);
     const all = this.catalog();
-    const films = plan.parts.slice(0, 3).filter((x) => all[x.code]).map((x, i) => ({ code: x.code, name: all[x.code].name || all[x.code].look || 'decorative film', where: x.where, n: ['first', 'second', 'third'][i] }));
+    const films = plan.parts.slice(0, 4).filter((x) => all[x.code]).map((x, i) => ({ code: x.code, name: all[x.code].name || all[x.code].look || 'decorative film', look: all[x.code].look || '', where: x.where, n: ['first', 'second', 'third', 'fourth'][i] })); // every film of the design (the owner, 21/11)
     const raw = String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 3000, text: [
       `The design: ${plan.room}.`, `The scene: ${plan.scene}`,
-      `The films, in the order their samples are attached: ${films.map((f) => `${f.code} «${f.name}» on ${f.where} (the ${f.n} sample)`).join('; ')}.`,
+      `The films, in the order their samples are attached: ${films.map((f) => `${f.code} «${f.name}»${f.look ? ` (${f.look})` : ''} on ${f.where} (the ${f.n} sample)`).join('; ')}.`,
       inspiration ? 'The owner also attaches his inspiration picture after the samples: the same room, layout and camera.' : '',
       note ? `The owner's words: ${note}` : '',
     ].filter(Boolean).join('\n') }) || '').trim().replace(/\s*\n+\s*/g, ' ');
@@ -839,7 +843,7 @@ export class SocialDesk {
       ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`),
       '',
       'روش ساختن ویدیو:',
-      '۱. در جمینای «ساختن ویدیو» را بزنید، قاب عمودی و ده ثانیه.',
+      '۱. در جمینای «ساختن ویدیو» را بزنید، قاب عمودی و پانزده ثانیه.',
       `۲. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید${inspiration ? ' و عکس الهام خودتان را هم بعد از آن‌ها' : ''}.`,
       '۳. متن پیام بعدی را کامل بچسبانید و بفرستید.',
       '۴. ویدیو را همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا شرح می‌نویسد و با «بله پست» منتشر می‌شود.',

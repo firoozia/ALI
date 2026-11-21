@@ -1125,3 +1125,14 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
   const cfg = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'config.js'), 'utf8');
   assert.match(cfg, /designMode: \(env\.SOCIAL_DESIGN_MODE \|\| 'gemini'\)/);
 });
+
+test('the Gemini prompt (the owner, 21/11): 15 seconds, a top designer and marketer, every film exactly its sample, no PVC film on a worktop', async () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /A 15-second vertical 9:16 photorealistic Instagram Reel for ARYAK/);
+  assert.match(src, /a world-class interior designer who also thinks like a top performance marketer/);
+  assert.match(src, /each film is rendered exactly like its attached sample: the same colour, brightness, pattern, grain direction, scale and surface/);
+  assert.match(src, /No film on a worktop, countertop, island top or shelf top/);
+  assert.match(src, /NEVER on a worktop, a countertop, an island top, a shelf top/, 'the designer too');
+  assert.match(src, /plan\.parts\.slice\(0, 4\)/);
+  assert.match(src, /قاب عمودی و پانزده ثانیه/);
+});
