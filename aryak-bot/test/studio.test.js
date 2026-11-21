@@ -1135,4 +1135,5 @@ test('the Gemini prompt (the owner, 21/11): 15 seconds, a top designer and marke
   assert.match(src, /NEVER on a worktop, a countertop, an island top, a shelf top/, 'the designer too');
   assert.match(src, /plan\.parts\.slice\(0, 4\)/);
   assert.match(src, /قاب عمودی و پانزده ثانیه/);
+  assert.match(src, /دستیار «استودیوی آریاک» را باز کنید/, 'the Gem with the three catalogues (21/11)');
 });
