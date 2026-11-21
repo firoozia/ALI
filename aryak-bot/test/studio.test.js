@@ -1134,7 +1134,7 @@ test('the Gemini prompt (the owner, 21/11): a top designer and marketer, every f
   assert.match(src, /No film on a worktop, countertop, island top or shelf top/);
   assert.match(src, /NEVER on a worktop, a countertop, an island top, a shelf top/, 'the designer too');
   assert.match(src, /plan\.parts\.slice\(0, 4\)/);
-  assert.match(src, /جمینای ویدیوی ده‌ثانیه‌ای می‌سازد/);
+  assert.match(src, /جمینای ویدیوی ده‌ثانیه‌ای می‌سازد و آتوسا آن را عمودی و پانزده‌ثانیه‌ای می‌کند/);
   assert.match(src, /دستیار «استودیوی آریاک» را باز کنید/, 'the Gem with the three catalogues (21/11)');
 });
 
@@ -1148,7 +1148,8 @@ test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, po
   const sage = await swatchTone(await sharp({ create: { width: 200, height: 250, channels: 3, background: '#BCBDB0' } }).jpeg().toBuffer());
   assert.match(sage.words, /^(light|very light) grey-green$/, 'a grey-green sample is never called warm');
   const oak = await swatchTone(await sharp({ create: { width: 200, height: 250, channels: 3, background: '#CDBFA6' } }).jpeg().toBuffer());
-  assert.match(oak.words, /warm/);
+  assert.match(oak.words, /beige|greige/);
+  assert.doesNotMatch(oak.words + sage.words + t1.words, /warm/, 'never «warm» for a film (the oak came out orange)');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   assert.match(src, /The catalogue name is only a label: the colour is the sample's/);
   assert.match(src, /ONE PLACE PER FILM/);
@@ -1160,4 +1161,35 @@ test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, po
   await desk.draftDesign({ note: 'آشپزخانه' });
   const w = writes.find((x) => x.kind === 'gemini-prompt');
   assert.match(w.text, /measured colour: [a-z -]+, hex #[0-9A-F]{6}/, 'the writer gets each sample\'s colour');
+});
+
+test('a Gemini video sent back (the owner, 21/11: «make the Reel 15 seconds»): a 10-second landscape video becomes a vertical 15-second Reel with the end card; the light rule is in the prompt', async () => {
+  const { verticalReel, probeVideo, ffmpegPath } = await import('../src/reel.js');
+  const { spawnSync } = await import('node:child_process');
+  const os = await import('node:os');
+  const sharp = (await import('sharp')).default;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vt-'));
+  try {
+    const src = path.join(dir, 'land.mp4');
+    const r = spawnSync(await ffmpegPath(), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=24:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', src]);
+    assert.equal(r.status, 0, String(r.stderr));
+    const card = async () => sharp({ create: { width: 1080, height: 1920, channels: 3, background: '#141110' } }).png().toBuffer();
+    let lastFrame = null;
+    const out = await verticalReel({ video: fs.readFileSync(src), seconds: 7, codes: ['126', 'HZ819'], line: 'WhatsApp +000', card: async (f) => { lastFrame = f; return card(); } });
+    const f = path.join(dir, 'out.mp4'); fs.writeFileSync(f, out);
+    const info = await probeVideo(f);
+    assert.equal(info.width, 1080); assert.equal(info.height, 1920);
+    assert.ok(info.seconds > 6.6 && info.seconds < 7.4, `about 7 seconds: ${info.seconds}`);
+    assert.ok(info.sound, 'the sound goes on');
+    assert.ok(Buffer.isBuffer(lastFrame) && lastFrame.length > 100, 'the end card is made on the video\'s last frame');
+    // a vertical video that is long enough is posted as it came
+    const tallSrc = path.join(dir, 'tall.mp4');
+    spawnSync(await ffmpegPath(), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=360x640:rate=24:duration=3', '-c:v', 'libx264', '-preset', 'ultrafast', tallSrc]);
+    const tall = fs.readFileSync(tallSrc);
+    assert.equal(await verticalReel({ video: tall, seconds: 3 }), tall);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /TRUE LIGHT ON THE FILMS/);
+  assert.match(src, /video = await verticalReel\(\{ video, seconds: 15,/);
+  assert.match(src, /this\.store\.d\.geminiLast = \{ codes:/);
 });

@@ -30,6 +30,97 @@ function run(bin, args, limitMs = 240000) {
 }
 export const REEL_MIN_FREE_MB = 300;
 
+/** What a video holds: { width, height, seconds, sound } from ffmpeg's own report. */
+export async function probeVideo(file) {
+  const bin = await ffmpegPath();
+  const err = await new Promise((resolve) => {
+    const ch = spawn(bin, ['-hide_banner', '-i', file], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let e = ''; ch.stderr.on('data', (d) => { e += d; }); ch.on('close', () => resolve(e)); ch.on('error', () => resolve(e));
+  });
+  const d = err.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+  const v = err.match(/Video:.*?(\d{2,5})x(\d{2,5})/);
+  if (!d || !v) throw new Error('not a video');
+  return { seconds: +d[1] * 3600 + +d[2] * 60 + +d[3], width: +v[1], height: +v[2], sound: /Audio:/.test(err) };
+}
+
+/**
+ * A vertical Reel from a video the owner made in Gemini (the owner, 21/11: the app makes 10-second landscape videos, «make the Reel 15
+ * seconds»): the whole video in the middle of a 1080 x 1920 frame over a blurred, darkened copy of itself (no label of it is cut), the
+ * logo above it, the codes and the WhatsApp line below it, then the end card ([card](lastFrame) -> PNG) up to [seconds]. The video's own
+ * sound goes on; kept [music] comes in under the end card. A video that is already vertical and long enough is returned as it is.
+ */
+export async function verticalReel({ video, seconds = 15, logo = null, font = '', codes = [], line = '', card = null, music = null }) {
+  if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vert-'));
+  try {
+    const put = (name, buf) => { const f = path.join(dir, name); fs.writeFileSync(f, buf); return f; };
+    const src = put('in.mp4', video);
+    const info = await probeVideo(src);
+    const tall = info.height > info.width;
+    const cardSec = Math.max(0, Math.min(6, seconds - info.seconds));
+    if (tall && cardSec < 1) return video;
+    const sharp = (await import('sharp')).default;
+    const W = 1080; const H = 1920;
+    const vh = tall ? H : Math.round(W * info.height / info.width / 2) * 2; // the video's height in the frame
+    const top = Math.round((H - vh) / 2);
+    // the words around the video, in the blurred bands above and below it
+    const comps = [];
+    const text = async (t, px, colour) => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${px}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+    if (!tall && logo) {
+      const lg = await sharp(logo).resize({ width: 300 }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      for (let i = 0; i < lg.data.length; i += 4) { lg.data[i] = 255; lg.data[i + 1] = 255; lg.data[i + 2] = 255; }
+      comps.push({ input: await sharp(lg.data, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } }).png().toBuffer(), top: Math.max(120, top - 90 - lg.info.height), left: Math.round((W - lg.info.width) / 2) });
+    }
+    const under = top + vh + 70;
+    if (!tall && codes.length) {
+      const t = await text(codes.join('     '), 56, '#ffffff'); const m = await sharp(t).metadata();
+      comps.push({ input: t, top: under, left: Math.max(20, Math.round((W - m.width) / 2)) });
+    }
+    if (!tall && line) {
+      const t = await text(line, 44, '#d6b25e'); const m = await sharp(t).metadata();
+      comps.push({ input: t, top: under + (codes.length ? 100 : 0), left: Math.max(20, Math.round((W - m.width) / 2)) });
+    }
+    const words = put('words.png', await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer());
+    const bin = await ffmpegPath();
+    const args = ['-y', '-loglevel', 'error', '-i', src, '-loop', '1', '-i', words];
+    const fc = [
+      `[0:v]fps=30,split[a][b]`,
+      `[a]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=24:2,eq=brightness=-0.18[bg]`,
+      `[b]scale=${W}:${H}:force_original_aspect_ratio=decrease,setsar=1[fg]`,
+      `[bg][fg]overlay=(W-w)/2:(H-h)/2[m]`,
+      `[m][1:v]overlay=0:0:shortest=1,format=yuv420p,setsar=1[v0]`,
+    ];
+    let vout = '[v0]';
+    let n = 2;
+    if (cardSec >= 1 && card) {
+      const lastFile = path.join(dir, 'last.jpg');
+      // the room before its own end words appear, blurred well, so no word of the video shows behind the card's words
+      await run(bin, ['-y', '-loglevel', 'error', '-ss', Math.max(0, info.seconds - 2.8).toFixed(2), '-i', src, '-frames:v', '1', lastFile], 60000);
+      const ground = await sharp(fs.readFileSync(lastFile)).resize(W, H, { fit: 'cover' }).blur(28).jpeg({ quality: 90 }).toBuffer();
+      const cardFile = put('card.png', await card(ground));
+      args.push('-loop', '1', '-t', cardSec.toFixed(2), '-i', cardFile);
+      fc.push(`[${n}:v]scale=${W}:${H},fps=30,format=yuv420p,setsar=1,fade=t=in:st=0:d=0.5[v1]`, `[v0][v1]concat=n=2:v=1:a=0[vv]`);
+      vout = '[vv]'; n += 1;
+    }
+    const total = info.seconds + (cardSec >= 1 && card ? cardSec : 0);
+    // the sound: the video's own, then kept music faded in under the end card; a silent track when there is none (Instagram wants one)
+    const own = info.sound ? `[0:a]aresample=48000,apad=whole_dur=${total.toFixed(2)}[own]` : `anullsrc=r=48000:cl=stereo,atrim=0:${total.toFixed(2)}[own]`;
+    fc.push(own);
+    let aout = '[own]';
+    if (music && total > info.seconds + 0.5) {
+      args.push('-i', put('music.mp3', music));
+      const start = Math.max(0, info.seconds - 0.6);
+      fc.push(`[${n}:a]aresample=48000,atrim=0:${(total - start).toFixed(2)},afade=t=in:st=0:d=0.8,volume=0.8,adelay=${Math.round(start * 1000)}:all=1[mus]`, `[own][mus]amix=inputs=2:duration=first:normalize=0[mix]`);
+      aout = '[mix]'; n += 1;
+    }
+    fc.push(`${aout}afade=t=out:st=${Math.max(0, total - 1).toFixed(2)}:d=1[aa]`);
+    const out = path.join(dir, 'out.mp4');
+    args.push('-filter_complex', fc.join(';'), '-map', vout, '-map', '[aa]', '-t', total.toFixed(2), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-threads', '1', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', out);
+    await run(bin, args, 420000);
+    return fs.readFileSync(out);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
 /** The cover of a video the owner sends (21/11): its frame at one second, a 4:5 JPEG for the draft's picture. */
 export async function coverFrame(video) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cover-'));

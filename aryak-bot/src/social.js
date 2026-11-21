@@ -358,6 +358,7 @@ export const GEMINI_PROMPT_RULES = `You are Atossa, the creative director of {BR
 Shape (the owner liked it; his review of the first video, 21/11: it came out 10 s and landscape, the dark olive came out lighter, a grey-green came out warm beige, and one film moved to another place in a close-up):
 - Start: "Portrait 9:16 vertical video (taller than wide), 10 seconds, photorealistic Instagram Reel for ARYAK, a supplier of decorative PVC films for kitchen and wardrobe fronts in the UAE. The attached pictures are the exact film samples." Keep the subject and every text inside the centre of the frame, so a vertical crop never cuts them.
 - EXACT FILMS, said plainly and strongly: each film is rendered exactly like its attached sample: the same colour, brightness, pattern, grain direction, scale and surface; never changed, never warmed, cooled, lightened, darkened or reinterpreted by the light, never a different wood or stone. The catalogue name is only a label: the colour is the sample's. For every film give its code, its sample (first, second...), where it goes, and its MEASURED colour exactly as given to you (the hex and the words, for example "very dark olive, hex #3F4030; keep it this dark, never lighter"); never describe a colour by its name when the measured colour says otherwise.
+- TRUE LIGHT ON THE FILMS (the owner, 21/11: a pale greige oak came out golden orange under warm light): the light falling on the films is soft neutral daylight, so each film shows its true sample colour; warm accents (lamps, LED strips, sunset) stay small and away from the film fronts; a wood film keeps its sample's grain, as fine and as pale. Never use the word warm for a film's colour.
 - ONE PLACE PER FILM: each film stays on the same surfaces in every shot, and a close-up shows the very place it has in the wide view (never another film's place).
 - THESE ARE PVC FILMS: they cover only vertical faces (doors, drawer fronts, panels, wall cladding). No film on a worktop, countertop, island top or shelf top: tops are real stone or quartz in a quiet matching tone; a marble-look film only on wall panels, tall doors or island side panels. Say this in the prompt.
 - THE ROOM: the design's room in rich, editorial detail (layout, light, styled objects, a fully styled space behind any glass), the camera always inside the room at eye level, every door closed, a signature detail that makes it memorable.
@@ -382,7 +383,7 @@ export async function swatchTone(buf) {
   let tone;
   if (max - min < 10) tone = 'neutral grey';
   else if (g >= r && g > b) tone = Y < 0.15 ? 'olive' : 'grey-green';
-  else if (r >= g && g >= b) tone = r - b > 40 ? 'warm brown-beige' : 'warm grey-beige';
+  else if (r >= g && g >= b) tone = r - b > 40 ? 'pale beige' : 'greige'; // never «warm»: the word warmed a pale oak to orange (the owner, 21/11)
   else if (b > r) tone = 'cool blue-grey';
   else tone = 'muted';
   return { hex, words: `${light} ${tone}${Y < 0.15 ? ', keep it this dark, never lighter' : ''}`, Y };
@@ -857,6 +858,7 @@ export class SocialDesk {
     ].filter(Boolean).join('\n') }) || '').trim().replace(/\s*\n+\s*/g, ' ');
     if (!raw) return { text: 'The prompt for Gemini could not be written; try again.' };
     this.remember(plan);
+    this.store.d.geminiLast = { codes: films.map((f) => f.code), at: this.now() }; // the video he sends back ends with these codes
     const sw = films.map((f) => ({ code: f.code, name: f.name, image: fs.readFileSync(path.join(this.catalogDir, all[f.code].file)) }));
     const head = [
       `طرح برای جمینای: ${plan.title_fa || plan.room}`,
@@ -865,7 +867,7 @@ export class SocialDesk {
       ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`),
       '',
       'روش ساختن ویدیو:',
-      '۱. در جمینای دستیار «استودیوی آریاک» را باز کنید (هر سه کاتالوگ را می‌شناسد) و «ساختن ویدیو» را بزنید؛ جمینای ویدیوی ده‌ثانیه‌ای می‌سازد.',
+      '۱. در جمینای دستیار «استودیوی آریاک» را باز کنید (هر سه کاتالوگ را می‌شناسد) و «ساختن ویدیو» را بزنید؛ جمینای ویدیوی ده‌ثانیه‌ای می‌سازد و آتوسا آن را عمودی و پانزده‌ثانیه‌ای می‌کند.',
       `۲. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید${inspiration ? ' و عکس الهام خودتان را هم بعد از آن‌ها' : ''}.`,
       '۳. متن پیام بعدی را کامل بچسبانید و بفرستید.',
       '۴. ویدیو را همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا شرح می‌نویسد و با «بله پست» منتشر می‌شود.',
@@ -875,10 +877,24 @@ export class SocialDesk {
 
   /** A post from a video the owner made (in Gemini, 21/11): its first second is the cover, the video goes out as a Reel only, with the stories. */
   async draftVideoPost({ video, note = '' }) {
-    const { coverFrame } = await import('./reel.js');
+    const { coverFrame, verticalReel, endCard } = await import('./reel.js');
     let cover;
     try { cover = await coverFrame(video); } catch (err) { return `The video could not be read (${err.message}); send it again.`; }
-    const codes = this.codesIn(note).map((c) => c.code);
+    const last = this.store.d.geminiLast;
+    const named = this.codesIn(note);
+    const codes = named.length ? named.map((c) => c.code) : (last && this.now() - last.at < 3 * 86400000 ? last.codes : []);
+    // the Gemini app makes 10-second landscape videos (the owner, 21/11: «a 15-second Reel»): the whole video in the middle of a vertical
+    // frame over a blurred copy of itself, the logo above and the codes and WhatsApp below, then the end card to 15 seconds
+    try {
+      const all = this.catalog();
+      const brand = this.brandAssets();
+      const films = codes.filter((c) => all[c]).map((c) => ({ code: c, name: all[c].name || '', swatch: fs.readFileSync(path.join(this.catalogDir, all[c].file)) }));
+      const dir = this.brandDir ? path.join(this.brandDir, 'music') : '';
+      let music = null;
+      try { const kept = fs.readdirSync(dir).filter((f) => f.endsWith('.mp3')); if (kept.length) music = fs.readFileSync(path.join(dir, kept[Math.floor(Math.random() * kept.length)])); } catch { /* no kept music: the video's own sound only */ }
+      video = await verticalReel({ video, seconds: 15, logo: brand.logo, font: brand.font, codes: films.map((f) => f.code), line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : '', music,
+        card: (frame) => endCard({ codes: films, logo: brand.logo, font: brand.font, cta: films.length > 1 ? 'Send the code you like on WhatsApp' : 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK', background: frame }) });
+    } catch (err) { this.log(`social: the video was kept as it came (${err.message})`); }
     const facts = `This is a short AI-made video Reel of an interior for ARYAK films${codes.length ? `, made with ${codes.map((c) => `«Code ${c}»`).join(', ')}` : ''}. Say that it is a design idea and name the codes.`;
     const mine = {};
     const text = await this.draftPost({ image: cover, mime: 'image/jpeg', note, facts, made: mine });
@@ -888,7 +904,7 @@ export class SocialDesk {
     p.videoOnly = true;
     if (codes.length) p.design = { room: 'video', codes, title: '', scene: '' };
     this.store.save();
-    return `${text}\n(ویدیو به‌صورت ریلز منتشر می‌شود، همراه استوری‌ها؛ عکس جدا منتشر نمی‌شود.)`;
+    return `${text}\n(ویدیو عمودی و پانزده‌ثانیه‌ای به‌صورت ریلز منتشر می‌شود، همراه استوری‌ها؛ عکس جدا منتشر نمی‌شود.)`;
   }
 
   /** The room of a plan, drawn by Gemini with each film's own picture (and the owner's inspiration as a mood reference). The raw picture. */
