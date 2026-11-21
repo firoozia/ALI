@@ -195,7 +195,10 @@ export function parsePaymentCaption(text) {
   const s0 = clean(text);
   if (!s0) return null;
   if (isEstimateText(s0)) return null; // an estimate, a quotation or an offer is never a payment
-  const s = s0.replace(/(?<![A-Za-z0-9])\d+(?:\.d+)?\s*(?:PCS?|PIECES?)\b/gi, ' ').replace(/\s+/g, ' ').trim(); // «4PC» is a count of pieces, never an amount
+  const s = s0.replace(/(?<![A-Za-z0-9])\d+(?:\.\d+)?\s*(?:PCS?|PIECES?)\b/gi, ' ') // «4PC» is a count of pieces, never an amount
+    .replace(/\b(?:month|mon)\s*(?:no\.?\s*)?\d{1,2}\b/gi, ' ') // «Al ebda month 10» (live 21/11): the month of a statement, never 10 AED
+    .replace(/\s+/g, ' ').trim();
+  if (/\?\s*$/.test(s) && /\b(?:available|stock|price|have)\b/i.test(s)) return null; // «307 available one roll in China stock?» is a question, no money
   const INV_NO = /(?:\binv(?:oice)?s?\b|فاکتور)\.?\s*(?:no\.?|number|#|شماره)?\s*[-:#]?\s*\d{3,6}/i;
   if (/^cleared?\b(?!\s+inv)/i.test(s) && !INV_NO.test(s)) return { kind: 'cleared' }; // with an invoice number it is a payment message («clear MUNICH DOOR KITCHEN inv 9940»), below
   const ci = /^clear\s+inv(?:oices?)?\.?\s*([\d\s/,&-]+)$/i.exec(s);

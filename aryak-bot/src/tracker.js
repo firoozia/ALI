@@ -333,14 +333,15 @@ export function customersWithOpenInvoices(tracker, { now = Date.now(), windowDay
 
 /**
  * A cutter posts a running total (live 21/11: «ART NO 228 DANDY DOOR 20.7M», then «20.7+25=44.7M»): the earlier post of the same customer and code
- * that day, whose length is the first piece or the first pieces of the new one, is now part of it. Its line keeps its length as [was] and counts 0,
+ * that day, whose length is one piece or a run of pieces of the new one, is now part of it. Its line keeps its length as [was] and counts 0,
  * so the cut is counted, cross-checked and reported once. Never an invoiced line, never another customer or code.
  */
 export function supersedeRunningTotal(events, ev, { hours = 8 } = {}) {
   if (ev.type !== 'cut' || ev.internal || !Array.isArray(ev.pieces) || ev.pieces.length < 2 || (ev.lines || []).length !== 1) return 0;
   const code = String(ev.lines[0].code || '').toUpperCase();
-  const prefix = []; let run = 0;
-  for (const p of ev.pieces.slice(0, -1)) { run += Number(p) || 0; prefix.push(Math.round(run * 1000) / 1000); }
+  // the earlier post is one run of the pieces, first or last («4M», then «12+4=16M» on 15/11), never all of them
+  const prefix = []; const ps = ev.pieces.map((x) => Number(x) || 0);
+  for (let i = 0; i < ps.length; i++) { let run = 0; for (let j = i; j < ps.length; j++) { run += ps[j]; if (!(i === 0 && j === ps.length - 1)) prefix.push(Math.round(run * 1000) / 1000); } }
   let n = 0;
   for (const e of events) {
     if (e.type !== 'cut' || e.internal || e.supersededBy || (e.lines || []).length !== 1) continue;

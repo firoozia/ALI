@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseDeliveryCaption, parseCutCaption } from '../src/captions.js';
+import { parseDeliveryCaption, parseCutCaption, parsePaymentCaption } from '../src/captions.js';
 import { supersedeRunningTotal } from '../src/tracker.js';
 import { buildDigest } from '../src/digest.js';
 
@@ -35,6 +35,8 @@ test('a running total takes the place of the earlier post of its first pieces (l
   assert.equal(events[0].supersededBy, 'b'); assert.equal(events[0].lines[0].quantity, 0); assert.equal(events[0].lines[0].was, 20.7);
   assert.equal(events[1].lines[0].quantity, 20.7, 'another customer is untouched');
   assert.equal(events[2].lines[0].quantity, 25, 'an invoiced line is untouched');
+  const later = [{ type: 'cut', ref: 'x', at: now, customer: 'DANDY DOORS', lines: [{ code: '409', quantity: 4, unit: 'm' }] }];
+  assert.equal(supersedeRunningTotal(later, { type: 'cut', ref: 'y', at: now + 5 * 60000, customer: 'DANDY DOORS', pieces: [12, 4], lines: [{ code: '409', quantity: 16, unit: 'm' }] }), 1, 'the last piece too (15/11: 4M, then 12+4=16M)');
   // the summary counts it once, no opened roll, no dispatch as a delivery
   const day = '2026-11-21';
   const all = [...events.slice(0, 1), ev,
@@ -50,4 +52,16 @@ test('the summary\'s «cuts with no invoice» comes from QuickBooks, and it name
   assert.match(src, /async function cutsNoInvoiceCount\(\)/);
   assert.match(src, /Cuts with no invoice in QuickBooks yet \(a day old or more\)/);
   assert.match(src, /Invoices made by Atossa in QuickBooks: \$\{made\.length\}/);
+});
+
+test('a month number and a stock question are never money (the owner, 21/11: «Al ebda month 10» was a payment of 10 AED)', () => {
+  const m = parsePaymentCaption('Al ebda month 10');
+  assert.ok(!m || !(Number(m.amount) > 0), JSON.stringify(m));
+  assert.equal(parsePaymentCaption('307 available one roll in China stock?'), null);
+  assert.equal(parsePaymentCaption('AL EBDA 5000 cheque for month 10').amount, 5000);
+  assert.equal(parsePaymentCaption('Cash from pvc work 789.5 aed').amount, 789.5);
+  const text = buildDigest({ history: [], requests: [], day: '2026-11-21', events: [
+    { type: 'payment', kind: 'transfer', amount: 0, noAmount: true, at: Date.parse('2026-11-10T10:00:00Z') },
+    { type: 'payment', kind: 'cash', amount: 500, at: Date.parse('2026-11-10T10:00:00Z') }] });
+  assert.match(text, /\(«CLEARED» نخورده\): 1/);
 });

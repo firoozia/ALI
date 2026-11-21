@@ -82,7 +82,7 @@ export function buildDigest({ history, requests, day, timeZone = 'Asia/Dubai', e
   const cuts = today.filter((e) => e.type === 'cut' && !e.internal && !e.simulated && !e.supersededBy).length;
   const deliveries = today.filter((e) => e.type === 'delivery' && !e.simulated && e.status !== 'dispatched').length;
   if (cuts || deliveries || count('payment')) lines.push(`- برش‌های ثبت‌شده: ${cuts}`, `- تحویل‌ها: ${deliveries}`, `- پرداخت‌های ثبت‌شده: ${count('payment')}`);
-  const open = events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared).length;
+  const open = events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared && !e.noInvoice && Number(e.amount) > 0).length; // a receipt with no amount read is no money waiting
   const received = count('received');
   if (received) lines.push(`- کالاهای رسیده‌شده: ${received}`);
   if (open) lines.push(`- پرداخت‌های هنوز تأییدنشده («CLEARED» نخورده): ${open}`);
