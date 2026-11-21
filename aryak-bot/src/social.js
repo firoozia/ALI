@@ -1515,7 +1515,7 @@ export class SocialDesk {
     views.forEach((v, k) => seq.push({ image: v, sec: onBeat(2.2), move: 'pan', toRight: k % 2 === 1 }));
     for (const [k, x] of rest.entries()) seq.push({ code: x.code, image: x.image, sec: onBeat(x.wood ? 3 : 2.6), ...(orbit ? { move: 'pan', toRight: k % 2 === 0 } : { move: 'push', zoom: x.wood ? 0.18 : 0.1 }), label: await label(x.code) });
     // the length: 20 s at most (the owner's review, 17/11: 41 s with the same doors twice), or what the owner asked (8 to 30 s)
-    const cardSec = 2.5;
+    let cardSec = 2.5;
     const want = Number(opts?.seconds);
     const cap = Number.isFinite(want) && want > 0 ? Math.min(30, Math.max(8, want)) : REEL_MAX_SECONDS;
     const length = () => seq.reduce((a, x) => a + x.sec, 0) - fade * (seq.length - 1) + cardSec - fade;
@@ -1536,12 +1536,14 @@ export class SocialDesk {
     if (pro && this.imager?.speak && this.cfg.voiceOver !== false) {
       const say = async (t) => { try { return await this.imager.speak(t); } catch (err) { this.log(`social: a voice line failed: ${err.message}`); return null; } };
       const n = (d.reelOpens || []).length;
-      const opens = ['Experience luxury with Aree-yak.', 'Aree-yak. Premium surface films.', 'Discover the Aree-yak collection.'];
-      const closes = ['Premium surfaces, designed for you.', 'Send us the code you love.', 'Find your colour with Aree-yak.'];
+      const opens = ['Experience luxury with Ah-ree-yack.', 'Ah-ree-yack. Premium surface films.', 'Discover the Ah-ree-yack collection.']; // heard as AH-ree-ak, the way the owner says it (tested 21/11: «Aree-yak» came out «Aria»)
+      const closes = ['Premium surfaces, designed for you.', 'Send us the code you love.', 'Find your colour with Ah-ree-yack.'];
       const first = seq.findIndex((x) => x.image === tagged || x.image === room);
       if (first >= 0) seq[first].voice = await say(opens[n % opens.length]);
       for (const x of seq) if (!x.voice && x.label && x.code) { const c = named.find((y) => y.code === x.code); if (c?.name) x.voice = await say(`${c.name}.`); }
       cardVoice = await say(closes[n % closes.length]);
+      // the card stays until its line is said (live 21/11: «designed for you» was cut off by the end of the Reel)
+      if (cardVoice) cardSec = Math.max(cardSec, (cardVoice.length - 44) / 48000 + 1.1);
     }
     d.reelOpens = [...(d.reelOpens || []), open].slice(-6);
     d.reelPairs = [...(d.reelPairs || []), cards.length > 0].slice(-6);

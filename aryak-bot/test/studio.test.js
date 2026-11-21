@@ -1095,6 +1095,7 @@ test('a Reel like the reference (the owner, 21/11): pointers on the room, a cent
   assert.match(src, /sidechaincompress=threshold=0\.02:ratio=8/, 'the music steps back under the voice');
   assert.match(src, /anoisesrc=c=pink/, 'the whooshes');
   const social = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(social, /const opens = \['Experience luxury with Aree-yak\.'/, 'the brand said the way the owner says it');
+  assert.match(social, /const opens = \['Experience luxury with Ah-ree-yack\.'/, 'the brand said the way the owner says it');
+  assert.match(social, /if \(cardVoice\) cardSec = Math\.max\(cardSec, \(cardVoice\.length - 44\) \/ 48000 \+ 1\.1\);/, 'the card waits for its line');
   assert.match(social, /model = 'gemini-3\.1-flash-tts-preview'/);
 });
