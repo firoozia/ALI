@@ -1107,12 +1107,12 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
   desk.write = async (r) => (r.kind === 'gemini-prompt' ? (writes.push(r), 'A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK.\nSecond line.') : base(r));
   const d = await desk.draftDesign({ note: 'آشپزخانه' });
   assert.equal(made.length, 0, 'nothing is drawn on the paid key');
-  assert.equal(d.prompt, 'A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK. Second line.', 'one paragraph: a line break would send it early');
+  assert.equal(d.prompt, 'A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK.\nSecond line.', 'the sections stay on their own lines (22/11: pasted, a line break does not send)');
   assert.ok(d.swatches.length >= 1 && Buffer.isBuffer(d.swatches[0].image));
   assert.match(d.text, /^طرح برای جمینای:/);
   assert.match(d.text, /«پست»/);
   const w = writes.find((x) => x.kind === 'gemini-prompt');
-  assert.match(w.system, /Gemini video maker/); assert.match(w.text, /the first sample/);
+  assert.match(w.system, /the video tool of the Gemini app/); assert.match(w.text, /the first sample/);
   const t = await desk.draftVideoPost({ video: Buffer.from('not a video'), note: 'HZ812' });
   assert.match(t, /could not be read/, 'a broken video is said, never posted');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
@@ -1128,14 +1128,12 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
 
 test('the Gemini prompt (the owner, 21/11): a top designer and marketer, every film exactly its sample, no PVC film on a worktop', async () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /Portrait 9:16 vertical video \(taller than wide\), 10 seconds, the first part of a 15-second photorealistic Instagram Reel for ARYAK/);
   assert.match(src, /a world-class interior designer who also thinks like a top performance marketer/);
-  assert.match(src, /each film is rendered exactly like its attached sample: the same colour, brightness, pattern, grain direction, scale and surface/);
-  assert.match(src, /No film on a worktop, countertop, island top or shelf top/);
+  assert.match(src, /Tops are real stone or quartz in a quiet tone, because a PVC film covers only vertical faces/);
   assert.match(src, /NEVER on a worktop, a countertop, an island top, a shelf top/, 'the designer too');
-  assert.match(src, /plan\.parts\.slice\(0, 4\)/);
-  assert.match(src, /جمینای ویدیوی ده‌ثانیه‌ای می‌سازد و آتوسا آن را عمودی و پانزده‌ثانیه‌ای می‌کند/);
-  assert.match(src, /دستیار «استودیوی آریاک» را باز کنید/, 'the Gem with the three catalogues (21/11)');
+  assert.match(src, /plan\.parts\.slice\(0, 3\)/, 'at most three films: a fourth sample averages the colours (Gemini, 22/11)');
+  assert.match(src, /جمینای معمولی را باز کنید \(گفتگوی تازه، نه دستیار «استودیوی آریاک»/, 'only plain Gemini offers 15 s and portrait (22/11)');
+  assert.match(src, /زیر کادر «۱۵ ثانیه» و «عمودی» را برگزینید/);
 });
 
 test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, portrait first, the measured colour of each sample, one place per film', async () => {
@@ -1151,16 +1149,15 @@ test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, po
   assert.match(oak.words, /beige|greige/);
   assert.doesNotMatch(oak.words + sage.words + t1.words, /warm/, 'never «warm» for a film (the oak came out orange)');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /The catalogue name is only a label: the colour is the sample's/);
-  assert.match(src, /ONE PLACE PER FILM/);
-  assert.match(src, /measured colour: \$\{f\.tone\.words\}, hex \$\{f\.tone\.hex\}/);
+  assert.match(src, /REFERENCE MAPPING: one line per film: "Image 1 \(a short look/);
   const { desk, writes } = await studio();
   desk.cfg.designMode = 'gemini';
   const base = desk.write;
   desk.write = async (r) => (r.kind === 'gemini-prompt' ? (writes.push(r), 'A prompt.') : base(r));
   await desk.draftDesign({ note: 'آشپزخانه' });
   const w = writes.find((x) => x.kind === 'gemini-prompt');
-  assert.match(w.text, /measured colour: [a-z -]+, hex #[0-9A-F]{6}/, 'the writer gets each sample\'s colour');
+  assert.match(w.text, /image 1; measured colour: [a-z -]+\)/, 'the writer gets each sample\'s colour in words, never a hex (22/11)');
+  assert.doesNotMatch(w.text, /never lighter|hex #/);
 });
 
 test('a Gemini video sent back (the owner, 21/11: «make the Reel 15 seconds»): a 10-second landscape video becomes a vertical 15-second Reel with the end card; the light rule is in the prompt', async () => {
@@ -1182,51 +1179,61 @@ test('a Gemini video sent back (the owner, 21/11: «make the Reel 15 seconds»):
     assert.ok(info.seconds > 6.6 && info.seconds < 7.4, `about 7 seconds: ${info.seconds}`);
     assert.ok(info.sound, 'the sound goes on');
     assert.ok(Buffer.isBuffer(lastFrame) && lastFrame.length > 100, 'the end card is made on the video\'s last frame');
-    // a vertical video that is long enough is posted as it came
+    // a vertical video that is long enough and has nothing to be written on it is posted as it came
     const tallSrc = path.join(dir, 'tall.mp4');
     spawnSync(await ffmpegPath(), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=360x640:rate=24:duration=3', '-c:v', 'libx264', '-preset', 'ultrafast', tallSrc]);
     const tall = fs.readFileSync(tallSrc);
     assert.equal(await verticalReel({ video: tall, seconds: 3 }), tall);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /TRUE LIGHT ON THE FILMS/);
+  assert.match(src, /Neutral 5500K overcast daylight from the windows, flat even product lighting, true-to-life matte colours, zero colour grading/);
   assert.match(src, /video = await verticalReel\(\{ video, seconds: 15,/);
   assert.match(src, /this\.store\.d\.geminiLast = \{ codes:/);
 });
 
-test('one continuous 15-second Gemini Reel (the owner, 21/11: «15 seconds for all the scenes»): the prompt and its extension in the same chat; a longer video is cut to 15 s, never an end card', { skip: !fs.existsSync(await ffmpegPath()) && 'no ffmpeg here' }, async () => {
+test('the vertical 15-second Gemini Reel (the owner, 22/11: Gemini\'s own prompt formula; plain Gemini makes 15 s portrait): a short sectioned prompt with no text in the video; Atossa writes the logo, codes, names and WhatsApp on it', { skip: !fs.existsSync(await ffmpegPath()) && 'no ffmpeg here' }, async () => {
   const { geminiParts } = await import('../src/social.js');
   const { verticalReel } = await import('../src/reel.js');
-  assert.deepEqual(geminiParts('PROMPT: one\nline\nEXTEND: two\nmore'), { prompt: 'one line', extend: 'two more' });
-  assert.deepEqual(geminiParts('just one\nprompt'), { prompt: 'just one prompt', extend: '' }, 'an answer without the marks is the prompt alone');
+  assert.deepEqual(geminiParts('SCENE: a kitchen\n\n  CAMERA: one dolly-in  \nFORMAT: 9:16'), { prompt: 'SCENE: a kitchen\nCAMERA: one dolly-in\nFORMAT: 9:16', extend: '' }, 'the sections keep their lines');
+  assert.deepEqual(geminiParts('PROMPT: one\nEXTEND: two\nmore'), { prompt: 'one', extend: 'two more' }, 'an old two-part answer still splits');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /You write a PROMPT and an EXTEND message in English for Google's Gemini video maker; together they make ONE continuous 15-second Instagram Reel/);
-  assert.match(src, /10 seconds, the first part of a 15-second photorealistic Instagram Reel for ARYAK/);
-  assert.match(src, /Extend this same video, continuing seamlessly from its very last frame/);
-  assert.match(src, /it ends on the last close-up: no logo, no end title/);
-  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
-  assert.match(index, /if \(d\.extend\) await socialSay\(d\.extend\);/, 'the extension is its own message, easy to copy');
-  // «طرح»: the prompt, then the extension and the steps that say where it goes
+  assert.match(src, /80 to 150 words in short labelled sections, each section on its own line/);
+  assert.match(src, /FORMAT: Aspect ratio: 9:16 vertical portrait\. Single continuous take, 15 seconds\./);
+  assert.match(src, /Leave out the words warm, golden, cozy, cinematic, moody and luxury lighting/);
+  assert.match(src, /the video itself carries no text at all/);
+  assert.match(src, /labels: films, tagline: 'PREMIUM SURFACE FILMS'/);
+  // «طرح»: the prompt with its lines, the steps for plain Gemini
   const { desk } = await studio();
   desk.cfg.designMode = 'gemini';
   const base = desk.write;
-  desk.write = async (r) => (r.kind === 'gemini-prompt' ? 'PROMPT: The room in 10 s.\nEXTEND: Extend this same video.' : base(r));
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? 'SCENE: The room.\nFORMAT: Aspect ratio: 9:16 vertical portrait.' : base(r));
   const d = await desk.draftDesign({ note: 'آشپزخانه' });
-  assert.equal(d.prompt, 'The room in 10 s.');
-  assert.equal(d.extend, 'Extend this same video.');
-  assert.match(d.text, /در همان گفتگو متن دوم \(پیام آخر\) را بچسبانید/);
-  assert.match(d.text, /۵\. ویدیوی نهایی \(بلندتر\) را بارگیری کنید/);
-  // a video longer than the Reel is cut to it, with no end card (short here to keep the test quick)
-  const dir = tmp('ext-');
+  assert.equal(d.prompt, 'SCENE: The room.\nFORMAT: Aspect ratio: 9:16 vertical portrait.');
+  assert.equal(d.extend, '');
+  assert.match(d.text, /۵\. ویدیو را بارگیری کنید/);
+  // a vertical video gets Atossa's words, fills the frame and keeps its length (short here to keep the test quick)
+  const dir = tmp('tall-');
   const { spawnSync } = await import('node:child_process');
-  const f = path.join(dir, 'long.mp4');
-  spawnSync(await ffmpegPath(), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=gray:s=320x180:d=6:r=24', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=6', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', f]);
+  const f = path.join(dir, 'tall.mp4');
+  spawnSync(await ffmpegPath(), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=gray:s=360x640:d=4:r=24', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', f]);
+  const tall = fs.readFileSync(f);
+  const logo = await sharp({ create: { width: 300, height: 100, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
   let carded = 0;
-  const out = await verticalReel({ video: fs.readFileSync(f), seconds: 4, codes: ['126'], line: 'WhatsApp +971000', card: async () => { carded++; return Buffer.alloc(0); } });
+  const out = await verticalReel({ video: tall, seconds: 4, logo, labels: [{ code: 'HZ812', name: 'Dark walnut' }, { code: '212', name: 'Olive khaki solid' }], tagline: 'PREMIUM SURFACE FILMS', line: 'WhatsApp +971000', card: async () => { carded++; return Buffer.alloc(0); } });
+  assert.notEqual(out, tall, 'the words are written on it');
   fs.writeFileSync(path.join(dir, 'out.mp4'), out);
   const err = spawnSync(await ffmpegPath(), ['-hide_banner', '-i', path.join(dir, 'out.mp4')], { encoding: 'utf8' }).stderr;
   const [, h, m, sec] = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(err);
-  assert.ok(Math.abs(+h * 3600 + +m * 60 + +sec - 4) < 0.2, `cut to the Reel's length (${sec})`);
-  assert.match(err, /1080x1920/);
-  assert.equal(carded, 0, 'no end card: all of it is the room');
+  assert.ok(Math.abs(+h * 3600 + +m * 60 + +sec - 4) < 0.2, `its own length (${sec})`);
+  assert.match(err, /1080x1920/); assert.match(err, /Audio:/);
+  assert.equal(carded, 0, 'no end card: the end logo is written on the room');
+  // the bottom of the frame has the light words on it, the gray room above stays gray
+  const frame = path.join(dir, 'f.png');
+  spawnSync(await ffmpegPath(), ['-y', '-loglevel', 'error', '-ss', '1', '-i', path.join(dir, 'out.mp4'), '-frames:v', '1', frame]);
+  const { data, info } = await sharp(frame).raw().toBuffer({ resolveWithObject: true });
+  let bright = 0;
+  for (let y = 1300; y < 1500; y += 2) for (let x = 100; x < 980; x += 2) { const i = (y * info.width + x) * info.channels; if (data[i] > 220 && data[i + 1] > 220) bright++; }
+  assert.ok(bright > 200, `the codes and names are written at the foot (${bright} bright points)`);
+  const reelSrc = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
+  assert.match(reelSrc, /let y = 1500 - \(rows\.length \* rowH \+ \(line \? 70 : 0\)\); \/\/ the block ends at the safe bottom/);
 });

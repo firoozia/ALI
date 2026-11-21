@@ -47,9 +47,10 @@ export async function probeVideo(file) {
  * A vertical Reel from a video the owner made in Gemini (the owner, 21/11: the app makes 10-second landscape videos, «make the Reel 15
  * seconds»): the whole video in the middle of a 1080 x 1920 frame over a blurred, darkened copy of itself (no label of it is cut), the
  * logo above it, the codes and the WhatsApp line below it, then the end card ([card](lastFrame) -> PNG) up to [seconds]. The video's own
- * sound goes on; kept [music] comes in under the end card. A video that is already vertical and long enough is returned as it is.
+ * sound goes on; kept [music] comes in under the end card. A video that is already vertical and long enough (plain Gemini's 15 s portrait,
+ * 22/11) fills the frame and gets Atossa's words on it (dressTall): the logo, each film's code and name, the WhatsApp line and the end logo.
  */
-export async function verticalReel({ video, seconds = 15, logo = null, font = '', codes = [], line = '', card = null, music = null }) {
+export async function verticalReel({ video, seconds = 15, logo = null, font = '', codes = [], labels = [], tagline = '', line = '', card = null, music = null }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vert-'));
   try {
@@ -59,7 +60,10 @@ export async function verticalReel({ video, seconds = 15, logo = null, font = ''
     const tall = info.height > info.width;
     const cardSec = Math.max(0, Math.min(6, seconds - info.seconds));
     const vidSec = Math.min(info.seconds, seconds); // a Gemini video extended to 20 s is cut to the Reel's 15 (the owner, 21/11)
-    if (tall && cardSec < 1 && info.seconds <= seconds + 0.2) return video;
+    if (tall && cardSec < 1) {
+      if (!logo && !labels.length && !line && info.seconds <= seconds + 0.2) return video;
+      return await dressTall({ src, dir, info, seconds: vidSec, logo, font, labels: labels.length ? labels : codes.map((c) => ({ code: c, name: '' })), tagline, line, music });
+    }
     const sharp = (await import('sharp')).default;
     const W = 1080; const H = 1920;
     const vh = tall ? H : Math.round(W * info.height / info.width / 2) * 2; // the video's height in the frame
@@ -120,6 +124,63 @@ export async function verticalReel({ video, seconds = 15, logo = null, font = ''
     await run(bin, args, 420000);
     return fs.readFileSync(out);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
+/**
+ * Atossa's words on a vertical Gemini video (the owner, 22/11; Gemini's own advice: make the video clean and put the codes, the
+ * callouts and the phone number on afterwards, so every letter is right and the brand's font stays the same): the video fills the
+ * 1080 x 1920 frame; the white logo on top; at the foot, over a soft dark fade, each film's code and name and the WhatsApp line; for the
+ * last 3 seconds the room darkens a little under a large logo and the [tagline]. Everything stays inside the Reel's safe area.
+ */
+async function dressTall({ src, dir, info, seconds, logo = null, font = '', labels = [], tagline = '', line = '', music = null }) {
+  const sharp = (await import('sharp')).default;
+  const W = 1080; const H = 1920;
+  const text = async (t, px, colour) => sharp({ text: { text: `<span foreground="${colour}">${String(t).replace(/[<&>]/g, '')}</span>`, font: `IBM Plex Sans SemiBold ${px}`, ...(font ? { fontfile: font } : {}), dpi: 72, rgba: true } }).png().toBuffer();
+  const white = async (buf, width) => {
+    const lg = await sharp(buf).resize({ width }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    for (let i = 0; i < lg.data.length; i += 4) { lg.data[i] = 255; lg.data[i + 1] = 255; lg.data[i + 2] = 255; }
+    return { input: await sharp(lg.data, { raw: { width: lg.info.width, height: lg.info.height, channels: 4 } }).png().toBuffer(), width: lg.info.width, height: lg.info.height };
+  };
+  const centre = async (buf, top) => { const m = await sharp(buf).metadata(); return { input: buf, top, left: Math.max(24, Math.round((W - m.width) / 2)) }; };
+  // the words over the whole video
+  const comps = [];
+  const fade = Buffer.from(`<svg width="${W}" height="${H}"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0.58" stop-color="#000" stop-opacity="0"/><stop offset="0.86" stop-color="#000" stop-opacity="0.55"/></linearGradient></defs><rect width="${W}" height="${H}" fill="url(#g)"/></svg>`);
+  comps.push({ input: fade, top: 0, left: 0 });
+  if (logo) { const l = await white(logo, 230); comps.push({ input: l.input, top: 250, left: Math.round((W - l.width) / 2) }); }
+  const rows = labels.slice(0, 3);
+  const rowH = 62;
+  let y = 1500 - (rows.length * rowH + (line ? 70 : 0)); // the block ends at the safe bottom
+  for (const r of rows) {
+    const t = await text(`${r.code}${r.name ? `   ${String(r.name).toUpperCase()}` : ''}`, 46, '#ffffff');
+    comps.push(await centre(t, y)); y += rowH;
+  }
+  if (line) comps.push(await centre(await text(line, 42, '#d6b25e'), y + 14));
+  const words = path.join(dir, 'tall-words.png');
+  fs.writeFileSync(words, await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(comps).png().toBuffer());
+  // the end: a darker room, the large logo and the tagline
+  const endComps = [{ input: Buffer.from(`<svg width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#000" fill-opacity="0.38"/></svg>`), top: 0, left: 0 }];
+  if (logo) { const l = await white(logo, 520); endComps.push({ input: l.input, top: 760, left: Math.round((W - l.width) / 2) }); }
+  if (tagline) endComps.push(await centre(await text(tagline, 44, '#ffffff'), logo ? 1000 : 900));
+  const end = path.join(dir, 'tall-end.png');
+  fs.writeFileSync(end, await sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite(endComps).png().toBuffer());
+  const endAt = Math.max(0, seconds - 3);
+  const bin = await ffmpegPath();
+  const args = ['-y', '-loglevel', 'error', '-i', src, '-loop', '1', '-i', words, '-loop', '1', '-t', (seconds - endAt).toFixed(2), '-i', end];
+  const fc = [
+    `[0:v]fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[m]`,
+    `[m][1:v]overlay=0:0:shortest=1[w]`,
+    `[2:v]format=rgba,fade=t=in:st=0:d=0.6:alpha=1,setpts=PTS-STARTPTS+${endAt.toFixed(2)}/TB[e]`,
+    `[w][e]overlay=0:0:eof_action=pass,format=yuv420p[v]`,
+  ];
+  let n = 3;
+  fc.push(info.sound ? `[0:a]aresample=48000,apad=whole_dur=${seconds.toFixed(2)}[own]` : `anullsrc=r=48000:cl=stereo,atrim=0:${seconds.toFixed(2)}[own]`);
+  let aout = '[own]';
+  if (music && !info.sound) { args.push('-i', path.join(dir, 'music.mp3')); fs.writeFileSync(path.join(dir, 'music.mp3'), music); fc.push(`[${n}:a]aresample=48000,atrim=0:${seconds.toFixed(2)},volume=0.8[mus]`, `[own][mus]amix=inputs=2:duration=first:normalize=0[mix]`); aout = '[mix]'; n += 1; }
+  fc.push(`${aout}afade=t=out:st=${Math.max(0, seconds - 1).toFixed(2)}:d=1[aa]`);
+  const out = path.join(dir, 'tall-out.mp4');
+  args.push('-filter_complex', fc.join(';'), '-map', '[v]', '-map', '[aa]', '-t', seconds.toFixed(2), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-threads', '1', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', out);
+  await run(bin, args, 420000);
+  return fs.readFileSync(out);
 }
 
 /** The cover of a video the owner sends (21/11): its frame at one second, a 4:5 JPEG for the draft's picture. */
