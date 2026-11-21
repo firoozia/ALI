@@ -103,6 +103,10 @@ export function parseCutCaption(text) {
   } else {
     const q = QTY_ONE.exec(rest);
     if (q) { quantity = num(q[1]); unit = /^roll/i.test(q[2]) ? 'roll' : /^(pc|piece)/i.test(q[2]) ? 'pcs' : 'm'; rest = rest.replace(q[0], ' '); } // «2 PCS» is two pieces, never two metres
+    else { // «ART NO 201 DESIGNER WOOD 30.» (live 21/11): a length at the very end with no unit is metres, never part of the name
+      const bare = /\s(\d{1,3}(?:\.\d+)?)\.?\s*$/.exec(rest);
+      if (bare && num(bare[1]) > 0) { quantity = num(bare[1]); rest = rest.slice(0, bare.index); }
+    }
   }
   const internal = /\bFOR\s+CUT(?:TING)?\b/i.test(rest);
   const damaged = /\bDAMAG\w*/i.test(rest);
@@ -115,6 +119,9 @@ export function parseCutCaption(text) {
 }
 
 // ---- delivery group --------------------------------------------------------------------------------------------------------
+const GOODS_WORD = /^(?:HINGES?|GLUE|JOWAT|JUWAT|GILU|SCREWS?|HANDLES?|CHANNELS?|SILICON\w*|TAPE|CATALOG\w*)\b/i;
+const GOODS_UNIT_RE = /\d+(?:\.\d+)?\s*(?:BOX(?:ES)?|GALL?[EO]NS?|BAGS?|CARTONS?)/i; // «2 PCS» may be a customer's count; a box or a gallon is goods
+const GOODS_TAIL = /\s+(?:HINGES?|GLUE|JOWAT|SCREWS?|HANDLES?)(?:\s+.*)?$/i; // «MICE INTERIORS GLUE»: the customer is MICE INTERIORS
 const STATUS = [[/\bPICKED\s*UP\b/i, 'picked-up'], [/\bDISPATCHED\b/i, 'dispatched'], [/\bDELIVERED\b/i, 'delivered']];
 
 /**
@@ -132,14 +139,18 @@ export function parseDeliveryCaption(text) {
   for (const [re, name] of STATUS) { const x = re.exec(s); if (x && x.index < cut) { cut = x.index; status = name; } }
   if (!status) return null;
   const head = s.slice(0, cut).replace(/\bAND\b/gi, '&');
-  const customers = head.split(/[,&]/).map((part) => {
+  // goods that go along are not customers (live 21/11: «HAMID TRADING 2 ROLLS, 2 GALLON GLUE & 5 BOX HINGES PICKED UP» gave the customers
+  // «2 GALLON GLUE» and «5 BOX HINGES»): a part that opens with a count or a goods word, or holds a goods unit, belongs to the customer before it
+  const goods = [];
+  const isGoods = (part) => { const t = title(part); return /^\d/.test(t) || GOODS_WORD.test(t) || GOODS_UNIT_RE.test(t); };
+  const customers = head.split(/[,&]/).filter((part) => (isGoods(part) ? (goods.push(title(part)), false) : true)).map((part) => {
     const x = /^(.*?)\s*(\d+(?:\.\d+)?)\s*(ROLLS?|M|MTRS?|METERS?|PCS?|SMPL|SAMPLES?)\b(?:\s+WITH\b.*)?\s*$/i.exec(title(part)); // «2 ROLLS WITH CATALOG»: what goes along is not part of the count
     if (x) return { customer: title(x[1]), quantity: num(x[2]), unit: /^roll/i.test(x[3]) ? 'roll' : /^(smpl|sample)/i.test(x[3]) ? 'sample' : /^pc/i.test(x[3]) ? 'pcs' : 'm' };
-    const name = title(part);
+    const name = title(title(part).replace(GOODS_TAIL, ''));
     return name ? { customer: name } : null;
   }).filter(Boolean);
   const by = status === 'picked-up' ? s.slice(cut).replace(/^PICKED\s*UP\s*(?:BY\s*)?/i, '').replace(/[.\s]+$/, '').trim() : '';
-  return { customers, cod: null, status, ...(by ? { by } : {}) };
+  return { customers, cod: null, status, ...(by ? { by } : {}), ...(goods.length ? { goods } : {}) };
 }
 
 /**

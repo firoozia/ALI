@@ -77,7 +77,11 @@ export function buildDigest({ history, requests, day, timeZone = 'Asia/Dubai', e
   if (notedOnly) lines.push(`- فاکتورهای فقط دارای یادداشت: ${notedOnly}`);
   const today = events.filter((e) => dayOf(e.at, timeZone) === day);
   const count = (type) => today.filter((e) => e.type === type).length;
-  if (count('cut') || count('delivery') || count('payment')) lines.push(`- برش‌های ثبت‌شده: ${count('cut')}`, `- تحویل‌ها: ${count('delivery')}`, `- پرداخت‌های ثبت‌شده: ${count('payment')}`);
+  // what each line counts (the owner, 21/11: the summary said 18 cuts and 17 deliveries): a cut of a customer once (no opened roll, no running total
+  // counted twice), a delivery when it was delivered or picked up (a dispatch is not a delivery yet)
+  const cuts = today.filter((e) => e.type === 'cut' && !e.internal && !e.simulated && !e.supersededBy).length;
+  const deliveries = today.filter((e) => e.type === 'delivery' && !e.simulated && e.status !== 'dispatched').length;
+  if (cuts || deliveries || count('payment')) lines.push(`- برش‌های ثبت‌شده: ${cuts}`, `- تحویل‌ها: ${deliveries}`, `- پرداخت‌های ثبت‌شده: ${count('payment')}`);
   const open = events.filter((e) => e.type === 'payment' && ['receipt', 'cheque', 'transfer', 'cash'].includes(e.kind) && !e.cleared).length;
   const received = count('received');
   if (received) lines.push(`- کالاهای رسیده‌شده: ${received}`);

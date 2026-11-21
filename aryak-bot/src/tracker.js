@@ -45,6 +45,7 @@ export class Tracker {
   add(ev) {
     if (ev.ref && this.events.some((e) => e.ref === ev.ref)) return false;
     if (!this.startedAt) { this.startedAt = ev.at || Date.now(); this.persist('state'); }
+    supersedeRunningTotal(this.events, ev);
     this.events.push(ev);
     if (this.events.length > 5000) this.events.shift();
     this.persist('events');
@@ -330,10 +331,35 @@ export function customersWithOpenInvoices(tracker, { now = Date.now(), windowDay
   return [...new Set(tracker.events.filter((e) => e.type === 'invoice' && now - e.at <= windowDays * DAY).map((e) => e.customer).filter(Boolean))];
 }
 
+/**
+ * A cutter posts a running total (live 21/11: «ART NO 228 DANDY DOOR 20.7M», then «20.7+25=44.7M»): the earlier post of the same customer and code
+ * that day, whose length is the first piece or the first pieces of the new one, is now part of it. Its line keeps its length as [was] and counts 0,
+ * so the cut is counted, cross-checked and reported once. Never an invoiced line, never another customer or code.
+ */
+export function supersedeRunningTotal(events, ev, { hours = 8 } = {}) {
+  if (ev.type !== 'cut' || ev.internal || !Array.isArray(ev.pieces) || ev.pieces.length < 2 || (ev.lines || []).length !== 1) return 0;
+  const code = String(ev.lines[0].code || '').toUpperCase();
+  const prefix = []; let run = 0;
+  for (const p of ev.pieces.slice(0, -1)) { run += Number(p) || 0; prefix.push(Math.round(run * 1000) / 1000); }
+  let n = 0;
+  for (const e of events) {
+    if (e.type !== 'cut' || e.internal || e.supersededBy || (e.lines || []).length !== 1) continue;
+    if ((ev.at || Date.now()) - e.at > hours * 3600000 || e.at > (ev.at || Date.now())) continue;
+    if (String(e.lines[0].code || '').toUpperCase() !== code || e.lines[0].invoiced) continue;
+    if (!((e.customer && e.customer === ev.customer) || (e.customerTyped && e.customerTyped === ev.customerTyped))) continue;
+    const q = Number(e.lines[0].quantity);
+    if (!(q > 0) || !prefix.some((x) => Math.abs(x - q) < 0.001)) continue;
+    e.supersededBy = ev.ref || 'later';
+    e.lines = [{ ...e.lines[0], was: q, quantity: 0 }];
+    n += 1;
+  }
+  return n;
+}
+
 /** Two counts for the daily summary: invoices with no cut recorded after [shortDays] days, and cuts with no invoice after a day. */
 export function cutDigest(tracker, { now = Date.now(), shortDays = 3, windowDays = 10 } = {}) {
   const invoices = tracker.events.filter((e) => e.type === 'invoice' && now - e.at <= windowDays * DAY);
-  const cuts = tracker.events.filter((e) => e.type === 'cut' && !e.internal && now - e.at <= windowDays * DAY);
+  const cuts = tracker.events.filter((e) => e.type === 'cut' && !e.internal && !e.supersededBy && now - e.at <= windowDays * DAY);
   // an invoice counts when some code on it has no cut of that very code (a letter variant such as 108 C is another code)
   const invoiceNoCut = invoices.filter((i) => now - i.at >= shortDays * DAY && (() => {
     const cutCodes = new Set([...sumByCode(tracker.of('cut', i.customer, { since: i.at - 3 * DAY }).filter((c) => !c.internal)).keys()].map((k) => k.split('|')[0]));

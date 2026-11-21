@@ -418,7 +418,9 @@ setInterval(async () => {
     if (!sock?.user || !config.infoGroupName || botState.paused) return;
     const day = digestDue({ timeZone: config.timezone, hour: config.digestHour, last: readLastDigest(config.authDir) });
     if (!day) return;
-    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: [...driverEveningLines(tracker.events, { day, timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: driverNamerNow() }), ...(() => { usage.save(); cost.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [cost.line() || usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : '', ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })()] }));
+    const noInvoice = await cutsNoInvoiceCount().catch((e) => { logger.warn(`summary: QuickBooks was not read for the cuts (${e.message})`); return null; });
+    const made = madeToday();
+    await sendTo(config.infoGroupName, buildDigest({ history: desk.history, requests: desk.requests, day, timeZone: config.timezone, events: tracker.events, extraLines: [...driverEveningLines(tracker.events, { day, timeZone: config.timezone, aliasOf: (n) => cutAliases.resolve(n), display: driverNamerNow() }), ...(() => { usage.save(); cost.save(); for (const l of usage.logLines()) logger.info(l); const taken = sheetState.d.notes.splice(0); if (taken.length) sheetState.save(); const c = cutDigest(tracker); if (taken.length) c.sheet = taken; return [cost.line() || usage.line(), (() => { const n = customerGroups.newUnmapped(knownInvoiceCustomers().customers, config); return n.length ? `- Invoice customers with no group in the customer list yet: ${n.slice(0, 8).join(', ')}${n.length > 8 ? ` and ${n.length - 8} more` : ''}` : ''; })(), ...customerGroups.takeNotes().map((l) => `- ${l}`), c.invoiceNoCut ? `- Invoices with no cut recorded yet: ${c.invoiceNoCut}` : '', made.length ? `- Invoices made by Atossa in QuickBooks: ${made.length} (${made.join(', ')})` : '', noInvoice !== null ? (noInvoice ? `- Cuts with no invoice in QuickBooks yet (a day old or more): ${noInvoice}` : '') : (c.cutNoInvoice ? `- Cuts with no invoice yet: ${c.cutNoInvoice}` : ''), ...(c.sheet ? ['- Cut photos against the sheet:', ...c.sheet.map((l) => `  ${l}`)] : [])].filter(Boolean); })()] }));
     writeLastDigest(config.authDir, day);
     logger.info(`daily summary for ${day} sent`);
   } catch (e) { logger.warn(`daily summary failed: ${e.message}`); }
@@ -1062,6 +1064,25 @@ async function readSheetOutRows(days, key) {
     Object.assign(sheetPages, { at: Date.now(), key, rows: mapped });
     return mapped;
   } catch (e) { logger.warn('three-way: the sheet gave no OUT rows (' + e.message + ')'); return null; }
+}
+
+/** The summary's «cuts with no invoice» (the owner, 21/11: it counted only invoices posted in the groups, so almost every cut looked unbilled): the cut lines of
+ * the last 10 days, a day old or more, that no QuickBooks invoice of the customer carries (the office's or ours), as the evening report pairs them. */
+async function cutsNoInvoiceCount() {
+  if (!qbo.connected) return null;
+  const since = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const invoices = await qbo.query("select * from Invoice where TxnDate >= '" + since + "'");
+  const items = new Map((await qboBulk.items(true)).map((it) => [String(it.Id), itemCodesOf(it)]));
+  const qboNames = [...new Set([...(await qboDesk.customers().catch(() => [])).map((r) => r.DisplayName), ...invoices.map((i) => i.CustomerRef?.name)].filter(Boolean))];
+  const before = Date.now() - 24 * 3600 * 1000;
+  const r = unbilled({ events: tracker.events.filter((e) => e.type === 'cut' && e.at <= before), invoices, itemCodes: (id, name) => (items.has(String(id)) ? items.get(String(id)) : [String(name || '')]), aliasOf: nameAlias, qboNames, days: 10, timeZone: config.timezone });
+  return r.groups.reduce((s, g) => s + g.parts.length, 0);
+}
+/** The invoices Atossa created in QuickBooks today (the audit log): their numbers. */
+function madeToday() {
+  const day = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: config.timezone }).format(new Date(ms));
+  const today = day(Date.now());
+  try { return qboInvoices.audit.all().filter((x) => x.event === 'create' && x.docNumber && day(Date.parse(x.at)) === today).map((x) => x.docNumber); } catch { return []; }
 }
 
 /** What was CUT (the orders group), what LEFT (the sheet's OUT rows), what was INVOICED (QuickBooks), per customer and code: the sections of src/threeway.js. */
