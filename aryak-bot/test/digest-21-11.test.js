@@ -65,3 +65,20 @@ test('a month number and a stock question are never money (the owner, 21/11: «A
     { type: 'payment', kind: 'cash', amount: 500, at: Date.parse('2026-11-10T10:00:00Z') }] });
   assert.match(text, /\(«CLEARED» نخورده\): 1/);
 });
+
+test('an amount is money only with AED beside it; otherwise nothing is recorded and the group is asked (the owner, 21/11)', async () => {
+  const { eventsFromCaption, aedBeside } = await import('../src/captionevents.js');
+  const ask = eventsFromCaption('payment', 'Cash received from Alia wood 176.40');
+  assert.deepEqual(ask.askAed, { amount: 176.4, customers: ['Alia wood'] });
+  assert.equal(ask.events, undefined, 'nothing recorded');
+  for (const t of ['Cash received from Alia wood 176.40 AED', 'Cash received from Alia wood AED 176.40', 'Cash received from Alia wood 176.40aed', 'نقد از الیا وود ۱۷۶٫۴۰ درهم']) {
+    const r = eventsFromCaption('payment', t.replace('٫', '.'));
+    assert.equal(r.events?.[0]?.amount, 176.4, t);
+  }
+  assert.equal(aedBeside('AED 3,500 from Zeta', 3500), true);
+  assert.equal(aedBeside('3500 Zeta 10 AED', 3500), false, 'AED beside another number does not count');
+  assert.ok(eventsFromCaption('payment', 'AL AFEEFI KITCHEN OMR = 567').events, 'a foreign currency keeps its own rule');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(src, /Please write the amount with AED beside it, for example/);
+  assert.match(src, /officeAsked\.has\('aed\|' \+ raw\.key\.id\)/, 'asked once per message');
+});

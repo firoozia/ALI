@@ -20,10 +20,10 @@ test('a number after «inv», «invoice», «inv-», «inv no» or «فاکتو�
     assert.equal(e.amount, 0, text); assert.deepEqual(e.invoices, ['inv-9940'], text); assert.equal(e.customer, customer, text); assert.equal(e.noAmount, true);
   }
   assert.deepEqual(eventsFromCaption('payment', 'inv-9940').events[0].invoices, ['inv-9940']);
-  const both = eventsFromCaption('payment', 'cash 500 from ZED inv 9808 / 9809').events[0]; // an amount AND invoice numbers: each is what it is
+  const both = eventsFromCaption('payment', 'cash 500 AED from ZED inv 9808 / 9809').events[0]; // an amount AND invoice numbers: each is what it is
   assert.equal(both.amount, 500); assert.deepEqual(both.invoices, ['inv-9808', 'inv-9809']); assert.equal(both.customer, 'ZED');
   assert.equal(parsePaymentCaption('clear inv 9808 / 9809').kind, 'clear-invoices'); // the older form still works
-  assert.equal(eventsFromCaption('payment', '500 ZED').events[0].invoices, undefined);
+  assert.equal(eventsFromCaption('payment', '500 AED ZED').events[0].invoices, undefined);
 });
 
 test('a PDF receipt: the text layer gives the amount, the date, the payer, the kind and the invoice it names; no text or no amount is not guessed', () => {

@@ -896,6 +896,15 @@ async function trackGroup(raw, groupId, role) {
     }
     if (det.clearInvoices) { markCleared(tracker, quotedId ? refOf(quotedId) : ''); trace(whereDet, 'tracker', `cleared ${det.clearInvoices.length} invoice(s)`); return; }
     if (det.ignore) { trace(whereDet, 'tracker', 'not a customer payment, left out'); return; }
+    if (det.askAed) { // the owner's rule (21/11): no AED beside the amount, nothing is recorded and the group is asked once to write it again
+      trace(whereDet, 'tracker', `an amount (${det.askAed.amount}) with no AED beside it: nothing recorded, the group is asked`);
+      if (!replayCtx.getStore()?.quiet && !officeAsked.has('aed|' + raw.key.id)) {
+        officeAsked.add('aed|' + raw.key.id);
+        const who = det.askAed.customers[0] || 'customer name';
+        await deliver({ send: (...args) => sock.sendMessage(...args), chatId: groupId, content: `Please write the amount with AED beside it, for example: ${det.askAed.amount} AED ${who}. Nothing was recorded.`, quoted: raw, where: whereDet, log: (s) => logger.info(s) }).catch((e) => logger.warn('AED question failed: ' + e.message));
+      }
+      return;
+    }
     if (det.noCode) { // «ART NO 21.8+9 30.8M DESIGNER WOOD» as a reply: the code is the one of the cut post it quotes; with no quoted cut nothing is recorded and the owner is told once
       const nc = det.noCode;
       const quoted = quotedId ? tracker.events.find((e) => e.type === 'cut' && e.ref === refOf(quotedId, 0) && e.lines?.[0]?.code) : null;

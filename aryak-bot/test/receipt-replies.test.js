@@ -17,7 +17,7 @@ test('«clear MUNICH DOOR KITCHEN inv 9940» is a payment message that also clea
   assert.deepEqual([f.amount, f.customer, f.invoices, f.cleared], [0, 'ZED CARPENTRY', ['inv-9940'], true]);
   for (const t of ['cleared', 'CLEARED', 'cleared two customer']) assert.equal(parsePaymentCaption(t).kind, 'cleared', t);
   assert.equal(parsePaymentCaption('clear inv 9808 / 9809').kind, 'clear-invoices'); // the older list form
-  assert.equal(eventsFromCaption('payment', 'cash from ZED 500').events[0].cleared, undefined);
+  assert.equal(eventsFromCaption('payment', 'cash from ZED 500 AED').events[0].cleared, undefined);
   const merged = mergePayment({ amount: 9940, receipt: 'transfer receipt', source: 'pdf' }, e);
   assert.deepEqual([merged.amount, merged.customer, merged.invoices, merged.cleared], [9940, 'MUNICH DOOR KITCHEN', ['inv-9940'], true]); // the cleared mark goes with the entry
 });

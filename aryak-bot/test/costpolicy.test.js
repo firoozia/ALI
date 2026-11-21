@@ -30,7 +30,7 @@ test('the tracker never sends a photo or an unreadable caption to the model unle
 test('the free caption reader still records the captions of every tracked group', () => {
   assert.equal(eventsFromCaption('cut', 'ART NO 410 DANDY DOOR 6M').events[0].customer, 'DANDY DOOR');
   assert.equal(eventsFromCaption('delivery', 'PVC WORKS (COD 908.25)').events[0].cod, 908.25);
-  assert.equal(eventsFromCaption('payment', 'Dandy 1500 received').events[0].amount, 1500);
+  assert.equal(eventsFromCaption('payment', 'Dandy 1500 AED received').events[0].amount, 1500);
   assert.equal(eventsFromCaption('goods', 'HINGES TYPE A 20 BOX FOR SHJ CUSTOMER').events[0].quantity, 20);
 });
 

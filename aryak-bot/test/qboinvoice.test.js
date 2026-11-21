@@ -1423,5 +1423,5 @@ test('simulation: a prefix post is read like the post of that group (cut posts w
   const delivery = eventsFromCaption('delivery', 'NUQOOSH 2 ROLLS DISPATCHED').events[0];
   assert.equal(delivery.type, 'delivery'); assert.match(JSON.stringify(delivery), /NUQOOSH/);
   const pay = eventsFromCaption('payment', 'HAMED TRADING 500 received');
-  assert.ok(pay === null || pay.events?.length >= 0); // a payment line is read by its own shapes; an unread one is simply said so
+  assert.ok(pay === null || pay.askAed || pay.events?.length >= 0); // a payment line is read by its own shapes; an unread one is simply said so
 });

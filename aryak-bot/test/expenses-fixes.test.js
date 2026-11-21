@@ -37,10 +37,10 @@ test('a photo that was not read says so: «receipt not read — caption amount u
 });
 
 test('a cheque is a cheque whatever the spelling, and the customer name carries none of the payment words', () => {
-  for (const [text, name] of [['AL AHLIA CHEAQUE 3500', 'AL AHLIA'], ['cheque ZED 2,000', 'ZED'], ['ZED chq 1200', 'ZED'], ['ZED check 1200', 'ZED'], ['ZED شيك 1200', 'ZED'], ['ZED چک 1200', 'ZED']]) {
+  for (const [text, name] of [['AL AHLIA CHEAQUE 3500 AED', 'AL AHLIA'], ['cheque ZED 2,000 AED', 'ZED'], ['ZED chq 1200 AED', 'ZED'], ['ZED check 1200 AED', 'ZED'], ['ZED شيك 1200 AED', 'ZED'], ['ZED چک 1200 AED', 'ZED']]) {
     const e = eventsFromCaption('payment', text).events[0]; assert.equal(e.kind, 'cheque', text); assert.equal(e.customer.replace(/شيك|چک/g, '').trim(), name, text);
   }
-  assert.equal(eventsFromCaption('payment', 'cash 500 from ZED').events[0].kind, 'cash');
+  assert.equal(eventsFromCaption('payment', 'cash 500 AED from ZED').events[0].kind, 'cash');
   // stored before: the word is in the stored name, so it is read as a cheque and the name is cleaned
   const list = sharedPaymentList({ events: [pay({ customer: 'AL AHLIA CHEAQUE', amount: 3500 })] });
   assert.deepEqual([list[0].kind, list[0].customer], ['cheque', 'AL AHLIA']);

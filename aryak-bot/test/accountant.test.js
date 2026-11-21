@@ -11,19 +11,21 @@ const cases = [
   // clear cash
   ['Cash from Zeta Work 789.5 aed', 'PAY cash 789.5 Zeta'],
   ['789.5 aed cash received from Zeta Work', 'PAY cash 789.5 Zeta'],
-  ['Zeta Work 1500 cash', 'PAY cash 1500 Zeta'],
+  ['Zeta Work 1500 cash', 'ASK'], // the owner, 21/11: no AED beside the amount: nothing is recorded, the group is asked
   ['received 2000 aed from Nova Kitchens', 'PAY cash 2000 Nova'],
   ['نقد ۱۵۰۰ درهم از زتا', 'PAY cash 1500'],
   ['دریافت شد ۲۰۰۰ درهم نوا', 'PAY cash 2000'],
   ['استلمنا 3000 درهم نقدا من نوفا', 'PAY cash 3000'],
   // cheques
   ['Nova Kitchens cheque 3500 aed', 'PAY cheque 3500 Nova'],
-  ['chq 4200 omega co dated 20/11', 'PAY cheque 4200 Omega'],
-  ['PDC 5000 Zeta Work due 01/12/2026', 'PAY cheque 5000 Zeta'],
-  ['چک ۳۵۰۰ نوا', 'PAY cheque 3500'],
+  ['chq 4200 omega co dated 20/11', 'ASK'],
+  ['chq 4200 aed omega co dated 20/11', 'PAY cheque 4200 Omega'],
+  ['PDC 5000 AED Zeta Work due 01/12/2026', 'PAY cheque 5000 Zeta'],
+  ['چک ۳۵۰۰ درهم نوا', 'PAY cheque 3500'],
+  ['چک ۳۵۰۰ نوا', 'ASK'],
   // transfers
   ['Omega Co bank transfer 2750 aed', 'PAY transfer 2750 Omega'],
-  ['TT 1200 Zeta', 'PAY transfer 1200 Zeta'],
+  ['TT 1200 AED Zeta', 'PAY transfer 1200 Zeta'],
   ['واریز ۲۰۰۰ درهم نوا', 'PAY transfer 2000'],
   ['Your AC No: XXXXXXXX1234 is credited with AED 708.75 for Aani Instant Payments. Login to Online Banking for details.', 'PAY transfer 708.75 nameless'],
   ['Your AC No: XXXXXXXX1234 is credited with AED 579.60 for Outward Cheque Clearing. Login to Online Banking for details.', 'PAY cash 579.6'], // stored as the bank message; every read makes it the cleared cheque
@@ -62,6 +64,7 @@ const verdict = (text) => {
   const r = eventsFromCaption('payment', text);
   const ev = r?.events?.[0];
   if (!r || r.ignore || r.cleared || r.clearInvoices || r.name) return 'IGNORE';
+  if (r.askAed) return 'ASK'; // the owner, 21/11: no AED beside the amount, the group is asked
   if (ev.kind === 'unclear') return 'ASK';
   if (/cash_to|salary|advance|boss/.test(String(ev.kind))) return 'CASH-OUT';
   return `PAY ${ev.kind} ${ev.amount} ${ev.customer || 'nameless'}`;
@@ -113,21 +116,22 @@ const box = [
   // money coming IN, never cash out
   ['received 2000 from boss for cash box', 'ASK'],
   ['boss gave 5000 to cash box', 'ASK'],
-  ['advance payment 2000 from Zeta Work', 'PAY'],
-  ['Zeta paid 1500 cash for 2 rolls', 'PAY'],
+  ['advance payment 2000 aed from Zeta Work', 'PAY'],
+  ['advance payment 2000 from Zeta Work', 'ASK'],
+  ['Zeta paid 1500 aed cash for 2 rolls', 'PAY'],
   ['Zeta Work paid 900 aed for invoice 1203', 'PAY'],
-  ['cash 1200 from Nova for advance', 'PAY'],
-  ['Omega Co paid advance 3000 cheque', 'PAY'],
+  ['cash 1200 aed from Nova for advance', 'PAY'],
+  ['Omega Co paid advance 3000 aed cheque', 'PAY'],
 ];
 test('the cash box: money to the boss, staff advances and company cash expenses are cash out; money FROM the boss is asked; a customer advance or payment is money received', () => {
   for (const [text, want] of box) {
     const r = eventsFromCaption('payment', text); const e = r?.events?.[0];
-    const got = !r || r.ignore ? 'IGNORE' : e.kind === 'unclear' ? 'ASK' : ['cash', 'cheque', 'transfer'].includes(e.kind) ? `PAY ${e.kind} ${e.amount} ${e.customer || ''}` : `${e.kind} ${e.amount} ${e.employee || ''}`;
+    const got = !r || r.ignore ? 'IGNORE' : r.askAed || e.kind === 'unclear' ? 'ASK' : ['cash', 'cheque', 'transfer'].includes(e.kind) ? `PAY ${e.kind} ${e.amount} ${e.customer || ''}` : `${e.kind} ${e.amount} ${e.employee || ''}`;
     assert.ok(want === 'PAY' ? got.startsWith('PAY') : got.startsWith(want), `${text} -> ${got} (wanted ${want})`);
   }
   assert.equal(eventsFromCaption('payment', 'Zeta Work paid 900 aed for invoice 1203').events[0].customer, 'Zeta Work'); // no «for» left on the name
   // live 17/11: what the money was for and the word «advance» are no part of the customer's name
-  for (const [text, name] of [['advance payment 2000 from Zeta Work', 'Zeta Work'], ['Zeta paid 1500 cash for 2 rolls', 'Zeta'], ['Omega Co paid advance 3000 cheque', 'Omega Co'], ['cash 1200 from Nova for advance', 'Nova'], ['cash 800 for Nova', 'Nova'], ['Cash from Lions for Kitchens 164 aed', 'Lions for Kitchens']]) assert.equal(eventsFromCaption('payment', text).events[0].customer, name, text);
+  for (const [text, name] of [['advance payment 2000 aed from Zeta Work', 'Zeta Work'], ['Zeta paid 1500 aed cash for 2 rolls', 'Zeta'], ['Omega Co paid advance 3000 aed cheque', 'Omega Co'], ['cash 1200 aed from Nova for advance', 'Nova'], ['cash 800 aed for Nova', 'Nova'], ['Cash from Lions for Kitchens 164 aed', 'Lions for Kitchens']]) assert.equal(eventsFromCaption('payment', text).events[0].customer, name, text);
 });
 
 const exp = [

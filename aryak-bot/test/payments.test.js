@@ -79,9 +79,9 @@ test('junk words are not a customer; a nameless cash payment waits for the name 
 test('payment names: «cash from receipt + clear», «cash from Pay» and «clear … inv» are read clean; a payment stored with junk is a payment without a name; a message of payment words only is no name', async () => {
   const { stripPaymentWords } = await import('../src/captions.js');
   const names = (t) => eventsFromCaption('payment', t).events?.map((e) => e.customer);
-  assert.deepEqual(names('cash from receipt + clear 115.00'), ['']); assert.equal(eventsFromCaption('payment', 'cash from receipt + clear 115.00').events[0].pendingName, true);
-  assert.deepEqual(names('cash from Pay 157.00'), ['']);
-  assert.deepEqual(names('cash from clear MUNICH DOOR KITCHEN inv 9,940.00'), ['MUNICH DOOR KITCHEN']);
+  assert.deepEqual(names('cash from receipt + clear 115.00 AED'), ['']); assert.equal(eventsFromCaption('payment', 'cash from receipt + clear 115.00 AED').events[0].pendingName, true);
+  assert.deepEqual(names('cash from Pay 157.00 AED'), ['']);
+  assert.deepEqual(names('cash from clear MUNICH DOOR KITCHEN inv 9,940.00 AED'), ['MUNICH DOOR KITCHEN']);
   assert.deepEqual(names('Cash received from clear Munich Door Kitchen inv AED 9940'), ['Munich Door Kitchen']);
   assert.equal(eventsFromCaption('payment', 'cash from receipt + clear'), null); // payment words only and no amount: nothing, never a name for the neighbour payment
   assert.deepEqual(eventsFromCaption('payment', 'Alwan sham'), { name: 'Alwan sham' });

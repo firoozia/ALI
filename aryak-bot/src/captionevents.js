@@ -10,7 +10,7 @@ import { bankSmsAmount, collectedAmount, driverCashAmount, isGenericBankSms, isS
 import { STAR_END, isStarred, parseCutCaption, parseDeliveryCaption, parseGoodsCaption, parsePaymentCaption } from './captions.js';
 
 /** The assistant's own replies (live 16/11: a statement it sent was read as 1.00 AED cash). */
-export const OWN_REPLY = /^\s*(?:🤖\s*)?(?:Statement of account for\b|Statement\s+-\s|Invoice request for\b|Invoice #Q\d|Post #SP\d|Customer group\b|From whom\?|Done:\s)/i;
+export const OWN_REPLY = /^\s*(?:🤖\s*)?(?:Please write the amount with AED\b|Statement of account for\b|Statement\s+-\s|Invoice request for\b|Invoice #Q\d|Post #SP\d|Customer group\b|From whom\?|Done:\s)/i;
 
 // ---- the accountant's rules for the Confirmation group (the owner, 16/11: «money is no place for mistakes: count only what is clearly a
 // payment or a receipt, ask about anything that is not clear»). A message counts as money received only when it says so.
@@ -27,6 +27,12 @@ const DATE = /(?<![\d.])\d{1,2}\s*[\/-]\s*\d{1,2}(?:\s*[\/-]\s*\d{2,4})?(?![\d.]
 /** An order or product line («410 - 4m», «check 603», «2 rolls 410»): codes and lengths, not money. */
 const ORDER_LINE = /\b\d+(?:\.\d+)?\s*(?:m|mtr|mtrs|meters?|metres?|rolls?|pcs|pieces|sheets?)\b|^\s*(?:check|available|stock|colou?r|code)\b/i;
 
+/** Is [amount] written with AED (or «درهم») right beside it in [t]? */
+export function aedBeside(t, amount) {
+  const re = /(?:\bAED|درهم)\s*[:=]?\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(?:AED\b|درهم)/gi;
+  for (const m of String(t || '').matchAll(re)) if (Math.abs(Number(String(m[1] || m[2]).replace(/,/g, '')) - Number(amount)) < 0.005) return true;
+  return false;
+}
 export function eventsFromCaption(role, text) {
   if (role === 'payment' && isStarred(text)) { // a star at the end: the star is taken off the name and the amount; the money needs no invoice
     const r = eventsFromCaption(role, String(text).replace(STAR_END, '').trim());
@@ -79,6 +85,9 @@ export function eventsFromCaption(role, text) {
     const p = parsePaymentCaption(text);
     if (!p) return null;
     if (p.kind === 'name' && FILLER_NAME.test(String(p.customer || '').trim())) return { ignore: true }; // «Done», «plz clear it»: never a name
+    // THE OWNER'S RULE (21/11): an amount is money only with AED written beside it («1500 AED», «AED 1500», «1500aed»; «درهم» is the same word). A bare
+    // number («Al ebda month 10», «Cash received from Alia wood 176.40») records nothing and the group is asked to write it again with AED
+    if (p.kind === 'cash' && Number(p.amount) > 0 && !p.foreign && !p.currency && !/\b(?:OMR|USD|SAR|EUR|GBP|QAR|KWD|BHD|INR)\b/i.test(t) && !aedBeside(t, p.amount)) return { askAed: { amount: p.amount, customers: p.customers || [] } };
     // an amount and a name and NO word of money nor currency («Zeta 1500»): unclear — kept apart, never counted, the owner is asked
     if (p.kind === 'cash' && !said && !CURRENCY.test(t) && !p.cheque && !p.transfer && !(p.invoices?.length)) {
       return { events: [{ type: 'payment', kind: 'unclear', customer: (p.customers || []).join(' + '), amount: p.amount, currency: 'AED', lines: [], unclear: true }] };

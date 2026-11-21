@@ -1162,7 +1162,7 @@ test('a post ending with a star needs no invoice: the star is taken off, it is n
   const { cashBoxReportQbo } = await import('../src/cashbox.js');
   for (const t of ['Cash from ZETA CO 3000 *', 'Cash from ZETA CO 3000 ★', 'Cash from ZETA CO 3000 ⭐', 'Cash from ZETA CO 3000 **']) assert.ok(isStarred(t), t);
   assert.ok(!isStarred('Cash from ZETA CO 3000') && !isStarred('*'));
-  const ev = eventsFromCaption('payment', 'Cash from ZETA CO 3000 *').events[0];
+  const ev = eventsFromCaption('payment', 'Cash from ZETA CO 3000 AED *').events[0];
   assert.deepEqual([ev.customer, ev.amount, ev.noInvoice], ['ZETA CO', 3000, true]); // the star is not in the name or the amount
   const at = Date.parse('2026-11-12T08:00:00Z');
   const oldRow = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'o', at, customer: 'NOVA CO *', amount: 750, text: 'Cash from NOVA CO 750 *' };
@@ -1220,7 +1220,7 @@ test('«3000 aed delivery» is the amount to collect on delivery, never money re
   assert.equal(driverCashAmount('3000 aed delivery'), 3000);
   assert.deepEqual(eventsFromCaption('payment', '3000 aed delivery'), { ignore: true }); // a new post is no payment
   assert.deepEqual(eventsFromCaption('payment', '307 confirm one roll for golden door'), { ignore: true }); // an amount beside order words, no word of money
-  assert.ok(eventsFromCaption('payment', 'cash received from ZETA CO 3000').events); // with the words of money it is one
+  assert.ok(eventsFromCaption('payment', 'cash received from ZETA CO 3000 AED').events); // with the words of money it is one
   const t = (day, hhmm) => Date.parse('2026-11-' + day + 'T' + hhmm + ':00+04:00');
   const stored = { type: 'payment', kind: 'cash', currency: 'AED', ref: 'd', at: t('12', '16:00'), customer: 'delivery', amount: 3000, text: '3000 aed delivery' };
   assert.equal(sharedPaymentList({ events: [stored] }).length, 0); // an old stored row is dropped on read
@@ -1497,12 +1497,12 @@ test('live test fixes: money out is shown as money out, a cheque date leaves the
   const chq = pay('cheque from tiger 2000 aed dated 20/11');
   assert.equal(chq.customer, 'tiger'); assert.equal(chq.kind, 'cheque'); assert.match(chq.chequeDate, /^\d{4}-11-20$/);
   assert.match(describeEvent(chq), /cheque, 2,000\.00 AED, from tiger, cheque date 20\/11\/\d{4}/);
-  assert.equal(pay('cheque 2000 tiger due on 20-11-2026').chequeDate, '2026-11-20');
+  assert.equal(pay('cheque 2000 aed tiger due on 20-11-2026').chequeDate, '2026-11-20');
   assert.equal(pay('نقد از مستر وود ۵۰۰ درهم دریافت شد').customer, 'مستر وود'); // the payment words leave the name
-  assert.equal(pay('چک ۱۲۰۰ از ببر چوب').kind, 'cheque');
-  assert.match(describeEvent(pay('cash received 450')), /from nobody named \(the owner is asked: from whom\?\)/);
+  assert.equal(pay('چک ۱۲۰۰ درهم از ببر چوب').kind, 'cheque');
+  assert.match(describeEvent(pay('cash received 450 aed')), /from nobody named \(the owner is asked: from whom\?\)/);
   assert.match(describeEvent({ ...pay('Received 500 aed from Blue Ocean Trading'), unknownCustomer: true }), /not our customer\? — check/);
-  const star = eventsFromCaption('payment', 'master wood 500 cash *').events[0]; assert.match(describeEvent(star), /⭐ no invoice needed/);
+  const star = eventsFromCaption('payment', 'master wood 500 aed cash *').events[0]; assert.match(describeEvent(star), /⭐ no invoice needed/);
   const del = eventsFromCaption('delivery', 'Master wood delivered, collected 1500 cash').events[0];
   assert.equal(del.collected, 1500); assert.match(describeEvent(del), /delivery: Master wood, delivered, driver collected 1,500\.00 AED cash \(kept as driver cash\)/);
   const cut = eventsFromCaption('cut', 'Golden door 1810 3m + 215 edge 50m').events[0];
@@ -1621,10 +1621,10 @@ test('the kind of a payment comes from its method words: transfer / bank / TT / 
   const one = (t) => eventsFromCaption('payment', t).events[0];
   const tr = one('Al masar transfer 918.75 aed'); assert.equal(tr.kind, 'transfer'); assert.equal(tr.customer, 'Al masar'); assert.equal(tr.amount, 918.75);
   const bk = one('bank transfer from atlas 1575 aed'); assert.equal(bk.kind, 'transfer'); assert.equal(bk.customer, 'atlas'); assert.match(describeEvent(bk), /^payment: bank transfer, 1,575\.00 AED, from atlas/);
-  for (const t of ['Master wood 500 TT', 'master wood 500 IPP', 'master wood 500 Aani', 'master wood 500 deposited', 'online payment master wood 500', 'master wood 500 wire', 'حواله از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'transfer', t);
-  for (const t of ['cheque from tiger 2000 aed PDC', 'tiger 2000 pdc', 'چک ۲۰۰۰ از ببر']) assert.equal(one(t).kind, 'cheque', t);
+  for (const t of ['Master wood 500 aed TT', 'master wood 500 aed IPP', 'master wood 500 aed Aani', 'master wood 500 aed deposited', 'online payment master wood 500 aed', 'master wood 500 aed wire', 'حواله از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'transfer', t);
+  for (const t of ['cheque from tiger 2000 aed PDC', 'tiger 2000 aed pdc', 'چک ۲۰۰۰ درهم از ببر']) assert.equal(one(t).kind, 'cheque', t);
   for (const t of ['cash received from alia wood 250 aed', 'master wood 300 aed', 'نقد از مستر وود ۵۰۰ درهم']) assert.equal(one(t).kind, 'cash', t);
-  assert.equal(one('master wood 300').kind, 'unclear', 'no word of money nor currency: never counted, the owner is asked (the owner, 16/11)');
+  assert.ok(eventsFromCaption('payment', 'master wood 300').askAed, 'no AED: never counted, the group is asked (the owner, 21/11)');
   assert.equal(one('cash received from alia wood 250 aed').customer, 'alia wood');
   assert.equal(one('18000 deposit to boss').kind, 'cash_to_boss'); // a deposit to the boss is still cash leaving the box
 });
