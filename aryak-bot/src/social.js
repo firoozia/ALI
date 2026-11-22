@@ -401,13 +401,17 @@ export async function swatchTone(buf) {
   const lin = (v) => { const x = v / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
   const Y = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
   const light = Y < 0.05 ? 'very dark' : Y < 0.15 ? 'dark' : Y < 0.35 ? 'mid-tone' : Y < 0.6 ? 'light' : 'very light';
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), ch = max - min;
+  const hue = !ch ? 0 : max === r ? (60 * ((g - b) / ch) + 360) % 360 : max === g ? 60 * ((b - r) / ch) + 120 : 60 * ((r - g) / ch) + 240;
   let tone;
-  if (max - min < 10) tone = 'neutral grey';
-  else if (g >= r && g > b) tone = Y < 0.15 ? 'olive' : 'grey-green';
-  else if (r >= g && g >= b) tone = r - b > 40 ? 'pale beige' : 'greige'; // never «warm»: the word warmed a pale oak to orange (the owner, 21/11)
-  else if (b > r) tone = 'cool blue-grey';
-  else tone = 'muted';
+  // live 22/11: a chocolate brown (67,45,37) was called «very dark greige» and a warm greige (185,185,172) «grey-green», so Gemini drew neither
+  if (ch < 10) tone = Y > 0.6 ? 'off-white' : Y < 0.05 ? 'charcoal' : 'neutral grey';
+  else if (hue >= 55 && hue < 170 && (g > r || Y < 0.15)) tone = Y < 0.15 ? 'olive' : 'grey-green'; // a dark olive (#3F4030) stays olive
+  else if (b > r + 4) tone = 'cool blue-grey';
+  else if (ch < 25 || ch / max < 0.15) tone = 'greige';
+  else if (Y < 0.15) tone = Y < 0.06 ? 'chocolate brown' : 'walnut brown';
+  else if (Y < 0.35) tone = 'mid brown';
+  else tone = 'pale beige'; // never «warm»: the word warmed a pale oak to orange (the owner, 21/11)
   return { hex, words: `${light} ${tone}${Y < 0.15 ? ', keep it this dark, never lighter' : ''}`, Y };
 }
 export const SPOT_RULES = 'Look at this interior picture and the films named. For each film give one point on a large, clearly visible surface of that film (its doors, panels or worktop), inside the middle of the picture: x between 0.26 and 0.74, y between 0.18 and 0.82 (0 is the left or top edge, 1 the right or bottom), never on another film or an object; the points well apart from each other. Answer only JSON: {"spots":[{"code":"the code","x":0.5,"y":0.5}]}';
@@ -886,7 +890,8 @@ export class SocialDesk {
     if (raw && faults.length) {
       const again = geminiParts(String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 3000,
         text: `Rewrite this prompt so it keeps every section, film and surface but ${faults.join(' and ')}. Output only the prompt.\n\n${raw}` }) || '')).prompt;
-      if (again && geminiPromptFaults(again, { person }).length < faults.length) raw = again;
+      const n = (x) => x.split(/\s+/).filter(Boolean).length, left = again ? geminiPromptFaults(again, { person }).length : 99;
+      if (again && (left < faults.length || (left === faults.length && n(again) < n(raw)))) raw = again; // live 22/11: a rewrite still over the limit but shorter is kept
     }
     if (!raw) return { text: 'The prompt for Gemini could not be written; try again.' };
     this.remember(plan);

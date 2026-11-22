@@ -1143,7 +1143,7 @@ test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, po
   const t1 = await swatchTone(olive);
   assert.match(t1.words, /^very dark olive, keep it this dark, never lighter$/);
   assert.match(t1.hex, /^#(3[E-F]|40)(3[F]|4[0-1])(2F|3[0-1])$/);
-  const sage = await swatchTone(await sharp({ create: { width: 200, height: 250, channels: 3, background: '#BCBDB0' } }).jpeg().toBuffer());
+  const sage = await swatchTone(await sharp({ create: { width: 200, height: 250, channels: 3, background: '#B9BFB0' } }).jpeg().toBuffer()); // green above red (22/11: #BCBDB0 turns #BCBCB0 in a JPEG, the same as the warm greige HZ819)
   assert.match(sage.words, /^(light|very light) grey-green$/, 'a grey-green sample is never called warm');
   const oak = await swatchTone(await sharp({ create: { width: 200, height: 250, channels: 3, background: '#CDBFA6' } }).jpeg().toBuffer());
   assert.match(oak.words, /beige|greige/);
@@ -1285,4 +1285,21 @@ test('«طرح … با آدم» (the owner, 22/11): a modest woman glides her f
   const plain = await desk.draftDesign({ note: 'آشپزخانه' });
   assert.doesNotMatch(seen[0], /PERSON/, 'no person unless asked');
   assert.doesNotMatch(plain.text, /با آدم/);
+  // live 22/11: 295 words came back; a rewrite still over the limit but shorter is kept
+  let k = 0;
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? (k++ ? Array(200).fill('oak').join(' ') : Array(300).fill('oak').join(' ')) : base(r));
+  const long = await desk.draftDesign({ note: 'کمد با آدم' });
+  assert.equal(long.prompt.split(' ').length, 200);
+});
+
+test('the sample\'s colour in words (live 22/11: a chocolate brown was called «very dark greige» and a warm greige «grey-green»; Gemini drew neither)', async () => {
+  const { swatchTone } = await import('../src/social.js');
+  const tone = async (r, g, b) => (await swatchTone(await sharp({ create: { width: 40, height: 40, channels: 3, background: { r, g, b } } }).png().toBuffer())).words;
+  assert.match(await tone(67, 45, 37), /^very dark chocolate brown/);
+  assert.equal(await tone(185, 185, 172), 'light greige');
+  assert.equal(await tone(188, 172, 145), 'light pale beige');
+  assert.match(await tone(120, 90, 60), /^dark walnut brown/, 'not chocolate');
+  assert.match(await tone(90, 100, 70), /^dark olive/);
+  assert.equal(await tone(230, 228, 225), 'very light off-white');
+  assert.match(await tone(63, 64, 48), /^very dark olive/, "the owner's dark olive (21/11) stays olive");
 });
