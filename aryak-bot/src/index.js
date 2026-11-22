@@ -4058,8 +4058,8 @@ async function socialSayDesign(d) {
   await socialSay(d.text, d.image || null);
   if (d.prompt) { // a design for the Gemini app (21/11): the swatches to attach, then the prompt alone in one message, easy to copy
     for (const s of d.swatches || []) await socialSay(`${s.code} ${s.name}`, s.image);
-    await socialSay(d.prompt);
-    if (d.extend) await socialSay(d.extend); // the second message, sent in the same Gemini chat when the video is made (21/11: one 15-second video)
+    await socialSay(d.prompt); // the still picture's prompt (22/11: the still first, then the video from it)
+    if (d.video) await socialSay(d.video); // the video's prompt, pasted in a new chat with the approved still
     return;
   }
   const id = /Post #(SP\d+)/.exec(d.text)?.[1] || '';

@@ -1112,7 +1112,7 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
   assert.match(d.text, /^طرح برای جمینای:/);
   assert.match(d.text, /«پست»/);
   const w = writes.find((x) => x.kind === 'gemini-prompt');
-  assert.match(w.system, /the video tool of the Gemini app/); assert.match(w.text, /the first sample/);
+  assert.match(w.system, /Gemini's video tool/); assert.match(w.text, /the first attached image/);
   const t = await desk.draftVideoPost({ video: Buffer.from('not a video'), note: 'HZ812' });
   assert.match(t, /could not be read/, 'a broken video is said, never posted');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
@@ -1128,12 +1128,12 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
 
 test('the Gemini prompt (the owner, 21/11): a top designer and marketer, every film exactly its sample, no PVC film on a worktop', async () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /a world-class interior designer who also thinks like a top performance marketer/);
-  assert.match(src, /Tops are real stone or quartz in a quiet tone, because a PVC film covers only vertical faces/);
+  assert.match(src, /a world-class architectural interior designer who also thinks like a top performance marketer/);
+  assert.match(src, /A PVC film covers only vertical faces \(doors, drawer fronts, island cladding, wall panels\)/);
   assert.match(src, /NEVER on a worktop, a countertop, an island top, a shelf top/, 'the designer too');
   assert.match(src, /plan\.parts\.slice\(0, 3\)/, 'at most three films: a fourth sample averages the colours (Gemini, 22/11)');
   assert.match(src, /جمینای معمولی را باز کنید \(گفتگوی تازه، نه دستیار «استودیوی آریاک»/, 'only plain Gemini offers 15 s and portrait (22/11)');
-  assert.match(src, /زیر کادر «۱۵ ثانیه» و «عمودی» را برگزینید/);
+  assert.match(src, /زیر کادر «۱۵ ثانیه» و «عمودی»\. فقط همان عکس را پیوست کنید \(نه نمونه‌ها\)/, 'the video from the approved still only (Gemini, 22/11)');
 });
 
 test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, portrait first, the measured colour of each sample, one place per film', async () => {
@@ -1149,14 +1149,14 @@ test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, po
   assert.match(oak.words, /beige|greige/);
   assert.doesNotMatch(oak.words + sage.words + t1.words, /warm/, 'never «warm» for a film (the oak came out orange)');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /REFERENCE MAPPING: one line per film: "Image 1 \(a short look/);
+  assert.match(src, /REFERENCE MAPPING: one line per film in upload order: "Apply the first attached image \(\[its exact wording\]\) exclusively/);
   const { desk, writes } = await studio();
   desk.cfg.designMode = 'gemini';
   const base = desk.write;
   desk.write = async (r) => (r.kind === 'gemini-prompt' ? (writes.push(r), 'A prompt.') : base(r));
   await desk.draftDesign({ note: 'آشپزخانه' });
   const w = writes.find((x) => x.kind === 'gemini-prompt');
-  assert.match(w.text, /image 1; measured colour: [a-z -]+\)/, 'the writer gets each sample\'s colour in words, never a hex (22/11)');
+  assert.match(w.text, /- the first attached image: "[^"]+" on /, 'the writer gets each film\'s words, never a hex or a code (22/11)');
   assert.doesNotMatch(w.text, /never lighter|hex #/);
 });
 
@@ -1186,7 +1186,7 @@ test('a Gemini video sent back (the owner, 21/11: «make the Reel 15 seconds»):
     assert.equal(await verticalReel({ video: tall, seconds: 3 }), tall);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /Neutral 5500K overcast daylight from the windows, flat even product lighting, true-to-life matte colours, zero colour grading/);
+  assert.match(src, /Soft, diffused neutral 5500K overcast daylight from large off-camera windows, true-to-life neutral white balance/);
   assert.match(src, /video = await verticalReel\(\{ video, seconds: 15,/);
   assert.match(src, /this\.store\.d\.geminiLast = \{ codes:/);
 });
@@ -1194,22 +1194,22 @@ test('a Gemini video sent back (the owner, 21/11: «make the Reel 15 seconds»):
 test('the vertical 15-second Gemini Reel (the owner, 22/11: Gemini\'s own prompt formula; plain Gemini makes 15 s portrait): a short sectioned prompt with no text in the video; Atossa writes the logo, codes, names and WhatsApp on it', { skip: !fs.existsSync(await ffmpegPath()) && 'no ffmpeg here' }, async () => {
   const { geminiParts } = await import('../src/social.js');
   const { verticalReel } = await import('../src/reel.js');
-  assert.deepEqual(geminiParts('SCENE: a kitchen\n\n  CAMERA: one dolly-in  \nFORMAT: 9:16'), { prompt: 'SCENE: a kitchen\nCAMERA: one dolly-in\nFORMAT: 9:16', extend: '' }, 'the sections keep their lines');
-  assert.deepEqual(geminiParts('PROMPT: one\nEXTEND: two\nmore'), { prompt: 'one', extend: 'two more' }, 'an old two-part answer still splits');
+  assert.deepEqual(geminiParts('PROMPT 1: 9:16 ROOM STILL\nSCENE: a kitchen\n\n  LIGHT: x  \nPROMPT 2: 15s VIDEO FROM STILL\nFRAME 1 LOCK: y'), { prompt: 'SCENE: a kitchen\nLIGHT: x', video: 'FRAME 1 LOCK: y' }, 'two prompts, the sections keep their lines');
+  assert.deepEqual(geminiParts('SCENE: one'), { prompt: 'SCENE: one', video: '' }, 'a single prompt is the still');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /80 to 150 words in short labelled sections, each section on its own line/);
-  assert.match(src, /FORMAT: Aspect ratio: 9:16 vertical portrait\. Single continuous take, 15 seconds\./);
-  assert.match(src, /Leave out the words warm, golden, cozy, cinematic, moody and luxury lighting/);
-  assert.match(src, /the video itself carries no text at all/);
+  assert.match(src, /WORKFLOW: STILL FIRST, TWO PROMPTS/);
+  assert.match(src, /PROMPT 2: 15s VIDEO FROM STILL for Gemini's video tool/);
+  assert.match(src, /Leave out these words, they tint or clutter the films: warm, cozy, golden/);
+  assert.match(src, /the picture and the video carry no text at all/);
   assert.match(src, /labels: films, tagline: 'PREMIUM SURFACE FILMS'/);
   // «طرح»: the prompt with its lines, the steps for plain Gemini
   const { desk } = await studio();
   desk.cfg.designMode = 'gemini';
   const base = desk.write;
-  desk.write = async (r) => (r.kind === 'gemini-prompt' ? 'SCENE: The room.\nFORMAT: Aspect ratio: 9:16 vertical portrait.' : base(r));
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? 'PROMPT 1: 9:16 ROOM STILL\nSCENE: The room.\nPROMPT 2: 15s VIDEO FROM STILL\nFRAME 1 LOCK: The still.' : base(r));
   const d = await desk.draftDesign({ note: 'آشپزخانه' });
-  assert.equal(d.prompt, 'SCENE: The room.\nFORMAT: Aspect ratio: 9:16 vertical portrait.');
-  assert.equal(d.extend, '');
+  assert.equal(d.prompt, 'SCENE: The room.');
+  assert.equal(d.video, 'FRAME 1 LOCK: The still.');
   assert.match(d.text, /۵\. ویدیو را بارگیری کنید/);
   // a vertical video gets Atossa's words, fills the frame and keeps its length (short here to keep the test quick)
   const dir = tmp('tall-');
@@ -1240,9 +1240,11 @@ test('the vertical 15-second Gemini Reel (the owner, 22/11: Gemini\'s own prompt
 
 test('live fixes 22/11: a prompt outside Gemini\'s formula is rewritten once; the owner sees the Reel itself after «پست»; a tall logo never covers the tagline', async () => {
   const { geminiPromptFaults } = await import('../src/social.js');
-  assert.deepEqual(geminiPromptFaults('SCENE: a known, notable room.\nFORMAT: 9:16.'), []);
-  assert.match(geminiPromptFaults('Image 2 (solid matte film, no pattern) ONLY on doors.').join(' '), /positive words \(now: "no pattern/);
-  assert.match(geminiPromptFaults(Array(200).fill('oak').join(' ')).join(' '), /at most 150 words \(it has 200\)/);
+  assert.deepEqual(geminiPromptFaults('SCENE: a known, notable room, 5500K, 26mm, 1 to 1.5 metres, from 0:01.\nEXCLUSIONS: No on-screen text.'), []);
+  const bad = geminiPromptFaults('Apply HZ819 to warm doors by ARYAK.').join(' ');
+  assert.match(bad, /tinting words "warm"/); assert.match(bad, /no film code \(now: HZ819\)/); assert.match(bad, /only as Ah-ree-ak/); assert.match(bad, /EXCLUSIONS line/);
+  assert.match(geminiPromptFaults(`${Array(230).fill('oak').join(' ')} No on-screen text.`).join(' '), /at most 180 words \(it has 233\)/);
+  assert.match(geminiPromptFaults(`${Array(180).fill('oak').join(' ')} No on-screen text.`, { kind: 'video' }).join(' '), /at most 150 words/);
   const { desk } = await studio();
   desk.cfg.designMode = 'gemini';
   const base = desk.write;
@@ -1267,23 +1269,26 @@ test('«طرح … با آدم» (the owner, 22/11): a modest woman glides her f
   assert.deepEqual(personAsked('آشپزخانه ایتالیایی با آدم'), { person: true, note: 'آشپزخانه ایتالیایی' });
   assert.deepEqual(personAsked('کمد دیواری'), { person: false, note: 'کمد دیواری' });
   assert.deepEqual(designRequest('طرح ۸۳۲ با آدم'), { code: '832', note: 'با آدم' });
-  assert.equal(geminiPromptFaults(Array(170).fill('oak').join(' ')).length, 1, 'over 160 without a person');
-  assert.deepEqual(geminiPromptFaults(Array(170).fill('oak').join(' '), { person: true }), [], 'a person may take a few more words');
+  const long208 = `${Array(205).fill('oak').join(' ')} No on-screen text.`;
+  assert.equal(geminiPromptFaults(long208).length, 1, 'over 200 without a person');
+  assert.deepEqual(geminiPromptFaults(long208, { person: true }), [], 'a person may take a few more words');
+  const { GEMINI_PERSON } = await import('../src/social.js');
+  assert.doesNotMatch(GEMINI_PERSON, /cinematic|warm/i);
   const { desk } = await studio();
   desk.cfg.designMode = 'gemini';
   const base = desk.write;
   const seen = [];
-  desk.write = async (r) => { if (r.kind === 'gemini-prompt') { seen.push(r.text); return 'SCENE: The room.\nPERSON: a woman.'; } return base(r); };
+  desk.write = async (r) => { if (r.kind === 'gemini-prompt') { seen.push(`${r.system}\n${r.text}`); return 'SCENE: The room.\nPERSON: a woman.\nEXCLUSIONS: No on-screen text.'; } return base(r); };
   const d = await desk.draftDesign({ note: 'آشپزخانه با آدم' });
-  assert.match(seen[0], /Add a PERSON section right after SCENE/);
-  assert.match(seen[0], /modestly dressed for the Gulf \(long sleeves and wide trousers, or a flowing abaya\)/);
-  assert.match(seen[0], /glides her fingertips along/);
-  assert.match(seen[0], /The owner's words: آشپزخانه\n/, 'the words «با آدم» are taken out of the note');
-  assert.doesNotMatch(seen[0], /cinematic|warm/i);
-  assert.match(d.text, /با آدم: یک خانم با پوشش پوشیده/);
+  assert.match(seen[0], /add a PERSON line right after SCENE/);
+  assert.match(seen[0], /modest matte cream, sand-beige or soft dove-grey flowing abaya/);
+  assert.match(seen[0], /glides her fingertips downward along/);
+  assert.match(seen[0], /"The woman on screen does not speak\."/);
+  assert.match(seen[0], /The owner's words: آشپزخانه$/m, 'the words «با آدم» are taken out of the note');
+  assert.match(d.text, /با آدم: خانم از همان عکس کنار قاب است/);
   seen.length = 0;
   const plain = await desk.draftDesign({ note: 'آشپزخانه' });
-  assert.doesNotMatch(seen[0], /PERSON/, 'no person unless asked');
+  assert.doesNotMatch(seen[0], /PERSON \(the owner asked/, 'no person unless asked');
   assert.doesNotMatch(plain.text, /با آدم/);
   // live 22/11: 295 words came back; a rewrite still over the limit but shorter is kept
   let k = 0;
@@ -1302,4 +1307,38 @@ test('the sample\'s colour in words (live 22/11: a chocolate brown was called «
   assert.match(await tone(90, 100, 70), /^dark olive/);
   assert.equal(await tone(230, 228, 225), 'very light off-white');
   assert.match(await tone(63, 64, 48), /^very dark olive/, "the owner's dark olive (21/11) stays olive");
+});
+
+test('the deep Gemini session (the owner, 22/11: «build it all»): still first, every film in Gemini\'s own words, samples cut clean, films that look the same chosen again', async () => {
+  const { filmWords, cleanSwatch, twinFilms } = await import('../src/social.js');
+  assert.match(filmWords('HZ824'), /^Very dark espresso chocolate-brown solid/);
+  assert.match(filmWords('126'), /zero orange/);
+  const words = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'filmwords.json'), 'utf8'));
+  assert.equal(Object.keys(words).length, 159, 'every ARYAK code');
+  assert.ok(Object.values(words).every((w) => w.split(/\s+/).length <= 16 && !/\b(warm|golden|cinematic)\b/i.test(w)));
+  // a sample with a printed code in its corner comes out square, 1024, without the corner
+  const swatch = await sharp({ create: { width: 900, height: 1200, channels: 3, background: { r: 120, g: 90, b: 60 } } })
+    .composite([{ input: await sharp({ create: { width: 160, height: 60, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 720, top: 1120 }]).jpeg().toBuffer();
+  const clean = await cleanSwatch(swatch);
+  const meta = await sharp(clean).metadata();
+  assert.equal(meta.width, 1024); assert.equal(meta.height, 1024);
+  const { channels } = await sharp(clean).stats();
+  assert.ok(channels[0].max < 200, 'the white code is cut away');
+  // twins: the same kind and almost the same colour
+  assert.deepEqual(twinFilms([{ code: 'A', name: 'Greige oak', look: '', tone: { hex: '#B5A890' } }, { code: 'B', name: 'Light oak', look: '', tone: { hex: '#BBAE95' } }, { code: 'C', name: 'Greige solid', look: '', tone: { hex: '#B8AB93' } }]), [['A', 'B']], 'a wood and a solid of one colour still read apart');
+  // «طرح»: the swatches go out cleaned, the writer never sees a code; two prompts, the video one sent after the still
+  const { desk } = await studio();
+  desk.cfg.designMode = 'gemini';
+  const base = desk.write;
+  const seen = [];
+  desk.write = async (r) => (r.kind === 'gemini-prompt' ? (seen.push(r), 'PROMPT 1: 9:16 ROOM STILL\nSCENE: The room.\nEXCLUSIONS: No on-screen text.\nPROMPT 2: 15s VIDEO FROM STILL\nFRAME 1 LOCK: The still.\nEXCLUSIONS: No on-screen text.') : base(r));
+  const d = await desk.draftDesign({ note: 'آشپزخانه' });
+  assert.equal(seen.length, 1, 'a clean answer is not rewritten');
+  for (const sw of d.swatches) { const m = await sharp(sw.image).metadata(); assert.equal(m.width, 1024); assert.equal(m.height, 1024); }
+  for (const sw of d.swatches) assert.ok(!seen[0].text.includes(sw.code), `the writer never sees code ${sw.code}`);
+  assert.match(d.text, /ابزار «ساختن تصویر»/); assert.match(d.text, /فقط همان عکس را پیوست کنید/);
+  const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.match(index, /if \(d\.video\) await socialSay\(d\.video\);/);
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src, /look the same on camera \(the same kind and almost the same colour\); keep only one of each pair/, 'the designer chooses again once');
 });
