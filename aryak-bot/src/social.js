@@ -367,15 +367,23 @@ FORMAT: Aspect ratio: 9:16 vertical portrait. Single continuous take, 15 seconds
 - At most three films.
 Output only the prompt, its sections on separate lines.`;
 /** What breaks Gemini's formula in a prompt (22/11): over 160 words, or negative words the model locks on. Each fault as an instruction. */
-export function geminiPromptFaults(prompt) {
+export function geminiPromptFaults(prompt, { person = false } = {}) {
   const t = String(prompt || '');
   const out = [];
   const words = t.split(/\s+/).filter(Boolean).length;
-  if (words > 160) out.push(`is at most 150 words (it has ${words})`);
+  if (words > (person ? 180 : 160)) out.push(`is at most ${person ? 170 : 150} words (it has ${words})`);
   const neg = t.match(/\b(no|not|never|don't|without|avoid)\b[^.\n]{0,30}/gi) || [];
   if (neg.length) out.push(`says only what is wanted, in positive words (now: ${neg.slice(0, 4).map((x) => `"${x.trim()}"`).join(', ')})`);
   return out;
 }
+/** «طرح … با آدم» (the owner, 22/11): a person in the Reel. Returns { person, note } with the words taken out of the note. */
+export function personAsked(note) {
+  const re = /(?:^|\s)(?:با\s*آدم|با\s*انسان|با\s*شخص|with\s+(?:a\s+)?(?:person|people|model))(?=\s|$|[،,.])/i;
+  const t = String(note || '');
+  return re.test(t) ? { person: true, note: t.replace(re, ' ').replace(/\s{2,}/g, ' ').trim() } : { person: false, note: t.trim() };
+}
+/** The person of a «با آدم» Reel (Gemini's advice, reviewed 22/11): modest for the Gulf, neutral clothes so the films stay the heroes, one slow touch that proves the matte film. */
+export const GEMINI_PERSON = `The owner asked for a person in this Reel. Add a PERSON section right after SCENE: one elegant woman in her thirties, modestly dressed for the Gulf (long sleeves and wide trousers, or a flowing abaya) in cream, beige, soft grey or black, so the films stay the heroes. One slow action: she walks calmly into the room, pauses and glides her fingertips along [the exact surface of one matte film, named] to show its smooth matte finish, then steps aside. Seen from a three-quarter angle, her gaze on the room, her hands relaxed and natural. In CAMERA & MOTION the camera follows her slowly at eye level and ends on a steady view of the whole room. Keep the whole prompt 80 to 170 words.`;
 /** The Gemini prompt (22/11): its sections stay on their own lines (pasted, a line break does not send); an old «PROMPT: … EXTEND: …» answer still splits. */
 export function geminiParts(raw) {
   const lines = (t) => String(t || '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
@@ -853,7 +861,8 @@ export class SocialDesk {
    * name, close-ups, the logo and the WhatsApp number at the end, a British female voice), and each film's swatch to attach. He makes the
    * video in Gemini and sends it back here with «پست». Returns { text, prompt, swatches: [{ code, name, image }] }.
    */
-  async geminiPackage({ code: asked = '', note = '', inspiration = null, pillar = '' } = {}) {
+  async geminiPackage({ code: asked = '', note: said = '', inspiration = null, pillar = '' } = {}) {
+    const { person, note } = personAsked(said); // «با آدم»: a person in the Reel (the owner, 22/11); the designer's room itself stays as it is
     let code = '';
     if (asked) { const c = this.catalogColour(asked); if (c.error) return { text: c.error }; code = c.code; }
     await this.researchTrends().catch((err) => this.log(`social: today's research failed: ${err.message}`));
@@ -865,18 +874,19 @@ export class SocialDesk {
     const films = plan.parts.slice(0, 3).filter((x) => all[x.code]).map((x, i) => ({ code: x.code, name: all[x.code].name || all[x.code].look || 'decorative film', look: all[x.code].look || '', where: x.where, n: ['first', 'second', 'third', 'fourth'][i] })); // every film of the design (the owner, 21/11)
     for (const f of films) f.tone = await swatchTone(fs.readFileSync(path.join(this.catalogDir, all[f.code].file))).catch(() => null); // the sample's own colour (the owner, 21/11: a dark olive came out lighter, a grey-green warm)
     const out = String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 5000, text: [
-      `The design: ${plan.room}.`, `The scene: ${plan.scene}`,
+      `The design: ${plan.room}.`, `The scene: ${person ? String(plan.scene || '').replace(/\bNo people,?\s*/i, '') : plan.scene}`,
       `The films, in the order their samples are attached: ${films.map((f) => `${f.code} «${f.name}»${f.look ? ` (${f.look})` : ''} on ${f.where} (the ${f.n} sample, image ${films.indexOf(f) + 1}${f.tone ? `; measured colour: ${f.tone.words.replace(/, keep it this dark, never lighter/, '')}` : ''})`).join('; ')}.`,
       inspiration ? 'The owner also attaches his inspiration picture after the samples (the last image): the same room, layout and camera.' : '',
       note ? `The owner's words: ${note}` : '',
+      person ? GEMINI_PERSON : '',
     ].filter(Boolean).join('\n') }) || '');
     // one vertical 15-second take in plain Gemini (22/11: its video tool has 15 s and portrait; the Gem's has neither), the text added by Atossa
     let { prompt: raw, extend } = geminiParts(out);
-    const faults = geminiPromptFaults(raw);
+    const faults = geminiPromptFaults(raw, { person });
     if (raw && faults.length) {
       const again = geminiParts(String(await this.write({ kind: 'gemini-prompt', system: fill(GEMINI_PROMPT_RULES, this.cfg), effort: 'medium', maxTokens: 3000,
         text: `Rewrite this prompt so it keeps every section, film and surface but ${faults.join(' and ')}. Output only the prompt.\n\n${raw}` }) || '')).prompt;
-      if (again && geminiPromptFaults(again).length < faults.length) raw = again;
+      if (again && geminiPromptFaults(again, { person }).length < faults.length) raw = again;
     }
     if (!raw) return { text: 'The prompt for Gemini could not be written; try again.' };
     this.remember(plan);
@@ -890,6 +900,7 @@ export class SocialDesk {
       '',
       'روش ساختن ویدیو:',
       'ریلز پانزده ثانیه و همه‌اش ویدیوی اتاق است؛ کد و نام فیلم‌ها، لوگو و شمارهٔ واتس‌اپ را آتوسا بعد روی آن می‌گذارد.',
+      ...(person ? ['با آدم: یک خانم با پوشش پوشیده و لباس رنگ خنثی آرام وارد می‌شود و نوک انگشتانش را روی یک فیلم مات می‌کشد. اگر دست یا صورت خراب درآمد، همان را دوباره بسازید.'] : []),
       '۱. جمینای معمولی را باز کنید (گفتگوی تازه، نه دستیار «استودیوی آریاک»: داخل دستیار گزینهٔ طول و قاب نیست) و «ساختن ویدیو» را بزنید.',
       '۲. زیر کادر «۱۵ ثانیه» و «عمودی» را برگزینید.',
       `۳. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید${inspiration ? ' و عکس الهام خودتان را هم بعد از آن‌ها' : ''}.`,

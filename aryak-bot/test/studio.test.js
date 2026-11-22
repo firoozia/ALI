@@ -1261,3 +1261,28 @@ test('live fixes 22/11: a prompt outside Gemini\'s formula is rewritten once; th
   const reelSrc = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
   assert.match(reelSrc, /under = 640 \+ l\.height \+ 40;/);
 });
+
+test('«طرح … با آدم» (the owner, 22/11): a modest woman glides her fingertips along a matte film; the default Reel stays with no people', async () => {
+  const { personAsked, geminiPromptFaults, designRequest } = await import('../src/social.js');
+  assert.deepEqual(personAsked('آشپزخانه ایتالیایی با آدم'), { person: true, note: 'آشپزخانه ایتالیایی' });
+  assert.deepEqual(personAsked('کمد دیواری'), { person: false, note: 'کمد دیواری' });
+  assert.deepEqual(designRequest('طرح ۸۳۲ با آدم'), { code: '832', note: 'با آدم' });
+  assert.equal(geminiPromptFaults(Array(170).fill('oak').join(' ')).length, 1, 'over 160 without a person');
+  assert.deepEqual(geminiPromptFaults(Array(170).fill('oak').join(' '), { person: true }), [], 'a person may take a few more words');
+  const { desk } = await studio();
+  desk.cfg.designMode = 'gemini';
+  const base = desk.write;
+  const seen = [];
+  desk.write = async (r) => { if (r.kind === 'gemini-prompt') { seen.push(r.text); return 'SCENE: The room.\nPERSON: a woman.'; } return base(r); };
+  const d = await desk.draftDesign({ note: 'آشپزخانه با آدم' });
+  assert.match(seen[0], /Add a PERSON section right after SCENE/);
+  assert.match(seen[0], /modestly dressed for the Gulf \(long sleeves and wide trousers, or a flowing abaya\)/);
+  assert.match(seen[0], /glides her fingertips along/);
+  assert.match(seen[0], /The owner's words: آشپزخانه\n/, 'the words «با آدم» are taken out of the note');
+  assert.doesNotMatch(seen[0], /cinematic|warm/i);
+  assert.match(d.text, /با آدم: یک خانم با پوشش پوشیده/);
+  seen.length = 0;
+  const plain = await desk.draftDesign({ note: 'آشپزخانه' });
+  assert.doesNotMatch(seen[0], /PERSON/, 'no person unless asked');
+  assert.doesNotMatch(plain.text, /با آدم/);
+});
