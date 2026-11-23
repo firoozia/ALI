@@ -1287,7 +1287,7 @@ test('the deep Gemini session (the owner, 22/11: «build it all»): still first,
   assert.match(filmWords('126'), /zero orange/);
   const words = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'filmwords.json'), 'utf8'));
   assert.equal(Object.keys(words).length, 159, 'every ARYAK code');
-  assert.ok(Object.values(words).every((w) => w.split(/\s+/).length <= 16 && !/\b(warm|golden|cinematic)\b/i.test(w)));
+  assert.ok(Object.values(words).every((w) => w.split(/\s+/).length <= 16 && !/\b(warm|golden|amber|cozy|sunset|sunlit|moody|cinematic|dramatic|editorial)\b/i.test(w)));
   // a sample with a printed code in its corner comes out square, 1024, without the corner
   const swatch = await sharp({ create: { width: 900, height: 1200, channels: 3, background: { r: 120, g: 90, b: 60 } } })
     .composite([{ input: await sharp({ create: { width: 160, height: 60, channels: 3, background: { r: 255, g: 255, b: 255 } } }).png().toBuffer(), left: 720, top: 1120 }]).jpeg().toBuffer();
