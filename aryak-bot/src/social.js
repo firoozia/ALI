@@ -379,35 +379,50 @@ const roomOf = (r) => { const t = (plainWords(r) || 'a modern kitchen').replace(
 const surfaceOf = (w) => { const t = plainWords(w, 12) || 'the cabinet doors'; return /^(the|a|an)\b/i.test(t) ? t : `the ${t}`; };
 /** «طرح … با آدم»: the woman in the last shot, after the close-ups (the deep session: at the edge, never looking at the camera, one slow touch). */
 export const GEMINI_PERSON = 'PERSON: one elegant woman in modest neutral clothing (a cream abaya or long sleeves and wide trousers), seen in three-quarter profile at the edge of the frame, never looking at the camera. In the pull back she glides her fingertips slowly along {SURFACE}. The woman on screen does not speak.';
-/** The prompt itself. films: [{ code, name, words, where }] in the order the samples are attached (2 or 3). clean: no labels and no voice. */
+/** A label's name: the catalogue name in one or two words (Gemini's mother prompt, 23/11: «never a new name»): SOLID, MATTE and the like
+ * go first, then the first and the last word stay (GREIGE WHITEWASHED OAK -> GREIGE OAK). */
+export function shortName(name) {
+  let w = labelName(name).split(' ').filter(Boolean);
+  if (w.length > 2) w = w.filter((x) => !/^(SOLID|MATTE?|MATT|COLOUR|COLOR|FINISH|LOOK|EFFECT)$/.test(x));
+  if (w.length > 2) w = [w[0], w[w.length - 1]];
+  return w.join(' ');
+}
+const sentence = (t) => { const x = String(t || '').toLowerCase(); return x ? `${x[0].toUpperCase()}${x.slice(1)}.` : ''; };
+/** The prompt itself: Gemini's own mother prompt (the owner's Gem, 23/11: his video came out with every text right and each dot on its film),
+ * filled by code. films: [{ code, name, words, where, tone }] in the order the samples are attached (2 or 3). clean: no labels, no
+ * outro text and no voice (Atossa then writes the codes, the logo and WhatsApp). */
 export function geminiTemplate({ room = '', films = [], person = false, clean = false } = {}) {
-  const f = films.slice(0, 3).map((x) => ({ ...x, surface: surfaceOf(x.where), label: labelName(x.name) || x.code }));
+  const f = films.slice(0, 3).map((x) => ({ ...x, surface: surfaceOf(x.where), label: shortName(x.name) || x.code }));
   const n = f.length;
-  const ord = ['first', 'second', 'third'];
-  const shots = f.map((x, i) => `${3 + 3 * i} to ${6 + 3 * i} s: a close-up that shows only ${x.surface} filling the frame, a slow glide along it.${clean ? '' : ' Label: "' + x.code + '" over "' + x.label + '".'}`);
-  const end = 3 + 3 * n;
+  const lum = (x) => { const m = /^#?([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})$/i.exec(x.tone?.hex || ''); return m ? 0.2126 * parseInt(m[1], 16) + 0.7152 * parseInt(m[2], 16) + 0.0722 * parseInt(m[3], 16) : 999; };
+  const darkest = [...f].sort((x, y) => lum(x) - lum(y))[0];
+  const slots = n === 3 ? ['0:02–0:05', '0:05–0:08', '0:08–0:11'] : n === 2 ? ['0:02–0:05', '0:05–0:11'] : ['0:02–0:11'];
+  const hands = ['as an interior designer\'s hand gently glides across the surface to show its fingerprint-free matte PVC texture', 'as the designer\'s hand softly brushes across the surface', 'as the designer\'s hand gently passes over the surface'];
+  const say = ['0:02.5', '0:05.5', '0:08.5'];
   return [
-    `Photorealistic 9:16 vertical architectural video, 15 seconds, of ${roomOf(room)}. Use the ${n === 1 ? 'attached image' : `${['', '', 'two', 'three'][n]} attached images`} strictly as surface material references, never shown as flat swatches or boards.`,
+    `Photorealistic ultra-luxury architectural showcase video, vertical 9:16 framing from floor to ceiling, 15 seconds, of ${roomOf(room)} in a bespoke Dubai villa. Apply the ${['', 'attached image', 'two attached images', 'three attached images'][n]} strictly as seamless architectural PVC film finishes vacuum-pressed onto MDF cabinetry—never show them as flat swatches or boards—preserving exact swatch color, grain direction, and dead-matte texture with zero gloss or plastic glare.`,
     '',
-    'FILMS (each film exactly like its attached image, on these surfaces only):',
-    ...f.map((x, i) => `- the ${ord[i]} attached image (${plainWords(x.words, 16)}) on ${x.surface}${i === n - 1 ? '.' : ';'}`),
-    'Worktops and tops are quiet neutral stone; walls, floor and ceiling quiet neutral plaster and stone; at most three quiet props. Every door and drawer closed, the camera always inside the room.',
-    ...(person ? ['', GEMINI_PERSON.replace('{SURFACE}', f[0]?.surface || 'the cabinet doors')] : []),
+    'SURFACE MAPPING (apply exclusively to assigned surfaces):',
+    ...f.map((x, i) => `- Image ${i + 1} (${plainWords(x.words, 16)}) ONLY on ${x.surface}.`),
+    'Architectural details: neutral honed stone countertops and backsplash, neutral matte flooring, minimal luxury styling, neutral recessed under-cabinet LED strips. All doors and drawers remain closed. Keep identical room layout, cabinetry proportions, and lighting across all shots.',
+    ...(person ? ['', GEMINI_PERSON.replace('In the pull back', 'In the final pull-back').replace('{SURFACE}', f[0]?.surface || 'the cabinet doors')] : []),
     '',
-    'SHOTS:',
-    `0 to 3 s: a calm wide view of the whole room, slow dolly-in.${clean ? '' : ' No text in this shot.'}`,
-    ...shots,
-    `${end} to 15 s: a slow pull back to the whole room.${clean ? '' : ' No text in this shot.'}`,
+    `SHOT LIST (${n + 2} clean cuts, smooth motorized gimbal motion, 15 seconds total):`,
+    '- 0:00–0:02: Calm eye-level wide vertical view of the entire room, slow continuous push-in. Clean frame, no text.',
+    ...f.map((x, i) => `- ${slots[i]}: Tight vertical close-up filling the frame exclusively with ${x.surface}, slow horizontal glide ${hands[i]}.${clean ? '' : ` Label ${i + 1}: "${x.code}" on line 1, "${x.label}" on line 2.`}`),
+    clean ? '- 0:11–0:15: Smooth slow-motion pull-back to the exact opening view of the room. Clean frame, no text.'
+      : `- 0:11–0:15: Smooth slow-motion pull-back to the exact opening view of the room. All film labels are gone. Clean luxury outro inside vertical safe zones for the full final 4 seconds: "ARYAK" centered with a subtle letter-by-letter reveal and soft dark drop shadow; completely static "PREMIUM SURFACE FILMS" directly beneath in tracked-out white sans-serif with soft dark drop shadow; completely static "+971 55 769 9100" above the bottom fifth of the frame over ${darkest?.surface || 'the lower cabinet fronts'} with a crisp dark drop shadow for 100% legibility.`,
     '',
-    ...(clean ? [] : ['LABELS: each label is two short lines of clean white sans-serif text in the upper middle of its close-up, with a soft dark shadow so it reads on light and dark surfaces, a thin white line ending in a small dot on that same surface. It appears with its close-up and disappears when the close-up ends. All text exactly as written, exact spelling, each label shown once.', '']),
-    'LIGHT: soft, diffused neutral 5500K overcast daylight, true-to-life neutral white balance, ungraded, the same light in every shot.',
+    ...(clean ? [] : ['ON-SCREEN LABELS (0:02–0:11 only):', 'Two short lines of crisp white geometric sans-serif text in the upper-middle third of each close-up with a soft dark drop shadow, connected by a thin white leader line ending in a small white dot anchored directly on that film\'s surface. Each label, line, and dot appears instantaneously from the first frame of its shot, stays completely static, and vanishes cleanly at the cut. Exact spelling only.', '']),
+    'LIGHTING & COLOR:',
+    'Soft, diffused neutral 5500K natural overcast daylight paired with neutral 5000K–5500K recessed under-cabinet LEDs, gentle grazing light across surfaces to reveal authentic matte texture and grain fidelity. Strictly neutral white balance, zero color cast, zero color grading.',
     '',
-    ...(clean ? ['AUDIO: very soft minimal modern ambient piano and a quiet room tone. No dialogue, no voice-over, no singing.', '', 'No on-screen text. No subtitles. No captions. No logos. No watermarks.']
-      : ['AUDIO: very soft minimal modern ambient piano and a quiet room tone. A calm, refined British female voice, unhurried, each line finished completely before the next:',
-        '0:01 "Ah-ree-ak."',
-        ...f.map((x, i) => `0:0${3 + 3 * i} "${spokenCode(x.code)}, ${x.label.toLowerCase()}."`),
-        `0:${String(end).padStart(2, '0')} "Premium surfaces, designed for you."`,
-        '', 'Nothing else written anywhere: no title, no logo, no subtitles, no captions, no watermark.']),
+    'AUDIO:',
+    ...(clean ? ['Soft, minimal modern ambient piano, subtle room acoustics and delicate tactile brushing sound during hand glides. No dialogue, no voice-over, no singing.', '', 'EXCLUSIONS:', 'No on-screen text, no subtitles, no captions, no logos, no watermarks.']
+      : ['Soft, minimal modern ambient piano, subtle room acoustics, delicate tactile brushing sound during hand glides, and a soft chime at 0:11. A calm, refined British female voice-over speaking ONLY short sensory lines—never reading codes or numbers aloud:',
+        ...f.map((x, i) => `- ${say[i]}: "${sentence(x.label)}"`),
+        '- 0:11.5: "Ah-ree-ak. Premium surface films."',
+        '', 'EXCLUSIONS:', 'No spoken codes or numbers, no duplicate on-screen brand names, no subtitles, no captions, no watermarks, no extra text anywhere on screen.']),
   ].join('\n');
 }
 /** «بدون برچسب»: a clean video with no labels and no voice (Atossa then writes the codes on it); «دو رنگ»: two films. Each taken out of the note. */
@@ -991,13 +1006,13 @@ export class SocialDesk {
       ...films.map((f) => `• کد ${f.code}: ${plan.parts.find((x) => x.code === f.code)?.where_fa || f.where}`),
       twins.length ? `هشدار: ${twins.map((t) => `کد ${t[0]} و ${t[1]}`).join('، ')} در ویدیو تقریباً یکی دیده می‌شوند.` : '',
       '',
-      clean ? 'روش ساختن ویدیو (یک ساخت، بدون برچسب و گوینده):' : 'روش ساختن ویدیو (یک ساخت؛ برچسب هر کد در درشت‌نمای خودش و گوینده از خود جمینای):',
+      clean ? 'روش ساختن ویدیو (یک ساخت، بدون برچسب، نوشته و گوینده):' : 'روش ساختن ویدیو (پرامپت مادر جمینای: برچسب هر کد در درشت‌نمای خودش، دست طراح، لوگو و شماره در پایان):',
       '۱. جمینای معمولی را باز کنید (گفتگوی تازه، نه داخل جم) و ابزار «ساختن ویدیو» را بزنید؛ زیر کادر «۱۵ ثانیه» و «عمودی».',
       `۲. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید و متن پیام بعد از نمونه‌ها را بچسبانید.`,
       '۳. اگر ویدیو درست نبود، اصلاح یا ادامه نزنید (جای برچسب‌ها و رنگ‌ها به هم می‌ریزد)؛ بنویسید چه چیزی غلط بود تا طرح تازه بدهم.',
       clean ? '۴. ویدیو را بارگیری کنید، همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا کدها، نام‌ها، لوگو و واتس‌اپ را رویش می‌گذارد.'
-        : '۴. ویدیو را بارگیری کنید، همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا لوگو و واتس‌اپ را رویش می‌گذارد (کدها را خود ویدیو دارد).',
-      person ? 'با آدم: خانم کنار قاب است و در پایان ویدیو نوک انگشتانش را روی فیلم اول می‌کشد.' : '',
+        : '۴. شمارهٔ واتس‌اپ پایان ویدیو را با چشم نگاه کنید، ویدیو را بارگیری کنید، همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا چیزی رویش نمی‌گذارد (برچسب‌ها، لوگو و شماره را خود ویدیو دارد).',
+      person ? 'با آدم: خانم کنار قاب است و در عقب‌کشیدن پایانی نوک انگشتانش را روی فیلم اول می‌کشد.' : '',
     ].filter((l, i, arr) => l || (arr[i - 1] && i < arr.length - 1)).join('\n');
     return { text: head, prompt, video: '', swatches: sw };
   }
@@ -1023,7 +1038,7 @@ export class SocialDesk {
       const dir = this.brandDir ? path.join(this.brandDir, 'music') : '';
       let music = null;
       try { const kept = fs.readdirSync(dir).filter((f) => f.endsWith('.mp3')); if (kept.length) music = fs.readFileSync(path.join(dir, kept[Math.floor(Math.random() * kept.length)])); } catch { /* no kept music: the video's own sound only */ }
-      video = await verticalReel({ video, seconds: 15, logo: brand.logo, font: brand.font, codes: films.map((f) => f.code), labels: films, tallLabels: !labelled, tagline: 'PREMIUM SURFACE FILMS', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : '', music,
+      video = await verticalReel({ video, seconds: 15, logo: labelled ? null : brand.logo, font: brand.font, codes: films.map((f) => f.code), labels: films, tallLabels: !labelled, tagline: labelled ? '' : 'PREMIUM SURFACE FILMS', line: labelled || !this.cfg.contact ? '' : `WhatsApp ${this.cfg.contact}`, music,
         card: (frame) => endCard({ codes: films, logo: brand.logo, font: brand.font, cta: films.length > 1 ? 'Send the code you like on WhatsApp' : 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK', background: frame }) });
     } catch (err) { this.log(`social: the video was kept as it came (${err.message})`); }
     const facts = `This is a short AI-made video Reel of an interior for ARYAK films${codes.length ? `, made with ${codes.map((c) => `«Code ${c}»`).join(', ')}` : ''}. Say that it is a design idea and name the codes.`;
@@ -1035,7 +1050,7 @@ export class SocialDesk {
     p.videoOnly = true;
     if (codes.length) p.design = { room: 'video', codes, title: '', scene: '' };
     this.store.save();
-    return `${text}\n(ویدیو عمودی و پانزده‌ثانیه‌ای به‌صورت ریلز منتشر می‌شود، همراه استوری‌ها؛ عکس جدا منتشر نمی‌شود.)${labelled ? '\n(کدها دوباره روی ویدیو نوشته نشد، چون خود ویدیو برچسب دارد. اگر برچسب نداشت، با «پست بدون برچسب» بفرستید.)' : ''}`;
+    return `${text}\n(ویدیو عمودی و پانزده‌ثانیه‌ای به‌صورت ریلز منتشر می‌شود، همراه استوری‌ها؛ عکس جدا منتشر نمی‌شود.)${labelled ? '\n(روی ویدیو چیزی اضافه نشد، چون برچسب‌ها، لوگو و شماره را خود ویدیو دارد. اگر ویدیو این‌ها را نداشت، با «پست بدون برچسب» بفرستید.)' : ''}`;
   }
 
   /** The room of a plan, drawn by Gemini with each film's own picture (and the owner's inspiration as a mood reference). The raw picture. */

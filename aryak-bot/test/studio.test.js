@@ -1107,12 +1107,12 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
   desk.write = async (r) => (r.kind === 'gemini-prompt' ? (writes.push(r), 'A 10-second vertical 9:16 photorealistic Instagram Reel for ARYAK.\nSecond line.') : base(r));
   const d = await desk.draftDesign({ note: 'آشپزخانه' });
   assert.equal(made.length, 0, 'nothing is drawn on the paid key');
-  assert.match(d.prompt, /\nSHOTS:\n/, 'the sections stay on their own lines (22/11: pasted, a line break does not send)');
+  assert.match(d.prompt, /\nSHOT LIST \(/, 'the sections stay on their own lines (22/11: pasted, a line break does not send)');
   assert.ok(d.swatches.length >= 1 && Buffer.isBuffer(d.swatches[0].image));
   assert.match(d.text, /^طرح برای جمینای:/);
   assert.match(d.text, /«پست»/);
   assert.equal(writes.filter((x) => x.kind === 'gemini-prompt').length, 0, 'the template is filled by code, no writer (23/11)');
-  assert.match(d.prompt, /the first attached image/);
+  assert.match(d.prompt, /- Image 1 \(/);
   const t = await desk.draftVideoPost({ video: Buffer.from('not a video'), note: 'HZ812' });
   assert.match(t, /could not be read/, 'a broken video is said, never posted');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
@@ -1128,7 +1128,7 @@ test('the Gemini way (the owner, 21/11): «طرح» gives a prompt and the swatc
 
 test('the Gemini prompt (the owner, 21/11): a top designer and marketer, every film exactly its sample, no PVC film on a worktop', async () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /Worktops and tops are quiet neutral stone; walls, floor and ceiling quiet neutral plaster and stone/);
+  assert.match(src, /neutral honed stone countertops and backsplash, neutral matte flooring/);
   assert.match(src, /NEVER on a worktop, a countertop, an island top, a shelf top/, 'the designer too');
   assert.match(src, /plan\.parts\.slice\(0, two \? 2 : 3\)/, 'at most three films: a fourth sample averages the colours (Gemini, 22/11)');
   assert.match(src, /جمینای معمولی را باز کنید \(گفتگوی تازه، نه داخل جم\)/, 'only plain Gemini offers 15 s and portrait (22/11)');
@@ -1151,7 +1151,7 @@ test('the Gemini prompt after the first video (the owner, 21/11): 10 seconds, po
   const { desk } = await studio();
   desk.cfg.designMode = 'gemini';
   const d = await desk.draftDesign({ note: 'آشپزخانه' });
-  assert.match(d.prompt, /- the first attached image \([^)]+\) on /, 'each film in its words, never a hex (22/11)');
+  assert.match(d.prompt, /- Image 1 \([^)]+\) ONLY on /, 'each film in its words, never a hex (22/11)');
   assert.doesNotMatch(d.prompt, /never lighter|hex #/);
 });
 
@@ -1181,7 +1181,7 @@ test('a Gemini video sent back (the owner, 21/11: «make the Reel 15 seconds»):
     assert.equal(await verticalReel({ video: tall, seconds: 3 }), tall);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /soft, diffused neutral 5500K overcast daylight, true-to-life neutral white balance/);
+  assert.match(src, /Soft, diffused neutral 5500K natural overcast daylight paired with neutral 5000K–5500K recessed under-cabinet LEDs/);
   assert.match(src, /video = await verticalReel\(\{ video, seconds: 15,/);
   assert.match(src, /this\.store\.d\.geminiLast = \{ codes:/);
 });
@@ -1192,16 +1192,16 @@ test('the vertical 15-second Gemini Reel (the owner, 22/11: Gemini\'s own prompt
   assert.deepEqual(geminiParts('PROMPT 1: 9:16 ROOM STILL\nSCENE: a kitchen\n\n  LIGHT: x  \nPROMPT 2: 15s VIDEO FROM STILL\nFRAME 1 LOCK: y'), { prompt: 'SCENE: a kitchen\nLIGHT: x', video: 'FRAME 1 LOCK: y' }, 'two prompts, the sections keep their lines');
   assert.deepEqual(geminiParts('SCENE: one'), { prompt: 'SCENE: one', video: '' }, 'a single prompt is the still');
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
-  assert.match(src, /labels: films, tallLabels: !labelled, tagline: 'PREMIUM SURFACE FILMS'/);
+  assert.match(src, /labels: films, tallLabels: !labelled, tagline: labelled \? '' : 'PREMIUM SURFACE FILMS'/);
   // «طرح»: the prompt with its lines, the steps for plain Gemini
   const { desk } = await studio();
   desk.cfg.designMode = 'gemini';
   const base = desk.write;
   desk.write = async (r) => (r.kind === 'gemini-prompt' ? 'PROMPT 1: 9:16 ROOM STILL\nSCENE: The room.\nPROMPT 2: 15s VIDEO FROM STILL\nFRAME 1 LOCK: The still.' : base(r));
   const d = await desk.draftDesign({ note: 'آشپزخانه' });
-  assert.match(d.prompt, /^Photorealistic 9:16 vertical architectural video, 15 seconds/);
+  assert.match(d.prompt, /^Photorealistic ultra-luxury architectural showcase video, vertical 9:16 framing from floor to ceiling, 15 seconds/);
   assert.equal(d.video, '', 'one prompt, one generation (23/11)');
-  assert.match(d.text, /۴\. ویدیو را بارگیری کنید/);
+  assert.match(d.text, /۴\. شمارهٔ واتس‌اپ پایان ویدیو را با چشم نگاه کنید/);
   // a vertical video gets Atossa's words, fills the frame and keeps its length (short here to keep the test quick)
   const dir = tmp('tall-');
   const { spawnSync } = await import('node:child_process');
@@ -1262,7 +1262,7 @@ test('«طرح … با آدم» (the owner, 22/11): a modest woman glides her f
   desk.cfg.designMode = 'gemini';
   const d = await desk.draftDesign({ note: 'آشپزخانه با آدم' });
   assert.match(d.prompt, /\nPERSON: one elegant woman in modest neutral clothing \(a cream abaya/);
-  assert.match(d.prompt, /In the pull back she glides her fingertips slowly along the tall doors\. The woman on screen does not speak\./);
+  assert.match(d.prompt, /In the final pull-back she glides her fingertips slowly along the tall doors\. The woman on screen does not speak\./);
   assert.match(d.text, /با آدم: خانم کنار قاب است/);
   const plain = await desk.draftDesign({ note: 'آشپزخانه' });
   assert.doesNotMatch(plain.prompt, /PERSON:/, 'no person unless asked');
@@ -1303,7 +1303,7 @@ test('the deep Gemini session (the owner, 22/11: «build it all»): still first,
   desk.cfg.designMode = 'gemini';
   const d = await desk.draftDesign({ note: 'آشپزخانه' });
   for (const sw of d.swatches) { const m = await sharp(sw.image).metadata(); assert.equal(m.width, 1024); assert.equal(m.height, 1024); }
-  for (const sw of d.swatches) assert.ok(!d.prompt.split('SHOTS:')[0].includes(sw.code), `code ${sw.code} only on its label`);
+  for (const sw of d.swatches) assert.ok(!d.prompt.split('SHOT LIST')[0].includes(sw.code), `code ${sw.code} only on its label`);
   assert.match(d.text, /ابزار «ساختن ویدیو»/);
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(index, /if \(d\.video\) await socialSay\(d\.video\);/);
@@ -1311,8 +1311,8 @@ test('the deep Gemini session (the owner, 22/11: «build it all»): still first,
   assert.match(src, /look the same on camera \(the same kind and almost the same colour\); keep only one of each pair/, 'the designer chooses again once');
 });
 
-test('Atossa matches the Gem (the owner, 23/11: «هماهنگ کن»): the template filled by code, labels in the close-ups, the voice says each code; a labelled video gets no second set of codes', async () => {
-  const { spokenCode, labelName, templateAsked, geminiTemplate } = await import('../src/social.js');
+test('Atossa matches the Gem (the owner, 23/11): Gemini\'s mother prompt filled by code, labels from the catalogue names, the voice never says a code; a labelled video gets nothing written on it', async () => {
+  const { spokenCode, labelName, shortName, templateAsked, geminiTemplate } = await import('../src/social.js');
   assert.deepEqual(['HZ812', 'HZ801', 'HZ810', '126', '212', '101', '602', '1803', '1815', '1820', 'TS840'].map(spokenCode),
     ['H-Z eight-twelve', 'H-Z eight-oh-one', 'H-Z eight-ten', 'One-twenty-six', 'Two-twelve', 'One-oh-one', 'Six-oh-two', 'Eighteen-oh-three', 'Eighteen-fifteen', 'Eighteen-twenty', 'T-S eight-forty']);
   assert.equal(labelName('Warm greige matte'), 'GREIGE MATTE');
@@ -1320,18 +1320,21 @@ test('Atossa matches the Gem (the owner, 23/11: «هماهنگ کن»): the temp
   assert.deepEqual(templateAsked('آشپزخانه دو رنگ بدون برچسب'), { clean: true, two: true, note: 'آشپزخانه' });
   assert.deepEqual(templateAsked('کمد'), { clean: false, two: false, note: 'کمد' });
   const films = [{ code: 'HZ812', name: 'Dark walnut', where: 'full-height tall doors', words: 'Very dark brown walnut' }, { code: 'HZ818', name: 'Ivory cream', where: 'the lower doors', words: 'Pale ivory-cream solid' }, { code: '212', name: 'Olive khaki solid', where: 'island side panels', words: 'Deep dark olive-khaki solid' }];
+  assert.deepEqual(['Olive khaki solid', 'Greige whitewashed oak', 'Dark walnut matte', 'Golden sycamore', 'Ivory cream'].map(shortName), ['OLIVE KHAKI', 'GREIGE OAK', 'DARK WALNUT', 'SYCAMORE', 'IVORY CREAM'], 'one or two words of the catalogue name');
+  films[0].tone = { hex: '#B9A992' }; films[2].tone = { hex: '#3F4030' };
   const p = geminiTemplate({ room: 'a warm Italian villa kitchen', films });
-  assert.match(p, /15 seconds, of an Italian villa kitchen\./, 'no tinting word, the right article');
-  assert.match(p, /- the first attached image \(Very dark brown walnut\) on the full-height tall doors;/);
-  assert.match(p, /0 to 3 s: a calm wide view of the whole room, slow dolly-in\. No text in this shot\./);
-  assert.match(p, /9 to 12 s: a close-up that shows only the island side panels filling the frame, a slow glide along it\. Label: "212" over "OLIVE KHAKI SOLID"\./);
-  assert.match(p, /12 to 15 s: a slow pull back to the whole room\. No text in this shot\./);
-  assert.match(p, /0:01 "Ah-ree-ak\."\n0:03 "H-Z eight-twelve, dark walnut\."\n0:06 "H-Z eight-eighteen, ivory cream\."\n0:09 "Two-twelve, olive khaki solid\."\n0:12 "Premium surfaces, designed for you\."/);
-  assert.doesNotMatch(p, /\bwarm\b|ARYAK/);
+  assert.match(p, /15 seconds, of an Italian villa kitchen in a bespoke Dubai villa\./, 'no tinting word, the right article');
+  assert.match(p, /- Image 1 \(Very dark brown walnut\) ONLY on the full-height tall doors\./, 'the wording word for word');
+  assert.match(p, /- 0:00–0:02: Calm eye-level wide vertical view of the entire room, slow continuous push-in\. Clean frame, no text\./);
+  assert.match(p, /- 0:08–0:11: Tight vertical close-up filling the frame exclusively with the island side panels, slow horizontal glide as the designer's hand gently passes over the surface\. Label 3: "212" on line 1, "OLIVE KHAKI" on line 2\./);
+  assert.match(p, /completely static "\+971 55 769 9100" above the bottom fifth of the frame over the island side panels/, 'the number over the darkest film');
+  assert.match(p, /- 0:02\.5: "Dark walnut\."\n- 0:05\.5: "Ivory cream\."\n- 0:08\.5: "Olive khaki\."\n- 0:11\.5: "Ah-ree-ak\. Premium surface films\."/, 'the voice never says a code');
+  assert.doesNotMatch(p, /\bwarm\b|\bgolden\b|\bamber\b/i);
   const two = geminiTemplate({ room: 'wardrobe', films: films.slice(0, 2), clean: true });
-  assert.match(two, /Use the two attached images/); assert.match(two, /9 to 15 s: a slow pull back/);
-  assert.doesNotMatch(two, /Label:|LABELS:|Ah-ree-ak/); assert.match(two, /No dialogue, no voice-over, no singing\./); assert.match(two, /No on-screen text\./);
+  assert.match(two, /Apply the two attached images/); assert.match(two, /- 0:05–0:11: Tight vertical close-up/);
+  assert.doesNotMatch(two, /Label \d|ON-SCREEN LABELS|Ah-ree-ak|\+971/); assert.match(two, /No dialogue, no voice-over, no singing\./); assert.match(two, /No on-screen text/);
   // «طرح»: geminiLast says whether Gemini writes the labels
+  const src0 = () => fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
   const { desk } = await studio();
   desk.cfg.designMode = 'gemini';
   await desk.draftDesign({ note: 'آشپزخانه' });
@@ -1339,7 +1342,8 @@ test('Atossa matches the Gem (the owner, 23/11: «هماهنگ کن»): the temp
   const clean = await desk.draftDesign({ note: 'آشپزخانه بدون برچسب' });
   assert.equal(desk.store.d.geminiLast.labels, false);
   assert.match(clean.text, /آتوسا کدها، نام‌ها، لوگو و واتس‌اپ را رویش می‌گذارد/);
-  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'social.js'), 'utf8');
+  assert.match(src0(), /logo: labelled \? null : brand\.logo/, 'nothing on a labelled video: it has its own logo and number');
+  const src = src0();
   assert.match(src, /const labelled = !said\.clean && \(named\.length \? true : last\?\.labels === true\);/);
   const reelSrc = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'reel.js'), 'utf8');
   assert.match(reelSrc, /const rows = !tallLabels \? \[\] : labels\.length \? labels : codes\.map/);
