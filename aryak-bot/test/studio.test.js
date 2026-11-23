@@ -1358,3 +1358,41 @@ test('Atossa matches the Gem (the owner, 23/11): Gemini\'s mother prompt filled 
     assert.equal(await verticalReel({ video: tall, seconds: 3, labels: [{ code: 'HZ812', name: 'Dark walnut' }], tallLabels: false }), tall, 'a labelled tall video with nothing else to add goes out as it came');
   }
 });
+
+test('the round of colours (the owner, 23/11): no colour comes back until every colour has been shown once; near the end the colours still owed are asked for', async () => {
+  const cat = tmp('cat-');
+  const codes = ['HZ801', 'HZ802', 'HZ803', 'HZ804', 'HZ805', 'HZ806', 'HZ807', 'HZ808', 'HZ809', 'HZ810'];
+  fs.writeFileSync(path.join(cat, 'catalog.json'), JSON.stringify(Object.fromEntries(codes.map((c, i) => [c, { file: `${c}.jpg`, catalogue: 'T', look: `look ${i}`, name: `Film ${i}` }]))));
+  for (const [i, c] of codes.entries()) fs.writeFileSync(path.join(cat, `${c}.jpg`), await pic(`#${(20 + i * 22).toString(16).padStart(2, '0').repeat(3)}`));
+  const asks = [];
+  const write = async (r) => {
+    if (r.kind !== 'design-plan') return '[]';
+    asks.push(r);
+    const listed = [...r.prefix.matchAll(/^(HZ\d+):/gm)].map((m) => m[1]);
+    const owed = /not been shown yet in this round of the catalogue: ([^.]+)\./.exec(r.text)?.[1].split(', ') || [];
+    const pick = [...owed, ...listed.filter((c) => !owed.includes(c))].slice(0, 3);
+    return JSON.stringify({ title_fa: 'طرح', room: 'kitchen', parts: [...pick, 'HZ801'].map((code) => ({ code, where: 'doors' })), scene: 'A kitchen.' });
+  };
+  const desk = new SocialDesk({ client: client(fakeGraph({}).fetchImpl), store: new SocialStore(''), catalogDir: cat, mediaDir: tmp('media-'), cfg: { designMode: 'gemini' }, imager: { enabled: false }, write });
+  desk.ensureNames = async () => 0; desk.researchTrends = async () => 0; desk.challenge = async () => [];
+  const seen = [];
+  for (let i = 0; i < 4; i++) { const d = await desk.draftDesign({}); seen.push(d.swatches.map((s) => s.code)); if (i === 0) assert.match(d.text, /دور 1 رنگ‌ها: 3 از 10 رنگ نشان داده شده/); }
+  assert.deepEqual(seen.slice(0, 3).flat().length, new Set(seen.slice(0, 3).flat()).size, 'no colour twice in a round');
+  assert.ok(!/HZ801:/.test(asks[1].prefix), 'a colour shown is not on the list again');
+  assert.match(asks[1].text, /only the films not shown yet in this round/);
+  // the fourth design: one colour left (fewer than six): the whole list, the owed one asked for; then the next round starts
+  assert.match(asks[3].text, /not been shown yet in this round of the catalogue: HZ810\./);
+  assert.ok(seen[3].includes('HZ810'));
+  assert.deepEqual(new Set(seen.flat()), new Set(codes), 'every colour shown once');
+  assert.equal(desk.colourRound().n, 2);
+  assert.equal(desk.colourRound().shown, 0);
+  const d5 = await desk.draftDesign({});
+  assert.ok(d5.swatches.length === 3);
+  // a code the owner names himself is always allowed
+  const d6 = await desk.draftDesign({ code: d5.swatches[0].code });
+  assert.ok(d6.swatches.some((s) => s.code === d5.swatches[0].code));
+  // the first round counts the designs made before it existed (the owner: «the colours she used before»)
+  const store = new SocialStore(''); store.d.designs = [{ codes: ['HZ803', 'HZ809', 'XX1'] }];
+  const late = new SocialDesk({ client: client(fakeGraph({}).fetchImpl), store, catalogDir: cat, write });
+  assert.deepEqual(late.colourRound(), { n: 1, shown: 2, total: 10, fresh: codes.filter((c) => c !== 'HZ803' && c !== 'HZ809') });
+});

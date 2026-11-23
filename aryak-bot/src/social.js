@@ -381,6 +381,7 @@ const surfaceOf = (w) => { const t = plainWords(w, 12) || 'the cabinet doors'; r
 export const GEMINI_PERSON = 'PERSON: one elegant woman in modest neutral clothing (a cream abaya or long sleeves and wide trousers), seen in three-quarter profile at the edge of the frame, never looking at the camera. In the pull back she glides her fingertips slowly along {SURFACE}. The woman on screen does not speak.';
 /** A label's name: the catalogue name in one or two words (Gemini's mother prompt, 23/11: «never a new name»): SOLID, MATTE and the like
  * go first, then the first and the last word stay (GREIGE WHITEWASHED OAK -> GREIGE OAK). */
+const ROUND_TAIL = 6; // fewer colours than this left in a round: the designer sees them all and must use the ones still owed
 export function shortName(name) {
   let w = labelName(name).split(' ').filter(Boolean);
   if (w.length > 2) w = w.filter((x) => !/^(SOLID|MATTE?|MATT|COLOUR|COLOR|FINISH|LOOK|EFFECT)$/.test(x));
@@ -904,8 +905,15 @@ export class SocialDesk {
   async designPlan({ code = '', note = '', inspiration = null, pillar = '' } = {}) {
     const all = this.catalog();
     const d = this.store.d;
-    const films = ['The films (code: look [catalogue]):', ...Object.entries(all).map(([k, e]) => `${k}: ${e.look || e.kind || 'decorative film'} [${e.catalogue || ''}]`)].join('\n');
+    // the round of colours (the owner, 23/11: «no colour comes back until every colour has been shown once»): the designer sees only the
+    // films not shown yet in this round; near its end (fewer than ROUND_TAIL left) she sees them all and must use the ones still owed
+    const round = this.colourRound();
+    const tail = round.fresh.length < ROUND_TAIL;
+    const pool = tail ? Object.keys(all) : [...round.fresh, ...(code && !round.fresh.includes(code) ? [code] : [])];
+    const films = ['The films (code: look [catalogue]):', ...pool.map((k) => `${k}: ${all[k].look || all[k].kind || 'decorative film'} [${all[k].catalogue || ''}]`)].join('\n');
     const text = [
+      tail ? (round.fresh.length ? `\nThese films have not been shown yet in this round of the catalogue: ${round.fresh.join(', ')}. Use at least one of them, as many as fit the design.` : '')
+        : '\nThe list holds only the films not shown yet in this round of the catalogue (the owner: every colour once before any comes back); choose only from it.',
       !inspiration && this.recentCompositions() ? `\nYour recent compositions (never repeat them):\n${this.recentCompositions()}` : '', // a design from his picture follows it, never «novelty» (the owner, 19/11)
       (d.taste || []).length ? `\nThe owner's notes on your earlier proposals (follow them):\n${d.taste.slice(-15).map((x) => `- ${x.text}`).join('\n')}` : '',
       this.todayTrends() ? `\nToday's notes from the world's design press (your own research this morning):\n${this.todayTrends()}` : '',
@@ -931,8 +939,8 @@ export class SocialDesk {
     plan.hook = review?.hook || plan.hook || '';
     plan.dialogue_fa = review?.verdict === 'revise' ? '' : review?.dialogue_fa || '';
     if (pillar) plan.pillar = pillar;
-    plan.parts = (Array.isArray(plan.parts) ? plan.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => all[p.code]).slice(0, 4);
-    if (code && !plan.parts.some((p) => p.code === code)) plan.parts.unshift({ code, where: 'the main fronts', where_fa: 'سطح اصلی' });
+    plan.parts = (Array.isArray(plan.parts) ? plan.parts : []).map((p) => ({ ...p, code: String(p.code || '').replace(/\s+/g, '').toUpperCase() })).filter((p) => all[p.code] && pool.includes(p.code)).slice(0, 4); // a colour already shown in this round is dropped
+    if (code) plan.parts = [plan.parts.find((p) => p.code === code) || { code, where: 'the main fronts', where_fa: 'سطح اصلی' }, ...plan.parts.filter((p) => p.code !== code)]; // the owner's code is the main film: first, so a video of three keeps it
     if (!plan.parts.length || !plan.scene) return { error: 'The designer chose no colour of the catalogues; try again.' };
     return plan;
   }
@@ -992,7 +1000,8 @@ export class SocialDesk {
     }
     if (inspiration) this.addTaste(`The owner's inspiration picture: ${plan.room}${note ? ` (${note})` : ''}`);
     const prompt = geminiTemplate({ room: plan.room, films, person, clean }); // filled by code: no writer to drift (23/11)
-    this.remember(plan);
+    this.remember({ ...plan, parts: films }); // only the films in the video join the round
+    const round = this.colourRound();
     this.store.d.geminiLast = { codes: films.map((f) => f.code), at: this.now(), labels: !clean }; // the video he sends back ends with these codes; labelled by Gemini or not
     const sw = [];
     for (const f of films) {
@@ -1005,6 +1014,7 @@ export class SocialDesk {
       plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '',
       ...films.map((f) => `• کد ${f.code}: ${plan.parts.find((x) => x.code === f.code)?.where_fa || f.where}`),
       twins.length ? `هشدار: ${twins.map((t) => `کد ${t[0]} و ${t[1]}`).join('، ')} در ویدیو تقریباً یکی دیده می‌شوند.` : '',
+      round.shown ? `دور ${round.n} رنگ‌ها: ${round.shown} از ${round.total} رنگ نشان داده شده؛ رنگ تکراری تا پایان دور نمی‌آید.` : `دور ${round.n - 1} رنگ‌ها کامل شد؛ از طرح بعد دور ${round.n} شروع می‌شود.`,
       '',
       clean ? 'روش ساختن ویدیو (یک ساخت، بدون برچسب، نوشته و گوینده):' : 'روش ساختن ویدیو (پرامپت مادر جمینای: برچسب هر کد در درشت‌نمای خودش، دست طراح، لوگو و شماره در پایان):',
       '۱. جمینای معمولی را باز کنید (گفتگوی تازه، نه داخل جم) و ابزار «ساختن ویدیو» را بزنید؛ زیر کادر «۱۵ ثانیه» و «عمودی».',
@@ -1839,9 +1849,21 @@ export class SocialDesk {
 
   /** A composition used (a produced design or a concept shown): its signature is kept so it is never made again (last 40). */
   remember(plan) {
-    (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes: (plan.parts || []).map((x) => x.code), signature: plan.signature || '' });
+    const codes = (plan.parts || []).map((x) => x.code);
+    (this.store.d.designs ||= []).push({ at: this.now(), room: plan.room, codes, signature: plan.signature || '' });
     this.store.d.designs = this.store.d.designs.slice(-40);
+    const r = this.colourRound();
+    const kept = this.store.d.colourRound;
+    kept.used = [...new Set([...kept.used, ...codes])];
+    if (r.total && r.fresh.every((k) => kept.used.includes(k))) Object.assign(kept, { n: kept.n + 1, used: [], at: this.now() }); // every colour shown: the next round
     this.store.save();
+  }
+  /** The round of colours (the owner, 23/11): { n, shown, total, fresh: the codes not shown yet in this round }. */
+  colourRound() {
+    const all = Object.keys(this.catalog());
+    const r = (this.store.d.colourRound ||= { n: 1, used: [...new Set((this.store.d.designs || []).flatMap((x) => x.codes || []))].filter((k) => all.includes(k)), at: this.now() }); // the first round counts the designs already made
+    const fresh = all.filter((k) => !r.used.includes(k));
+    return { n: r.n, shown: all.length - fresh.length, total: all.length, fresh };
   }
   /** The last compositions, one line each, for the designer and for Dariush. */
   recentCompositions(max = 15) {
