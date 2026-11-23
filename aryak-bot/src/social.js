@@ -411,7 +411,7 @@ export function geminiTemplate({ room = '', films = [], person = false, clean = 
     '- 0:00–0:02: Calm eye-level wide vertical view of the entire room, slow continuous push-in. Clean frame, no text.',
     ...f.map((x, i) => `- ${slots[i]}: Tight vertical close-up filling the frame exclusively with ${x.surface}, slow horizontal glide ${hands[i]}.${clean ? '' : ` Label ${i + 1}: "${x.code}" on line 1, "${x.label}" on line 2.`}`),
     clean ? '- 0:11–0:15: Smooth slow-motion pull-back to the exact opening view of the room. Clean frame, no text.'
-      : `- 0:11–0:15: Smooth slow-motion pull-back to the exact opening view of the room. All film labels are gone. Clean luxury outro inside vertical safe zones for the full final 4 seconds: "ARYAK" centered with a subtle letter-by-letter reveal and soft dark drop shadow; completely static "PREMIUM SURFACE FILMS" directly beneath in tracked-out white sans-serif with soft dark drop shadow; completely static "+971 55 769 9100" above the bottom fifth of the frame over ${darkest?.surface || 'the lower cabinet fronts'} with a crisp dark drop shadow for 100% legibility.`,
+      : `- 0:11–0:15: Smooth slow-motion pull-back to the exact opening view of the room. All film labels are gone. Clean luxury outro inside vertical safe zones for the full final 4 seconds: "ARYAK" appears once in the center with a refined letter-by-letter motion reveal and a subtle soft white shimmer with a distinct soft dark drop shadow; completely static "PREMIUM SURFACE FILMS" directly beneath in tracked-out white sans-serif with soft dark drop shadow; completely static "+971 55 769 9100" above the bottom fifth of the frame over ${darkest?.surface || 'the lower cabinet fronts'} with a crisp dark drop shadow for 100% legibility.`,
     '',
     ...(clean ? [] : ['ON-SCREEN LABELS (0:02–0:11 only):', 'Two short lines of crisp white geometric sans-serif text in the upper-middle third of each close-up with a soft dark drop shadow, connected by a thin white leader line ending in a small white dot anchored directly on that film\'s surface. Each label, line, and dot appears instantaneously from the first frame of its shot, stays completely static, and vanishes cleanly at the cut. Exact spelling only.', '']),
     'LIGHTING & COLOR:',
@@ -419,7 +419,7 @@ export function geminiTemplate({ room = '', films = [], person = false, clean = 
     '',
     'AUDIO:',
     ...(clean ? ['Soft, minimal modern ambient piano, subtle room acoustics and delicate tactile brushing sound during hand glides. No dialogue, no voice-over, no singing.', '', 'EXCLUSIONS:', 'No on-screen text, no subtitles, no captions, no logos, no watermarks.']
-      : ['Soft, minimal modern ambient piano, subtle room acoustics, delicate tactile brushing sound during hand glides, and a soft chime at 0:11. A calm, refined British female voice-over speaking ONLY short sensory lines—never reading codes or numbers aloud:',
+      : ['Soft, minimal modern ambient piano, subtle room acoustics, delicate tactile brushing sound during hand glides, and a delicate soft chime shimmer at 0:11 as "ARYAK" reveals. A calm, refined British female voice-over speaking ONLY short sensory lines—never reading codes or numbers aloud:',
         ...f.map((x, i) => `- ${say[i]}: "${sentence(x.label)}"`),
         '- 0:11.5: "Ah-ree-ak. Premium surface films."',
         '', 'EXCLUSIONS:', 'No spoken codes or numbers, no duplicate on-screen brand names, no subtitles, no captions, no watermarks, no extra text anywhere on screen.']),

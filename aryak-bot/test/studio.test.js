@@ -1327,6 +1327,8 @@ test('Atossa matches the Gem (the owner, 23/11): Gemini\'s mother prompt filled 
   assert.match(p, /- Image 1 \(Very dark brown walnut\) ONLY on the full-height tall doors\./, 'the wording word for word');
   assert.match(p, /- 0:00–0:02: Calm eye-level wide vertical view of the entire room, slow continuous push-in\. Clean frame, no text\./);
   assert.match(p, /- 0:08–0:11: Tight vertical close-up filling the frame exclusively with the island side panels, slow horizontal glide as the designer's hand gently passes over the surface\. Label 3: "212" on line 1, "OLIVE KHAKI" on line 2\./);
+  assert.match(p, /"ARYAK" appears once in the center with a refined letter-by-letter motion reveal and a subtle soft white shimmer/, 'the logo shimmers in (the owner, 23/11: it used to appear with a sparkle)');
+  assert.match(p, /a delicate soft chime shimmer at 0:11 as "ARYAK" reveals\./);
   assert.match(p, /completely static "\+971 55 769 9100" above the bottom fifth of the frame over the island side panels/, 'the number over the darkest film');
   assert.match(p, /- 0:02\.5: "Dark walnut\."\n- 0:05\.5: "Ivory cream\."\n- 0:08\.5: "Olive khaki\."\n- 0:11\.5: "Ah-ree-ak\. Premium surface films\."/, 'the voice never says a code');
   assert.doesNotMatch(p, /\bwarm\b|\bgolden\b|\bamber\b/i);
