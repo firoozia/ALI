@@ -1,0 +1,52 @@
+name: Hinge Labels APK
+
+on:
+  push:
+    paths:
+      - "hinge-labels/**"
+      - ".github/workflows/hinge-labels.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: hinge-labels
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+      - name: Build APK
+        run: ./gradlew --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hinge-labels-apk
+          path: hinge-labels/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Name the APK
+        id: version
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk HingeLabels.apk
+          echo "code=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+          echo "name=$(grep -oP 'versionName = "\K[0-9.]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/claude/hinge-labels'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: hinge-labels-b${{ github.run_number }}
+          name: Hinge Labels ${{ steps.version.outputs.name }} (build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: |
+            Android APK for Hinge Labels (box stickers for cabinet hinges, Xprinter XP-420B). Download HingeLabels.apk and install it on the phone.
+            versionName: ${{ steps.version.outputs.name }}
+            versionCode: ${{ steps.version.outputs.code }}
+          files: hinge-labels/HingeLabels.apk

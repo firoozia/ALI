@@ -1,0 +1,108 @@
+package com.aryak.hingelabels.label
+
+import java.io.ByteArrayOutputStream
+import java.util.Locale
+
+/**
+ * TSPL job for Xprinter label printers (XP-420B and similar, 203 dpi = 8 dots/mm).
+ * The whole label is sent as one bitmap so any font prints correctly.
+ */
+object Tspl {
+    data class Setup(
+        val widthMm: Int = 58,
+        val heightMm: Int = 39,
+        val gapMm: Double = 2.0,
+        val direction: Int = 1,
+        val density: Int = 8,
+        val speed: Int = 4,
+        /** TSPL prints a dot for bit 0. Turn on if labels come out as negatives. */
+        val invert: Boolean = false,
+    )
+
+    const val DOTS_PER_MM = 8
+
+    /** XP-420B prints up to 108 mm wide. */
+    const val MAX_WIDTH_MM = 108
+    const val MAX_HEIGHT_MM = 200
+    const val MIN_MM = 20
+
+    /** XP-420B print speeds, inches per second. */
+    const val MIN_SPEED = 2
+    const val MAX_SPEED = 5
+
+    /** Common label rolls, width × height in mm. */
+    val PRESETS = listOf(58 to 39, 50 to 30, 40 to 30, 60 to 40, 70 to 50, 100 to 50, 100 to 70)
+
+    /** Copies sent in one job; small enough that Cancel and the progress bar stay useful. */
+    const val BATCH = 10
+
+    /**
+     * Splits [copies] labels into jobs of at most [size] copies each (TSPL `PRINT 1,n`), so a long run
+     * shows progress and can be cancelled between jobs. 0 or less gives no jobs.
+     */
+    fun batches(copies: Int, size: Int = BATCH): List<Int> {
+        require(size > 0)
+        if (copies <= 0) return emptyList()
+        val out = ArrayList<Int>()
+        var left = copies
+        while (left > 0) {
+            val n = minOf(size, left)
+            out += n
+            left -= n
+        }
+        return out
+    }
+
+    fun widthDots(s: Setup) = s.widthMm * DOTS_PER_MM
+    fun heightDots(s: Setup) = s.heightMm * DOTS_PER_MM
+
+    /**
+     * Makes the printer measure the label length and the gap itself (GAPDETECT), then feed to the start of
+     * the next label. Fixes blank labels being skipped after a new roll or a wrong size in Settings.
+     */
+    fun calibrateJob(s: Setup): ByteArray {
+        val gap = String.format(Locale.US, "%.1f", s.gapMm)
+        return buildString {
+            append("SIZE ${s.widthMm} mm,${s.heightMm} mm\r\n")
+            append("GAP $gap mm,0 mm\r\n")
+            append("GAPDETECT\r\n")
+            append("HOME\r\n")
+        }.toByteArray(Charsets.US_ASCII)
+    }
+
+    /** [black] is row-major, true where a dot should be printed. */
+    fun job(black: BooleanArray, width: Int, height: Int, s: Setup, copies: Int = 1): ByteArray {
+        require(black.size == width * height) { "bitmap size mismatch" }
+        require(copies >= 1) { "copies must be at least 1" }
+        val widthBytes = (width + 7) / 8
+        val data = ByteArray(widthBytes * height)
+        for (y in 0 until height) {
+            for (xb in 0 until widthBytes) {
+                var b = 0
+                for (bit in 0 until 8) {
+                    val x = xb * 8 + bit
+                    val dot = x < width && black[y * width + x]
+                    val one = if (s.invert) dot else !dot
+                    if (one) b = b or (0x80 ushr bit)
+                }
+                data[y * widthBytes + xb] = b.toByte()
+            }
+        }
+        val gap = String.format(Locale.US, "%.1f", s.gapMm)
+        val head = buildString {
+            append("SIZE ${s.widthMm} mm,${s.heightMm} mm\r\n")
+            append("GAP $gap mm,0 mm\r\n")
+            append("DIRECTION ${s.direction}\r\n")
+            append("REFERENCE 0,0\r\n")
+            append("DENSITY ${s.density}\r\n")
+            append("SPEED ${s.speed}\r\n")
+            append("CLS\r\n")
+            append("BITMAP 0,0,$widthBytes,$height,0,")
+        }
+        val out = ByteArrayOutputStream(head.length + data.size + 32)
+        out.write(head.toByteArray(Charsets.US_ASCII))
+        out.write(data)
+        out.write("\r\nPRINT 1,$copies\r\n".toByteArray(Charsets.US_ASCII))
+        return out.toByteArray()
+    }
+}

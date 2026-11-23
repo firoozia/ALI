@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Hinge" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/hinge_primary</item>
+        <item name="android:navigationBarColor">@color/hinge_background</item>
+        <item name="android:windowBackground">@color/hinge_background</item>
+    </style>
+</resources>

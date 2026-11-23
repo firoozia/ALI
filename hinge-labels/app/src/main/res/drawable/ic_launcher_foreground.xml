@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A cabinet cup hinge: round cup on the left, arm with two screw holes, on a white label with an orange strip. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M34,32 L74,32 Q78,32 78,36 L78,72 Q78,76 74,76 L34,76 Q30,76 30,72 L30,36 Q30,32 34,32 Z" />
+    <path android:fillColor="#FFFF9F1C"
+        android:pathData="M30,66 L78,66 L78,72 Q78,76 74,76 L34,76 Q30,76 30,72 Z" />
+    <path android:fillColor="#FF23265E" android:fillType="evenOdd"
+        android:pathData="M46,49 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0 Z M46,49 m-5,0 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0 Z" />
+    <path android:fillColor="#FF23265E"
+        android:pathData="M54,45 L72,45 Q74,45 74,47 L74,51 Q74,53 72,53 L54,53 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M63,49 m-1.6,0 a1.6,1.6 0 1,0 3.2,0 a1.6,1.6 0 1,0 -3.2,0 Z M69,49 m-1.6,0 a1.6,1.6 0 1,0 3.2,0 a1.6,1.6 0 1,0 -3.2,0 Z" />
+</vector>

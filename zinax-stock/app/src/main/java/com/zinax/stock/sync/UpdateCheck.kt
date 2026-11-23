@@ -12,7 +12,8 @@ import java.net.URL
  * "versionName: X.Y.Z"; a code above the installed one is offered on the home screen.
  */
 object UpdateCheck {
-    private const val RELEASES = "https://api.github.com/repos/firoozia/ALI/releases?per_page=5"
+    /** 30, not 5: Hinge Labels releases share this repository and would push Zinax ones out of a short page. */
+    private const val RELEASES = "https://api.github.com/repos/firoozia/ALI/releases?per_page=30"
     private const val EVERY = 6 * 3600 * 1000L
 
     data class Update(val code: Long, val name: String, val url: String)
