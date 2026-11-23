@@ -354,38 +354,73 @@ These are the most liked recent posts of leading interior design accounts on Ins
 export const LOOKS_RULES = `${ATOSSA}
 These are interior pictures from today's design press. For each one, write one short English line of what a designer can take from it for decorative films on cabinets, wardrobes and wall panels: the colours and how they are paired, the wood or stone look, the finish, the light, one detail. Then one line «Together:» with the strongest common idea. Output only the lines.`;
 
-export const GEMINI_PROMPT_RULES = `You are Atossa, the creative director of {BRAND}: a world-class architectural interior designer who also thinks like a top performance marketer. You write the prompts for the Gemini app that make a 15-second vertical (9:16) Instagram Reel showing 2 or 3 real ARYAK decorative PVC films (kitchen cabinet doors, wardrobe doors, drawer fronts, island cladding, wall panels) for the UAE and Oman. Atossa's own software puts every code, film name, the logo and the WhatsApp number on the finished video, so the picture and the video carry no text at all.
-This follows a long session with Gemini itself (the owner, 22/11), which proved: the words decide over the sample picture when they disagree, so each film's wording is given to you and you copy it exactly; a still picture made first and then animated keeps the films true and costs far less.
-WORKFLOW: STILL FIRST, TWO PROMPTS. You always write TWO prompts in English:
-PROMPT 1: 9:16 ROOM STILL for Gemini's image tool, with the 2 or 3 film samples attached in the given order.
-PROMPT 2: 15s VIDEO FROM STILL for Gemini's video tool (15 seconds, portrait 9:16), with only the approved still from step 1 attached as the first frame.
-RULES:
-- The films are given to you as the first, second and third attached image, each with its exact wording. Copy each wording word for word: never paraphrase, never add a colour word of your own, never write a film code, a hex code, a phone number or the brand name in capitals.
-- Leave out these words, they tint or clutter the films: warm, cozy, golden, golden hour, sunset, amber, sunlit, moody, dramatic, cinematic, editorial, luxury lighting, hyper-realistic.
-- The designer's scene may list many objects: keep its room, layout and style, but only 2 or 3 quiet neutral props, so the films fill about 70 % of the frame. Flat-front handleless slab doors with crisp 2 mm shadow gaps.
-- Each film goes on large, well-lit vertical planes covering at least 15 to 20 % of the frame; a dark film is never only inside a small shadowed niche. A PVC film covers only vertical faces (doors, drawer fronts, island cladding, wall panels): name the worktop, backsplash, floor, walls and ceiling as quiet neutral stone or plaster.
-- Describe what is there in positive words; never list objects that should be absent. The exclusion lines below are the only negatives, plus short colour guards inside the wordings (zero orange cast).
-OUTPUT, exactly this, each section on its own line, nothing else:
-PROMPT 1: 9:16 ROOM STILL
-FORMAT & SWATCHES: Photorealistic 9:16 vertical architectural interior photograph. Use the attached images strictly as surface material references, never shown as flat swatches, sample boards or framed pictures.
-SCENE: one or two sentences: the room, flat-front handleless slab joinery with 2 mm shadow gaps, a 26mm architectural lens at eye level, straight on or a slight 15-degree angle so the cabinetry fills about 70 % of the vertical frame, every door and drawer closed.
-REFERENCE MAPPING: one line per film in upload order: "Apply the first attached image ([its exact wording]) exclusively to the [exact surfaces]." and the same for the second and third.
-CONTAINMENT & STYLING: the quiet neutral stone worktop and backsplash, the matte neutral floor, flat off-white walls and ceiling, and at most 2 or 3 minimal neutral props.
-LIGHTING & COLOUR: Soft, diffused neutral 5500K overcast daylight from large off-camera windows, true-to-life neutral white balance, ungraded architectural photography, crisp vertical lines, soft edge detail on dark and light doors.
-EXCLUSIONS: No on-screen text. No subtitles. No captions. No logos. No watermarks. No people.
-PROMPT 2: 15s VIDEO FROM STILL
-FRAME 1 LOCK: Use the attached image as the exact opening frame (Frame 1) of a continuous 15-second vertical 9:16 architectural video. Preserve every cabinet door, woodgrain pattern, matte or gloss finish, colour and room proportion identically; keep every door closed and the room exactly as shown.
-CAMERA & MOTION: Single continuous, ultra-slow stabilized gimbal shot with true 3D parallax. Seconds 0 to 5: the full vertical composition. Seconds 5 to 11: a slow forward dolly push-in of 1 to 1.5 metres toward [the hero surfaces], moving only into geometry visible in Frame 1. Seconds 11 to 15: a smooth slow-down to a near-still hover on the surface texture and the door seams.
-SURFACE STABILITY: All woodgrain lines, stone mottling and matte door edges stay razor-sharp and locked in place, steady from the first second to the last.
-LIGHTING LOCK: Constant, ungraded neutral 5500K overcast daylight from second 0 to second 15.
-AUDIO: Very soft minimal modern ambient piano and a quiet room tone. A calm, refined British female voice-over from 0:01 says: "[15 to 26 words, the brand written Ah-ree-ak, ending with: Premium surfaces, designed for you.]"
-EXCLUSIONS: No on-screen text. No subtitles. No captions. No logos. No watermarks. No camera cuts. No people.
-Prompt 1 is 130 to 180 words, prompt 2 is 110 to 150 words.`;
-/** «طرح … با آدم» (the owner, 22/11): Gemini's own way (the deep session): she is in the still, at the edge, one slow touch in the video. */
-export const GEMINI_PERSON = `PERSON (the owner asked for a person in this Reel): change both prompts.
-In PROMPT 1 leave "No people." out of EXCLUSIONS and add a PERSON line right after SCENE: one elegant Arab woman in her early thirties in a tailored, modest matte cream, sand-beige or soft dove-grey flowing abaya (or long sleeves and wide-leg trousers) with a softly draped matching headscarf, standing near the far left or far right edge (at most 15 % of the frame) in a calm three-quarter side profile facing the cabinetry, so every film stays in full view, one hand resting lightly near [the exact surface of one matte film].
-In PROMPT 2 leave "No people." out of EXCLUSIONS and add a PERSON ACTION line right after FRAME 1 LOCK: Keep the woman's face, modest clothing and position as in Frame 1. From seconds 3 to 9 she slowly and gently glides her fingertips downward along [that surface and its finish] with relaxed, natural fingers, then lowers her hand and takes one slow half-step back. She looks at the room and does not speak. In AUDIO add: "The woman on screen does not speak."
-Prompt 1 stays under 200 words and prompt 2 under 175.`;
+/** The one video prompt (the owner, 23/11: «make Atossa match the Gem»): the template that worked in his video 82a4, filled by code, never
+ * rewritten by a writer. A wide view with no text, one close-up per film with its label (the dot can only land on that film), a clean pull
+ * back, the voice timed to the close-ups, each line finished. The same template as the Gem «ARYAK Studio» (out/gemini_gem/aryak_gem_v3). */
+const TINT_WORDS = /\b(warm|cozy|cosy|golden|golden hour|sunset|amber|sunlit|moody|dramatic|cinematic|editorial|luxury lighting|hyper-realistic)\b\s*/gi;
+const ONES = 'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen'.split(' ');
+const TENS = { 2: 'twenty', 3: 'thirty', 4: 'forty', 5: 'fifty', 6: 'sixty', 7: 'seventy', 8: 'eighty', 9: 'ninety' };
+/** A code as the voice should say it (82a4: «H-Z eight-twelve» was read right): letters apart, numbers in pairs. */
+export function spokenCode(code) {
+  const m = /^([A-Z]*)(\d+)$/.exec(String(code || '').toUpperCase());
+  if (!m) return String(code || '');
+  const pair = (d) => { const n = +d; if (d[0] === '0') return `oh-${ONES[n]}`; if (n < 20) return ONES[n]; const t = Math.floor(n / 10); return TENS[t] + (n % 10 ? `-${ONES[n % 10]}` : ''); };
+  const d = m[2];
+  const num = d.length === 3 ? `${ONES[+d[0]]}-${d.slice(1) === '00' ? 'hundred' : pair(d.slice(1))}` : d.length === 4 ? `${pair(d.slice(0, 2))}-${d.slice(2) === '00' ? 'hundred' : pair(d.slice(2))}` : [...d].map((c) => ONES[+c]).join('-');
+  const s = m[1] ? `${[...m[1]].join('-')} ${num}` : num;
+  return s[0].toUpperCase() + s.slice(1);
+}
+/** A film's name on its label: the catalogue name without the words that tint (warm, golden), in capitals. */
+export function labelName(name) {
+  return String(name || '').replace(TINT_WORDS, '').replace(/\s{2,}/g, ' ').trim().toUpperCase();
+}
+const plainWords = (t, max = 20) => String(t || '').replace(TINT_WORDS, '').replace(/["\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim().split(' ').slice(0, max).join(' ').replace(/[.,;:]+$/, '');
+const roomOf = (r) => { const t = (plainWords(r) || 'a modern kitchen').replace(/\ba (?=[aeiou])/gi, 'an ').replace(/\ban (?=[^aeiou\s])/gi, 'a '); return /^(the|a|an)\b/i.test(t) ? t : `${/^[aeiou]/i.test(t) ? 'an' : 'a'} ${t}`; };
+const surfaceOf = (w) => { const t = plainWords(w, 12) || 'the cabinet doors'; return /^(the|a|an)\b/i.test(t) ? t : `the ${t}`; };
+/** «طرح … با آدم»: the woman in the last shot, after the close-ups (the deep session: at the edge, never looking at the camera, one slow touch). */
+export const GEMINI_PERSON = 'PERSON: one elegant woman in modest neutral clothing (a cream abaya or long sleeves and wide trousers), seen in three-quarter profile at the edge of the frame, never looking at the camera. In the pull back she glides her fingertips slowly along {SURFACE}. The woman on screen does not speak.';
+/** The prompt itself. films: [{ code, name, words, where }] in the order the samples are attached (2 or 3). clean: no labels and no voice. */
+export function geminiTemplate({ room = '', films = [], person = false, clean = false } = {}) {
+  const f = films.slice(0, 3).map((x) => ({ ...x, surface: surfaceOf(x.where), label: labelName(x.name) || x.code }));
+  const n = f.length;
+  const ord = ['first', 'second', 'third'];
+  const shots = f.map((x, i) => `${3 + 3 * i} to ${6 + 3 * i} s: a close-up that shows only ${x.surface} filling the frame, a slow glide along it.${clean ? '' : ' Label: "' + x.code + '" over "' + x.label + '".'}`);
+  const end = 3 + 3 * n;
+  return [
+    `Photorealistic 9:16 vertical architectural video, 15 seconds, of ${roomOf(room)}. Use the ${n === 1 ? 'attached image' : `${['', '', 'two', 'three'][n]} attached images`} strictly as surface material references, never shown as flat swatches or boards.`,
+    '',
+    'FILMS (each film exactly like its attached image, on these surfaces only):',
+    ...f.map((x, i) => `- the ${ord[i]} attached image (${plainWords(x.words, 16)}) on ${x.surface}${i === n - 1 ? '.' : ';'}`),
+    'Worktops and tops are quiet neutral stone; walls, floor and ceiling quiet neutral plaster and stone; at most three quiet props. Every door and drawer closed, the camera always inside the room.',
+    ...(person ? ['', GEMINI_PERSON.replace('{SURFACE}', f[0]?.surface || 'the cabinet doors')] : []),
+    '',
+    'SHOTS:',
+    `0 to 3 s: a calm wide view of the whole room, slow dolly-in.${clean ? '' : ' No text in this shot.'}`,
+    ...shots,
+    `${end} to 15 s: a slow pull back to the whole room.${clean ? '' : ' No text in this shot.'}`,
+    '',
+    ...(clean ? [] : ['LABELS: each label is two short lines of clean white sans-serif text in the upper middle of its close-up, with a soft dark shadow so it reads on light and dark surfaces, a thin white line ending in a small dot on that same surface. It appears with its close-up and disappears when the close-up ends. All text exactly as written, exact spelling, each label shown once.', '']),
+    'LIGHT: soft, diffused neutral 5500K overcast daylight, true-to-life neutral white balance, ungraded, the same light in every shot.',
+    '',
+    ...(clean ? ['AUDIO: very soft minimal modern ambient piano and a quiet room tone. No dialogue, no voice-over, no singing.', '', 'No on-screen text. No subtitles. No captions. No logos. No watermarks.']
+      : ['AUDIO: very soft minimal modern ambient piano and a quiet room tone. A calm, refined British female voice, unhurried, each line finished completely before the next:',
+        '0:01 "Ah-ree-ak."',
+        ...f.map((x, i) => `0:0${3 + 3 * i} "${spokenCode(x.code)}, ${x.label.toLowerCase()}."`),
+        `0:${String(end).padStart(2, '0')} "Premium surfaces, designed for you."`,
+        '', 'Nothing else written anywhere: no title, no logo, no subtitles, no captions, no watermark.']),
+  ].join('\n');
+}
+/** «بدون برچسب»: a clean video with no labels and no voice (Atossa then writes the codes on it); «دو رنگ»: two films. Each taken out of the note. */
+export function templateAsked(note) {
+  let t = String(note || '');
+  const cleanRe = /(?:^|\s)بدون\s*(?:برچسب|نوشته|متن)(?=\s|$|[،,.])/g;
+  const twoRe = /(?:^|\s)(?:دو|۲|2)\s*رنگ(?:ه)?(?=\s|$|[،,.])/g;
+  const clean = new RegExp(cleanRe.source).test(t);
+  t = t.replace(cleanRe, ' ');
+  const two = new RegExp(twoRe.source).test(t);
+  t = t.replace(twoRe, ' ');
+  return { clean, two, note: t.replace(/\s{2,}/g, ' ').trim() };
+}
 /** What breaks Gemini's rules in a prompt (the deep session, 22/11): too long, a tinting word, a code, the brand in capitals, the exclusions line missing. Each fault as an instruction. */
 export function geminiPromptFaults(prompt, { person = false, kind = 'still' } = {}) {
   const t = String(prompt || '');
@@ -916,14 +951,16 @@ export class SocialDesk {
    * each film in Gemini's own wording for its code, never a code in the prompt. Returns { text, prompt (the still), video, swatches: [{ code, name, image }] }.
    */
   async geminiPackage({ code: asked = '', note: said = '', inspiration = null, pillar = '' } = {}) {
-    const { person, note } = personAsked(said); // «با آدم»: a person in the Reel (the owner, 22/11)
+    const { person, note: said2 } = personAsked(said); // «با آدم»: a person in the Reel (the owner, 22/11)
+    const { clean, two, note: said3 } = templateAsked(said2); // «بدون برچسب», «دو رنگ» (the Gem's words, 23/11)
+    const note = two ? `${said3 ? `${said3}\n` : ''}Choose exactly two films.` : said3;
     let code = '';
     if (asked) { const c = this.catalogColour(asked); if (c.error) return { text: c.error }; code = c.code; }
     await this.researchTrends().catch((err) => this.log(`social: today's research failed: ${err.message}`));
     await this.ensureNames().catch(() => 0);
     const all = this.catalog();
     const filmsOf = async (plan) => {
-      const films = plan.parts.slice(0, 3).filter((x) => all[x.code]).map((x, i) => ({ code: x.code, name: all[x.code].name || all[x.code].look || 'decorative film', look: all[x.code].look || '', where: x.where, n: ['first', 'second', 'third'][i] })); // at most three: a fourth sample averages the colours (Gemini, 22/11)
+      const films = plan.parts.slice(0, two ? 2 : 3).filter((x) => all[x.code]).map((x, i) => ({ code: x.code, name: all[x.code].name || all[x.code].look || 'decorative film', look: all[x.code].look || '', where: x.where, n: ['first', 'second', 'third'][i] })); // at most three: a fourth sample averages the colours (Gemini, 22/11)
       for (const f of films) {
         f.tone = await swatchTone(fs.readFileSync(path.join(this.catalogDir, all[f.code].file))).catch(() => null);
         f.words = filmWords(f.code) || `${f.tone ? `${f.tone.words.replace(/, keep it this dark, never lighter/, '')} ` : ''}${f.look}`.trim(); // a new code Gemini has not worded yet: the measured colour and the look
@@ -939,27 +976,9 @@ export class SocialDesk {
       if (!again.error) { const f2 = await filmsOf(again); const t2 = twinFilms(f2); if (t2.length < twins.length) { plan = again; films = f2; twins = t2; } }
     }
     if (inspiration) this.addTaste(`The owner's inspiration picture: ${plan.room}${note ? ` (${note})` : ''}`);
-    const system = fill(GEMINI_PROMPT_RULES, this.cfg) + (person ? `\n${GEMINI_PERSON}` : '');
-    const input = [
-      `The design: ${plan.room}.`, `The designer's scene (keep its room and style, only 2 or 3 quiet props): ${person ? String(plan.scene || '').replace(/\bNo people,?\s*/i, '') : plan.scene}`,
-      `The films, in the order their samples are attached:\n${films.map((f, i) => `- the ${f.n} attached image: "${f.words}" on ${f.where}`).join('\n')}`,
-      inspiration ? 'The owner also attaches his inspiration picture after the samples in step 1 (the last image): the same room, layout and camera.' : '',
-      note ? `The owner's words: ${note}` : '',
-    ].filter(Boolean).join('\n');
-    const out = String(await this.write({ kind: 'gemini-prompt', system, effort: 'medium', maxTokens: 6000, text: input }) || '');
-    let { prompt: raw, video } = geminiParts(out);
-    const faultsOf = (pr, vi) => [...geminiPromptFaults(pr, { person, kind: 'still' }).map((x) => `prompt 1 ${x}`), ...(vi ? geminiPromptFaults(vi, { person, kind: 'video' }).map((x) => `prompt 2 ${x}`) : [])];
-    const faults = faultsOf(raw, video);
-    if (raw && faults.length) { // one rewrite when a prompt breaks Gemini's rules (22/11)
-      const again = geminiParts(String(await this.write({ kind: 'gemini-prompt', system, effort: 'medium', maxTokens: 6000,
-        text: `${input}\n\nRewrite these two prompts so they keep every section, film and surface but: ${faults.join('; ')}. Output only the two prompts.\n\nPROMPT 1: 9:16 ROOM STILL\n${raw}\nPROMPT 2: 15s VIDEO FROM STILL\n${video}` }) || ''));
-      const n = (x) => String(x || '').split(/\s+/).filter(Boolean).length;
-      const left = again.prompt ? faultsOf(again.prompt, again.video).length : 99;
-      if (again.prompt && (left < faults.length || (left === faults.length && n(again.prompt) + n(again.video) < n(raw) + n(video)))) ({ prompt: raw, video } = again);
-    }
-    if (!raw) return { text: 'The prompt for Gemini could not be written; try again.' };
+    const prompt = geminiTemplate({ room: plan.room, films, person, clean }); // filled by code: no writer to drift (23/11)
     this.remember(plan);
-    this.store.d.geminiLast = { codes: films.map((f) => f.code), at: this.now() }; // the video he sends back ends with these codes
+    this.store.d.geminiLast = { codes: films.map((f) => f.code), at: this.now(), labels: !clean }; // the video he sends back ends with these codes; labelled by Gemini or not
     const sw = [];
     for (const f of films) {
       const orig = fs.readFileSync(path.join(this.catalogDir, all[f.code].file));
@@ -969,18 +988,18 @@ export class SocialDesk {
       `طرح برای جمینای: ${plan.title_fa || plan.room}`,
       plan.why_fa || '',
       plan.inspiration_fa ? `الهام: ${plan.inspiration_fa}` : '',
-      ...plan.parts.map((x) => `• کد ${x.code}: ${x.where_fa || x.where}`),
+      ...films.map((f) => `• کد ${f.code}: ${plan.parts.find((x) => x.code === f.code)?.where_fa || f.where}`),
       twins.length ? `هشدار: ${twins.map((t) => `کد ${t[0]} و ${t[1]}`).join('، ')} در ویدیو تقریباً یکی دیده می‌شوند.` : '',
       '',
-      'روش ساختن ویدیو (اول عکس، بعد ویدیو؛ همان روشی که خود جمینای گفت و سهمیهٔ کمتری می‌سوزاند):',
-      '۱. جمینای معمولی را باز کنید (گفتگوی تازه، نه دستیار «استودیوی آریاک») و ابزار «ساختن تصویر» را بزنید.',
-      `۲. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید${inspiration ? ' و عکس الهام خودتان را هم بعد از آن‌ها' : ''} و «متن عکس» (پیام اول بعد از نمونه‌ها) را بچسبانید.`,
-      '۳. عکس را با نمونه‌ها مقایسه کنید. اگر رنگ یا جای یک فیلم درست نبود، در همان گفتگو بنویسید: «همه‌چیز را همین‌طور نگه دار، فقط …». عکس درست را بارگیری کنید.',
-      '۴. گفتگوی تازه، ابزار «ساختن ویدیو»، زیر کادر «۱۵ ثانیه» و «عمودی». فقط همان عکس را پیوست کنید (نه نمونه‌ها) و «متن ویدیو» (پیام دوم) را بچسبانید.',
-      '۵. ویدیو را بارگیری کنید، همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا کدها، نام‌ها، لوگو و واتس‌اپ را رویش می‌گذارد.',
-      person ? 'با آدم: خانم از همان عکس کنار قاب است و در ویدیو فقط نوک انگشتانش را روی یک فیلم مات می‌کشد. اگر دست یا صورت خراب شد، در همان گفتگوی ویدیو بنویسید: «همه‌چیز را همین‌طور نگه دار، فقط حرکت دست را ساده‌تر کن».' : '',
+      clean ? 'روش ساختن ویدیو (یک ساخت، بدون برچسب و گوینده):' : 'روش ساختن ویدیو (یک ساخت؛ برچسب هر کد در درشت‌نمای خودش و گوینده از خود جمینای):',
+      '۱. جمینای معمولی را باز کنید (گفتگوی تازه، نه داخل جم) و ابزار «ساختن ویدیو» را بزنید؛ زیر کادر «۱۵ ثانیه» و «عمودی».',
+      `۲. ${films.length === 1 ? 'نمونه‌رنگ زیر' : `${films.length} نمونه‌رنگ زیر را به همین ترتیب`} پیوست کنید و متن پیام بعد از نمونه‌ها را بچسبانید.`,
+      '۳. اگر ویدیو درست نبود، اصلاح یا ادامه نزنید (جای برچسب‌ها و رنگ‌ها به هم می‌ریزد)؛ بنویسید چه چیزی غلط بود تا طرح تازه بدهم.',
+      clean ? '۴. ویدیو را بارگیری کنید، همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا کدها، نام‌ها، لوگو و واتس‌اپ را رویش می‌گذارد.'
+        : '۴. ویدیو را بارگیری کنید، همین‌جا بفرستید و زیرش بنویسید «پست»؛ آتوسا لوگو و واتس‌اپ را رویش می‌گذارد (کدها را خود ویدیو دارد).',
+      person ? 'با آدم: خانم کنار قاب است و در پایان ویدیو نوک انگشتانش را روی فیلم اول می‌کشد.' : '',
     ].filter((l, i, arr) => l || (arr[i - 1] && i < arr.length - 1)).join('\n');
-    return { text: head, prompt: raw, video, swatches: sw };
+    return { text: head, prompt, video: '', swatches: sw };
   }
 
   /** A post from a video the owner made (in Gemini, 21/11): its first second is the cover, the video goes out as a Reel only, with the stories. An extended video (20 s) is cut to 15. */
@@ -988,9 +1007,13 @@ export class SocialDesk {
     const { coverFrame, verticalReel, endCard } = await import('./reel.js');
     let cover;
     try { cover = await coverFrame(video); } catch (err) { return `The video could not be read (${err.message}); send it again.`; }
+    const said = templateAsked(note);
+    if (said.clean) note = said.note; // «پست بدون برچسب»: the video has no labels, Atossa writes the codes
     const last = this.store.d.geminiLast;
     const named = this.codesIn(note);
     const codes = named.length ? named.map((c) => c.code) : (last && this.now() - last.at < 3 * 86400000 ? last.codes : []);
+    // a video from the template carries Gemini's own labels (23/11): the codes are not written on it a second time
+    const labelled = !said.clean && (named.length ? true : last?.labels === true);
     // the Gemini app makes 10-second landscape videos (the owner, 21/11: «a 15-second Reel»): the whole video in the middle of a vertical
     // frame over a blurred copy of itself, the logo above and the codes and WhatsApp below, then the end card to 15 seconds
     try {
@@ -1000,7 +1023,7 @@ export class SocialDesk {
       const dir = this.brandDir ? path.join(this.brandDir, 'music') : '';
       let music = null;
       try { const kept = fs.readdirSync(dir).filter((f) => f.endsWith('.mp3')); if (kept.length) music = fs.readFileSync(path.join(dir, kept[Math.floor(Math.random() * kept.length)])); } catch { /* no kept music: the video's own sound only */ }
-      video = await verticalReel({ video, seconds: 15, logo: brand.logo, font: brand.font, codes: films.map((f) => f.code), labels: films, tagline: 'PREMIUM SURFACE FILMS', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : '', music,
+      video = await verticalReel({ video, seconds: 15, logo: brand.logo, font: brand.font, codes: films.map((f) => f.code), labels: films, tallLabels: !labelled, tagline: 'PREMIUM SURFACE FILMS', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : '', music,
         card: (frame) => endCard({ codes: films, logo: brand.logo, font: brand.font, cta: films.length > 1 ? 'Send the code you like on WhatsApp' : 'Send this code on WhatsApp', line: this.cfg.contact ? `WhatsApp ${this.cfg.contact}` : 'ARYAK', background: frame }) });
     } catch (err) { this.log(`social: the video was kept as it came (${err.message})`); }
     const facts = `This is a short AI-made video Reel of an interior for ARYAK films${codes.length ? `, made with ${codes.map((c) => `«Code ${c}»`).join(', ')}` : ''}. Say that it is a design idea and name the codes.`;
@@ -1012,7 +1035,7 @@ export class SocialDesk {
     p.videoOnly = true;
     if (codes.length) p.design = { room: 'video', codes, title: '', scene: '' };
     this.store.save();
-    return `${text}\n(ویدیو عمودی و پانزده‌ثانیه‌ای به‌صورت ریلز منتشر می‌شود، همراه استوری‌ها؛ عکس جدا منتشر نمی‌شود.)`;
+    return `${text}\n(ویدیو عمودی و پانزده‌ثانیه‌ای به‌صورت ریلز منتشر می‌شود، همراه استوری‌ها؛ عکس جدا منتشر نمی‌شود.)${labelled ? '\n(کدها دوباره روی ویدیو نوشته نشد، چون خود ویدیو برچسب دارد. اگر برچسب نداشت، با «پست بدون برچسب» بفرستید.)' : ''}`;
   }
 
   /** The room of a plan, drawn by Gemini with each film's own picture (and the owner's inspiration as a mood reference). The raw picture. */

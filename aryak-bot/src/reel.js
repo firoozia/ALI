@@ -50,7 +50,7 @@ export async function probeVideo(file) {
  * sound goes on; kept [music] comes in under the end card. A video that is already vertical and long enough (plain Gemini's 15 s portrait,
  * 22/11) fills the frame and gets Atossa's words on it (dressTall): the logo, each film's code and name, the WhatsApp line and the end logo.
  */
-export async function verticalReel({ video, seconds = 15, logo = null, font = '', codes = [], labels = [], tagline = '', line = '', card = null, music = null }) {
+export async function verticalReel({ video, seconds = 15, logo = null, font = '', codes = [], labels = [], tallLabels = true, tagline = '', line = '', card = null, music = null }) {
   if (os.freemem() / 1048576 < REEL_MIN_FREE_MB && os.totalmem() / 1048576 < 4096) throw new Error(`too little free memory for a Reel (${Math.round(os.freemem() / 1048576)} MB)`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vert-'));
   try {
@@ -61,8 +61,9 @@ export async function verticalReel({ video, seconds = 15, logo = null, font = ''
     const cardSec = Math.max(0, Math.min(6, seconds - info.seconds));
     const vidSec = Math.min(info.seconds, seconds); // a Gemini video extended to 20 s is cut to the Reel's 15 (the owner, 21/11)
     if (tall && cardSec < 1) {
-      if (!logo && !labels.length && !line && info.seconds <= seconds + 0.2) return video;
-      return await dressTall({ src, dir, info, seconds: vidSec, logo, font, labels: labels.length ? labels : codes.map((c) => ({ code: c, name: '' })), tagline, line, music });
+      const rows = !tallLabels ? [] : labels.length ? labels : codes.map((c) => ({ code: c, name: '' })); // a video with Gemini's own labels (23/11) gets no second set
+      if (!logo && !rows.length && !line && info.seconds <= seconds + 0.2) return video;
+      return await dressTall({ src, dir, info, seconds: vidSec, logo, font, labels: rows, tagline, line, music });
     }
     const sharp = (await import('sharp')).default;
     const W = 1080; const H = 1920;
