@@ -71,7 +71,7 @@ export function cutRecords(tracker, customer, codes, { now = Date.now(), windowD
   if (!wanted.size || !customer) return [];
   const out = []; let cuts = 0; let ofCustomer = 0;
   for (const e of tracker.events) {
-    if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
+    if (e.type !== 'cut' || e.internal || e.sample || e.at < now - windowDays * DAY) continue;
     cuts += 1;
     if (!namesOf(e, nameOf).some((n) => sameCutCustomer(n, customer))) continue;
     ofCustomer += 1;
@@ -109,7 +109,7 @@ export function markCutsInvoiced(tracker, refs, number, at = Date.now()) {
 export function unInvoicedCuts(tracker, { since = 0 } = {}) {
   const out = [];
   for (const e of tracker.events) {
-    if (e.type !== 'cut' || e.internal || e.at < since) continue;
+    if (e.type !== 'cut' || e.internal || e.sample || e.at < since) continue;
     for (const l of e.lines || []) if (!l.invoiced && Number(l.quantity) > 0) out.push({ customer: e.customer, code: l.code, qty: Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at });
   }
   return out.sort((a, b) => b.at - a.at);
@@ -145,12 +145,13 @@ const amount = (qty, unit) => `${Math.round(qty * 1000) / 1000}${unit === 'm' ? 
  * invoiced, an invoice LARGER than the cut, a cut no invoice carries. Returns { problems, more }: at most [max] lines, then the count of the rest. [log](text) says what matched.
  */
 export function crossCheck(tracker, customer, lines, { now = Date.now(), windowDays = 30, timeZone = 'Asia/Dubai', invoiced = null, max = 5, log = null, aliasOf = () => '', trackedSince = 0, outs = null, nameOf = null } = {}) {
-  const rows = [];
+  const rows = []; const samples = [];
   const forCustomer = (name) => sameCutCustomer(name, customer) || (!!aliasOf(name) && sameCutCustomer(aliasOf(name), customer)); // an alias the owner approved stands for the QuickBooks name
   for (const e of tracker.events) {
     if (e.type !== 'cut' || e.internal || e.at < now - windowDays * DAY) continue;
     if (!namesOf(e, nameOf).some((n) => forCustomer(n))) continue;
     // a catalog is always free (the owner, 14/11): never «not invoiced»
+    if (e.sample) { if (now - e.at <= 7 * DAY) (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0) samples.push(`${code(l.code)}: sample ${amount(Number(l.quantity), unitOf(l.unit) || 'm')} on ${dm(e.at, timeZone)}, no invoice needed`); }); continue; }
     (e.lines || []).forEach((l) => { if (Number(l.quantity) > 0 && code(l.code) !== 'CATALOG') rows.push({ code: code(l.code), digits: digitsOf(l.code), qty: Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity), unit: unitOf(l.unit) || 'm', at: e.at, tracked: l.invoiced || null, ref: e.ref, post: e.customerTyped || e.customer, note: l.note || '', text: e.text || '', left: !l.invoiced, by: l.invoiced ? { number: l.invoiced.number, at: l.invoiced.at } : null }); });
   }
   const same = (r, inv) => (inv.codes || []).some((k) => code(k) === r.code || (r.digits && digitsOf(k) === r.digits));
@@ -161,7 +162,7 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
     for (const r of [...rows].sort((a, b) => a.at - b.at)) {
       if (!r.left) continue;
       // an invoice line from before the tracking began (its cuts were never seen here) never pairs with a cut after it; the NEAREST date pairs first
-      const cands = invoiced.filter((inv) => same(r, inv) && Math.abs(inv.at - r.at) <= windowDays * DAY && left.get(inv) > 0.0001 && !(trackedSince && inv.at < trackedSince && r.at >= trackedSince));
+      const cands = invoiced.filter((inv) => same(r, inv) && inv.at >= r.at - 7 * DAY && inv.at - r.at <= windowDays * DAY && left.get(inv) > 0.0001 && !(trackedSince && inv.at < trackedSince && r.at >= trackedSince));
       const hit = cands.sort((a, b) => Math.abs(a.at - r.at) - Math.abs(b.at - r.at))[0];
       if (hit) { left.set(hit, Math.max(0, left.get(hit) - r.qty)); r.left = false; r.by = { number: hit.number, at: hit.at }; }
     }
@@ -202,5 +203,5 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
       problems.push(`${k}: ${list[0].code === 'CATALOG' ? 'given' : 'cut'} ${amount(list.reduce((x, r) => x + r.qty, 0), list[0].unit)} on ${dm(list[0].at, timeZone)}${postQuote(list[0])}, not invoiced`);
     }
   }
-  return { problems: problems.slice(0, max), more: Math.max(0, problems.length - max), covered: covered.slice(0, max) };
+  return { problems: problems.slice(0, max), more: Math.max(0, problems.length - max), covered: covered.slice(0, max), samples: [...new Set(samples)].slice(0, max) };
 }

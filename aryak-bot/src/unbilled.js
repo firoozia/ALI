@@ -39,7 +39,7 @@ export function unbilled({ events, invoices, itemCodes = () => [], aliasOf = () 
   const trace = [];
   const add = (customer, text, ref = '', post = '', said = '') => { const name = nameOf(customer); byCustomer.set(name, [...(byCustomer.get(name) || []), text]); trace.push(`unbilled: "${name}" <- "${post || customer}": ${text}${ref ? ` (post ${String(ref).slice(0, 8)}${said ? `: "${said}"` : ''})` : ''}`); }; // one QuickBooks name for the spellings of one customer name
   for (const e of events) {
-    if (e.at < now - days * DAY || e.internal || e.simulated) continue;
+    if (e.at < now - days * DAY || e.internal || e.simulated || e.sample) continue; // a sample is free (the owner, 25/11)
     const post = e.customerTyped || e.customer;
     if (!post) continue;
     const his = invoicesOf(post);

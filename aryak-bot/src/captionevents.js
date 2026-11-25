@@ -50,7 +50,7 @@ export function eventsFromCaption(role, text) {
     if (c.kind === 'open-roll' || c.kind === 'damage') return { events: [{ type: 'cut', internal: true, kind: c.kind, customer: c.kind === 'damage' ? c.customer : '', lines }] };
     // a catalog is always FREE (the owner, 14/11): kept in the log with its customer, never a sale, never «not invoiced»
     if (lines.length && lines.every((l) => l.code === 'CATALOG')) return { events: [{ type: 'cut', internal: true, kind: 'catalog', customer: c.customer, lines }] };
-    return { events: [{ type: 'cut', customer: c.customer, lines, ...(c.pieces ? { pieces: c.pieces } : {}) }] };
+    return { events: [{ type: 'cut', customer: c.customer, lines, ...(c.pieces ? { pieces: c.pieces } : {}), ...(c.sample ? { sample: true } : {}) }] };
   }
   if (role === 'delivery') {
     const d = parseDeliveryCaption(text);

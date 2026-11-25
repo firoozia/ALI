@@ -360,7 +360,7 @@ export function supersedeRunningTotal(events, ev, { hours = 8 } = {}) {
 /** Two counts for the daily summary: invoices with no cut recorded after [shortDays] days, and cuts with no invoice after a day. */
 export function cutDigest(tracker, { now = Date.now(), shortDays = 3, windowDays = 10 } = {}) {
   const invoices = tracker.events.filter((e) => e.type === 'invoice' && now - e.at <= windowDays * DAY);
-  const cuts = tracker.events.filter((e) => e.type === 'cut' && !e.internal && !e.supersededBy && now - e.at <= windowDays * DAY);
+  const cuts = tracker.events.filter((e) => e.type === 'cut' && !e.internal && !e.sample && !e.supersededBy && now - e.at <= windowDays * DAY);
   // an invoice counts when some code on it has no cut of that very code (a letter variant such as 108 C is another code)
   const invoiceNoCut = invoices.filter((i) => now - i.at >= shortDays * DAY && (() => {
     const cutCodes = new Set([...sumByCode(tracker.of('cut', i.customer, { since: i.at - 3 * DAY }).filter((c) => !c.internal)).keys()].map((k) => k.split('|')[0]));

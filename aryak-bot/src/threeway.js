@@ -76,7 +76,7 @@ export function threeWay({ events, outs, returns = null, invoices, itemCodes = (
   // ---- the three sources as lists
   const cuts = [];
   for (const e of settleCuts(events)) {
-    if (e.type !== 'cut' || e.internal || e.simulated || e.at < since) continue;
+    if (e.type !== 'cut' || e.internal || e.simulated || e.sample || e.at < since) continue; // a sample is free (the owner, 25/11)
     const post = e.customerTyped || e.customer; if (!post) continue;
     for (const l of e.lines || []) {
       const code = digits(l.code); const qty = Number(l.invoiceQuantity) > 0 ? Number(l.invoiceQuantity) : Number(l.quantity);

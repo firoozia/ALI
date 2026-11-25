@@ -1163,7 +1163,7 @@ export class QboInvoiceDesk {
       ...(p.po ? [`PO: *${p.po}*`] : []),
       ...p.lines.map((l, i) => `${i + 1}. ${named(l)} (${l.qty} ×${l.price} = ${money(l.amount)})${l.override ? ` ✎ your price (system ${Number(l.override.system).toFixed(2)})` : ''}`),
       `Total: *${money(p.total)}${p.currency ? ` ${p.currency}` : ''}*`,
-      ...((p.cross?.problems?.length || p.cross?.covered?.length) ? ['Cross-check (Aryak Orders):', ...(p.cross.covered || []).map((x) => `✔ ${x}`), ...(p.cross.problems || []).map((x) => `⚠ ${x}`), ...(p.cross.more ? [`+${p.cross.more} more`] : [])] : []), // nothing at all when everything matches
+      ...((p.cross?.problems?.length || p.cross?.covered?.length || p.cross?.samples?.length) ? ['Cross-check (Aryak Orders):', ...(p.cross.covered || []).map((x) => `✔ ${x}`), ...(p.cross.samples || []).map((x) => `✅ ${x}`), ...(p.cross.problems || []).map((x) => `⚠ ${x}`), ...(p.cross.more ? [`+${p.cross.more} more`] : [])] : []), // nothing at all when everything matches
       ...flags,
       answer,
     ].join('\n');
