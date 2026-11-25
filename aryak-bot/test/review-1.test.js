@@ -1116,7 +1116,8 @@ test('owner review: «invoice NAME 221 20m» is read; the preview pairs by the n
   near.add({ type: 'cut', at: NOW - 2 * DAY, customer: 'GOLDEN DOOR', lines: [{ code: '300', quantity: 10, unit: 'm' }], ref: 'n1' });
   const far = { codes: ['300'], qty: 10, number: 'far', at: NOW - 20 * DAY }; const close = { codes: ['300'], qty: 10, number: 'close', at: NOW - 3 * DAY };
   const n = crossCheck(near, 'GOLDEN DOOR', [{ code: '300', qty: 10 }], { now: NOW, invoiced: [far, close], trackedSince: 0 });
-  assert.match(n.problems.join('|'), /already invoiced \(close\)/);
+  assert.match(n.problems.join('|'), /300: not cut yet/); // the cut paired with «close» (3 days ago) is a past order (the owner, 25/11): never brought back
+  assert.match(crossCheck(near, 'GOLDEN DOOR', [{ code: '300', qty: 10 }], { now: NOW - 2 * DAY + 3600000, invoiced: [{ ...close, at: NOW - 2 * DAY + 1800000 }], trackedSince: 0 }).problems.join('|'), /already invoiced \(close\)/, 'invoiced within the day: a second invoice is named');
   const gate = (s) => s.includes('async function sheetOutRows(days, cached = false, freshMs') && s.includes('unbilledReport(tracker.events, { cached: true })');
   const index = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'index.js'), 'utf8');
   assert.ok(gate(index)); // only the automatic evening run may use the copy read minutes ago

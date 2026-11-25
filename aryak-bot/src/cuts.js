@@ -179,7 +179,14 @@ export function crossCheck(tracker, customer, lines, { now = Date.now(), windowD
     if (log) log(`cross-check: line ${shown} x${ln.qty} for "${customer}": ${mine.length} cut(s) of this customer (posts named: ${[...new Set(mine.map((r) => r.post))].join(' | ') || '-'}), ${open.length} open, ${done.length} invoiced`);
     if (shown === 'CATALOG') continue; // a free catalog has no cut to check
     if (!mine.length) problems.push(`${shown}: not cut yet (no orders-group post)`);
-    else if (!open.length) { if (invoiced || done[0].tracked) problems.push(`${shown}: already invoiced${done[0].by?.number ? ` (${done[0].by.number})` : ''} on ${dm(done[0].by?.at || done[0].at, timeZone)}`); }
+    else if (!open.length) {
+      // the cuts of this code were all invoiced already. THE OWNER (25/11): an order invoiced in the past is never brought back: the new line simply has
+      // no new cut. Only a cut invoiced today or yesterday is named (a second invoice for the same cut is likely then).
+      const last = [...done].sort((a, b) => (b.by?.at || b.at) - (a.by?.at || a.at))[0];
+      const recent = now - (last.by?.at || last.at) <= 36 * 3600 * 1000;
+      if (recent && (invoiced || last.tracked)) problems.push(`${shown}: already invoiced${last.by?.number ? ` (${last.by.number})` : ''} on ${dm(last.by?.at || last.at, timeZone)}`);
+      else problems.push(`${shown}: not cut yet (no orders-group post)`);
+    }
     else if (open.every((r) => r.unit === 'm')) { // meters against meters only: a count of pieces is another measure
       const total = open.reduce((x, r) => x + r.qty, 0);
       if (Number(ln.qty) > total + 0.001) problems.push(`${shown}: invoice has ${ln.qty}, cut ${amount(total, 'm')} on ${dm(open[0].at, timeZone)}`); // charging more than was cut

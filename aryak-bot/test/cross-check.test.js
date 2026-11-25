@@ -55,7 +55,7 @@ test('the owner\'s rule: an invoice line of the same customer and code on or aft
   const { problems } = crossCheck(tr, 'MASTER WOOD', [], { now: NOW, invoiced });
   assert.deepEqual(problems, ['203: cut 9m on 05/11, not invoiced', '512: cut 7m on 06/11, not invoiced', '410: cut 4m on 07/11, not invoiced']); // 216 and 235 are invoiced
   assert.deepEqual(crossCheck(tr, 'MASTER WOOD', [], { now: NOW, invoiced: null }).problems, []); // QuickBooks could not be read: nothing claimed
-  assert.deepEqual(crossCheck(tr, 'MASTER WOOD', [{ code: '216', qty: 12 }], { now: NOW, invoiced }).problems.slice(0, 1), ['216: already invoiced (inv-9906) on 04/11']); // a double invoice names its number
+  assert.deepEqual(crossCheck(tr, 'MASTER WOOD', [{ code: '216', qty: 12 }], { now: NOW, invoiced }).problems.slice(0, 1), ['216: not cut yet (no orders-group post)']); // the owner, 25/11: the cut invoiced 4 days ago is a past order, never brought back; the new line has no new cut
   // a cut larger than the invoice (a margin, the end of a roll) is normal
   const margin = new Tracker({ dir: '' });
   cut(margin, 'm1', 'MASTER WOOD', '303', 6.4, 1); cut(margin, 'm2', 'MASTER WOOD', '702', 4.4, 1);
