@@ -243,3 +243,19 @@ export function stockAsk(text, names = []) {
 
 /** parseCommand as written, and when it reads nothing, once more with a leading «Atossa» taken off. */
 export const parseCommand = nameFallback(parseCommandImpl);
+
+/**
+ * THE OWNER'S RULE (25/11): «whatever I send to my own number gets a reaction — make it a rule: in my private chat and in every group except the
+ * Confirmation and expenses groups, a message that does not call Atossa gets no reaction». In his own chat (and the studio and stock groups, which act as
+ * it) a message calls her when it holds her name, answers one of her messages ([repliedToHer]), or carries one of her codes («yes #Q5», «Q5 yes»,
+ * «بله پست 3», «جواب پیام 5»). A bare «بله» or «1» with no code and no reply is not enough. A voice note is judged by its written-out text.
+ */
+export function callsHer({ text = '', names = [], repliedToHer = false } = {}) {
+  if (repliedToHer) return true;
+  const t = String(text || '');
+  if (isAddressed({ text: t, names })) return true;
+  if (/#\s?[A-Za-z]{1,3}\s?[0-9۰-۹]+/.test(t)) return true; // #Q5, #SP3, #E8, # W1
+  if (/(?:^|\s)(?:Q|W|SP|SR|SA|S|E|Z|X|A|V|H|G|D|B|AD|P|N|C|M|T|I|K)[0-9]+(?=\s|$)/.test(t)) return true; // «Q5 yes»
+  if (/(?:پست|پیام|طرح)\s*[0-9۰-۹]+/.test(t)) return true; // «بله پست 3», «جواب پیام 5», «اصلاح طرح 22»
+  return false;
+}

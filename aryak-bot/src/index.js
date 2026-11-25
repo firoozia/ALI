@@ -70,7 +70,7 @@ import { GroupGate, staffChecker } from './gate.js';
 import { afterClose, clearAuth, pairingOnce } from './pairing.js';
 import { InvoiceDesk, checkInvoice, extractMeta, noRequestText, readInvoice, reportText, staffWarning } from './invoice.js';
 import { helloOnce } from './hello.js';
-import { BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
+import { callsHer, BotState, isAddressed, parseCommand, runCommand, staffAnswer, startsWithName, stockAsk, withoutBotNames } from './staff.js';
 import { fetchReserved, reservedText } from './reserved.js';
 import { answerExpenseEdit, isBareAnswer, pendingView, viewAnswer, expensesReport, parseExpenseEdit, requestExpenseEdit, undoExpense } from './expenseedit.js';
 import { CASH_OUT_KINDS, CashBoxStore, cashBoxReport, cashBoxReportQbo, fetchCashBoxQbo, parseCashBoxCommand, rederiveCashOut } from './cashbox.js';
@@ -2502,6 +2502,14 @@ async function handleStaffChat(raw, chatId, group, place = {}) {
     trace(where, 'owner', 'ignored: a QuickBooks connect line that is not from the owner\'s own chat');
     return true;
   }
+  // THE OWNER'S RULE (25/11): his own chat, the studio and the stock group react only to a message that calls her (callsHer: her name, a reply to her,
+  // one of her codes). A voice note goes on to be written out and is judged by its text (below); a voice yes that runs as typed passes.
+  const selfCtx = (content.extendedTextMessage || audio || image || content.documentMessage || content.videoMessage)?.contextInfo || {};
+  const repliedToHer = !!selfCtx.stanzaId && (sent.has(selfCtx.stanzaId) || String(textOf(normalizeMessageContent(selfCtx.quotedMessage)) || '').startsWith('🤖'));
+  if (isSelf && !audio && !String(raw.key.id).startsWith('VOICE-') && !looksLikeConnectLine(text || '') && !callsHer({ text, names: config.botNames, repliedToHer })) {
+    trace(where, 'owner', 'own chat: the message does not call her (no name, no reply to her, no code of hers): no reaction');
+    return false;
+  }
   if (!group && raw.key.fromMe && !isSelf) { // from the bot's phone, in the owner's chat with another person
     const octx = (content.extendedTextMessage || {}).contextInfo || {};
     const waitingChoice = choiceDesk.get(`pc:${chatId}`);
@@ -2762,6 +2770,7 @@ ${t.authorizeUrl()}`);
   }
   // the echo of a transcript (merged or not), then by its class: a question runs, a change waits for the yes
   const actOnTranscript = async (said, lang) => {
+    if (isSelf && !callsHer({ text: said, names: config.botNames, repliedToHer })) { trace(where, role, 'own chat: a voice note that does not call her: no reaction'); return false; } // the owner's rule, 25/11
     const pv = planVoice({ transcript: said, lang, priv: true });
     const echoed = `${pv.echo}${pv.mode === 'ask' ? `\n${pv.prompt}` : ''}`;
     await sock.sendMessage(chatId, group ? persianText(echoed) : { text: `${isSelf ? '🤖 ' : ''}${echoed}` }, { quoted: raw });
